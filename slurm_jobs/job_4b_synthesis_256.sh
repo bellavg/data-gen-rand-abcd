@@ -17,17 +17,29 @@ echo "Running on: $(hostname)"
 echo "Start time: $(date)"
 echo ""
 
+# Load required modules for Snellius
+module purge
+module load 2023
+module load Python/3.11.3-GCCcore-12.3.0
+
+echo "Loaded modules:"
+module list
+echo ""
+
+# Add ABC to PATH (adjust path if ABC is installed elsewhere)
+export PATH="$HOME/abc:$PATH"
+
 BASE_DIR="$HOME/data-gen-rand-abcd"
 DATASET_DIR="${BASE_DIR}/OPENABC_DATASET"
 
-# Try to load yosys module
-module load 2025 2>/dev/null || true
-module load yosys 2>/dev/null || module load Yosys 2>/dev/null || true
-
-if ! command -v yosys-abc &> /dev/null; then
-    echo "✗ Error: yosys-abc not found. Run check_yosys.sh for help."
+if ! command -v abc &> /dev/null; then
+    echo "✗ Error: abc not found"
+    echo "Current PATH: $PATH"
     exit 1
 fi
+
+echo "✓ Using abc: $(which abc)"
+echo ""
 
 cd "${DATASET_DIR}/bench"
 echo "Running synthesis for design 256..."
