@@ -3,7 +3,7 @@
 #SBATCH --time=72:00:00
 #SBATCH -N 1
 #SBATCH --ntasks-per-node=1
-#SBATCH --partition=thin
+#SBATCH --partition=genoa
 #SBATCH --output=logs/synthesis_2048_%j.out
 
 # Step 4e: Run Synthesis for Design 2048

@@ -3,7 +3,7 @@
 #SBATCH --time=01:00:00
 #SBATCH -N 1
 #SBATCH --ntasks-per-node=1
-#SBATCH --partition=thin
+#SBATCH --partition=genoa
 #SBATCH --output=logs/gen_design_scripts_%j.out
 
 # Step 2: Generate Design-Specific Synthesis Scripts
