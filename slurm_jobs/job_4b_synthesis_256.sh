@@ -20,8 +20,12 @@ echo ""
 BASE_DIR="$HOME/data-gen-rand-abcd"
 DATASET_DIR="${BASE_DIR}/OPENABC_DATASET"
 
+# Try to load yosys module
+module load 2025 2>/dev/null || true
+module load yosys 2>/dev/null || module load Yosys 2>/dev/null || true
+
 if ! command -v yosys-abc &> /dev/null; then
-    echo "✗ Error: yosys-abc not found"
+    echo "✗ Error: yosys-abc not found. Run check_yosys.sh for help."
     exit 1
 fi
 
