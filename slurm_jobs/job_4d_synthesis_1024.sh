@@ -32,6 +32,12 @@ export PATH="$HOME/abc:$PATH"
 BASE_DIR="$HOME/data-gen-rand-abcd"
 DATASET_DIR="${BASE_DIR}/OPENABC_DATASET"
 
+# Copy abc.rc for ABC aliases
+if [ -f "${BASE_DIR}/abc.rc" ]; then
+    cp "${BASE_DIR}/abc.rc" "$HOME/.abc.rc"
+    cp "${BASE_DIR}/abc.rc" "${DATASET_DIR}/bench/abc.rc"
+fi
+
 if ! command -v abc &> /dev/null; then
     echo "✗ Error: abc not found"
     echo "Current PATH: $PATH"
