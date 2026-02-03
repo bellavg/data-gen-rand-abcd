@@ -16,7 +16,7 @@ def genShellScriptForSynthesis():
         designScriptFile = open(os.path.join(graphDataFolder,'synthesisBulk_'+des+'.sh'),'w+')
         logFolder = os.path.join(graphDataFolder,des,'log_'+des)
         if not os.path.exists(logFolder):
-            os.mkdir(logFolder)
+            os.makedirs(logFolder)
         for i in range(numSynthesizedScript):
             synScriptPath = os.path.join(scriptsDataFolder,des,'abc'+str(i)+".script")
             logFilePath = os.path.join(logFolder,'log_'+des+'_syn'+str(i)+'.log')

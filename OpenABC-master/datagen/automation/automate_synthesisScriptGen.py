@@ -26,7 +26,7 @@ def genSynthesisScripts():
         for des in designs:
             scriptFolder = os.path.join(scriptsDataFolder,des)
             if(not os.path.exists(scriptFolder)):
-                os.mkdir(scriptFolder)
+                os.makedirs(scriptFolder)
             graphDumpFolder = os.path.join(graphDataFolder,des)
             scriptFilePath = os.path.join(scriptFolder, 'abc' + str(i) + '.script')
             scriptFile = open(scriptFilePath, 'w+')

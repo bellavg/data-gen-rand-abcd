@@ -24,10 +24,33 @@ echo ""
 BASE_DIR="$HOME/data-gen-rand-abcd"
 DATASET_DIR="${BASE_DIR}/OPENABC_DATASET"
 
+# Try to load yosys module if available
+module load 2025 2>/dev/null || true
+if module avail 2>&1 | grep -qi yosys; then
+    echo "Loading yosys module..."
+    module load yosys 2>/dev/null || module load Yosys 2>/dev/null || true
+fi
+
 # Check if yosys-abc is available
 if ! command -v yosys-abc &> /dev/null; then
-    echo "✗ Error: yosys-abc not found in PATH"
-    echo "Please ensure yosys-abc is installed and available"
+    echo "=========================================="
+    echo "✗ ERROR: yosys-abc not found in PATH"
+    echo "=========================================="
+    echo ""
+    echo "yosys-abc is required for synthesis. Please:"
+    echo ""
+    echo "1. Check if yosys module exists:"
+    echo "   module avail | grep -i yosys"
+    echo ""
+    echo "2. If module exists, load it:"
+    echo "   module load yosys  # or Yosys"
+    echo ""
+    echo "3. If no module exists, you need to:"
+    echo "   - Request installation from Snellius support"
+    echo "   - OR compile from source: https://github.com/YosysHQ/yosys"
+    echo ""
+    echo "4. After installation, ensure 'yosys-abc' is in PATH"
+    echo ""
     exit 1
 fi
 
