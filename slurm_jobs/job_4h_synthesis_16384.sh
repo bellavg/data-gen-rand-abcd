@@ -19,8 +19,8 @@ echo ""
 
 # Load required modules for Snellius
 module purge
-module load 2023
-module load Python/3.11.3-GCCcore-12.3.0
+module load 2025
+module load Python/3.13.1-GCCcore-14.2.0
 
 echo "Loaded modules:"
 module list
