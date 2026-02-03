@@ -32,17 +32,17 @@ def genSynthesisScripts():
             scriptFile = open(scriptFilePath, 'w+')
             readLibLine = "read "+os.path.join(libraryCellFolder,"nangate45.lib")+delimiter
             scriptFile.write(readLibLine)
-            fileLines[1] = "read_aig "+graphDumpFolder+os.sep+des+"_orig.aig"+delimiter
+            fileLines[1] = "read "+graphDumpFolder+os.sep+des+"_orig.aig"+delimiter
             scriptFile.write(fileLines[1])
             scriptFile.write("strash"+delimiter)
             firstPathFileName = os.path.join(graphDumpFolder, "syn" + str(i),des + "_syn" + str(i) + "_step0.aig"+delimiter)
-            dumpFirstGraphLine = "write_aig " + firstPathFileName
+            dumpFirstGraphLine = "write " + firstPathFileName
             scriptFile.write(dumpFirstGraphLine)
             numSteps = 1
             for line in fileLines[2:-8]:
                 scriptFile.write(line)
                 intermediatePathFileName = os.path.join(graphDumpFolder,"syn"+str(i),des+"_syn"+str(i)+"_step"+str(numSteps)+".aig"+delimiter)
-                dumpIntermediateGraphLine = "write_aig " + intermediatePathFileName
+                dumpIntermediateGraphLine = "write " + intermediatePathFileName
                 scriptFile.write(dumpIntermediateGraphLine)
                 numSteps+=1
             scriptFile.write("map -B 0.9"+delimiter+"topo"+delimiter+"stime -c"+delimiter)

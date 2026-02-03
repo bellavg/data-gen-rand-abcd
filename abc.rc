@@ -1,0 +1,8 @@
+# ABC configuration file
+# Defines aliases for ABC commands used in OpenABC-D
+
+# Alias for reading AIG files
+alias read_aig "read"
+
+# Alias for writing AIG files  
+alias write_aig "write"

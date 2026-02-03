@@ -32,6 +32,16 @@ export PATH="$HOME/abc:$PATH"
 BASE_DIR="$HOME/data-gen-rand-abcd"
 DATASET_DIR="${BASE_DIR}/OPENABC_DATASET"
 
+# Copy abc.rc file for ABC aliases
+if [ -f "${BASE_DIR}/abc.rc" ]; then
+    cp "${BASE_DIR}/abc.rc" "$HOME/.abc.rc"
+    cp "${BASE_DIR}/abc.rc" "${DATASET_DIR}/bench/abc.rc"
+    echo "✓ ABC configuration file copied"
+else
+    echo "⚠ Warning: abc.rc not found"
+fi
+echo ""
+
 if ! command -v abc &> /dev/null; then
     echo "✗ Error: abc not found"
     echo "Current PATH: $PATH"
@@ -40,6 +50,12 @@ fi
 
 echo "✓ Using abc: $(which abc)"
 echo ""
+
+# Verify library and design files
+if [ ! -f "${DATASET_DIR}/lib/nangate45.lib" ] || [ ! -f "${DATASET_DIR}/bench/256/256_orig.aig" ]; then
+    echo "✗ Error: Required files missing"
+    exit 1
+fi
 
 cd "${DATASET_DIR}/bench"
 echo "Running synthesis for design 256..."
