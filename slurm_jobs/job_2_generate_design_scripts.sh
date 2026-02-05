@@ -29,6 +29,7 @@ BASE_DIR="$HOME/data-gen-rand-abcd"
 DATASET_DIR="${BASE_DIR}/OPENABC_DATASET"
 REFERENCE_SCRIPTS_DIR="${BASE_DIR}/referenceScripts"
 AUTOMATION_DIR="${BASE_DIR}/OpenABC-master/datagen/automation"
+LIBRARY_FILE="/scratch-shared/$USER/openabc_full/OPENABC_DATASET/lib/nangate45.lib"
 
 # Define the 8 designs
 DESIGNS=("128" "256" "512" "1024" "2048" "4096" "8192" "16384")
@@ -39,7 +40,8 @@ echo ""
 
 python "${AUTOMATION_DIR}/automate_synthesisScriptGen.py" \
     --home "${BASE_DIR}" \
-    --script "${REFERENCE_SCRIPTS_DIR}"
+    --script "${REFERENCE_SCRIPTS_DIR}" \
+    --lib "${LIBRARY_FILE}"
 
 echo ""
 echo "✓ Design-specific scripts generated"
