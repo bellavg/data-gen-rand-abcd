@@ -7,6 +7,7 @@ srcFolder = None #sys.argv[1]
 graphDataFolder = None #os.path.join(homeDir,"OPENABC_DATASET","bench")
 scriptsDataFolder = None #os.path.join(homeDir,"OPENABC_DATASET","synScripts")
 libraryCellFolder = None #os.path.join(homeDir,"OPENABC_DATASET","lib")
+libraryFile = None # Full path to the library file
 
 
 numSynthesizedScript = 1500
@@ -30,19 +31,19 @@ def genSynthesisScripts():
             graphDumpFolder = os.path.join(graphDataFolder,des)
             scriptFilePath = os.path.join(scriptFolder, 'abc' + str(i) + '.script')
             scriptFile = open(scriptFilePath, 'w+')
-            readLibLine = "read "+os.path.join(libraryCellFolder,"nangate45.lib")+delimiter
+            readLibLine = "read "+libraryFile+delimiter
             scriptFile.write(readLibLine)
             fileLines[1] = "read "+graphDumpFolder+os.sep+des+"_orig.aig"+delimiter
             scriptFile.write(fileLines[1])
             scriptFile.write("strash"+delimiter)
-            firstPathFileName = os.path.join(graphDumpFolder, "syn" + str(i),des + "_syn" + str(i) + "_step0.aig"+delimiter)
-            dumpFirstGraphLine = "write " + firstPathFileName
+            firstPathFileName = os.path.join(graphDumpFolder, "syn" + str(i),des + "_syn" + str(i) + "_step0.aig")
+            dumpFirstGraphLine = "write " + firstPathFileName + delimiter
             scriptFile.write(dumpFirstGraphLine)
             numSteps = 1
             for line in fileLines[2:-8]:
                 scriptFile.write(line)
-                intermediatePathFileName = os.path.join(graphDumpFolder,"syn"+str(i),des+"_syn"+str(i)+"_step"+str(numSteps)+".aig"+delimiter)
-                dumpIntermediateGraphLine = "write " + intermediatePathFileName
+                intermediatePathFileName = os.path.join(graphDumpFolder,"syn"+str(i),des+"_syn"+str(i)+"_step"+str(numSteps)+".aig")
+                dumpIntermediateGraphLine = "write " + intermediatePathFileName + delimiter
                 scriptFile.write(dumpIntermediateGraphLine)
                 numSteps+=1
             scriptFile.write("map -B 0.9"+delimiter+"topo"+delimiter+"stime -c"+delimiter)
@@ -50,7 +51,7 @@ def genSynthesisScripts():
 
 
 def setGlobalAndEnvironmentVars(cmdArgs):
-    global homeDir, srcFolder, graphDataFolder,scriptsDataFolder,libraryCellFolder
+    global homeDir, srcFolder, graphDataFolder,scriptsDataFolder,libraryCellFolder,libraryFile
     homeDir = cmdArgs.home
     srcFolder = cmdArgs.script
     if not (os.path.exists(homeDir) and os.path.exists(srcFolder)):
@@ -58,12 +59,19 @@ def setGlobalAndEnvironmentVars(cmdArgs):
     graphDataFolder = os.path.join(homeDir,"OPENABC_DATASET","bench")
     scriptsDataFolder = os.path.join(homeDir,"OPENABC_DATASET","synScripts")
     libraryCellFolder = os.path.join(homeDir,"OPENABC_DATASET","lib")
+    
+    # Set library file: use provided path or default to nangate45.lib
+    if cmdArgs.lib:
+        libraryFile = cmdArgs.lib
+    else:
+        libraryFile = os.path.join(libraryCellFolder,"nangate45.lib")
 
 def parseCmdLineArgs():
     parser = argparse.ArgumentParser(prog='SYNTHESIS RECIPE GENERATOR', description="Circuit characteristics")
     parser.add_argument('--version',action='version', version='1.0.0')
     parser.add_argument('--home',required=True, help="OpenABC dataset home path")
     parser.add_argument('--script', required=True, help="Sample script folder path of 1500 synthesis scripts")
+    parser.add_argument('--lib', required=False, help="Path to library file (default: OPENABC_DATASET/lib/nangate45.lib)")
     return parser.parse_args()
 
 def main():

@@ -27,6 +27,7 @@ module load Python/3.13.1-GCCcore-14.2.0
 BASE_DIR="$HOME/data-gen-rand-abcd"
 DATASET_DIR="${BASE_DIR}/OPENABC_DATASET"
 AUTOMATION_DIR="${BASE_DIR}/OpenABC-master/datagen/automation"
+LIBRARY_FILE="/scratch-shared/$USER/openabc_full/OPENABC_DATASET/lib/nangate45.lib"
 
 # Define the 8 designs
 DESIGNS=("128" "256" "512" "1024" "2048" "4096" "8192" "16384")
@@ -35,7 +36,8 @@ echo "Generating bulk synthesis shell scripts..."
 echo ""
 
 python "${AUTOMATION_DIR}/automate_bulkSynthesis.py" \
-    --home "${BASE_DIR}"
+    --home "${BASE_DIR}" \
+    --lib "${LIBRARY_FILE}"
 
 echo ""
 echo "✓ Shell scripts generated"

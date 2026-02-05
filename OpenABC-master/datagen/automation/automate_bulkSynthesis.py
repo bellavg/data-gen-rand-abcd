@@ -5,6 +5,7 @@ homeDir = None#os.environ["HOME"]
 graphDataFolder = None #os.path.join(homeDir,"OPENABC_DATASET","bench")
 scriptsDataFolder = None #os.path.join(homeDir,"OPENABC_DATASET","synScripts")
 libraryCellFolder = None #os.path.join(homeDir,"OPENABC_DATASET","lib")
+libraryFile = None # Full path to the library file
 
 designSet6 = ['128','256','512','1024','2048','4096','8192','16384']
 designs = designSet6
@@ -30,18 +31,25 @@ def genShellScriptForSynthesis():
         designScriptFile.close()
 
 def setGlobalAndEnvironmentVars(cmdArgs):
-    global homeDir, graphDataFolder,scriptsDataFolder,libraryCellFolder
+    global homeDir, graphDataFolder,scriptsDataFolder,libraryCellFolder,libraryFile
     homeDir = cmdArgs.home
     if not (os.path.exists(homeDir)):
         print("\nPlease rerun with appropriate paths")
     graphDataFolder = os.path.join(homeDir,"OPENABC_DATASET","bench")
     scriptsDataFolder = os.path.join(homeDir,"OPENABC_DATASET","synScripts")
     libraryCellFolder = os.path.join(homeDir,"OPENABC_DATASET","lib")
+    
+    # Set library file: use provided path or default to nangate45.lib
+    if cmdArgs.lib:
+        libraryFile = cmdArgs.lib
+    else:
+        libraryFile = os.path.join(libraryCellFolder,"nangate45.lib")
 
 def parseCmdLineArgs():
     parser = argparse.ArgumentParser(prog='AUTOMATE SYNTHESIS FLOW', description="Circuit characteristics")
     parser.add_argument('--version',action='version', version='1.0.0')
     parser.add_argument('--home',required=True, help="OpenABC dataset home path")
+    parser.add_argument('--lib', required=False, help="Path to library file (default: OPENABC_DATASET/lib/nangate45.lib)")
     return parser.parse_args()
 
 def main():
