@@ -23,7 +23,7 @@ echo ""
 # Load required modules for Snellius
 module purge
 module load 2025
-module load Python/3.13.1-GCCcore-14.2.0
+module load foss/2025a
 
 echo "Loaded modules:"
 module list
@@ -32,11 +32,9 @@ echo ""
 # Add ABC to PATH (adjust path if ABC is installed elsewhere)
 export PATH="$HOME/abc:$PATH"
 
-# Define paths
 BASE_DIR="$HOME/data-gen-rand-abcd"
 DATASET_DIR="${BASE_DIR}/OPENABC_DATASET"
 
-# Check if abc is available
 if ! command -v abc &> /dev/null; then
     echo "✗ Error: abc not found in PATH"
     echo "Current PATH: $PATH"
