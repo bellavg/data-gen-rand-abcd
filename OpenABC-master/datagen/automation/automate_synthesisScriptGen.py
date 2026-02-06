@@ -31,22 +31,54 @@ def genSynthesisScripts():
             graphDumpFolder = os.path.join(graphDataFolder,des)
             scriptFilePath = os.path.join(scriptFolder, 'abc' + str(i) + '.script')
             scriptFile = open(scriptFilePath, 'w+')
+            
+            # Create metadata directory and CSV file if needed (once per design)
+            metadataFolder = os.path.join(graphDataFolder, des, 'metadata')
+            if not os.path.exists(metadataFolder):
+                os.makedirs(metadataFolder, exist_ok=True)
+            
+            csvFile = os.path.join(metadataFolder, f'{des}.csv')
+            if not os.path.exists(csvFile):
+                with open(csvFile, 'w') as f:
+                    f.write("file_path,design,recipe_id,step_id,tier_id,nodes,edges,num_PI,num_PO,depth,avg_fanout,max_fanout\n")
+            
             readLibLine = "read "+libraryFile+delimiter
             scriptFile.write(readLibLine)
             fileLines[1] = "read "+graphDumpFolder+os.sep+des+"_orig.aig"+delimiter
             scriptFile.write(fileLines[1])
             scriptFile.write("strash"+delimiter)
-            firstPathFileName = os.path.join(graphDumpFolder, "syn" + str(i),des + "_syn" + str(i) + "_step0.aig")
+            
+            # Capture and write initial stats to temp file, then collect metadata
+            temp_stats_file = os.path.join(graphDumpFolder, f"temp_stats_syn{i}_step1.txt")
+            scriptFile.write(f'print_stats > {temp_stats_file}{delimiter}')
+            metadata_script = os.path.join(homeDir, "dataset_tools", "metadata_collector.py")
+            scriptFile.write(f'system "python3 {metadata_script} {des} {i} 1 {graphDumpFolder} {temp_stats_file}"{delimiter}')
+            
+            firstPathFileName = os.path.join(graphDumpFolder, "syn" + str(i),des + "_syn" + str(i) + "_step1.aig")
             dumpFirstGraphLine = "write " + firstPathFileName + delimiter
             scriptFile.write(dumpFirstGraphLine)
+            
             numSteps = 1
             for line in fileLines[2:-8]:
                 scriptFile.write(line)
+                
+                # Increment step counter
+                numSteps += 1
+                
+                # Capture and write stats to temp file, then collect metadata
+                temp_stats_file = os.path.join(graphDumpFolder, f"temp_stats_syn{i}_step{numSteps}.txt")
+                scriptFile.write(f'print_stats > {temp_stats_file}{delimiter}')
+                scriptFile.write(f'system "python3 {metadata_script} {des} {i} {numSteps} {graphDumpFolder} {temp_stats_file}"{delimiter}')
+                
                 intermediatePathFileName = os.path.join(graphDumpFolder,"syn"+str(i),des+"_syn"+str(i)+"_step"+str(numSteps)+".aig")
                 dumpIntermediateGraphLine = "write " + intermediatePathFileName + delimiter
                 scriptFile.write(dumpIntermediateGraphLine)
-                numSteps+=1
-            scriptFile.write("map -B 0.9"+delimiter+"topo"+delimiter+"stime -c"+delimiter)
+            
+            # Final step: capture final logical statistics to temp file
+            temp_stats_file = os.path.join(graphDumpFolder, f"temp_stats_syn{i}_step21.txt")
+            scriptFile.write(f'print_stats > {temp_stats_file}{delimiter}')
+            scriptFile.write(f'system "python3 {metadata_script} {des} {i} 21 {graphDumpFolder} {temp_stats_file}"{delimiter}')
+            
             scriptFile.close()
 
 
