@@ -1,9 +1,35 @@
 # Thesis Project Data Documentation
 
+## Thesis Project Data — Summary
+This project combines two AIG sources into a unified dataset for downstream ML experiments and algorithm comparison:
 
-## Random AIG Dataset Documentation
+ - Random AIG dataset: 8 synthetic random start designs (sizes 128–16384) — ~252,000 AIGs (per design ≈ 1 + 1,500×21 ≈31.5k AIGs)
+ - Converted OpenABC-D: 29 real IP designs converted from BENCH to AIG — ~913,500 AIGs (per design ≈ 1 + 1,500×21 ≈31.5k AIGs)
 
-### Overview
+Total base AIGs (approx): 1,165,537 (~1.17M)
+
+Planned experiment pipeline (high level):
+
+  1) For every base AIG, apply four AIG optimization algorithms (Tier‑1):
+    - Orchestrate, Deepsyn (with random seed recorded), Syn4, C2RS
+    - This produces 4 × base_count Tier‑1 outputs (~4.66M files)
+
+  2) For every Tier‑1 AIG, re-apply the same four algorithms (Tier‑2), using the same timing and hyperparameters as the first pass:
+    - This produces 4 × Tier1_count Tier‑2 outputs (~18.65M files)
+
+Storage/scale note: the two-tier expansion is very large (tens of millions of files). Plan storage, I/O and compute accordingly.
+
+Visual pipeline (ASCII):
+
+  [Base AIGs ~1.17M]
+      |
+      |-- apply 4 algos --> [Tier-1 AIGs ~4.66M]
+                    |
+                    |-- apply 4 algos --> [Tier-2 AIGs ~18.65M]
+
+All algorithms use the same timing constraints and hyperparameters per your plan; Deepsyn runs will record the RNG seed used for reproducibility.
+
+### Random AIG Dataset Documentation
 This dataset contains synthesized AIG (And-Inverter Graph) files generated using ABC (Berkeley Logic Synthesis and Verification Tool) for 8 different circuit designs of varying sizes.
 
 ### Dataset Structure
