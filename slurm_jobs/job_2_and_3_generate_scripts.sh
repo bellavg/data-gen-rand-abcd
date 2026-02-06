@@ -21,6 +21,7 @@ echo "Start time: $(date)"
 echo ""
 
 # Load Python module
+module load 2025
 module load foss/2025a
 module load Python/3.13.1-GCCcore-14.2.0
 
