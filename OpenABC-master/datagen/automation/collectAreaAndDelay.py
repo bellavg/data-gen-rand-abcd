@@ -2,17 +2,21 @@ import os,sys
 import re,argparse
 import os.path as osp
 
-designSet6 = ['128','256','512','1024','2048','4096','8192','16384']
-designs = designSet6
+designSet1 = ['i2c','spi','des3_area','ss_pcm','usb_phy','sasc','wb_dma','simple_spi']
+designSet2 = ['dynamic_node','aes','pci','ac97_ctrl','mem_ctrl','tv80','fpu']
+designSet3 = ['wb_conmax','tinyRocket','aes_xcrypt','aes_secworks']
+designSet4 = ['jpeg','bp_be','ethernet','vga_lcd','picosoc']
+designSet5 = ['dft','idft','fir','iir','sha256']
 
 homeDir = None
 benchDataFolder = None
 statsDataFolder = None
-
+designs = designSet1+designSet2+designSet3+designSet4+designSet5
 NUM_SYNTHESIZED_DESIGNS = 1500
 csvDelimiter = ","
 
-designSet = designs
+
+designSet = designSet1+designSet2+designSet3+designSet4+designSet5
 
 def getFileLines(filePath):
     f = open(filePath,'r')

@@ -40,7 +40,7 @@ All algorithms use the same timing constraints and hyperparameters per your plan
 Directory layout (Full Dataset):
 
 ```
-OPENABC_DATASET/
+FULL_DATASET/
 ├─ base_aigs/                             
 │  ├─ ac97_ctrl/                      # example design folder
 │  │  ├─ ac97_ctrl_orig.aig
@@ -109,7 +109,6 @@ Canonical column definitions
 | `max_fanout` | integer | Maximum fanout observed (integer). |
 
 
-
 ## Random AIG Dataset Documentation
 This dataset contains synthesized AIG (And-Inverter Graph) files generated using ABC for 8 different circuit designs of varying sizes.
 
@@ -132,22 +131,24 @@ OPENABC_DATASET/
 ├── bench/
 │   ├── 128/
 │   │   ├── 128_orig.aig              # Original AIG file
-│   │   ├── syn0.zip                  # Synthesis recipe 0 results
-│   │   ├── syn1.zip                  # Synthesis recipe 1 results
+│   │   ├── syn0.zip                  # Synthesis recipe 0 results (21 AIG files)
+│   │   ├── syn1.zip                  # Synthesis recipe 1 results (21 AIG files)
 │   │   ├── ...
-│   │   ├── syn1499.zip               # Synthesis recipe 1499 results
-│   │   └── log_128/
+│   │   ├── syn1499.zip               # Synthesis recipe 1499 results (21 AIG files)
+│   │   ├── metadata/                 # Metadata CSV files
+│   │   │   └── 128.csv               # CSV with logical statistics (~31,500 rows)
+│   │   └── log_128/                  # ABC synthesis logs
 │   │       ├── log_128_syn0.log      # ABC log for recipe 0
 │   │       ├── log_128_syn1.log      # ABC log for recipe 1
-│   │       └── ...
+│   │       └── ... (1500 log files)
 │   ├── 256/
 │   │   └── [same structure]
 │   └── ... [remaining 6 designs]
 ├── synScripts/
 │   ├── 128/
-│   │   ├── abc0.script               # ABC synthesis script 0
-│   │   ├── abc1.script               # ABC synthesis script 1
-│   │   └── ...
+│   │   ├── abc0.script               # ABC synthesis script 0 with metadata capture
+│   │   ├── abc1.script               # ABC synthesis script 1 with metadata capture
+│   │   └── ... (1500 script files)
 │   └── ... [remaining 7 designs]
 └── lib/
     └── (empty - library stored separately)
@@ -185,6 +186,8 @@ OPENABC_DATASET/
 - **Total AIGs per design:** 31,501 (1 original + 1,500 × 21 = 31,500 synthesized; total 31,501)
 - **Zip archives:** 1,500
 - **Log files:** 1,500
+- **Statistics files:** 0 (metadata captured directly to CSV)
+- **Metadata CSV:** 1 per design with canonical format
 
 #### Total Dataset (All 8 Designs)
 - **Original AIG files:** 8
