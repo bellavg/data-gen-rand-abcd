@@ -96,3 +96,34 @@ OPENABC_DATASET/
 - **step0:** Result after initial `strash` (structural hashing)
 - **step1-19:** Intermediate optimization steps
 - **step20:** Final optimized circuit (before mapping)
+
+## Source Data: OpenABC-D Converted to AIG
+
+### Original OpenABC-D Dataset
+The source dataset contains **29 open-source hardware IP designs** from various sources (MIT-CEP, IWLS, OpenROAD, OpenPiton):
+
+**Design Set 1 (8 designs):**
+- `i2c`, `spi`, `des3_area`, `ss_pcm`, `usb_phy`, `sasc`, `wb_dma`, `simple_spi`
+
+**Design Set 2 (7 designs):**
+- `dynamic_node`, `aes`, `pci`, `ac97_ctrl`, `mem_ctrl`, `tv80`, `fpu`
+
+**Design Set 3 (4 designs):**
+- `wb_conmax`, `tinyRocket`, `aes_xcrypt`, `aes_secworks`
+
+**Design Set 4 (5 designs):**
+- `jpeg`, `bp_be`, `ethernet`, `vga_lcd`, `picosoc`
+
+**Design Set 5 (5 designs):**
+- `dft`, `idft`, `fir`, `iir`, `sha256`
+
+### OpenABC-D Statistics (Converted to AIG)
+- **Total Designs:** 29 open-source hardware IPs
+- **Synthesis Recipes per Design:** 1,500
+- **Total Synthesis Runs:** 43,500 (29 × 1,500)
+- **Steps per Recipe:** ~21 (step0 through step20)
+- **Total AIG Files:** ~913,500 (29 × 1,500 × 21)
+- **Original Format:** BENCH files (converted to AIG using ABC)
+- **Conversion Command:** `read_bench {file}.bench; strash; write {file}.aig`
+
+
