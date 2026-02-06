@@ -20,7 +20,7 @@ echo ""
 # Load required modules for Snellius
 module purge
 module load 2025
-module load Python/3.13.1-GCCcore-14.2.0
+module load foss/2025a
 
 echo "Loaded modules:"
 module list
@@ -31,16 +31,6 @@ export PATH="$HOME/abc:$PATH"
 
 BASE_DIR="$HOME/data-gen-rand-abcd"
 DATASET_DIR="${BASE_DIR}/OPENABC_DATASET"
-
-# Copy abc.rc file for ABC aliases
-if [ -f "${BASE_DIR}/abc.rc" ]; then
-    cp "${BASE_DIR}/abc.rc" "$HOME/.abc.rc"
-    cp "${BASE_DIR}/abc.rc" "${DATASET_DIR}/bench/abc.rc"
-    echo "✓ ABC configuration file copied"
-else
-    echo "⚠ Warning: abc.rc not found"
-fi
-echo ""
 
 if ! command -v abc &> /dev/null; then
     echo "✗ Error: abc not found"
