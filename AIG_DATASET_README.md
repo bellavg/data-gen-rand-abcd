@@ -1,11 +1,14 @@
-# Random AIG Dataset Documentation
+# Thesis Project Data Documentation
 
-## Overview
+
+## Random AIG Dataset Documentation
+
+### Overview
 This dataset contains synthesized AIG (And-Inverter Graph) files generated using ABC (Berkeley Logic Synthesis and Verification Tool) for 8 different circuit designs of varying sizes.
 
-## Dataset Structure
+### Dataset Structure
 
-### Random Designs
+#### Random Designs
 The dataset includes 8 random designs, named by their size:
 - `128` 
 - `256`  
@@ -16,7 +19,7 @@ The dataset includes 8 random designs, named by their size:
 - `8192` 
 - `16384` 
 
-### Directory Structure
+#### Directory Structure
 ```
 OPENABC_DATASET/
 ├── bench/
@@ -46,14 +49,14 @@ OPENABC_DATASET/
 **Note:** The standard cell library is stored separately at:
 `/scratch-shared/$USER/openabc_full/OPENABC_DATASET/lib/nangate45.lib`
 
-## File Naming Convention
+### File Naming Convention
 
-### Original AIG Files
+#### Original AIG Files
 - **Format:** `{design}_orig.aig`
 - **Examples:** `128_orig.aig`, `256_orig.aig`, `16384_orig.aig`
 - **Location:** `OPENABC_DATASET/bench/{design}/`
 
-### Synthesized AIG Files
+#### Synthesized AIG Files
 - **Format:** `{design}_syn{recipe}_step{step}.aig`
 - **Examples:** 
   - `128_syn0_step0.aig` - Design 128, recipe 0, step 0
@@ -61,14 +64,14 @@ OPENABC_DATASET/
   - `16384_syn1499_step20.aig` - Design 16384, recipe 1499, step 20
 - **Location:** Inside `syn{recipe}.zip` files
 
-### Compressed Archives
+#### Compressed Archives
 - **Format:** `syn{recipe}.zip`
 - **Range:** `syn0.zip` to `syn1499.zip`
 - **Location:** `OPENABC_DATASET/bench/{design}/`
 
-## Dataset Size
+### Dataset Size
 
-### Per Design
+#### Per Design
 - **Original AIG files:** 1
 - **Synthesis recipes:** 1,500
 - **Steps per recipe:** ~21 (step0 through step20)
@@ -76,30 +79,30 @@ OPENABC_DATASET/
 - **Zip archives:** 1,500
 - **Log files:** 1,500
 
-### Total Dataset (All 8 Designs)
+#### Total Dataset (All 8 Designs)
 - **Original AIG files:** 8
 - **Total synthesis recipes:** 12,000 (8 × 1,500)
 - **Total synthesized AIGs:** ~252,000 (8 × 31,500)
 - **Total zip archives:** 12,000
 - **Total log files:** 12,000
 
-## Numbering Scheme
+### Numbering Scheme
 
-### Recipe Numbers
+#### Recipe Numbers
 - **Range:** 0 to 1499
 - **Total:** 1,500 recipes per design
 - All designs use the same recipe numbers for consistency
 
-### Step Numbers
+#### Step Numbers
 - **Range:** 0 to 20
 - **Total:** ~21 steps per recipe
 - **step0:** Result after initial `strash` (structural hashing)
 - **step1-19:** Intermediate optimization steps
 - **step20:** Final optimized circuit (before mapping)
 
-## Source Data: OpenABC-D Converted to AIG
+### Source Data: OpenABC-D Converted to AIG
 
-### Original OpenABC-D Dataset
+## Original OpenABC-D Dataset
 The source dataset contains **29 open-source hardware IP designs** from various sources (MIT-CEP, IWLS, OpenROAD, OpenPiton):
 
 **Design Set 1 (8 designs):**
