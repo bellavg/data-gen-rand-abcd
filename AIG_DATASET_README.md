@@ -1,36 +1,117 @@
 # Thesis Project Data Documentation
 
+## TODOs
+- Finish downloading original OPENABCD 
+- Run job 4s to apply synthesis scripts to all random 
+
 ## Thesis Project Data — Summary
-This project combines two AIG sources into a unified dataset for downstream ML experiments and algorithm comparison:
+This project combines two AIG sources into a unified dataset for downstream ML experiments and algorithm comparison.
 
- - Random AIG dataset: 8 synthetic random start designs (sizes 128–16384) — ~252,000 AIGs (per design ≈ 1 + 1,500×21 ≈31.5k AIGs)
- - Converted OpenABC-D: 29 real IP designs converted from BENCH to AIG — ~913,500 AIGs (per design ≈ 1 + 1,500×21 ≈31.5k AIGs)
+- Random AIG dataset: 8 synthetic random start designs (sizes 128–16384) — 252,008 AIGs (per design: 31,501 AIGs — 1 original + 1,500 × 21 = 31,500 synthesized; total 31,501)
+- Converted OpenABC-D: 29 real IP designs converted from BENCH to AIG — 913,529 AIGs (per design: 31,501 AIGs — 1 original + 1,500 × 21 = 31,500 synthesized; total 31,501)
 
-Total base AIGs (approx): 1,165,537 (~1.17M)
+Total base AIGs (exact): 1,165,537 (≈1.17M)
+
+Note: The Random and Converted OpenABC-D datasets are the two source datasets. The "Full Dataset" described in this repository is the combined (union) dataset created by merging those two sources and is the primary dataset for this project.
 
 Planned experiment pipeline (high level):
 
   1) For every base AIG, apply four AIG optimization algorithms (Tier‑1):
     - Orchestrate, Deepsyn (with random seed recorded), Syn4, C2RS
-    - This produces 4 × base_count Tier‑1 outputs (~4.66M files)
+    - This produces 4 × base_count Tier‑1 outputs: 4,662,148 outputs (≈4.66M files)
 
   2) For every Tier‑1 AIG, re-apply the same four algorithms (Tier‑2), using the same timing and hyperparameters as the first pass:
-    - This produces 4 × Tier1_count Tier‑2 outputs (~18.65M files)
+    - This produces 4 × Tier1_count Tier‑2 outputs: 18,648,592 outputs (≈18.65M files)
 
 Storage/scale note: the two-tier expansion is very large (tens of millions of files). Plan storage, I/O and compute accordingly.
 
 Visual pipeline (ASCII):
 
-  [Base AIGs ~1.17M]
+  [Base AIGs 1,165,537 (≈1.17M)]
       |
-      |-- apply 4 algos --> [Tier-1 AIGs ~4.66M]
+      |-- apply 4 algos --> [Tier-1 AIGs 4,662,148 (≈4.66M)]
                     |
-                    |-- apply 4 algos --> [Tier-2 AIGs ~18.65M]
+                    |-- apply 4 algos --> [Tier-2 AIGs 18,648,592 (≈18.65M)]
 
 All algorithms use the same timing constraints and hyperparameters per your plan; Deepsyn runs will record the RNG seed used for reproducibility.
 
-### Random AIG Dataset Documentation
-This dataset contains synthesized AIG (And-Inverter Graph) files generated using ABC (Berkeley Logic Synthesis and Verification Tool) for 8 different circuit designs of varying sizes.
+## Full Dataset Naming Schema and Directory Structure
+
+Directory layout (Full Dataset):
+
+```
+OPENABC_DATASET/
+├─ base_aigs/                             
+│  ├─ ac97_ctrl/                      # example design folder
+│  │  ├─ ac97_ctrl_orig.aig
+│  │  ├─ ac97_ctrl_syn0_step1.aig     # example start (order not fixed)
+│  │  ├─ ...                  
+│  │  └─ ac97_ctrl_syn1499_step21.aig # example end (order not fixed)
+│  ├─ ...
+│  └─ {design}/                   # repeated for each design 
+│     ├─ {design}_orig.aig        # original AIG
+│     ├─ ...                     
+│     └─ {design}_syn{recipe_id}_step{step_id}.aig                          
+├─ synScripts/                    # zipped synthesis scripts per design 
+|  ├─ ...
+│  └─ {design}.zip                # inside: abc{recipe_id}.script
+├─ optimized_aigs/                # algorithm outputs (tiered)
+|  ├─ ...
+│  └─ {algorithm}/               
+|     ├─ ...
+│     └─ tier{tier_id}/                 # per tier 
+|        ├─ ...
+|        └─ {design}/             
+|           ├─ ...
+|           └─ {design}_syn{recipe_id}_step{step_id}.aig
+└─ metadata/                     
+  ├─ stats/
+  |  ├─ ...                     
+  │  └─ {design}.csv             # per-design CSV (one row per AIG)
+  └─ library/
+    └─ nangate45.lib.zip
+
+```
+
+
+Variable ranges / notes (for `{...}` values used above):
+- `design`: `128, 256, 512, 1024, 2048, 4096, 8192, 16384, i2c, spi, des3_area, ss_pcm, usb_phy, sasc, wb_dma, simple_spi, dynamic_node, aes, pci, ac97_ctrl, mem_ctrl, tv80, fpu, wb_conmax, tinyRocket, aes_xcrypt, aes_secworks, jpeg, bp_be, ethernet, vga_lcd, picosoc, dft, idft, fir, iir, sha256` (random-size names plus the 29 OpenABC‑D designs in one list).
+- `recipe_id`: synthesis recipe identifier. Range: `0..1499`.
+- `step_id`: per-recipe step index. Range: `1..21` (synthesized steps). Base AIGs use `{design}_orig.aig`.
+- `tier_id`: generation tier for algorithm outputs. Values: `1` = first-pass, `2` = second-pass. Base AIGs should have an empty `tier_id` in per-design CSV rows.
+- `algorithm`:  `Orchestrate`, `Deepsyn`, `Syn4`, `C2RS`
+
+
+
+## AIG Statistics in `metadata/stats/{design}.csv`
+
+Canonical CSV header (exact — tools should emit this header, comma-separated, no extra spaces):
+
+```
+file_path,design,recipe_id,step_id,tier_id,nodes,edges,num_PI,num_PO,depth,avg_fanout,max_fanout
+```
+
+Canonical column definitions
+
+| Column name | Type | Description |
+|---|---:|---|
+| `file_path` | string | Relative path to the AIG file inside the dataset (e.g. `base_aigs/ac97_ctrl/ac97_ctrl_syn0_step1.aig`). |
+| `design` | string | Design identifier (e.g. `128`, `ac97_ctrl`). |
+| `recipe_id` | integer | Synthesis recipe identifier (0..1499). |
+| `step_id` | integer | Per-recipe step index. Parse as integer — some datasets use 0-based (0..20) while converted OpenABC‑D uses 1-based (1..21); accept both when ingesting. |
+| `tier_id` | integer or empty | Generation tier for algorithm outputs: `1` = first-pass, `2` = second-pass. Base AIGs are stored under `base_aigs/` and should have an empty `tier_id` in per-design CSV rows. |
+| `nodes` | integer | Number of internal AIG nodes (integer count). |
+| `edges` | integer | Number of edges in the AIG (integer count). |
+| `num_PI` | integer | Number of primary inputs. |
+| `num_PO` | integer | Number of primary outputs. |
+| `depth` | integer | Estimated combinational depth (length of the longest path, measured in AIG nodes). |
+| `avg_fanout` | float | Average fanout per node (floating point). |
+| `max_fanout` | integer | Maximum fanout observed (integer). |
+
+
+
+## Random AIG Dataset Documentation
+This dataset contains synthesized AIG (And-Inverter Graph) files generated using ABC for 8 different circuit designs of varying sizes.
 
 ### Dataset Structure
 
@@ -45,7 +126,7 @@ The dataset includes 8 random designs, named by their size:
 - `8192` 
 - `16384` 
 
-#### Directory Structure
+#### Directory Structure for the Original Random AIG 
 ```
 OPENABC_DATASET/
 ├── bench/
@@ -72,7 +153,7 @@ OPENABC_DATASET/
     └── (empty - library stored separately)
 ```
 
-**Note:** The standard cell library is stored separately at:
+**Note to self:** The standard cell library is stored separately at:
 `/scratch-shared/$USER/openabc_full/OPENABC_DATASET/lib/nangate45.lib`
 
 ### File Naming Convention
@@ -82,12 +163,12 @@ OPENABC_DATASET/
 - **Examples:** `128_orig.aig`, `256_orig.aig`, `16384_orig.aig`
 - **Location:** `OPENABC_DATASET/bench/{design}/`
 
-#### Synthesized AIG Files
-- **Format:** `{design}_syn{recipe}_step{step}.aig`
+-#### Synthesized AIG Files
+- **Format:** `{design}_syn{recipe}_step{step_id}.aig`
 - **Examples:** 
-  - `128_syn0_step0.aig` - Design 128, recipe 0, step 0
+  - `128_syn0_step1.aig` - Design 128, recipe 0, step 1
   - `256_syn42_step15.aig` - Design 256, recipe 42, step 15
-  - `16384_syn1499_step20.aig` - Design 16384, recipe 1499, step 20
+  - `16384_syn1499_step21.aig` - Design 16384, recipe 1499, step 21
 - **Location:** Inside `syn{recipe}.zip` files
 
 #### Compressed Archives
@@ -100,15 +181,16 @@ OPENABC_DATASET/
 #### Per Design
 - **Original AIG files:** 1
 - **Synthesis recipes:** 1,500
-- **Steps per recipe:** ~21 (step0 through step20)
-- **Total AIGs per design:** ~31,500 (1 original + 1,500 × 21 synthesized)
+- **Steps per recipe:** 21 (step1 through step21)
+- **Total AIGs per design:** 31,501 (1 original + 1,500 × 21 = 31,500 synthesized; total 31,501)
 - **Zip archives:** 1,500
 - **Log files:** 1,500
 
 #### Total Dataset (All 8 Designs)
 - **Original AIG files:** 8
 - **Total synthesis recipes:** 12,000 (8 × 1,500)
-- **Total synthesized AIGs:** ~252,000 (8 × 31,500)
+- **Total base AIGs:** 252,008 (8 × 31,501)
+- **Total synthesized AIGs:** 252,000 (8 × 31,500)
 - **Total zip archives:** 12,000
 - **Total log files:** 12,000
 
@@ -120,11 +202,15 @@ OPENABC_DATASET/
 - All designs use the same recipe numbers for consistency
 
 #### Step Numbers
-- **Range:** 0 to 20
+- **Range:** 1 to 21
 - **Total:** ~21 steps per recipe
-- **step0:** Result after initial `strash` (structural hashing)
-- **step1-19:** Intermediate optimization steps
-- **step20:** Final optimized circuit (before mapping)
+- **step1:** Result after initial `strash` (structural hashing)
+- **step2-20:** Intermediate optimization steps
+- **step21:** Final optimized circuit (before mapping)
+ - **orig:** Original AIG (stored as `{design}_orig.aig` in `base_aigs/{design}/`).
+ - **step1:** Result after initial `strash` (structural hashing) — this is the first synthesized step.
+ - **step2-20:** Intermediate optimization steps.
+ - **step21:** Final optimized circuit (before mapping).
 
 ### Source Data: OpenABC-D Converted to AIG
 
@@ -150,9 +236,41 @@ The source dataset contains **29 open-source hardware IP designs** from various 
 - **Total Designs:** 29 open-source hardware IPs
 - **Synthesis Recipes per Design:** 1,500
 - **Total Synthesis Runs:** 43,500 (29 × 1,500)
-- **Steps per Recipe:** ~21 (step0 through step20)
-- **Total AIG Files:** ~913,500 (29 × 1,500 × 21)
+- **Steps per Recipe:** 21 (step1 through step21)
+- **Total synthesized AIG files:** 913,500 (29 × 1,500 × 21)
+- **Total base AIG files including originals:** 913,529 (913,500 synthesized + 29 originals)
 - **Original Format:** BENCH files (converted to AIG using ABC)
 - **Conversion Command:** `read_bench {file}.bench; strash; write {file}.aig`
+
+### Original OpenABC-D layout (as downloaded)
+
+
+```
+/scratch-shared/igardner1/openabc_full/
+│
+├── OPENABC_DATASET/                 <-- THE PRODUCTION ROOT
+│   ├── lib/                         <-- PHYSICAL LIBRARIES (.lib, .v)
+│   ├── statistics/                  <-- THE "LABELS" (CSV, PKL)
+│   ├── synScripts.zip               <-- THE "RECIPES" (ABC commands)
+│   └── bench/                       <-- THE CORE DATA (AIGs)
+│       ├── ac97_ctrl/               <-- 31,501 AIG files
+│       ├── aes_secworks/            <-- 31,501 AIG files
+│       ├── aes_xcrypt/              <-- 31,501 AIG files
+│       └── ... (26 more designs)
+│
+├── OPENABC_DATASET.zip              <-- MASTER INSTALLER (Can be deleted)
+└── OPENABC_DATASET.z01...z13        <-- MASTER PARTS (Can be deleted)
+```
+
+Detailed Content Breakdown
+
+| Item | What is inside EXACTLY? | Why do you need it? |
+|---|---|---|
+| `bench/<design>/*.aig` | Binary AIG files (extracted/converted from BENCH). No .bench or .zip needed here. | These are the core graph inputs for your GNN / ML models. |
+| `synScripts.zip` | 1,500 recipe files (ABC command sequences like `rewrite; refactor; resub;`) | If you predict a recipe is best, this archive shows the exact ABC commands executed for that recipe. |
+| `statistics/` | Large CSVs and Python pickle files mapping filenames to Area, Delay, Power and other labels. | Ground truth labels for supervised learning — required to train models to predict quality metrics. |
+| `lib/` | Technology libraries (e.g. Nangate 45nm `.lib` files). | Required to map AIGs to real timing/area during mapping runs with ABC. |
+
+
 
 
