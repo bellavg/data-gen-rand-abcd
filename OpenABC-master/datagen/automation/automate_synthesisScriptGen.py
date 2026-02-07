@@ -1,4 +1,5 @@
-import os, sys,random,shutil
+import os
+from typing import Optional
 import argparse
 
 homeDir = None#os.environ["HOME"]
@@ -20,39 +21,44 @@ designs = designSet6
 
 def genSynthesisScripts():
     for i in range(numSynthesizedScript):
-        srcFile = os.path.join(srcFolder,'abc'+str(i)+'.script')
-        origScriptFile = open(srcFile,'r')
+        if srcFolder is None:
+            raise ValueError("Source folder not properly initialized")
+        srcFile = os.path.join(srcFolder, 'abc' + str(i) + '.script')
+        origScriptFile = open(srcFile, 'r', encoding='utf-8')
         fileLines = origScriptFile.readlines()
         origScriptFile.close()
         for des in designs:
-            scriptFolder = os.path.join(scriptsDataFolder,des)
+            if scriptsDataFolder is None or graphDataFolder is None:
+                raise ValueError("Required folders not properly initialized")
+            scriptFolder = os.path.join(scriptsDataFolder, des)
             if(not os.path.exists(scriptFolder)):
                 os.mkdir(scriptFolder)
-            graphDumpFolder = os.path.join(graphDataFolder,des)
+            graphDumpFolder = os.path.join(graphDataFolder, des)
             scriptFilePath = os.path.join(scriptFolder, 'abc' + str(i) + '.script')
-            scriptFile = open(scriptFilePath, 'w+')
+            scriptFile = open(scriptFilePath, 'w+', encoding='utf-8')
             
             # Create metadata directory and CSV file if needed (once per design)
+            if graphDataFolder is None:
+                raise ValueError("Graph data folder not properly initialized")
             metadataFolder = os.path.join(graphDataFolder, des, 'metadata')
             if not os.path.exists(metadataFolder):
                 os.makedirs(metadataFolder, exist_ok=True)
             
             csvFile = os.path.join(metadataFolder, f'{des}.csv')
             if not os.path.exists(csvFile):
-                with open(csvFile, 'w') as f:
+                with open(csvFile, 'w', encoding='utf-8') as f:
                     f.write("file_path,design,recipe_id,step_id,tier_id,nodes,edges,num_PI,num_PO,depth,avg_fanout,max_fanout\n")
             
-            readLibLine = "read "+libraryFile+delimiter
+            if libraryFile is None:
+                raise ValueError("Library file not specified")
+            readLibLine = "read " + libraryFile + delimiter
             scriptFile.write(readLibLine)
             fileLines[1] = "read "+graphDumpFolder+os.sep+des+"_orig.aig"+delimiter
             scriptFile.write(fileLines[1])
             scriptFile.write("strash"+delimiter)
             
-            # Capture and write initial stats to temp file, then collect metadata
-            temp_stats_file = os.path.join(graphDumpFolder, f"temp_stats_syn{i}_step1.txt")
-            scriptFile.write(f'print_stats > {temp_stats_file}{delimiter}')
-            metadata_script = os.path.join(homeDir, "dataset_tools", "metadata_collector.py")
-            scriptFile.write(f'system "python3 {metadata_script} {des} {i} 1 {graphDumpFolder} {temp_stats_file}"{delimiter}')
+            # Write stats to log (system command removed - will collect metadata post-synthesis)
+            scriptFile.write(f'print_stats{delimiter}')
             
             firstPathFileName = os.path.join(graphDumpFolder, "syn" + str(i),des + "_syn" + str(i) + "_step1.aig")
             dumpFirstGraphLine = "write " + firstPathFileName + delimiter
@@ -65,25 +71,22 @@ def genSynthesisScripts():
                 # Increment step counter
                 numSteps += 1
                 
-                # Capture and write stats to temp file, then collect metadata
-                temp_stats_file = os.path.join(graphDumpFolder, f"temp_stats_syn{i}_step{numSteps}.txt")
-                scriptFile.write(f'print_stats > {temp_stats_file}{delimiter}')
-                scriptFile.write(f'system "python3 {metadata_script} {des} {i} {numSteps} {graphDumpFolder} {temp_stats_file}"{delimiter}')
+                # Write stats to log (system command removed - will collect metadata post-synthesis)
+                scriptFile.write(f'print_stats{delimiter}')
                 
                 intermediatePathFileName = os.path.join(graphDumpFolder,"syn"+str(i),des+"_syn"+str(i)+"_step"+str(numSteps)+".aig")
                 dumpIntermediateGraphLine = "write " + intermediatePathFileName + delimiter
                 scriptFile.write(dumpIntermediateGraphLine)
             
-            # Final step: capture final logical statistics to temp file
-            temp_stats_file = os.path.join(graphDumpFolder, f"temp_stats_syn{i}_step21.txt")
-            scriptFile.write(f'print_stats > {temp_stats_file}{delimiter}')
-            scriptFile.write(f'system "python3 {metadata_script} {des} {i} 21 {graphDumpFolder} {temp_stats_file}"{delimiter}')
+            # Final step: write final stats to log (system command removed - will collect metadata post-synthesis)
+            scriptFile.write(f'print_stats{delimiter}')
             
             scriptFile.close()
 
 
 def setGlobalAndEnvironmentVars(cmdArgs):
-    global homeDir, srcFolder, graphDataFolder,scriptsDataFolder,libraryCellFolder,libraryFile
+    global homeDir, srcFolder, graphDataFolder, scriptsDataFolder, libraryCellFolder, libraryFile
+    # Initialize global variables with proper types
     homeDir = cmdArgs.home
     srcFolder = cmdArgs.script
     if not (os.path.exists(homeDir) and os.path.exists(srcFolder)):
