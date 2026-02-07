@@ -6,7 +6,7 @@
 #SBATCH --partition=genoa
 #SBATCH --output=logs/collect_metadata_%j.out
 
-# Job 6: Collect Post-Synthesis Metadata
+# Job 5: Collect Post-Synthesis Metadata
 # Analyzes synthesis log files and AIG files to extract circuit statistics
 # Run this after synthesis jobs (4a-4h) complete
 
