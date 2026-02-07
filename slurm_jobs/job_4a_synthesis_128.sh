@@ -1,6 +1,6 @@
 #!/bin/bash
-#SBATCH --job-name=synth_128
-#SBATCH --time=72:00:00
+#SBATCH --job-name=syn_4a
+#SBATCH --time=01:00:00
 #SBATCH -N 1
 #SBATCH --ntasks-per-node=1
 #SBATCH --partition=genoa
@@ -26,7 +26,7 @@ module load 2025
 module load foss/2025a
 
 echo "Loaded modules:"
-module list
+echo "✓ Modules loaded: 2025, foss/2025a"
 echo ""
 
 # Add ABC to PATH (adjust path if ABC is installed elsewhere)

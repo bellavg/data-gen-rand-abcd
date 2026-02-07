@@ -1,6 +1,6 @@
 #!/bin/bash
-#SBATCH --job-name=synth_512
-#SBATCH --time=72:00:00
+#SBATCH --job-name=syn_4c
+#SBATCH --time=01:00:00
 #SBATCH -N 1
 #SBATCH --ntasks-per-node=1
 #SBATCH --partition=genoa
@@ -23,7 +23,7 @@ module load 2025
 module load foss/2025a
 
 echo "Loaded modules:"
-module list
+echo "✓ Modules loaded: 2025, foss/2025a"
 echo ""
 
 # Add ABC to PATH (adjust path if ABC is installed elsewhere)
@@ -44,5 +44,18 @@ echo ""
 cd "${DATASET_DIR}/bench"
 ./synthesisBulk_512.sh
 
-echo "✓ Synthesis complete for design 512"
+echo ""
+echo "=========================================="
+echo "Synthesis Complete for Design 512"
+echo "=========================================="
+echo ""
+
+# Count generated files
+zip_count=$(ls -1 512/syn*.zip 2>/dev/null | wc -l | tr -d ' ')
+log_count=$(ls -1 512/log_512/*.log 2>/dev/null | wc -l | tr -d ' ')
+
+echo "Generated:"
+echo "  - ${zip_count} synthesis result zip files"
+echo "  - ${log_count} log files"
+echo ""
 echo "End time: $(date)"
