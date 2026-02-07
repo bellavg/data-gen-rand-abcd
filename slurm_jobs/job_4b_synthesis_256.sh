@@ -41,12 +41,6 @@ fi
 echo "✓ Using abc: $(which abc)"
 echo ""
 
-# Verify library and design files
-if [ ! -f "${DATASET_DIR}/lib/nangate45.lib" ] || [ ! -f "${DATASET_DIR}/bench/256/256_orig.aig" ]; then
-    echo "✗ Error: Required files missing"
-    exit 1
-fi
-
 cd "${DATASET_DIR}/bench"
 echo "Running synthesis for design 256..."
 ./synthesisBulk_256.sh
