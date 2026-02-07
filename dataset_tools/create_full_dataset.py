@@ -18,7 +18,6 @@ import argparse
 import json
 import subprocess
 import time
-from pathlib import Path
 from datetime import datetime
 
 def run_command(cmd, description, check=True):
@@ -81,12 +80,12 @@ def check_prerequisites():
     
     for tool in required_tools:
         try:
-            result = subprocess.run(['which', tool], capture_output=True, text=True)
+            result = subprocess.run(['which', tool], capture_output=True, text=True, check=False)
             if result.returncode == 0:
                 print(f"  ✓ {tool}: {result.stdout.strip()}")
             else:
                 missing_tools.append(tool)
-        except Exception:
+        except (ImportError, subprocess.CalledProcessError):
             missing_tools.append(tool)
     
     if missing_tools:
@@ -97,11 +96,19 @@ def check_prerequisites():
         return False
     
     # Check Python packages
-    try:
-        import tqdm
-        print("  ✓ Python package 'tqdm' available")
-    except ImportError:
-        print("  ✗ Python package 'tqdm' missing. Install with: pip install tqdm")
+    required_packages = ['tqdm', 'pandas']
+    missing_packages = []
+    
+    for package in required_packages:
+        try:
+            __import__(package)
+            print(f"  ✓ Python package '{package}' available")
+        except ImportError:
+            missing_packages.append(package)
+    
+    if missing_packages:
+        print(f"  ✗ Missing Python packages: {', '.join(missing_packages)}")
+        print(f"    Install with: pip install {' '.join(missing_packages)}")
         return False
     
     return True
@@ -123,7 +130,7 @@ def validate_input_paths(args):
         # Try alternative structure
         random_bench = os.path.join(args.random_path, 'bench')
         if not os.path.exists(random_bench):
-            print(f"  ✗ Random dataset bench directory not found")
+            print("  ✗ Random dataset bench directory not found")
             return False
     print(f"  ✓ Random dataset bench directory found: {random_bench}")
     
@@ -153,7 +160,7 @@ def validate_input_paths(args):
             if not os.path.exists(lib_path):
                 print(f"  ✗ Library path does not exist: {lib_path}")
                 return False
-        print(f"  ✓ All library paths exist")
+        print("  ✓ All library paths exist")
     
     return True
 
@@ -168,7 +175,7 @@ def create_progress_log(output_path):
         'status': 'in_progress'
     }
     
-    with open(log_path, 'w') as f:
+    with open(log_path, 'w', encoding='utf-8') as f:
         json.dump(progress, f, indent=2)
     
     return log_path
@@ -178,7 +185,7 @@ def update_progress_log(log_path, step_name, status, details=None):
     Update the progress log with step completion.
     """
     try:
-        with open(log_path, 'r') as f:
+        with open(log_path, 'r', encoding='utf-8') as f:
             progress = json.load(f)
         
         step_info = {
@@ -192,10 +199,10 @@ def update_progress_log(log_path, step_name, status, details=None):
         
         progress['steps'].append(step_info)
         
-        with open(log_path, 'w') as f:
+        with open(log_path, 'w', encoding='utf-8') as f:
             json.dump(progress, f, indent=2)
     
-    except Exception as e:
+    except (OSError, json.JSONDecodeError) as e:
         print(f"Warning: Could not update progress log: {e}")
 
 def main():
@@ -285,7 +292,7 @@ Library paths: {args.lib_paths or 'None'}
             if args.dry_run:
                 cmd.append('--dry-run')
             
-            result = run_command(cmd, "Dataset Reorganization", check=not args.dry_run)
+            run_command(cmd, "Dataset Reorganization", check=not args.dry_run)
             
             if log_path:
                 update_progress_log(log_path, "reorganization", "completed" if not args.dry_run else "skipped")
@@ -310,9 +317,9 @@ Library paths: {args.lib_paths or 'None'}
             if args.designs:
                 for design in args.designs:
                     design_cmd = cmd + ['--design', design]
-                    result = run_command(design_cmd, f"Metadata Generation for {design}")
+                    run_command(design_cmd, f"Metadata Generation for {design}")
             else:
-                result = run_command(cmd, "Metadata Generation")
+                run_command(cmd, "Metadata Generation")
             
             if log_path:
                 update_progress_log(log_path, "metadata_generation", "completed")
@@ -332,7 +339,7 @@ Library paths: {args.lib_paths or 'None'}
             manifest_path = os.path.join(args.output, 'dataset_manifest.json')
             if os.path.exists(manifest_path):
                 print(f"✓ Dataset manifest found: {manifest_path}")
-                with open(manifest_path, 'r') as f:
+                with open(manifest_path, 'r', encoding='utf-8') as f:
                     manifest = json.load(f)
                     print(f"  - Total designs: {manifest['statistics']['total_designs']}")
                     print(f"  - Random designs: {manifest['statistics']['random_designs']}")
@@ -344,7 +351,7 @@ Library paths: {args.lib_paths or 'None'}
             summary_path = os.path.join(args.output, 'metadata', 'stats', 'dataset_summary.json')
             if os.path.exists(summary_path):
                 print(f"✓ Dataset summary found: {summary_path}")
-                with open(summary_path, 'r') as f:
+                with open(summary_path, 'r', encoding='utf-8') as f:
                     summary = json.load(f)
                     print(f"  - Total files processed: {summary['totals']['files']}")
                     print(f"  - Designs with data: {summary['totals']['designs']}")
@@ -359,12 +366,12 @@ Library paths: {args.lib_paths or 'None'}
         total_duration = end_time - start_time
         
         if log_path:
-            with open(log_path, 'r') as f:
+            with open(log_path, 'r', encoding='utf-8') as f:
                 progress = json.load(f)
             progress['status'] = 'completed'
             progress['end_time'] = datetime.now().isoformat()
             progress['total_duration_seconds'] = total_duration
-            with open(log_path, 'w') as f:
+            with open(log_path, 'w', encoding='utf-8') as f:
                 json.dump(progress, f, indent=2)
         
         print(f"\n{'='*60}")
@@ -392,7 +399,7 @@ Library paths: {args.lib_paths or 'None'}
             update_progress_log(log_path, "process", "interrupted")
         sys.exit(1)
     
-    except Exception as e:
+    except (subprocess.CalledProcessError, OSError) as e:
         print(f"\n\nUnexpected error: {e}")
         if log_path:
             update_progress_log(log_path, "process", "error", str(e))
