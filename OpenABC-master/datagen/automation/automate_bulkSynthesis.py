@@ -21,10 +21,15 @@ def genShellScriptForSynthesis():
         for i in range(numSynthesizedScript):
             synScriptPath = os.path.join(scriptsDataFolder,des,'abc'+str(i)+".script")
             logFilePath = os.path.join(logFolder,'log_'+des+'_syn'+str(i)+'.log')
-            synRunCmd = 'abc -f '+synScriptPath+' > '+logFilePath
             synFolder = os.path.join(graphDataFolder,des,'syn'+str(i))
+            
+            # Create directory for synthesis outputs
+            mkdirCmd = 'mkdir -p '+synFolder
+            synRunCmd = 'abc -f '+synScriptPath+' > '+logFilePath
             zipCmd = 'zip -q -j -r '+synFolder+'.zip '+synFolder+"/"
             rmCmd = 'rm -fr '+synFolder+"/"
+            
+            designScriptFile.write(mkdirCmd+delimiter)
             designScriptFile.write(synRunCmd+delimiter)
             designScriptFile.write(zipCmd+delimiter)
             designScriptFile.write(rmCmd+delimiter)

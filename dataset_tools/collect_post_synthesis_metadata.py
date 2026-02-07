@@ -82,9 +82,13 @@ def collect_metadata_for_design(design, base_dir):
             stats_list = parse_abc_stats_from_log(log_content)
             
             # Get list of AIG files from zip to match with statistics
-            with zipfile.ZipFile(zip_file, 'r') as zf:
-                aig_files = [name for name in zf.namelist() if name.endswith('.aig')]
-                aig_files.sort()  # Ensure consistent ordering
+            try:
+                with zipfile.ZipFile(zip_file, 'r') as zf:
+                    aig_files = [name for name in zf.namelist() if name.endswith('.aig')]
+                    aig_files.sort()  # Ensure consistent ordering
+            except zipfile.BadZipFile:
+                print(f"Warning: Invalid zip file for recipe {recipe_id}")
+                continue
             
             # Match statistics with AIG files
             for step_id, (aig_file, stats) in enumerate(zip(aig_files, stats_list), 1):
@@ -93,8 +97,8 @@ def collect_metadata_for_design(design, base_dir):
                     step_match = re.search(r'step(\d+)\.aig', aig_file)
                     actual_step = int(step_match.group(1)) if step_match else step_id
                     
-                    # Create file path for the AIG file
-                    file_path = f"{design}/syn{recipe_id}/{aig_file}"
+                    # Create file path for the AIG file (use zip-based path)
+                    file_path = f"{design}/syn{recipe_id}.zip/{aig_file}"
                     
                     # Calculate tier (group steps into tiers)
                     tier_id = (actual_step - 1) // 7 + 1  # 7 steps per tier
