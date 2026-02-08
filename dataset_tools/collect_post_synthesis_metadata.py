@@ -232,16 +232,61 @@ def collect_metadata_for_design(design: str, base_dir: str) -> int:
         orig_row = [file_path, design, "", "", "", 0, 0, 0, 0, 0, 0.0, 0]
         metadata_rows.append(orig_row)
     
-    for recipe_id in range(1500):  # 1500 synthesis recipes
+    # Debug: Check what files actually exist
+    print(f"  Checking file structure in {bench_dir}...")
+    
+    # Check for ZIP files
+    zip_files = [f for f in os.listdir(bench_dir) if f.endswith('.zip')]
+    print(f"  Found {len(zip_files)} ZIP files")
+    if len(zip_files) > 0:
+        # Show sample ZIP filenames to understand naming pattern
+        sample_zips = sorted(zip_files)[:5]
+        print(f"  Sample ZIP files: {sample_zips}")
+        
+        # Extract recipe IDs from ZIP filenames
+        zip_recipe_ids = []
+        for zip_file in zip_files:
+            match = re.search(r'syn(\d+)\.zip', zip_file)
+            if match:
+                zip_recipe_ids.append(int(match.group(1)))
+        
+        if zip_recipe_ids:
+            zip_recipe_ids.sort()
+            print(f"  Recipe ID range in ZIP files: {min(zip_recipe_ids)} to {max(zip_recipe_ids)}")
+            print(f"  Expected range: 0 to 1499")
+            
+            # Check if we need to adjust the range
+            if min(zip_recipe_ids) > 0:
+                print(f"  ⚠️  ZIP files start from {min(zip_recipe_ids)}, not 0!")
+    
+    # Check for log files
+    if os.path.exists(log_dir):
+        log_files = [f for f in os.listdir(log_dir) if f.endswith('.log')]
+        print(f"  Found {len(log_files)} LOG files in {log_dir}")
+        if len(log_files) > 0:
+            sample_logs = sorted(log_files)[:5]
+            print(f"  Sample LOG files: {sample_logs}")
+    else:
+        print(f"  ⚠️  Log directory does not exist: {log_dir}")
+    
+    print(f"  Processing recipes...")
+    
+    for recipe_id in range(1500):  # 1500 synthesis recipes (0-1499)
         log_file = os.path.join(log_dir, f"log_{design}_syn{recipe_id}.log")
         zip_file = os.path.join(bench_dir, f"syn{recipe_id}.zip")
         
+        # Debug: print every 100th recipe to see progress
+        if recipe_id % 500 == 0:
+            print(f"  Checking recipe {recipe_id}: log={os.path.exists(log_file)}, zip={os.path.exists(zip_file)}")
+        
         if not os.path.exists(log_file):
-            print(f"Warning: Log file missing for recipe {recipe_id}")
+            if recipe_id < 10:  # Only warn for first few missing files to avoid spam
+                print(f"Warning: Log file missing for recipe {recipe_id}: {log_file}")
             continue
             
         if not os.path.exists(zip_file):
-            print(f"Warning: Zip file missing for recipe {recipe_id}")
+            if recipe_id < 10:  # Only warn for first few missing files to avoid spam
+                print(f"Warning: Zip file missing for recipe {recipe_id}: {zip_file}")
             continue
         
         try:
