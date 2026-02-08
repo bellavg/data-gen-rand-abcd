@@ -25,18 +25,26 @@ module load 2025
 module load foss/2025a
 module load Python/3.13.1-GCCcore-14.2.0
 
-# Load ABC for circuit analysis (metadata script uses 'abc' command)
-# Check if ABC module exists, otherwise script will use fallback methods
-if module avail ABC 2>&1 | grep -q "ABC"; then
-    module load ABC
-    echo "✓ ABC module loaded"
-else
-    echo "⚠️  ABC module not available - using fallback AIG parsing methods"
-fi
+echo "Loaded modules:"
+echo "✓ Modules loaded: 2025, foss/2025a, Python/3.13.1"
+echo ""
+
+# Add ABC to PATH (same as job 4 scripts)
+export PATH="$HOME/abc:$PATH"
 
 # Define paths
 BASE_DIR="$HOME/data-gen-rand-abcd"
 METADATA_SCRIPT="${BASE_DIR}/dataset_tools/collect_post_synthesis_metadata.py"
+
+# Verify ABC is available
+if ! command -v abc &> /dev/null; then
+    echo "⚠️  abc not found in PATH - metadata script will use fallback AIG parsing methods"
+    echo "Current PATH: $PATH"
+else
+    echo "✓ Using abc: $(which abc)"
+    abc -h 2>&1 | head -3 || echo "(ABC help unavailable)"
+fi
+echo ""
 
 echo "Configuration:"
 echo "  Base directory: ${BASE_DIR}"
