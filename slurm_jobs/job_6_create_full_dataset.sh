@@ -6,14 +6,14 @@
 #SBATCH --partition=genoa
 #SBATCH --output=logs/create_full_dataset_%j.out
 
-# Step 5: Create Full Dataset
+# Job 6: Create Full Dataset
 # Combines Random AIG and OpenABC-D datasets into unified FULL_DATASET structure
 # Collects and organizes existing metadata into canonical CSV format
 
 set -e  # Exit on error
 
 echo "=========================================="
-echo "STEP 5: Creating Full Dataset"
+echo "JOB 6: Creating Full Dataset"
 echo "=========================================="
 echo "Job ID: $SLURM_JOB_ID"
 echo "Running on: $(hostname)"
@@ -23,10 +23,13 @@ echo ""
 # Load required modules for Snellius
 module purge
 module load 2025
+module load foss/2025a
 module load Python/3.13.1-GCCcore-14.2.0
+module load SciPy-bundle/2025.06-gfbf-2025a
 
 echo "Loaded modules:"
-module list
+echo "✓ Modules loaded: 2025, foss/2025a, Python/3.13.1, SciPy-bundle/2025.06"
+echo "  - Provides: pandas, numpy, tqdm and other scientific Python packages"
 echo ""
 
 # Define paths
@@ -71,9 +74,23 @@ echo ""
 # Create backup directory
 mkdir -p "$BACKUP_DIR"
 
-# Install required Python packages
-echo "Installing required Python packages..."
-pip install --user pandas tqdm
+# Verify required Python packages are available
+echo "Verifying Python packages are available..."
+python3 -c "import pandas, numpy; print('✓ pandas and numpy available')" || {
+    echo "ERROR: Required Python packages not available"
+    echo "Make sure SciPy-bundle module is loaded correctly"
+    exit 1
+}
+
+# Check if tqdm is available (may need separate install)
+python3 -c "import tqdm; print('✓ tqdm available')" 2>/dev/null || {
+    echo "Installing tqdm (not in SciPy-bundle)..."
+    pip install --user tqdm || {
+        echo "ERROR: Could not install tqdm"
+        exit 1
+    }
+    echo "✓ tqdm installed"
+}
 echo ""
 
 # Change to dataset tools directory
@@ -89,44 +106,15 @@ if [ "$OPENABC_AVAILABLE" = true ]; then
     echo ""
     
     echo "Creating initial dataset structure with OpenABC-D only..."
-    python3 run_dataset_creation.py \
+    python3 create_full_dataset.py \
+        --openabc-path "$OPENABC_DATASET" \
         --output-dir "/scratch-shared/$USER/FULL_DATASET" \
         --workers 4 || {
         echo "ERROR: Failed to process OpenABC-D dataset"
         exit 1
     }
-    
     echo ""
-    echo "=========================================="
-    echo "PHASE 2: Backing up OpenABC-D Dataset"
-    echo "=========================================="
-    echo "Creating compressed backup of OpenABC-D dataset..."
-    echo "This may take a while due to large size..."
-    
-    # Create compressed backup
-    BACKUP_FILE="$BACKUP_DIR/OPENABC_DATASET_backup_$(date +%Y%m%d_%H%M%S).tar.gz"
-    echo "Backup location: $BACKUP_FILE"
-    
-    tar -czf "$BACKUP_FILE" -C "$(dirname "$OPENABC_DATASET")" "$(basename "$OPENABC_DATASET")" || {
-        echo "ERROR: Failed to create backup of OpenABC-D dataset"
-        exit 1
-    }
-    
-    # Check backup size
-    BACKUP_SIZE=$(du -sh "$BACKUP_FILE" | cut -f1)
-    BACKUP_SIZE_BYTES=$(du -sb "$BACKUP_FILE" | cut -f1)
-    echo ""
-    echo "✓ OpenABC-D backup created successfully!"
-    echo "Backup size: $BACKUP_SIZE (${BACKUP_SIZE_BYTES} bytes)"
-    echo "Backup location: $BACKUP_FILE"
-    echo ""
-    
-    # Verify backup integrity
-    echo "Verifying backup integrity..."
-    tar -tzf "$BACKUP_FILE" > /dev/null && echo "✓ Backup integrity verified" || {
-        echo "ERROR: Backup integrity check failed"
-        exit 1
-    }
+    echo "✓ Initial dataset structure created with OpenABC-D"
     echo ""
 fi
 
@@ -151,7 +139,7 @@ if [ "$OPENABC_AVAILABLE" = true ]; then
     # Add OpenABC dataset path if available
     python3 create_full_dataset.py \
         --random-path "$RANDOM_DATASET" \
-        --openabc-path "$(dirname "$OPENABC_DATASET")" \
+        --openabc-path "$OPENABC_DATASET" \
         $CMD_ARGS
 else
     # Random dataset only
@@ -164,6 +152,153 @@ fi
 if [ -d "$OUTPUT_DATASET" ]; then
     echo ""
     echo "=========================================="
+    echo "DATASET VALIDATION"
+    echo "=========================================="
+    
+    # Validate that the full dataset was created successfully
+    echo "Validating FULL_DATASET creation..."
+    
+    # Check for expected directory structure
+    validation_failed=false
+    
+    if [ ! -d "$OUTPUT_DATASET/base_aigs" ]; then
+        echo "✗ Missing base_aigs directory"
+        validation_failed=true
+    else
+        echo "✓ base_aigs directory exists"
+    fi
+    
+    if [ ! -d "$OUTPUT_DATASET/metadata" ]; then
+        echo "✗ Missing metadata directory"
+        validation_failed=true
+    else
+        echo "✓ metadata directory exists"
+    fi
+    
+    # Check for some actual content
+    aig_count=$(find "$OUTPUT_DATASET/base_aigs" -name "*.aig" 2>/dev/null | wc -l)
+    if [ "$aig_count" -eq 0 ]; then
+        echo "✗ No AIG files found in base_aigs directory"
+        validation_failed=true
+    else
+        echo "✓ Found $aig_count AIG files"
+    fi
+    
+    csv_count=$(find "$OUTPUT_DATASET/metadata" -name "*.csv" 2>/dev/null | wc -l)
+    if [ "$csv_count" -eq 0 ]; then
+        echo "✗ No CSV metadata files found"
+        validation_failed=true
+    else
+        echo "✓ Found $csv_count CSV metadata files"
+    fi
+    
+    # If validation failed, abort cleanup
+    if [ "$validation_failed" = true ]; then
+        echo ""
+        echo "⚠️  DATASET VALIDATION FAILED"
+        echo "✗ FULL_DATASET creation appears incomplete or failed"
+        echo "✓ ORIGINALS PRESERVED - No cleanup will be performed"
+        echo ""
+        echo "Please check the dataset creation process and try again."
+        echo "Original datasets remain untouched:"
+        echo "  - Random dataset: $RANDOM_DATASET"
+        if [ "$OPENABC_AVAILABLE" = true ]; then
+            echo "  - OpenABC-D dataset: $OPENABC_DATASET"
+        fi
+        exit 1
+    fi
+    
+    echo ""
+    echo "✓ Dataset validation passed - FULL_DATASET creation successful"
+    echo "✓ Safe to proceed with cleanup of originals"
+    echo ""
+    echo "=========================================="
+    echo "CLEANUP PHASE: Archiving Original Datasets"
+    echo "=========================================="
+    echo "The original datasets are very large. Creating compressed archives and removing originals to save space..."
+    echo ""
+    
+    # Archive and remove Random dataset
+    echo "Archiving Random AIG dataset..."
+    RANDOM_BACKUP_FILE="$BACKUP_DIR/RANDOM_DATASET_backup_$(date +%Y%m%d_%H%M%S).tar.gz"
+    echo "Creating: $RANDOM_BACKUP_FILE"
+    
+    tar -czf "$RANDOM_BACKUP_FILE" -C "$(dirname "$RANDOM_DATASET")" "$(basename "$RANDOM_DATASET")" || {
+        echo "ERROR: Failed to create Random dataset backup"
+        exit 1
+    }
+    
+    # Verify Random backup
+    echo "Verifying Random dataset backup..."
+    tar -tzf "$RANDOM_BACKUP_FILE" > /dev/null && echo "✓ Random backup integrity verified" || {
+        echo "ERROR: Random backup integrity check failed"
+        exit 1
+    }
+    
+    RANDOM_BACKUP_SIZE=$(du -sh "$RANDOM_BACKUP_FILE" | cut -f1)
+    echo "✓ Random dataset archived: $RANDOM_BACKUP_SIZE"
+    echo "Backup location: $RANDOM_BACKUP_FILE"
+    echo ""
+    
+    # Archive and remove OpenABC-D dataset (if available and not already backed up)
+    if [ "$OPENABC_AVAILABLE" = true ]; then
+        echo "Archiving OpenABC-D dataset..."
+        OPENABC_BACKUP_FILE="$BACKUP_DIR/OPENABC_DATASET_backup_$(date +%Y%m%d_%H%M%S).tar.gz"
+        echo "Creating: $OPENABC_BACKUP_FILE"
+        
+        tar -czf "$OPENABC_BACKUP_FILE" -C "$(dirname "$OPENABC_DATASET")" "$(basename "$OPENABC_DATASET")" || {
+            echo "ERROR: Failed to create OpenABC-D dataset backup"
+            exit 1
+        }
+        
+        # Verify OpenABC backup
+        echo "Verifying OpenABC-D dataset backup..."
+        tar -tzf "$OPENABC_BACKUP_FILE" > /dev/null && echo "✓ OpenABC-D backup integrity verified" || {
+            echo "ERROR: OpenABC-D backup integrity check failed"
+            exit 1
+        }
+        
+        OPENABC_BACKUP_SIZE=$(du -sh "$OPENABC_BACKUP_FILE" | cut -f1)
+        echo "✓ OpenABC-D dataset archived: $OPENABC_BACKUP_SIZE"
+        echo "Backup location: $OPENABC_BACKUP_FILE"
+        echo ""
+    fi
+    
+    echo "=========================================="
+    echo "REMOVING ORIGINAL DATASETS"
+    echo "=========================================="
+    echo "⚠️  FINAL SAFETY CHECK"
+    echo "   - FULL_DATASET validation: PASSED ✓"
+    echo "   - Backups created and verified: ✓"
+    echo "   - About to delete original datasets!"
+    echo ""
+    echo "Original datasets to be removed:"
+    echo "  - Random dataset: $RANDOM_DATASET"
+    if [ "$OPENABC_AVAILABLE" = true ]; then
+        echo "  - OpenABC-D dataset: $OPENABC_DATASET"  
+    fi
+    echo ""
+    echo "Proceeding with cleanup in 15 seconds..."
+    echo "Press Ctrl+C to abort if you want to keep originals"
+    echo ""
+    
+    sleep 15
+    
+    # Remove Random dataset
+    echo "Removing Random dataset: $RANDOM_DATASET"
+    rm -rf "$RANDOM_DATASET" && echo "✓ Random dataset removed" || echo "⚠️  Warning: Failed to remove Random dataset"
+    
+    # Remove OpenABC-D dataset (if we have access)
+    if [ "$OPENABC_AVAILABLE" = true ]; then
+        echo "Removing OpenABC-D dataset: $OPENABC_DATASET"
+        rm -rf "$OPENABC_DATASET" && echo "✓ OpenABC-D dataset removed" || echo "⚠️  Warning: Failed to remove OpenABC-D dataset"
+    fi
+    
+    echo ""
+    echo "✓ Cleanup completed - original datasets archived and removed"
+    
+    echo ""
+    echo "=========================================="
     echo "FINAL DATASET SUMMARY"
     echo "=========================================="
     
@@ -171,8 +306,13 @@ if [ -d "$OUTPUT_DATASET" ]; then
     echo "Calculating final dataset size..."
     TOTAL_SIZE=$(du -sh "$OUTPUT_DATASET" | cut -f1)
     TOTAL_SIZE_BYTES=$(du -sb "$OUTPUT_DATASET" | cut -f1)
+    TOTAL_SIZE_GB=$(echo "scale=2; $TOTAL_SIZE_BYTES / 1024 / 1024 / 1024" | bc)
     
-    echo "Total FULL_DATASET size: $TOTAL_SIZE (${TOTAL_SIZE_BYTES} bytes)"
+    echo ""
+    echo "🗂️  FULL DATASET SIZE ANALYSIS"
+    echo "================================"
+    echo "Total size: $TOTAL_SIZE (${TOTAL_SIZE_BYTES} bytes / ${TOTAL_SIZE_GB} GB)"
+    echo "Location: $OUTPUT_DATASET"
     echo ""
     
     # Count files in different directories
@@ -199,51 +339,106 @@ if [ -d "$OUTPUT_DATASET" ]; then
     ls -la "$OUTPUT_DATASET"
     
     echo ""
-    echo "Directory sizes breakdown:"
+    echo "📁 Directory sizes breakdown:"
     du -sh "$OUTPUT_DATASET"/*
+    
+    echo ""
+    echo "💾 STORAGE LOCATION ANALYSIS"
+    echo "============================"
+    echo "Current location: $OUTPUT_DATASET (scratch-shared)"
+    echo ""
+    echo "Storage options analysis:"
+    
+    # Check available space in different locations
+    echo "  📊 Scratch space remaining:"
+    df -h "/scratch-shared/$USER" | tail -1 | awk '{print "      Available: " $4 " (" $5 " used)"}'
+    
+    echo ""
+    echo "  📊 Home directory space:"
+    df -h "$HOME" | tail -1 | awk '{print "      Available: " $4 " (" $5 " used)"}'
+    echo "      Location: $HOME"
+    
+    echo ""
+    echo "  🔄 Dataset portability:"
+    if (( $(echo "$TOTAL_SIZE_GB < 50" | bc -l) )); then
+        echo "      ✅ SMALL dataset (${TOTAL_SIZE_GB} GB) - Easy to move to home directory"
+        echo "      💡 Recommended: Move to home for permanent storage"
+        echo "      📝 Command: mv $OUTPUT_DATASET $HOME/"
+    elif (( $(echo "$TOTAL_SIZE_GB < 200" | bc -l) )); then
+        echo "      ⚠️  MEDIUM dataset (${TOTAL_SIZE_GB} GB) - Consider if home has space"
+        echo "      💡 Check home directory space before moving"
+        echo "      📝 Command: mv $OUTPUT_DATASET $HOME/ (if space permits)"
+    else
+        echo "      ⚠️  LARGE dataset (${TOTAL_SIZE_GB} GB) - May need to stay in scratch"
+        echo "      💡 Consider keeping in scratch-shared for performance"
+        echo "      📝 Archive older datasets if scratch space is needed"
+    fi
     
     echo ""
     echo "=========================================="
     echo "SPACE USAGE SUMMARY"
     echo "=========================================="
     
-    # Show backup information if created
-    if [ "$OPENABC_AVAILABLE" = true ] && [ -f "$BACKUP_FILE" ]; then
-        echo "OpenABC-D backup: $BACKUP_SIZE"
-        echo "Backup location: $BACKUP_FILE"
-        echo ""
+    # Show backup information
+    echo "Dataset Backups Created:"
+    echo "  - Random dataset: $RANDOM_BACKUP_SIZE ($RANDOM_BACKUP_FILE)"
+    if [ "$OPENABC_AVAILABLE" = true ]; then
+        echo "  - OpenABC-D dataset: $OPENABC_BACKUP_SIZE ($OPENABC_BACKUP_FILE)"
     fi
+    echo ""
     
-    echo "Final dataset size: $TOTAL_SIZE"
-    echo "Dataset location: $OUTPUT_DATASET"
+    echo "Final dataset size: $TOTAL_SIZE (${TOTAL_SIZE_GB} GB)"
+    echo "Dataset location: $OUTPUT_DATASET (scratch-shared)"
+    echo ""
+    
+    # Calculate space savings
+    echo "Space Savings:"
+    echo "  - Original datasets: REMOVED (archived as compressed backups)"
+    echo "  - Storage efficiency: Significant space saved by removing uncompressed originals"
     echo ""
     
     # Check available scratch space
-    echo "Scratch space usage:"
+    echo "Scratch space usage after cleanup:"
     df -h "/scratch-shared/$USER"
     
     echo ""
-    echo "✓ Full dataset created successfully!"
+    echo "✓ Full dataset created successfully with space optimization!"
     echo ""
     echo "Files created:"
-    echo "  - FULL_DATASET: $OUTPUT_DATASET ($TOTAL_SIZE)"
-    if [ "$OPENABC_AVAILABLE" = true ] && [ -f "$BACKUP_FILE" ]; then
-        echo "  - OpenABC-D backup: $BACKUP_FILE ($BACKUP_SIZE)"
+    echo "  - FULL_DATASET: $OUTPUT_DATASET ($TOTAL_SIZE / ${TOTAL_SIZE_GB} GB)"
+    echo "  - Random backup: $RANDOM_BACKUP_FILE ($RANDOM_BACKUP_SIZE)"
+    if [ "$OPENABC_AVAILABLE" = true ]; then
+        echo "  - OpenABC-D backup: $OPENABC_BACKUP_FILE ($OPENABC_BACKUP_SIZE)"
     fi
-    
     echo ""
-    echo "Next steps:"
+    echo "Files removed:"
+    echo "  - Original Random dataset: $RANDOM_DATASET (archived)"
+    if [ "$OPENABC_AVAILABLE" = true ]; then
+        echo "  - Original OpenABC-D dataset: $OPENABC_DATASET (archived)"
+    fi
+    echo ""
+    echo "🚀 Next steps:"
     echo "  1. Verify dataset integrity"
-    echo "  2. Run algorithm optimization pipelines (Orchestrate, Deepsyn, Syn4, C2RS)"
-    echo "  3. Begin ML experiments"
-    echo "  4. Consider removing original datasets if space is needed"
+    echo "  2. Consider moving to home directory if size permits (see analysis above)"
+    echo "  3. Run algorithm optimization pipelines (Orchestrate, Deepsyn, Syn4, C2RS)"
+    echo "  4. Begin ML experiments"
+    echo "  5. Backups can be extracted if originals are needed: tar -xzf backup_file.tar.gz"
     
 else
     echo ""
-    echo "ERROR: Dataset creation failed - output directory not found"
+    echo "✗ ERROR: Dataset creation failed - output directory not found"
+    echo "✓ ORIGINALS PRESERVED - No cleanup performed"
+    echo ""
+    echo "Original datasets remain untouched:"
+    echo "  - Random dataset: $RANDOM_DATASET"
+    if [ "$OPENABC_AVAILABLE" = true ]; then
+        echo "  - OpenABC-D dataset: $OPENABC_DATASET"
+    fi
+    echo ""
+    echo "Please investigate the dataset creation failure and try again."
     exit 1
 fi
 
 echo ""
 echo "End time: $(date)"
-echo "Job 5 completed successfully!"
+echo "Job 6 completed successfully!"
