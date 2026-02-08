@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=collect_metadata
+#SBATCH --job-name=r_metadata
 #SBATCH --time=02:00:00
 #SBATCH -N 1
 #SBATCH --ntasks-per-node=1
@@ -20,10 +20,19 @@ echo "Running on: $(hostname)"
 echo "Start time: $(date)"
 echo ""
 
-# Load Python module
+# Load required modules
 module load 2025
 module load foss/2025a
 module load Python/3.13.1-GCCcore-14.2.0
+
+# Load ABC for circuit analysis (metadata script uses 'abc' command)
+# Check if ABC module exists, otherwise script will use fallback methods
+if module avail ABC 2>&1 | grep -q "ABC"; then
+    module load ABC
+    echo "✓ ABC module loaded"
+else
+    echo "⚠️  ABC module not available - using fallback AIG parsing methods"
+fi
 
 # Define paths
 BASE_DIR="$HOME/data-gen-rand-abcd"
