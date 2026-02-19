@@ -217,7 +217,7 @@ def main():
                        help='Paths to library files (.lib)')
     
     # Output configuration
-    parser.add_argument('--output', '-o', required=True,
+    parser.add_argument('--output', '--output-dir', '-o', required=True,
                        help='Output directory for FULL_DATASET')
     
     # Processing options
@@ -310,6 +310,11 @@ Library paths: {args.lib_paths or 'None'}
                 '--validate',
                 '--summary'
             ]
+
+            # Pass explicit source paths to avoid ambiguous auto-discovery.
+            cmd.extend(['--random-source', args.random_path])
+            if args.openabc_path:
+                cmd.extend(['--openabc-source', args.openabc_path])
             
             if args.lib_paths and len(args.lib_paths) > 0:
                 cmd.extend(['--lib', args.lib_paths[0]])  # Use first library file
