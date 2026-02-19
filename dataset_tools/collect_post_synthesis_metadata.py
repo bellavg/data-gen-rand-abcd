@@ -54,16 +54,26 @@ def check_log_for_errors(log_content: str) -> Tuple[List[str], List[str]]:
 
 def parse_abc_stats_from_log(log_content: str) -> List[Dict[str, Any]]:
     """Extract ABC statistics from synthesis log content."""
-    stats_pattern = r'i/o\s*=\s*(\d+)/\s*(\d+)\s+nd\s*=\s*(\d+)\s+edge\s*=\s*(\d+)\s+lev\s*=\s*(\d+)'
-    
-    matches = re.findall(stats_pattern, log_content)
+    # Support multiple ABC print formats, e.g.:
+    #   i/o = 128/398  nd = 984  edge = 2048  lev = 12
+    #   i/o = 128/398  lat = 0    and = 984    lev = 12
+    stats_pattern = re.compile(
+        r'i/o\s*=\s*(\d+)\s*/\s*(\d+).*?(?:nd|and)\s*=\s*(\d+)(?:.*?edge\s*=\s*(\d+))?.*?lev\s*=\s*(\d+)',
+        re.IGNORECASE
+    )
+
+    matches = list(stats_pattern.finditer(log_content))
     if not matches:
         return []
-    
-    # Each match is (PI, PO, nodes, edges, levels)
+
+    # Each match is (PI, PO, nodes, edges?, levels)
     parsed_stats: List[Dict[str, Any]] = []
     for match in matches:
-        pi, po, nodes, edges, levels = map(int, match)
+        pi = int(match.group(1))
+        po = int(match.group(2))
+        nodes = int(match.group(3))
+        edges = int(match.group(4)) if match.group(4) is not None else nodes * 2
+        levels = int(match.group(5))
         # Calculate approximate fanout statistics
         avg_fanout = round(edges / nodes, 2) if nodes > 0 else 0
         max_fanout = max(10, int(avg_fanout * 1.5))  # Estimated max fanout
@@ -91,10 +101,18 @@ def extract_aig_stats_from_file(aig_file_path: str) -> Dict[str, Any]:
         
         if result.returncode == 0:
             output = result.stdout
-            # Parse ABC print_stats output for i/o, nd, edge, lev
-            stats_match = re.search(r'i/o\s*=\s*(\d+)/\s*(\d+)\s+nd\s*=\s*(\d+)\s+edge\s*=\s*(\d+)\s+lev\s*=\s*(\d+)', output)
+            # Parse ABC print_stats output across formats (nd/edge or lat/and)
+            stats_match = re.search(
+                r'i/o\s*=\s*(\d+)\s*/\s*(\d+).*?(?:nd|and)\s*=\s*(\d+)(?:.*?edge\s*=\s*(\d+))?.*?lev\s*=\s*(\d+)',
+                output,
+                re.IGNORECASE
+            )
             if stats_match:
-                pi, po, nodes, edges, levels = map(int, stats_match.groups())
+                pi = int(stats_match.group(1))
+                po = int(stats_match.group(2))
+                nodes = int(stats_match.group(3))
+                edges = int(stats_match.group(4)) if stats_match.group(4) is not None else nodes * 2
+                levels = int(stats_match.group(5))
                 avg_fanout = round(edges / nodes, 2) if nodes > 0 else 0
                 max_fanout = max(10, int(avg_fanout * 1.5))  # Estimated max fanout
                 
@@ -253,7 +271,7 @@ def collect_metadata_for_design(design: str, base_dir: str) -> int:
         if zip_recipe_ids:
             zip_recipe_ids.sort()
             print(f"  Recipe ID range in ZIP files: {min(zip_recipe_ids)} to {max(zip_recipe_ids)}")
-            print(f"  Expected range: 0 to 1499")
+            print("  Expected range: 0 to 1499")
             
             # Check if we need to adjust the range
             if min(zip_recipe_ids) > 0:
@@ -269,7 +287,7 @@ def collect_metadata_for_design(design: str, base_dir: str) -> int:
     else:
         print(f"  ⚠️  Log directory does not exist: {log_dir}")
     
-    print(f"  Processing recipes...")
+    print("  Processing recipes...")
     
     for recipe_id in range(1500):  # 1500 synthesis recipes (0-1499)
         log_file = os.path.join(log_dir, f"log_{design}_syn{recipe_id}.log")
