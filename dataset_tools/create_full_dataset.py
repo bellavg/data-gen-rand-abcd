@@ -75,7 +75,9 @@ def check_prerequisites():
     """
     print("Checking prerequisites...")
     
-    required_tools = ['abc', 'python3']
+    # job_6_create_full_dataset flow only requires Python tooling.
+    # ABC is used in synthesis jobs, not in this reorganization/metadata pipeline.
+    required_tools = ['python3']
     missing_tools = []
     
     for tool in required_tools:
@@ -91,7 +93,6 @@ def check_prerequisites():
     if missing_tools:
         print(f"  ✗ Missing tools: {', '.join(missing_tools)}")
         print("\nPlease install the missing tools:")
-        print("  - abc: ABC synthesis tool (install from Berkeley)")
         print("  - python3: Python 3.6+ with required packages")
         return False
     
