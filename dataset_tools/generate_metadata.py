@@ -79,8 +79,6 @@ def find_source_datasets(full_dataset_path):
         os.path.join(full_dataset_path, "..", "OPENABC_DATASET"),
         os.path.join(full_dataset_path, "..", "random_dataset", "OPENABC_DATASET"),
         "/scratch-shared/*/openabc_full/OPENABC_DATASET",
-        # Add user's current structure
-        os.path.join(full_dataset_path, "..", "OPENABC_DATASET"),
     ]
 
     # Common locations for OpenABC-D dataset
@@ -96,23 +94,33 @@ def find_source_datasets(full_dataset_path):
         "/home/*/OPENABC_DATASET",
     ]
 
+    # Expand wildcard patterns first, then validate discovered paths.
+    def expand_pattern(pattern):
+        return glob.glob(pattern) if any(ch in pattern for ch in "*?[]") else [pattern]
+
     # Check Random AIG sources
     for pattern in random_patterns:
-        if os.path.exists(pattern):
-            bench_path = os.path.join(pattern, "bench")
-            if os.path.exists(bench_path):
-                potential_sources["random"].append(pattern)
+        for candidate in expand_pattern(pattern):
+            if os.path.exists(candidate):
+                bench_path = os.path.join(candidate, "bench")
+                if os.path.exists(bench_path):
+                    potential_sources["random"].append(candidate)
 
     # Check OpenABC-D sources
     for pattern in openabc_patterns:
-        if os.path.exists(pattern):
-            if "statistics" in pattern:
-                # Direct statistics folder
-                potential_sources["openabc"].append(os.path.dirname(pattern))
-            else:
-                stats_path = os.path.join(pattern, "statistics")
-                if os.path.exists(stats_path):
-                    potential_sources["openabc"].append(pattern)
+        for candidate in expand_pattern(pattern):
+            if os.path.exists(candidate):
+                if "statistics" in candidate:
+                    # Direct statistics folder
+                    potential_sources["openabc"].append(os.path.dirname(candidate))
+                else:
+                    stats_path = os.path.join(candidate, "statistics")
+                    if os.path.exists(stats_path):
+                        potential_sources["openabc"].append(candidate)
+
+    # Remove duplicates while preserving order
+    potential_sources["random"] = list(dict.fromkeys(potential_sources["random"]))
+    potential_sources["openabc"] = list(dict.fromkeys(potential_sources["openabc"]))
 
     return potential_sources
 
@@ -135,43 +143,53 @@ def collect_random_metadata(random_source, full_dataset_path, design):
         return False
 
     try:
-        # Read existing CSV and enforce canonical format for random dataset
+        # Read existing CSV and validate schema/content for random dataset
         df = pd.read_csv(design_metadata_path)
 
-        if df.empty:
-            print(f"  ✗ Error processing {design}: CSV is empty")
-            return False
-
-        expected_columns = CANONICAL_HEADER.split(",")
-        if list(df.columns) != expected_columns:
-            print(
-                f"  ✗ Error processing {design}: non-canonical columns. "
-                f"Expected {expected_columns}, got {list(df.columns)}"
-            )
-            return False
-
-        expected_prefix = f"base_aigs/{design}/"
-        if not df["file_path"].astype(str).str.startswith(expected_prefix).all():
-            print(
-                f"  ✗ Error processing {design}: file_path values are not canonical "
-                f"(must start with {expected_prefix})"
-            )
-            return False
-
-        if not df["design"].astype(str).eq(design).all():
-            print(
-                f"  ✗ Error processing {design}: design column contains values other than '{design}'"
-            )
+        is_valid, error_message = validate_random_metadata_df(df, design)
+        if not is_valid:
+            print(f"  ✗ Error processing {design}: {error_message}")
             return False
 
         shutil.copy2(design_metadata_path, target_metadata_path)
-        print(f"  ✓ Copied {design}.csv (canonical random metadata)")
+        print(f"  ✓ Copied {design}.csv (random metadata validated)")
 
         return True
 
     except (FileNotFoundError, pd.errors.EmptyDataError, ValueError) as e:
         print(f"  ✗ Error processing {design}: {e}")
         return False
+
+
+def validate_random_metadata_df(df, design):
+    """Validate random-source metadata for direct copy (no path rewriting)."""
+    if df.empty:
+        return False, "CSV is empty"
+
+    expected_columns = CANONICAL_HEADER.split(",")
+    if list(df.columns) != expected_columns:
+        return (
+            False,
+            "non-canonical columns. "
+            f"Expected {expected_columns}, got {list(df.columns)}",
+        )
+
+    file_path_series = df["file_path"].astype(str).str.strip()
+    invalid_path_mask = file_path_series.eq("") | file_path_series.str.lower().eq("nan")
+    if invalid_path_mask.any():
+        sample_bad = df.loc[invalid_path_mask, "file_path"].astype(str).head(3).tolist()
+        return (
+            False,
+            f"file_path contains empty/invalid values; sample bad values: {sample_bad}",
+        )
+
+    if not df["design"].astype(str).str.strip().eq(design).all():
+        return (
+            False,
+            f"design column contains values other than '{design}'",
+        )
+
+    return True, "Valid"
 
 
 def collect_openabc_metadata(openabc_source, full_dataset_path, design):
@@ -253,13 +271,7 @@ def collect_openabc_metadata(openabc_source, full_dataset_path, design):
         return False
 
 
-def convert_to_canonical_format(
-    df,
-    design,
-    _source_type,
-    force_file_path=False,
-    force_design=False,
-):
+def convert_to_canonical_format(df, design, _source_type):
     """
     Convert various metadata formats to canonical format defined in README.
     """
@@ -304,10 +316,7 @@ def convert_to_canonical_format(
 
     # Fill in canonical columns with available data
     for col in canonical_columns:
-        if col in df_mapped.columns and not (
-            (col == "file_path" and force_file_path)
-            or (col == "design" and force_design)
-        ):
+        if col in df_mapped.columns:
             canonical_df[col] = df_mapped[col]
         elif col == "design":
             canonical_df[col] = design
@@ -348,14 +357,11 @@ def convert_to_canonical_format(
         ),
     )
 
-    if force_file_path:
-        canonical_df["file_path"] = generated_file_path
-    else:
-        canonical_df["file_path"] = canonical_df["file_path"].fillna("")
-        empty_path_mask = canonical_df["file_path"].astype(str).str.strip().eq("")
-        canonical_df.loc[empty_path_mask, "file_path"] = generated_file_path.loc[
-            empty_path_mask
-        ]
+    canonical_df["file_path"] = canonical_df["file_path"].fillna("")
+    empty_path_mask = canonical_df["file_path"].astype(str).str.strip().eq("")
+    canonical_df.loc[empty_path_mask, "file_path"] = generated_file_path.loc[
+        empty_path_mask
+    ]
 
     # Numeric coercion for robust arithmetic
     for numeric_col in [
@@ -504,13 +510,13 @@ def process_design_metadata(design, sources, full_dataset_path):
         for random_source in sources["random"]:
             if collect_random_metadata(random_source, full_dataset_path, design):
                 return design, True, "random"
-        return design, False, "Random metadata not found"
+        return design, False, "Random metadata missing or invalid"
 
     if design in OPENABC_DESIGNS and sources["openabc"]:
         for openabc_source in sources["openabc"]:
             if collect_openabc_metadata(openabc_source, full_dataset_path, design):
                 return design, True, "openabc"
-        return design, False, "OpenABC metadata not found"
+        return design, False, "OpenABC metadata missing or invalid"
 
     return design, False, "No source found"
 
@@ -541,7 +547,11 @@ def main():
         "--source-scope",
         choices=["all", "random", "openabc"],
         default="all",
-        help="Limit processing to a dataset source type",
+        help=(
+            "Limit processing to a dataset source type: "
+            "random=copy+validate existing random CSVs, "
+            "openabc=scrape/convert statistics, all=both"
+        ),
     )
 
     args = parser.parse_args()
@@ -568,6 +578,13 @@ def main():
 
     print(f"Found Random AIG sources: {sources['random']}")
     print(f"Found OpenABC-D sources: {sources['openabc']}")
+
+    if args.source_scope == "random":
+        print("Mode: Random metadata copy+check only (no conversion)")
+    elif args.source_scope == "openabc":
+        print("Mode: OpenABC metadata scrape/convert")
+    else:
+        print("Mode: Combined random copy+check + OpenABC scrape/convert")
 
     # Process designs
     if args.design:
