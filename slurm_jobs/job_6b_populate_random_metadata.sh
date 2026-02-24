@@ -240,7 +240,7 @@ for design in expected_designs:
         errors.append(f"Empty metadata CSV: {csv_path}")
         continue
 
-    bad_design_rows = df["design"].astype(str) != design
+    bad_design_rows = df["design"].astype(str).str.strip() != design
     if bad_design_rows.any():
         errors.append(f"Design column mismatch in {csv_path}")
 
