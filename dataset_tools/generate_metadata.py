@@ -138,16 +138,28 @@ def collect_random_metadata(random_source, full_dataset_path, design):
         # Read existing CSV and convert to canonical format if needed
         df = pd.read_csv(design_metadata_path)
 
+        expected_prefix = f"base_aigs/{design}/"
+        has_base_paths = (
+            "file_path" in df.columns
+            and df["file_path"].astype(str).str.startswith(expected_prefix).all()
+        )
+
         # Check if it already has canonical format
-        if list(df.columns) == CANONICAL_HEADER.split(","):
+        if list(df.columns) == CANONICAL_HEADER.split(",") and has_base_paths:
             # Already in canonical format, just copy
             shutil.copy2(design_metadata_path, target_metadata_path)
             print(f"  ✓ Copied {design}.csv (already canonical format)")
         else:
             # Need to convert to canonical format
-            canonical_df = convert_to_canonical_format(df, design, "random")
+            canonical_df = convert_to_canonical_format(
+                df,
+                design,
+                "random",
+                force_file_path=True,
+                force_design=True,
+            )
             canonical_df.to_csv(target_metadata_path, index=False)
-            print(f"  ✓ Converted and saved {design}.csv to canonical format")
+            print(f"  ✓ Converted and normalized {design}.csv to canonical format")
 
         return True
 
@@ -235,7 +247,13 @@ def collect_openabc_metadata(openabc_source, full_dataset_path, design):
         return False
 
 
-def convert_to_canonical_format(df, design, _source_type):
+def convert_to_canonical_format(
+    df,
+    design,
+    _source_type,
+    force_file_path=False,
+    force_design=False,
+):
     """
     Convert various metadata formats to canonical format defined in README.
     """
@@ -279,7 +297,10 @@ def convert_to_canonical_format(df, design, _source_type):
 
     # Fill in canonical columns with available data
     for col in canonical_columns:
-        if col in df_mapped.columns:
+        if col in df_mapped.columns and not (
+            (col == "file_path" and force_file_path)
+            or (col == "design" and force_design)
+        ):
             canonical_df[col] = df_mapped[col]
         elif col == "design":
             canonical_df[col] = design
