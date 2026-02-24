@@ -19,21 +19,21 @@
       "deterministic": true,
       "max_passes": 20,
       "score_metric": "area_delay",
-      "command_template": "orchestrate --input \"{input_aig}\" --output \"{output_aig}\" --timeout {timeout_seconds} --threads {threads}"
+      "command_template": "abc -c 'source {abc_rc}; read {input_aig}; strash; orchestrate; write {output_aig}'"
     },
     "Deepsyn": {
       "engine": "deepsyn",
       "record_seed": true,
       "seed_mode": "deterministic_by_input_path",
       "max_passes": 20,
-      "command_template": "deepsyn --input \"{input_aig}\" --output \"{output_aig}\" --seed {seed} --timeout {timeout_seconds} --threads {threads}"
+      "command_template": "abc -c 'source {abc_rc}; read {input_aig}; strash; &get; &deepsyn -S {seed}; &put; write {output_aig}'"
     },
     "Syn4": {
       "engine": "syn4",
       "flow_name": "syn4_default",
       "max_passes": 4,
       "deterministic": true,
-      "command_template": "abc -c 'source {abc_rc}; read {input_aig}; strash; syn4; write {output_aig}'"
+      "command_template": "abc -c 'source {abc_rc}; read {input_aig}; strash; &get; &syn4; &put; write {output_aig}'"
     },
     "C2RS": {
       "engine": "abc_alias",
