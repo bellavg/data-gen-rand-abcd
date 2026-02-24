@@ -152,7 +152,7 @@ import sys
 
 import pandas as pd
 
-output_dataset = os.path.realpath("""$OUTPUT_DATASET""")
+output_dataset = os.path.normpath("""$OUTPUT_DATASET""")
 scope = """$VERIFY_SCOPE"""
 
 metadata_dir = os.path.join(output_dataset, "metadata", "stats")
@@ -255,6 +255,12 @@ for design in expected_designs:
         bad_paths = ~df["file_path"].astype(str).str.startswith(f"base_aigs/{design}/")
         if bad_paths.any():
             errors.append(f"Invalid file_path prefix in {csv_path}")
+            sample_bad = (
+                df.loc[bad_paths, "file_path"].astype(str).head(3).tolist()
+            )
+            errors.append(
+                f"Sample invalid file_path values for {design}: {sample_bad}"
+            )
 
     total_rows += len(df)
 
