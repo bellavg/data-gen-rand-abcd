@@ -29,7 +29,7 @@ except ImportError:
     sys.exit(1)
 
 # Canonical CSV header as defined in README
-CANONICAL_HEADER = "file_path,design,recipe_id,step_id,tier_id,nodes,edges,num_PI,num_PO,depth,avg_fanout,max_fanout"
+CANONICAL_HEADER = "file_path,design,recipe_id,step_id,tier_id,algorithm,nodes,edges,num_PI,num_PO,depth,avg_fanout,max_fanout"
 
 # Design lists from reorganize_datasets.py
 RANDOM_DESIGNS = ["128", "256", "512", "1024", "2048", "4096", "8192", "16384"]
@@ -321,6 +321,8 @@ def convert_to_canonical_format(df, design, _source_type):
         elif col == "design":
             canonical_df[col] = design
         elif col == "tier_id":
+            canonical_df[col] = ""  # Empty for base AIGs
+        elif col == "algorithm":
             canonical_df[col] = ""  # Empty for base AIGs
         elif col == "file_path":
             # Defer file_path generation until all key columns are available.
