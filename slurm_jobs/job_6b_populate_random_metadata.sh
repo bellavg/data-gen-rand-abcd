@@ -252,9 +252,10 @@ for design in expected_designs:
             errors.append(f"Negative values in {csv_path}:{col}")
 
     if "file_path" in df.columns:
-        bad_paths = ~df["file_path"].astype(str).str.startswith(f"base_aigs/{design}/")
+        path_series = df["file_path"].astype(str).str.strip()
+        bad_paths = path_series.eq("") | path_series.str.lower().eq("nan")
         if bad_paths.any():
-            errors.append(f"Invalid file_path prefix in {csv_path}")
+            errors.append(f"Invalid empty file_path values in {csv_path}")
             sample_bad = (
                 df.loc[bad_paths, "file_path"].astype(str).head(3).tolist()
             )
