@@ -88,14 +88,14 @@ FULL_DATASET/
 │     └─ syn{recipe_id}.zip       # each zip stores step AIGs for that recipe
 ├─ synScripts/                    # zipped synthesis scripts per design 
 |  ├─ ...
-│  └─ {design}.zip                # inside: abc{recipe_id}.script
+│  └─ {design}.zip                # inside: abc{recipe_id}.script #todo add line 
 ├─ optimized_aigs/                # algorithm outputs (tiered)
 |  ├─ ...
 │  └─ {algorithm}/               
 |     ├─ ...
 │     └─ tier{tier_id}/                 # per tier 
 |        ├─ ...
-|        └─ {design}/             
+|        └─ {design}/        # save as zip     
 |           ├─ ...
 |           └─ {design}_syn{recipe_id}_step{step_id}.aig
 └─ metadata/                     
@@ -122,7 +122,7 @@ Variable ranges / notes (for `{...}` values used above):
 Canonical CSV header (exact — tools should emit this header, comma-separated, no extra spaces):
 
 ```
-file_path,design,recipe_id,step_id,tier_id,nodes,edges,num_PI,num_PO,depth,avg_fanout,max_fanout
+file_path,design,recipe_id,step_id,tier_id,algorithm,nodes,edges,num_PI,num_PO,depth,avg_fanout,max_fanout
 ```
 
 Canonical column definitions
@@ -133,7 +133,8 @@ Canonical column definitions
 | `design` | string | Design identifier (e.g. `128`, `ac97_ctrl`). |
 | `recipe_id` | integer | Synthesis recipe identifier (0..1499). |
 | `step_id` | integer | Per-recipe step index. Parse as integer — some datasets use 0-based (0..20) while converted OpenABC‑D uses 1-based (1..21); accept both when ingesting. |
-| `tier_id` | integer or empty | Generation tier for algorithm outputs: `1` = first-pass, `2` = second-pass. Base AIGs are stored under `base_aigs/` and should have an empty `tier_id` in per-design CSV rows. |
+| `tier_id` | integer | Generation tier for algorithm outputs: `0` = base aigs. `1` = first-pass, `2` = second-pass. `3` = final aig, the graphs made from tier 2 second pass. |
+| `algorithm` | string or empty | Optimization algorithm used to generate the graph: `Orchestrate`, `Deepsyn`, `Syn4`, `C2RS`. Base AIG rows should have an empty value. |
 | `nodes` | integer | Number of internal AIG nodes (integer count). |
 | `edges` | integer | Number of edges in the AIG (integer count). |
 | `num_PI` | integer | Number of primary inputs. |

@@ -15,6 +15,8 @@ set -e
 
 DESIGN_GROUP="${DESIGN_GROUP:-all}"
 DESIGNS="${DESIGNS:-}"
+ALGORITHMS="${ALGORITHMS:-all}"
+INPUT_SOURCE="${INPUT_SOURCE:-base_aigs}"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -26,13 +28,24 @@ while [[ $# -gt 0 ]]; do
             DESIGNS="$2"
             shift 2
             ;;
+        --algorithms)
+            ALGORITHMS="$2"
+            shift 2
+            ;;
+        --input-source)
+            INPUT_SOURCE="$2"
+            shift 2
+            ;;
         -h|--help)
-            echo "Usage: sbatch slurm_jobs/job_8_make_optimize_scripts.sh [--design-group all|random|openabc] [--designs 'd1,d2,...']"
+            echo "Usage: sbatch slurm_jobs/job_8_make_optimize_scripts.sh [--design-group all|random|openabc] [--designs 'd1,d2,...'] [--algorithms all|Orchestrate,Deepsyn,Syn4,C2RS] [--input-source all|base_aigs|tier1|tier2]"
             echo ""
             echo "Examples:"
             echo "  sbatch slurm_jobs/job_8_make_optimize_scripts.sh --design-group random"
             echo "  sbatch slurm_jobs/job_8_make_optimize_scripts.sh --designs '128,256,512'"
             echo "  sbatch slurm_jobs/job_8_make_optimize_scripts.sh --design-group random --designs '128,256'"
+            echo "  sbatch slurm_jobs/job_8_make_optimize_scripts.sh --design-group random --algorithms C2RS"
+            echo "  sbatch slurm_jobs/job_8_make_optimize_scripts.sh --input-source tier1 --algorithms 'C2RS,Syn4'"
+            echo "  sbatch slurm_jobs/job_8_make_optimize_scripts.sh --input-source all --algorithms C2RS"
             exit 0
             ;;
         *)
@@ -46,6 +59,26 @@ done
 if [[ "$DESIGN_GROUP" != "all" && "$DESIGN_GROUP" != "random" && "$DESIGN_GROUP" != "openabc" ]]; then
     echo "✗ ERROR: Invalid --design-group '$DESIGN_GROUP' (expected all|random|openabc)"
     exit 1
+fi
+
+if [[ "$INPUT_SOURCE" != "all" && "$INPUT_SOURCE" != "base_aigs" && "$INPUT_SOURCE" != "tier1" && "$INPUT_SOURCE" != "tier2" ]]; then
+    echo "✗ ERROR: Invalid --input-source '$INPUT_SOURCE' (expected all|base_aigs|tier1|tier2)"
+    exit 1
+fi
+
+if [[ "$ALGORITHMS" != "all" ]]; then
+    IFS=',' read -r -a requested_algorithms <<< "$ALGORITHMS"
+    if [[ ${#requested_algorithms[@]} -eq 0 ]]; then
+        echo "✗ ERROR: --algorithms provided but empty"
+        exit 1
+    fi
+    for alg in "${requested_algorithms[@]}"; do
+        trimmed="$(echo "$alg" | xargs)"
+        if [[ "$trimmed" != "Orchestrate" && "$trimmed" != "Deepsyn" && "$trimmed" != "Syn4" && "$trimmed" != "C2RS" ]]; then
+            echo "✗ ERROR: Invalid algorithm '$trimmed' in --algorithms (allowed: Orchestrate, Deepsyn, Syn4, C2RS)"
+            exit 1
+        fi
+    done
 fi
 
 echo "=========================================="
@@ -68,7 +101,7 @@ BASE_DIR="$HOME/data-gen-rand-abcd"
 FULL_DATASET="${FULL_DATASET:-/scratch-shared/$USER/FULL_DATASET}"
 GEN_SCRIPT="${BASE_DIR}/dataset_tools/generate_optimization_bulk_scripts.py"
 CONFIG_FILE="${BASE_DIR}/dataset_tools/optimization_config.json"
-SCRIPTS_DIR="${FULL_DATASET}/optimized_aigs/scripts"
+SCRIPTS_ZIP_ROOT="${FULL_DATASET}/synScripts/optimization"
 
 echo "Configuration:"
 echo "  Base directory: $BASE_DIR"
@@ -77,6 +110,9 @@ echo "  Generator:      $GEN_SCRIPT"
 echo "  Config source:  $CONFIG_FILE"
 echo "  Design group:   $DESIGN_GROUP"
 echo "  Designs:        ${DESIGNS:-<all in selected group>}"
+echo "  Algorithms:     $ALGORITHMS"
+echo "  Input source:   $INPUT_SOURCE"
+echo "  Script zip root:$SCRIPTS_ZIP_ROOT"
 echo ""
 
 if [ ! -d "$FULL_DATASET" ]; then
@@ -106,6 +142,8 @@ GEN_ARGS=(
     --full-dataset "$FULL_DATASET"
     --config "$CONFIG_FILE"
     --design-group "$DESIGN_GROUP"
+    --algorithms "$ALGORITHMS"
+    --input-source "$INPUT_SOURCE"
 )
 
 if [[ -n "$DESIGNS" ]]; then
@@ -115,22 +153,48 @@ fi
 python3 "$GEN_SCRIPT" "${GEN_ARGS[@]}"
 
 echo ""
-echo "Verifying generated scripts..."
-for algorithm in Orchestrate Deepsyn Syn4 C2RS; do
-    algorithm_dir="$SCRIPTS_DIR/${algorithm}"
-    if [ ! -d "$algorithm_dir" ]; then
-        echo "  ✗ ${algorithm}: Script directory not found: $algorithm_dir"
-        exit 1
-    fi
+echo "Verifying generated script zip bundles..."
+if [[ "$ALGORITHMS" == "all" ]]; then
+    algorithms_to_check=(Orchestrate Deepsyn Syn4 C2RS)
+else
+    IFS=',' read -r -a algorithms_to_check <<< "$ALGORITHMS"
+fi
 
-    script_count=$(find "$algorithm_dir" -type f -name "optimizeBulk_${algorithm}_*.sh" | wc -l | tr -d ' ')
-    if [ "$script_count" -gt 0 ]; then
-        chmod +x "$algorithm_dir"/*.sh
-        echo "  ✓ ${algorithm}: ${script_count} shard scripts"
-    else
-        echo "  ✗ ${algorithm}: No shard scripts found"
-        exit 1
-    fi
+if [[ "$INPUT_SOURCE" == "all" ]]; then
+    source_labels=(base tier1 tier2)
+elif [[ "$INPUT_SOURCE" == "base_aigs" ]]; then
+    source_labels=(base)
+elif [[ "$INPUT_SOURCE" == "tier1" ]]; then
+    source_labels=(tier1)
+else
+    source_labels=(tier2)
+fi
+
+if [ ! -d "$SCRIPTS_ZIP_ROOT" ]; then
+    echo "✗ ERROR: Script zip root not found: $SCRIPTS_ZIP_ROOT"
+    exit 1
+fi
+
+zip_count=$(find "$SCRIPTS_ZIP_ROOT" -type f -name '*.zip' | wc -l | tr -d ' ')
+if [ "$zip_count" -eq 0 ]; then
+    echo "✗ ERROR: No design zip bundles found in: $SCRIPTS_ZIP_ROOT"
+    exit 1
+fi
+
+echo "Found ${zip_count} design zip bundles"
+
+for algorithm in "${algorithms_to_check[@]}"; do
+    algorithm="$(echo "$algorithm" | xargs)"
+    for source_label in "${source_labels[@]}"; do
+        pattern="optimizeBulk_${algorithm}_*_${source_label}.sh"
+        match_count=$(find "$SCRIPTS_ZIP_ROOT" -type f -name '*.zip' -exec sh -c 'for z in "$@"; do unzip -Z1 "$z" "$0" 2>/dev/null; done' "$pattern" {} + | wc -l | tr -d ' ')
+        if [ "$match_count" -gt 0 ]; then
+            echo "  ✓ ${algorithm} (${source_label}): ${match_count} scripts in zip bundles"
+        else
+            echo "  ✗ ${algorithm} (${source_label}): No scripts found in zip bundles"
+            exit 1
+        fi
+    done
 done
 
 echo ""
@@ -138,9 +202,9 @@ echo "=========================================="
 echo "Step 8 Complete"
 echo "=========================================="
 echo ""
-total_scripts=$(find "$SCRIPTS_DIR" -type f -name "optimizeBulk_*.sh" | wc -l | tr -d ' ')
+total_scripts=$(find "$SCRIPTS_ZIP_ROOT" -type f -name '*.zip' -exec sh -c 'for z in "$@"; do unzip -Z1 "$z" "optimizeBulk_*.sh" 2>/dev/null; done' _ {} + | wc -l | tr -d ' ')
 echo "Generated: ${total_scripts} optimization shard scripts"
-echo "Location: $SCRIPTS_DIR"
+echo "Location: $SCRIPTS_ZIP_ROOT"
 echo ""
 echo "Next step: Submit per-algorithm jobs"
 echo ""
