@@ -13,10 +13,24 @@
 
 set -e
 
-DESIGN_GROUP="${DESIGN_GROUP:-all}"
+# ================= USER SETTINGS (EDIT HERE) =================
+# Design scope: random | openabcd | all
+DEFAULT_DESIGN_GROUP="${DEFAULT_DESIGN_GROUP:-random}"
+# Algorithms: all | Orchestrate,Deepsyn,Syn4,C2RS
+DEFAULT_ALGORITHMS="${DEFAULT_ALGORITHMS:-all}"
+# Optional explicit design override: e.g. "128,256"
+DEFAULT_DESIGNS="${DEFAULT_DESIGNS:-}"
+# Input source: base_aigs | tier1 | tier2 | all
+DEFAULT_INPUT_SOURCE="${DEFAULT_INPUT_SOURCE:-base_aigs}"
+# ============================================================
+
+DESIGN_GROUP="${DESIGN_GROUP:-$DEFAULT_DESIGN_GROUP}"
 DESIGNS="${DESIGNS:-}"
-ALGORITHMS="${ALGORITHMS:-all}"
-INPUT_SOURCE="${INPUT_SOURCE:-base_aigs}"
+if [[ -z "$DESIGNS" && -n "$DEFAULT_DESIGNS" ]]; then
+    DESIGNS="$DEFAULT_DESIGNS"
+fi
+ALGORITHMS="${ALGORITHMS:-$DEFAULT_ALGORITHMS}"
+INPUT_SOURCE="${INPUT_SOURCE:-$DEFAULT_INPUT_SOURCE}"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -37,7 +51,7 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         -h|--help)
-            echo "Usage: sbatch slurm_jobs/job_8_make_optimize_scripts.sh [--design-group all|random|openabc] [--designs 'd1,d2,...'] [--algorithms all|Orchestrate,Deepsyn,Syn4,C2RS] [--input-source all|base_aigs|tier1|tier2]"
+            echo "Usage: sbatch slurm_jobs/job_8_make_optimize_scripts.sh [--design-group all|random|openabc|openabcd] [--designs 'd1,d2,...'] [--algorithms all|Orchestrate,Deepsyn,Syn4,C2RS] [--input-source all|base_aigs|tier1|tier2]"
             echo ""
             echo "Examples:"
             echo "  sbatch slurm_jobs/job_8_make_optimize_scripts.sh --design-group random"
@@ -56,8 +70,12 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+if [[ "$DESIGN_GROUP" == "openabcd" ]]; then
+    DESIGN_GROUP="openabc"
+fi
+
 if [[ "$DESIGN_GROUP" != "all" && "$DESIGN_GROUP" != "random" && "$DESIGN_GROUP" != "openabc" ]]; then
-    echo "✗ ERROR: Invalid --design-group '$DESIGN_GROUP' (expected all|random|openabc)"
+    echo "✗ ERROR: Invalid --design-group '$DESIGN_GROUP' (expected all|random|openabc|openabcd)"
     exit 1
 fi
 

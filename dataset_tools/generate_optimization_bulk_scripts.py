@@ -29,7 +29,7 @@ INPUT_SOURCES = ["base_aigs", "tier1", "tier2"]
 INPUT_SOURCE_TO_OUTPUT = {
     "base_aigs": "tier1",
     "tier1": "tier2",
-    "tier2": "final",
+    "tier2": "tier3",
 }
 INPUT_SOURCE_TO_LABEL = {
     "base_aigs": "base",
@@ -205,7 +205,7 @@ def render_shard_script(
         raise ValueError(f"Missing command_template for algorithm {algorithm}")
 
     command_template_escaped = shell_quote_single(command_template)
-    needs_abc_rc = algorithm in ("Syn4", "C2RS")
+    needs_abc_rc = True
     abc_rc_check = (
         (
             'if [[ ! -f "$ABC_RC" ]]; then\n'
