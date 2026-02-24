@@ -35,6 +35,39 @@ Visual pipeline (ASCII):
 
 All algorithms use the same timing constraints and hyperparameters per your plan; Deepsyn runs will record the RNG seed used for reproducibility.
 
+## Optimization Parameters / Tier Configuration
+
+- **Same parameter policy for Tier‑1 and Tier‑2:** Yes
+- **Algorithms:** `Orchestrate`, `Deepsyn`, `Syn4`, `C2RS`
+- **Tier‑1 input set:** `FULL_DATASET/base_aigs/**.aig`
+- **Tier‑2 input set:** `FULL_DATASET/optimized_aigs/{algorithm}/tier1/**.aig`
+- **Tier outputs:** `FULL_DATASET/optimized_aigs/{algorithm}/tier{1|2}/{design}/...`
+
+### Per-Algorithm Parameters
+#TODO check if true and replace with real values
+Per-algorithm defaults:
+
+- `Orchestrate`:
+  - `engine=orchestrate`
+  - `deterministic=true`
+  - `max_passes=20`
+  - `score_metric=area_delay`
+- `Deepsyn`:
+  - `engine=deepsyn`
+  - `record_seed=true`
+  - `seed_mode=deterministic_by_input_path`
+  - `max_passes=20`
+- `Syn4`:
+  - `engine=syn4`
+  - `flow_name=syn4_default`
+  - `max_passes=4`
+  - `deterministic=true`
+- `C2RS`:
+  - `engine=abc_alias`
+  - `alias=c2rs` (from `abc.rc`)
+  - `use_abc_l_flag=true`
+  - `deterministic=true`
+
 ## Full Dataset Naming Schema and Directory Structure
 
 Directory layout (Full Dataset):
