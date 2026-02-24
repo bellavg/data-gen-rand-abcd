@@ -6,15 +6,50 @@
 #SBATCH --partition=genoa
 #SBATCH --output=logs/gen_opt_scripts_%j.out
 
-# Job 7: Generate Optimization Bulk Scripts
+# Job 8: Generate Optimization Bulk Scripts
 # Mirrors the Job 2/3 pattern:
 #   - Use dataset_tools to generate bulk shell scripts
 #   - Then run per-algorithm jobs (Job 8a-8d)
 
 set -e
 
+DESIGN_GROUP="${DESIGN_GROUP:-all}"
+DESIGNS="${DESIGNS:-}"
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --design-group)
+            DESIGN_GROUP="$2"
+            shift 2
+            ;;
+        --designs)
+            DESIGNS="$2"
+            shift 2
+            ;;
+        -h|--help)
+            echo "Usage: sbatch slurm_jobs/job_8_make_optimize_scripts.sh [--design-group all|random|openabc] [--designs 'd1,d2,...']"
+            echo ""
+            echo "Examples:"
+            echo "  sbatch slurm_jobs/job_8_make_optimize_scripts.sh --design-group random"
+            echo "  sbatch slurm_jobs/job_8_make_optimize_scripts.sh --designs '128,256,512'"
+            echo "  sbatch slurm_jobs/job_8_make_optimize_scripts.sh --design-group random --designs '128,256'"
+            exit 0
+            ;;
+        *)
+            echo "✗ ERROR: Unknown argument: $1"
+            echo "Run with --help for usage"
+            exit 1
+            ;;
+    esac
+done
+
+if [[ "$DESIGN_GROUP" != "all" && "$DESIGN_GROUP" != "random" && "$DESIGN_GROUP" != "openabc" ]]; then
+    echo "✗ ERROR: Invalid --design-group '$DESIGN_GROUP' (expected all|random|openabc)"
+    exit 1
+fi
+
 echo "=========================================="
-echo "STEP 7: Generating Optimization Bulk Scripts"
+echo "STEP 8: Generating Optimization Bulk Scripts"
 echo "=========================================="
 echo "Job ID: $SLURM_JOB_ID"
 echo "Running on: $(hostname)"
@@ -40,11 +75,13 @@ echo "  Base directory: $BASE_DIR"
 echo "  Full dataset:   $FULL_DATASET"
 echo "  Generator:      $GEN_SCRIPT"
 echo "  Config source:  $CONFIG_FILE"
+echo "  Design group:   $DESIGN_GROUP"
+echo "  Designs:        ${DESIGNS:-<all in selected group>}"
 echo ""
 
 if [ ! -d "$FULL_DATASET" ]; then
     echo "✗ ERROR: FULL_DATASET not found: $FULL_DATASET"
-    echo "  Override path: FULL_DATASET=/path/to/FULL_DATASET sbatch slurm_jobs/job_7_optimize.sh"
+    echo "  Override path: FULL_DATASET=/path/to/FULL_DATASET sbatch slurm_jobs/job_8_make_optimize_scripts.sh"
     exit 1
 fi
 
@@ -64,10 +101,18 @@ if [ ! -f "$CONFIG_FILE" ]; then
 fi
 
 echo "Generating optimization bulk scripts..."
-python3 "$GEN_SCRIPT" \
-    --base-dir "$BASE_DIR" \
-    --full-dataset "$FULL_DATASET" \
+GEN_ARGS=(
+    --base-dir "$BASE_DIR"
+    --full-dataset "$FULL_DATASET"
     --config "$CONFIG_FILE"
+    --design-group "$DESIGN_GROUP"
+)
+
+if [[ -n "$DESIGNS" ]]; then
+    GEN_ARGS+=(--designs "$DESIGNS")
+fi
+
+python3 "$GEN_SCRIPT" "${GEN_ARGS[@]}"
 
 echo ""
 echo "Verifying generated scripts..."
@@ -90,7 +135,7 @@ done
 
 echo ""
 echo "=========================================="
-echo "Step 7 Complete"
+echo "Step 8 Complete"
 echo "=========================================="
 echo ""
 total_scripts=$(find "$SCRIPTS_DIR" -type f -name "optimizeBulk_*.sh" | wc -l | tr -d ' ')
