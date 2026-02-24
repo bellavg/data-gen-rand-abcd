@@ -4,12 +4,12 @@
 #SBATCH -N 1
 #SBATCH --ntasks-per-node=1
 #SBATCH --partition=genoa
-#SBATCH --output=logs/validate_full_dataset_%j.out
+#SBATCH --output=logs/7_validate_full_dataset_%j.out
 
 set -euo pipefail
 
 echo "=========================================="
-echo "JOB 6A: Validate Full Dataset"
+echo "JOB 7: Validate Full Dataset"
 echo "=========================================="
 echo "Job ID: ${SLURM_JOB_ID:-manual_run}"
 echo "Running on: $(hostname)"
@@ -30,15 +30,25 @@ DEFAULT_DATASET_PATH="/scratch-shared/$USER/FULL_DATASET"
 FULL_DATASET="${1:-${DATASET_PATH:-$DEFAULT_DATASET_PATH}}"
 RANDOM_SOURCE_PATH="${2:-${RANDOM_SOURCE_PATH:-$BASE_DIR/OPENABC_DATASET}}"
 OPENABC_SOURCE_PATH="${3:-${OPENABC_SOURCE_PATH:-/scratch-shared/igardner1/openabc_full/OPENABC_DATASET}}"
+VALIDATION_SCOPE="${4:-${VALIDATION_SCOPE:-all}}"
+
+if [[ "$VALIDATION_SCOPE" != "random" && "$VALIDATION_SCOPE" != "openabcd" && "$VALIDATION_SCOPE" != "all" ]]; then
+    echo "ERROR: VALIDATION_SCOPE must be one of: random, openabcd, all"
+    echo "Got: $VALIDATION_SCOPE"
+    exit 1
+fi
+
 export DEFAULT_DATASET_PATH
 export FULL_DATASET
 export RANDOM_SOURCE_PATH
 export OPENABC_SOURCE_PATH
+export VALIDATION_SCOPE
 
 echo "Expected default location: $DEFAULT_DATASET_PATH"
 echo "Dataset location to validate: $FULL_DATASET"
 echo "Random source for comparison: $RANDOM_SOURCE_PATH"
 echo "OpenABC source for comparison: $OPENABC_SOURCE_PATH"
+echo "Validation scope: $VALIDATION_SCOPE"
 echo ""
 
 if [ "$FULL_DATASET" != "$DEFAULT_DATASET_PATH" ]; then
@@ -70,6 +80,7 @@ FULL_DATASET = os.environ.get("FULL_DATASET")
 DEFAULT_DATASET_PATH = os.environ.get("DEFAULT_DATASET_PATH")
 RANDOM_SOURCE_PATH = os.environ.get("RANDOM_SOURCE_PATH")
 OPENABC_SOURCE_PATH = os.environ.get("OPENABC_SOURCE_PATH")
+VALIDATION_SCOPE = os.environ.get("VALIDATION_SCOPE", "all")
 
 RANDOM_DESIGNS = ["128", "256", "512", "1024", "2048", "4096", "8192", "16384"]
 OPENABC_DESIGNS = [
@@ -123,6 +134,7 @@ expected_columns = [
     "recipe_id",
     "step_id",
     "tier_id",
+    "algorithm",
     "nodes",
     "edges",
     "num_PI",
@@ -139,9 +151,19 @@ report = {
     "timestamp": datetime.now().isoformat(),
     "dataset_path": FULL_DATASET,
     "default_expected_path": DEFAULT_DATASET_PATH,
+    "validation_scope": VALIDATION_SCOPE,
     "using_default_path": os.path.abspath(FULL_DATASET) == os.path.abspath(DEFAULT_DATASET_PATH),
     "checks": {},
 }
+
+if VALIDATION_SCOPE == "random":
+    expected_designs = list(RANDOM_DESIGNS)
+elif VALIDATION_SCOPE == "openabcd":
+    expected_designs = list(OPENABC_DESIGNS)
+else:
+    expected_designs = list(RANDOM_DESIGNS) + list(OPENABC_DESIGNS)
+
+expected_designs_set = set(expected_designs)
 
 # Directory checks
 missing_dirs = []
@@ -287,41 +309,45 @@ source_compare["random_bench_root"] = random_bench_root
 source_compare["openabc_bench_root"] = openabc_bench_root
 
 if not random_bench_root:
-    warnings.append("Random source bench root not found; skipped random source-to-target integrity comparison")
+    if VALIDATION_SCOPE in ("random", "all"):
+        warnings.append("Random source bench root not found; skipped random source-to-target integrity comparison")
 if not openabc_bench_root:
-    warnings.append("OpenABC source bench root not found; skipped OpenABC source-to-target integrity comparison")
+    if VALIDATION_SCOPE in ("openabcd", "all"):
+        warnings.append("OpenABC source bench root not found; skipped OpenABC source-to-target integrity comparison")
 
-for design in RANDOM_DESIGNS:
-    source_compare["checked_designs"] += 1
-    source_design_dir = os.path.join(random_bench_root, design) if random_bench_root else None
-    target_design_dir = os.path.join(FULL_DATASET, "base_aigs", design)
+if VALIDATION_SCOPE in ("random", "all"):
+    for design in RANDOM_DESIGNS:
+        source_compare["checked_designs"] += 1
+        source_design_dir = os.path.join(random_bench_root, design) if random_bench_root else None
+        target_design_dir = os.path.join(FULL_DATASET, "base_aigs", design)
 
-    if (not source_design_dir) or (not os.path.isdir(source_design_dir)):
-        source_compare["missing_source_design_dirs"].append(design)
-        continue
+        if (not source_design_dir) or (not os.path.isdir(source_design_dir)):
+            source_compare["missing_source_design_dirs"].append(design)
+            continue
 
-    source_compare["source_designs_found"] += 1
-    result = compare_design_source_to_target(design, source_design_dir, target_design_dir)
-    source_compare["missing_files_total"] += len(result["missing_files"])
-    source_compare["size_mismatches_total"] += len(result["size_mismatches"])
-    source_compare["corrupt_targets_total"] += len(result["corrupt_targets"])
-    source_compare["designs"].append(result)
+        source_compare["source_designs_found"] += 1
+        result = compare_design_source_to_target(design, source_design_dir, target_design_dir)
+        source_compare["missing_files_total"] += len(result["missing_files"])
+        source_compare["size_mismatches_total"] += len(result["size_mismatches"])
+        source_compare["corrupt_targets_total"] += len(result["corrupt_targets"])
+        source_compare["designs"].append(result)
 
-for design in OPENABC_DESIGNS:
-    source_compare["checked_designs"] += 1
-    source_design_dir = os.path.join(openabc_bench_root, design) if openabc_bench_root else None
-    target_design_dir = os.path.join(FULL_DATASET, "base_aigs", design)
+if VALIDATION_SCOPE in ("openabcd", "all"):
+    for design in OPENABC_DESIGNS:
+        source_compare["checked_designs"] += 1
+        source_design_dir = os.path.join(openabc_bench_root, design) if openabc_bench_root else None
+        target_design_dir = os.path.join(FULL_DATASET, "base_aigs", design)
 
-    if (not source_design_dir) or (not os.path.isdir(source_design_dir)):
-        source_compare["missing_source_design_dirs"].append(design)
-        continue
+        if (not source_design_dir) or (not os.path.isdir(source_design_dir)):
+            source_compare["missing_source_design_dirs"].append(design)
+            continue
 
-    source_compare["source_designs_found"] += 1
-    result = compare_design_source_to_target(design, source_design_dir, target_design_dir)
-    source_compare["missing_files_total"] += len(result["missing_files"])
-    source_compare["size_mismatches_total"] += len(result["size_mismatches"])
-    source_compare["corrupt_targets_total"] += len(result["corrupt_targets"])
-    source_compare["designs"].append(result)
+        source_compare["source_designs_found"] += 1
+        result = compare_design_source_to_target(design, source_design_dir, target_design_dir)
+        source_compare["missing_files_total"] += len(result["missing_files"])
+        source_compare["size_mismatches_total"] += len(result["size_mismatches"])
+        source_compare["corrupt_targets_total"] += len(result["corrupt_targets"])
+        source_compare["designs"].append(result)
 
 report["checks"]["source_integrity"] = source_compare
 
@@ -384,13 +410,23 @@ if os.path.isfile(summary_path):
 # CSV checks
 stats_dir = os.path.join(FULL_DATASET, "metadata", "stats")
 csv_files = []
+ignored_csv_files = []
 if os.path.isdir(stats_dir):
     for name in sorted(os.listdir(stats_dir)):
         if name.endswith(".csv"):
-            csv_files.append(os.path.join(stats_dir, name))
+            design_name = os.path.splitext(name)[0]
+            full_csv_path = os.path.join(stats_dir, name)
+            if design_name in expected_designs_set:
+                csv_files.append(full_csv_path)
+            else:
+                ignored_csv_files.append(name)
 
 csv_report = {
+    "scope": VALIDATION_SCOPE,
+    "expected_designs": len(expected_designs),
+    "expected_design_list": expected_designs,
     "csv_files_found": len(csv_files),
+    "ignored_csv_files": ignored_csv_files,
     "csv_files": [],
     "total_rows": 0,
     "valid_files": 0,
@@ -398,7 +434,21 @@ csv_report = {
 }
 
 if len(csv_files) == 0:
-    errors.append("No CSV files found in metadata/stats")
+    errors.append(
+        f"No CSV files found in metadata/stats for validation scope={VALIDATION_SCOPE}"
+    )
+
+found_designs = {
+    os.path.splitext(os.path.basename(path))[0]
+    for path in csv_files
+}
+missing_expected_design_csvs = sorted(expected_designs_set - found_designs)
+csv_report["missing_expected_design_csvs"] = missing_expected_design_csvs
+if missing_expected_design_csvs:
+    errors.append(
+        "Missing expected metadata CSVs for scope "
+        f"{VALIDATION_SCOPE}: {', '.join(missing_expected_design_csvs)}"
+    )
 
 for csv_path in csv_files:
     name = os.path.basename(csv_path)
@@ -499,15 +549,20 @@ if summary:
     summary_totals = summary.get("totals", {})
     summary_designs = summary_totals.get("designs")
     summary_files = summary_totals.get("files")
-    summary_ok = (summary_designs == len(csv_files)) and (summary_files == csv_report["total_rows"])
+    if VALIDATION_SCOPE == "all":
+        summary_ok = (summary_designs == len(csv_files)) and (summary_files == csv_report["total_rows"])
+    else:
+        summary_ok = None
     consistency["summary_totals_match_csv"] = {
         "ok": summary_ok,
+        "skipped": VALIDATION_SCOPE != "all",
+        "reason": "Scope-specific validation only" if VALIDATION_SCOPE != "all" else "",
         "summary_designs": summary_designs,
         "actual_csv_count": len(csv_files),
         "summary_files": summary_files,
         "actual_csv_rows": csv_report["total_rows"],
     }
-    if not summary_ok:
+    if summary_ok is False:
         errors.append("dataset_summary.json totals do not match discovered CSV metrics")
 
 if manifest:
@@ -515,13 +570,18 @@ if manifest:
     total_designs = mstats.get("total_designs")
     expected_base_aigs = mstats.get("expected_base_aigs")
 
-    designs_match = (total_designs == len(csv_files))
+    if VALIDATION_SCOPE == "all":
+        designs_match = (total_designs == len(csv_files))
+    else:
+        designs_match = None
     consistency["manifest_total_designs_match_csv_count"] = {
         "ok": designs_match,
+        "skipped": VALIDATION_SCOPE != "all",
+        "reason": "Scope-specific validation only" if VALIDATION_SCOPE != "all" else "",
         "manifest_total_designs": total_designs,
         "actual_csv_count": len(csv_files),
     }
-    if not designs_match:
+    if designs_match is False:
         errors.append("dataset_manifest.json total_designs does not match CSV design count")
 
     if expected_base_aigs is not None:
@@ -547,7 +607,7 @@ report["result"] = {
 }
 
 print("==========================================")
-print("JOB 6A VALIDATION SUMMARY")
+print("JOB 7 VALIDATION SUMMARY")
 print("==========================================")
 print(f"Dataset path: {FULL_DATASET}")
 print(f"AIG files found: {aig_count}")
@@ -582,4 +642,4 @@ PY
 
 echo ""
 echo "End time: $(date)"
-echo "Job 6a completed successfully."
+echo "Job 7 completed successfully."
