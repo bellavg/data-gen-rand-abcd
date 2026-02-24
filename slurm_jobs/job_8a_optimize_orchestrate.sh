@@ -25,43 +25,76 @@ module load foss/2025a
 
 BASE_DIR="$HOME/data-gen-rand-abcd"
 FULL_DATASET="${FULL_DATASET:-/scratch-shared/$USER/FULL_DATASET}"
-SCRIPT_DIR="${FULL_DATASET}/optimized_aigs/scripts/Orchestrate"
+SCRIPT_ZIP_ROOT="${FULL_DATASET}/synScripts/optimization"
 
-TIER="${TIER:-1}"
+TIER="${TIER:-}"
+INPUT_SOURCE="${INPUT_SOURCE:-}"
 DRY_RUN="${DRY_RUN:-true}"
 
-if [ "$TIER" != "1" ] && [ "$TIER" != "2" ]; then
-    echo "✗ ERROR: Invalid TIER=$TIER (must be 1 or 2)"
-    echo "  Examples:"
-    echo "    sbatch slurm_jobs/job_8a_optimize_orchestrate.sh"
-    echo "    sbatch --export=ALL,TIER=2 slurm_jobs/job_8a_optimize_orchestrate.sh"
+if [ -n "$TIER" ] && [ "$TIER" != "1" ] && [ "$TIER" != "2" ] && [ "$TIER" != "3" ]; then
+    echo "✗ ERROR: Invalid TIER=$TIER (must be 1, 2, or 3)"
     exit 1
+fi
+
+if [ -n "$INPUT_SOURCE" ] && [ "$INPUT_SOURCE" != "base_aigs" ] && [ "$INPUT_SOURCE" != "tier1" ] && [ "$INPUT_SOURCE" != "tier2" ]; then
+    echo "✗ ERROR: Invalid INPUT_SOURCE=$INPUT_SOURCE (must be base_aigs|tier1|tier2)"
+    exit 1
+fi
+
+if [ -n "$TIER" ]; then
+    case "$TIER" in
+        1) INPUT_SOURCE="base_aigs" ;;
+        2) INPUT_SOURCE="tier1" ;;
+        3) INPUT_SOURCE="tier2" ;;
+    esac
+fi
+
+if [ -z "$INPUT_SOURCE" ]; then
+    INPUT_SOURCE="base_aigs"
+fi
+
+if [ "$INPUT_SOURCE" = "base_aigs" ]; then
+    SOURCE_LABEL="base"
+elif [ "$INPUT_SOURCE" = "tier1" ]; then
+    SOURCE_LABEL="tier1"
+else
+    SOURCE_LABEL="tier2"
 fi
 
 echo "Configuration:"
 echo "  FULL_DATASET: $FULL_DATASET"
-echo "  Script dir:   $SCRIPT_DIR"
-echo "  TIER:         $TIER"
+echo "  Script zip root: $SCRIPT_ZIP_ROOT"
+echo "  TIER override: ${TIER:-<none>}"
+echo "  INPUT_SOURCE: $INPUT_SOURCE"
 echo "  DRY_RUN:      $DRY_RUN"
 echo ""
 
-if [ ! -d "$SCRIPT_DIR" ]; then
-    echo "✗ ERROR: Missing generated script directory: $SCRIPT_DIR"
+if [ ! -d "$SCRIPT_ZIP_ROOT" ]; then
+    echo "✗ ERROR: Missing generated script zip root: $SCRIPT_ZIP_ROOT"
     echo "Run slurm_jobs/job_8_make_optimize_scripts.sh first."
     exit 1
 fi
 
-script_count=$(find "$SCRIPT_DIR" -type f -name 'optimizeBulk_Orchestrate_*.sh' | wc -l | tr -d ' ')
+script_count=$(find "$SCRIPT_ZIP_ROOT" -type f -name '*.zip' -exec sh -c 'for z in "$@"; do unzip -Z1 "$z" "$0" 2>/dev/null; done' "optimizeBulk_Orchestrate_*_${SOURCE_LABEL}.sh" {} + | wc -l | tr -d ' ')
 if [ "$script_count" -eq 0 ]; then
-    echo "✗ ERROR: No Orchestrate shard scripts found in $SCRIPT_DIR"
+    echo "✗ ERROR: No Orchestrate shard scripts found in $SCRIPT_ZIP_ROOT for input source $INPUT_SOURCE"
     exit 1
 fi
 
 echo "Found ${script_count} shard scripts"
 
-while IFS= read -r script_file; do
-    TIER="$TIER" DRY_RUN="$DRY_RUN" bash "$script_file"
-done < <(find "$SCRIPT_DIR" -type f -name 'optimizeBulk_Orchestrate_*.sh' | sort)
+while IFS= read -r design_zip; do
+    tmp_extract_dir="$(mktemp -d "${TMPDIR:-/tmp}/opt_orch_${SLURM_JOB_ID:-local}_XXXXXX")"
+
+    if unzip -q "$design_zip" "optimizeBulk_Orchestrate_*_${SOURCE_LABEL}.sh" -d "$tmp_extract_dir" 2>/dev/null; then
+        find "$tmp_extract_dir" -type f -name 'optimizeBulk_Orchestrate_*.sh' -exec chmod +x {} +
+        while IFS= read -r script_file; do
+            INPUT_SOURCE="$INPUT_SOURCE" DRY_RUN="$DRY_RUN" bash "$script_file"
+        done < <(find "$tmp_extract_dir" -type f -name 'optimizeBulk_Orchestrate_*.sh' | sort)
+    fi
+
+    rm -rf "$tmp_extract_dir"
+done < <(find "$SCRIPT_ZIP_ROOT" -type f -name '*.zip' | sort)
 
 echo ""
 echo "=========================================="
