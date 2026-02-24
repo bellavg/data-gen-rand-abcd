@@ -30,7 +30,36 @@ DEFAULT_DATASET_PATH="/scratch-shared/$USER/FULL_DATASET"
 FULL_DATASET="${1:-${DATASET_PATH:-$DEFAULT_DATASET_PATH}}"
 RANDOM_SOURCE_PATH="${2:-${RANDOM_SOURCE_PATH:-$BASE_DIR/OPENABC_DATASET}}"
 OPENABC_SOURCE_PATH="${3:-${OPENABC_SOURCE_PATH:-/scratch-shared/igardner1/openabc_full/OPENABC_DATASET}}"
-VALIDATION_SCOPE="${4:-${VALIDATION_SCOPE:-all}}"
+
+# Scope precedence:
+# 1) Positional arg 4
+# 2) VALIDATION_SCOPE env var
+# 3) SLURM_ARRAY_TASK_ID mapping (0=random, 1=openabcd, 2=all)
+# 4) default: random
+if [ -n "${4:-}" ]; then
+    VALIDATION_SCOPE="$4"
+elif [ -n "${VALIDATION_SCOPE:-}" ]; then
+    VALIDATION_SCOPE="$VALIDATION_SCOPE"
+elif [ -n "${SLURM_ARRAY_TASK_ID:-}" ]; then
+    case "$SLURM_ARRAY_TASK_ID" in
+        0)
+            VALIDATION_SCOPE="random"
+            ;;
+        1)
+            VALIDATION_SCOPE="openabcd"
+            ;;
+        2)
+            VALIDATION_SCOPE="all"
+            ;;
+        *)
+            echo "ERROR: Unsupported SLURM_ARRAY_TASK_ID for scope mapping: $SLURM_ARRAY_TASK_ID"
+            echo "Use task IDs: 0=random, 1=openabcd, 2=all"
+            exit 1
+            ;;
+    esac
+else
+    VALIDATION_SCOPE="random"
+fi
 
 if [[ "$VALIDATION_SCOPE" != "random" && "$VALIDATION_SCOPE" != "openabcd" && "$VALIDATION_SCOPE" != "all" ]]; then
     echo "ERROR: VALIDATION_SCOPE must be one of: random, openabcd, all"
@@ -49,6 +78,9 @@ echo "Dataset location to validate: $FULL_DATASET"
 echo "Random source for comparison: $RANDOM_SOURCE_PATH"
 echo "OpenABC source for comparison: $OPENABC_SOURCE_PATH"
 echo "Validation scope: $VALIDATION_SCOPE"
+if [ -n "${SLURM_ARRAY_TASK_ID:-}" ]; then
+    echo "SLURM_ARRAY_TASK_ID: $SLURM_ARRAY_TASK_ID"
+fi
 echo ""
 
 if [ "$FULL_DATASET" != "$DEFAULT_DATASET_PATH" ]; then
