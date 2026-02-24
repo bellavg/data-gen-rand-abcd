@@ -47,7 +47,7 @@ echo ""
 
 if [ ! -d "$SCRIPT_DIR" ]; then
     echo "✗ ERROR: Missing generated script directory: $SCRIPT_DIR"
-    echo "Run job_7_optimize.sh first."
+    echo "Run slurm_jobs/job_8_make_optimize_scripts.sh first."
     exit 1
 fi
 
