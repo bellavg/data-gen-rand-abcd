@@ -226,6 +226,10 @@ def main():
                        help='Number of parallel workers for metadata generation (default: 4)')
     parser.add_argument('--designs', nargs='*',
                        help='Process only specific designs (default: all)')
+    parser.add_argument('--keep-zipped-aigs', action='store_true',
+                       help='Keep synthesized syn*.zip files under base_aigs instead of extracting all step AIGs (existing extracted AIGs already in output are preserved)')
+    parser.add_argument('--verify-existing', action='store_true',
+                       help='Verify existing source-backed output files and recopy only suspect or mismatched ones (no bulk deletion)')
     
     # Execution control
     parser.add_argument('--skip-reorganize', action='store_true',
@@ -289,6 +293,12 @@ Library paths: {args.lib_paths or 'None'}
             
             if args.lib_paths:
                 cmd.extend(['--lib-paths'] + args.lib_paths)
+
+            if args.keep_zipped_aigs:
+                cmd.append('--keep-zipped-aigs')
+
+            if args.verify_existing:
+                cmd.append('--verify-existing')
             
             if args.dry_run:
                 cmd.append('--dry-run')
