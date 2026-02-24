@@ -26,8 +26,7 @@ module load SciPy-bundle/2025.06-gfbf-2025a
 echo "Loaded modules: 2025, foss/2025a, Python/3.13.1, SciPy-bundle/2025.06"
 echo ""
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BASE_DIR="${BASE_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+BASE_DIR="${BASE_DIR:-$HOME/data-gen-rand-abcd}"
 DATASET_TOOLS_DIR="${BASE_DIR}/dataset_tools"
 RANDOM_DATASET="${RANDOM_DATASET:-${BASE_DIR}/OPENABC_DATASET}"
 OPENABC_DATASET="${OPENABC_DATASET:-/scratch-shared/igardner1/openabc_full/OPENABC_DATASET}"
