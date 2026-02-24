@@ -39,7 +39,7 @@ All algorithms use the same timing constraints and hyperparameters per your plan
 
 - **Same parameter policy for Tier‑1 and Tier‑2:** Yes
 - **Algorithms:** `Orchestrate`, `Deepsyn`, `Syn4`, `C2RS`
-- **Tier‑1 input set:** `FULL_DATASET/base_aigs/**.aig`
+- **Tier‑1 input set:** `FULL_DATASET/base_aigs/{design}/{design}_orig.aig` and/or AIGs extracted from `FULL_DATASET/base_aigs/{design}/syn*.zip`
 - **Tier‑2 input set:** `FULL_DATASET/optimized_aigs/{algorithm}/tier1/**.aig`
 - **Tier outputs:** `FULL_DATASET/optimized_aigs/{algorithm}/tier{1|2}/{design}/...`
 
@@ -77,14 +77,15 @@ FULL_DATASET/
 ├─ base_aigs/                             
 │  ├─ ac97_ctrl/                      # example design folder
 │  │  ├─ ac97_ctrl_orig.aig
-│  │  ├─ ac97_ctrl_syn0_step1.aig     # example start (order not fixed)
+│  │  ├─ syn0.zip                     # contains ac97_ctrl_syn0_step{1..21}.aig
+│  │  ├─ syn1.zip                     # contains ac97_ctrl_syn1_step{1..21}.aig
 │  │  ├─ ...                  
-│  │  └─ ac97_ctrl_syn1499_step21.aig # example end (order not fixed)
+│  │  └─ syn1499.zip
 │  ├─ ...
 │  └─ {design}/                   # repeated for each design 
 │     ├─ {design}_orig.aig        # original AIG
 │     ├─ ...                     
-│     └─ {design}_syn{recipe_id}_step{step_id}.aig                          
+│     └─ syn{recipe_id}.zip       # each zip stores step AIGs for that recipe
 ├─ synScripts/                    # zipped synthesis scripts per design 
 |  ├─ ...
 │  └─ {design}.zip                # inside: abc{recipe_id}.script
@@ -128,7 +129,7 @@ Canonical column definitions
 
 | Column name | Type | Description |
 |---|---:|---|
-| `file_path` | string | Relative path to the AIG file inside the dataset (e.g. `base_aigs/ac97_ctrl/ac97_ctrl_syn0_step1.aig`). |
+| `file_path` | string | Canonical relative AIG path (e.g. `base_aigs/ac97_ctrl/ac97_ctrl_syn0_step1.aig`). In zip-preserving storage this logical path resolves inside `base_aigs/ac97_ctrl/syn0.zip`. |
 | `design` | string | Design identifier (e.g. `128`, `ac97_ctrl`). |
 | `recipe_id` | integer | Synthesis recipe identifier (0..1499). |
 | `step_id` | integer | Per-recipe step index. Parse as integer — some datasets use 0-based (0..20) while converted OpenABC‑D uses 1-based (1..21); accept both when ingesting. |

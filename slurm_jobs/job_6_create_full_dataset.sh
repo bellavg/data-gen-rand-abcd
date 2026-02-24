@@ -8,7 +8,7 @@
 
 # Job 6: Create Full Dataset
 # Combines Random AIG and OpenABC-D datasets into unified FULL_DATASET structure
-# Collects and organizes existing metadata into canonical CSV format
+# Move/reorganize only (metadata is deferred to Job 6b)
 
 set -e  # Exit on error
 
@@ -29,15 +29,15 @@ module load SciPy-bundle/2025.06-gfbf-2025a
 
 echo "Loaded modules:"
 echo "✓ Modules loaded: 2025, foss/2025a, Python/3.13.1, SciPy-bundle/2025.06"
-echo "  - Provides: pandas, numpy, tqdm and other scientific Python packages"
+echo "  - Provides Python runtime for dataset tools"
 echo ""
 
 # Define paths
 BASE_DIR="$HOME/data-gen-rand-abcd"
 DATASET_TOOLS_DIR="${BASE_DIR}/dataset_tools"
-RANDOM_DATASET="${BASE_DIR}/OPENABC_DATASET"
-OPENABC_DATASET="/scratch-shared/igardner1/openabc_full/OPENABC_DATASET"  # Full OpenABC-D dataset
-OUTPUT_DATASET="/scratch-shared/$USER/FULL_DATASET"
+RANDOM_DATASET="${RANDOM_DATASET:-${BASE_DIR}/OPENABC_DATASET}"
+OPENABC_DATASET="${OPENABC_DATASET:-/scratch-shared/igardner1/openabc_full/OPENABC_DATASET}"  # Full OpenABC-D dataset
+OUTPUT_DATASET="${OUTPUT_DATASET:-/scratch-shared/$USER/FULL_DATASET}"
 BACKUP_DIR="/scratch-shared/$USER/dataset_backups"
 HOME_ARCHIVE_DIR="${BASE_DIR}"
 CLEANUP_ORIGINALS=false
@@ -83,24 +83,12 @@ echo ""
 # Create backup directory
 mkdir -p "$BACKUP_DIR"
 
-# Verify required Python packages are available
-echo "Verifying Python packages are available..."
-python3 -c "import pandas, numpy; print('✓ pandas and numpy available')" || {
-    echo "ERROR: Required Python packages not available"
-    echo "Make sure SciPy-bundle module is loaded correctly"
-    exit 1
-}
-
-# Check if tqdm is available (may need separate install)
-python3 -c "import tqdm; print('✓ tqdm available')" 2>/dev/null || {
-    echo "Installing tqdm (not in SciPy-bundle)..."
-    pip install --user tqdm || {
-        echo "ERROR: Could not install tqdm"
+for cmd in python3 tar du df find bc; do
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+        echo "ERROR: Required command not found in PATH: $cmd"
         exit 1
-    }
-    echo "✓ tqdm installed"
-}
-echo ""
+    fi
+done
 
 # Change to dataset tools directory
 cd "$DATASET_TOOLS_DIR"
@@ -123,35 +111,28 @@ echo "Creating FULL_DATASET from available sources..."
 echo "This will:"
 echo "  1. Reorganize Random and OpenABC-D data into unified structure"
 echo "     (preserving synthesized syn*.zip in base_aigs for speed)"
-echo "  2. Collect metadata into canonical CSV files"
-echo "  3. Write manifest and dataset summary"
+echo "  2. Write dataset manifest"
+echo "  3. Defer ALL metadata generation to Job 6b"
 echo ""
 echo "Rerun behavior:"
 echo "  - Safe to rerun this job if interrupted"
 echo "  - Existing AIGs already present under base_aigs are preserved"
 echo "  - Existing files are checked (size/zip sanity) and bad ones are recopied"
-echo "  - Metadata is regenerated to keep summaries consistent"
+echo "  - Metadata is intentionally deferred to Job 6b"
 echo ""
 
-WORKERS="${SLURM_CPUS_PER_TASK:-24}"
-if ! [[ "$WORKERS" =~ ^[0-9]+$ ]] || [ "$WORKERS" -lt 1 ]; then
-    WORKERS=4
-fi
-echo "Using metadata workers: $WORKERS"
-echo ""
-
-# Build command for combined dataset
-CMD_ARGS="--output /scratch-shared/$USER/FULL_DATASET --workers $WORKERS --keep-zipped-aigs --verify-existing"
+# Build command for combined dataset (reorganize only)
+CMD_ARGS="--output $OUTPUT_DATASET --keep-zipped-aigs --verify-existing"
 if [ "$OPENABC_AVAILABLE" = true ]; then
     # Combined run: random + OpenABC-D
-    python3 create_full_dataset.py \
-        --random-path "$RANDOM_DATASET" \
-        --openabc-path "$OPENABC_DATASET" \
+    python3 reorganize_datasets.py \
+        --random-dataset "$RANDOM_DATASET" \
+        --openabc-dataset "$OPENABC_DATASET" \
         $CMD_ARGS
 else
     # Random dataset only
-    python3 create_full_dataset.py \
-        --random-path "$RANDOM_DATASET" \
+    python3 reorganize_datasets.py \
+        --random-dataset "$RANDOM_DATASET" \
         $CMD_ARGS
 fi
 
@@ -194,8 +175,7 @@ if [ -d "$OUTPUT_DATASET" ]; then
     
     csv_count=$(find "$OUTPUT_DATASET/metadata" -name "*.csv" 2>/dev/null | wc -l)
     if [ "$csv_count" -eq 0 ]; then
-        echo "✗ No CSV metadata files found"
-        validation_failed=true
+        echo "⚠ No CSV metadata files found (expected before Job 6b)"
     else
         echo "✓ Found $csv_count CSV metadata files"
     fi
@@ -516,11 +496,12 @@ if [ -d "$OUTPUT_DATASET" ]; then
     fi
     echo ""
     echo "🚀 Next steps:"
-    echo "  1. Verify dataset integrity"
-    echo "  2. Consider moving to home directory if size permits (see analysis above)"
-    echo "  3. Run algorithm optimization pipelines (Orchestrate, Deepsyn, Syn4, C2RS)"
-    echo "  4. Begin ML experiments"
-    echo "  5. Backups can be extracted if originals are needed: tar -xzf backup_file.tar.gz"
+    echo "  1. Run Job 6b to populate metadata (random + OpenABC)"
+    echo "  2. Re-run Job 6a validator after Job 6b"
+    echo "  3. Consider moving to home directory if size permits (see analysis above)"
+    echo "  4. Run algorithm optimization pipelines (Orchestrate, Deepsyn, Syn4, C2RS)"
+    echo "  5. Begin ML experiments"
+    echo "  6. Backups can be extracted if originals are needed: tar -xzf backup_file.tar.gz"
     
 else
     echo ""
