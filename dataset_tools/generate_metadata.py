@@ -135,31 +135,37 @@ def collect_random_metadata(random_source, full_dataset_path, design):
         return False
 
     try:
-        # Read existing CSV and convert to canonical format if needed
+        # Read existing CSV and enforce canonical format for random dataset
         df = pd.read_csv(design_metadata_path)
 
-        expected_prefix = f"base_aigs/{design}/"
-        has_base_paths = (
-            "file_path" in df.columns
-            and df["file_path"].astype(str).str.startswith(expected_prefix).all()
-        )
+        if df.empty:
+            print(f"  ✗ Error processing {design}: CSV is empty")
+            return False
 
-        # Check if it already has canonical format
-        if list(df.columns) == CANONICAL_HEADER.split(",") and has_base_paths:
-            # Already in canonical format, just copy
-            shutil.copy2(design_metadata_path, target_metadata_path)
-            print(f"  ✓ Copied {design}.csv (already canonical format)")
-        else:
-            # Need to convert to canonical format
-            canonical_df = convert_to_canonical_format(
-                df,
-                design,
-                "random",
-                force_file_path=True,
-                force_design=True,
+        expected_columns = CANONICAL_HEADER.split(",")
+        if list(df.columns) != expected_columns:
+            print(
+                f"  ✗ Error processing {design}: non-canonical columns. "
+                f"Expected {expected_columns}, got {list(df.columns)}"
             )
-            canonical_df.to_csv(target_metadata_path, index=False)
-            print(f"  ✓ Converted and normalized {design}.csv to canonical format")
+            return False
+
+        expected_prefix = f"base_aigs/{design}/"
+        if not df["file_path"].astype(str).str.startswith(expected_prefix).all():
+            print(
+                f"  ✗ Error processing {design}: file_path values are not canonical "
+                f"(must start with {expected_prefix})"
+            )
+            return False
+
+        if not df["design"].astype(str).eq(design).all():
+            print(
+                f"  ✗ Error processing {design}: design column contains values other than '{design}'"
+            )
+            return False
+
+        shutil.copy2(design_metadata_path, target_metadata_path)
+        print(f"  ✓ Copied {design}.csv (canonical random metadata)")
 
         return True
 
@@ -257,9 +263,9 @@ def convert_to_canonical_format(
     """
     Convert various metadata formats to canonical format defined in README.
     """
-    # Create canonical DataFrame
+    # Create canonical DataFrame with source index preserved.
+    # This avoids scalar assignments landing on an empty frame and later becoming NaN.
     canonical_columns = CANONICAL_HEADER.split(",")
-    canonical_df = pd.DataFrame(columns=canonical_columns)
 
     # Map common column names to canonical names
     column_mapping = {
@@ -294,6 +300,7 @@ def convert_to_canonical_format(
 
     # Apply column mapping
     df_mapped = df.rename(columns=column_mapping)
+    canonical_df = pd.DataFrame(index=df_mapped.index, columns=canonical_columns)
 
     # Fill in canonical columns with available data
     for col in canonical_columns:
@@ -307,22 +314,8 @@ def convert_to_canonical_format(
         elif col == "tier_id":
             canonical_df[col] = ""  # Empty for base AIGs
         elif col == "file_path":
-            # Construct file paths based on design and IDs
-            if (
-                "recipe_id" in canonical_df.columns
-                and "step_id" in canonical_df.columns
-            ):
-                canonical_df[col] = canonical_df.apply(
-                    lambda row: (
-                        f"base_aigs/{design}/{design}_syn{row['recipe_id']}_step{row['step_id']}.aig"
-                        if pd.notna(row.get("recipe_id"))
-                        and pd.notna(row.get("step_id"))
-                        else f"base_aigs/{design}/{design}_orig.aig"
-                    ),
-                    axis=1,
-                )
-            else:
-                canonical_df[col] = f"base_aigs/{design}/{design}_orig.aig"
+            # Defer file_path generation until all key columns are available.
+            canonical_df[col] = ""
         elif col in ["avg_fanout", "max_fanout"]:
             # Fill placeholders now; recomputed below when possible
             if col == "avg_fanout":
@@ -334,6 +327,35 @@ def convert_to_canonical_format(
             canonical_df[col] = (
                 0 if col in ["nodes", "edges", "num_PI", "num_PO", "depth"] else ""
             )
+
+    # Ensure design is always populated for this per-design conversion.
+    canonical_df["design"] = canonical_df["design"].fillna(design)
+    canonical_df.loc[
+        canonical_df["design"].astype(str).str.strip().eq(""), "design"
+    ] = design
+
+    # Build canonical file_path from recipe_id/step_id with robust fallback to orig.
+    recipe_vals = pd.to_numeric(canonical_df["recipe_id"], errors="coerce")
+    step_vals = pd.to_numeric(canonical_df["step_id"], errors="coerce")
+    recipe_int = recipe_vals.round().astype("Int64")
+    step_int = step_vals.round().astype("Int64")
+    generated_file_path = recipe_int.combine(
+        step_int,
+        lambda recipe_id, step_id: (
+            f"base_aigs/{design}/{design}_syn{int(recipe_id)}_step{int(step_id)}.aig"
+            if pd.notna(recipe_id) and pd.notna(step_id)
+            else f"base_aigs/{design}/{design}_orig.aig"
+        ),
+    )
+
+    if force_file_path:
+        canonical_df["file_path"] = generated_file_path
+    else:
+        canonical_df["file_path"] = canonical_df["file_path"].fillna("")
+        empty_path_mask = canonical_df["file_path"].astype(str).str.strip().eq("")
+        canonical_df.loc[empty_path_mask, "file_path"] = generated_file_path.loc[
+            empty_path_mask
+        ]
 
     # Numeric coercion for robust arithmetic
     for numeric_col in [
