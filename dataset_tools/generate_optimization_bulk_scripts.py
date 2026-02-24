@@ -192,8 +192,10 @@ def shell_quote_single(value: str) -> str:
 def render_shard_script(
     algorithm: str,
     design: str,
+    base_dir: str,
     full_dataset: str,
     abc_rc: str,
+    metadata_updater: str,
     input_source: str,
     runtime: Dict,
     algo_cfg: Dict,
@@ -228,8 +230,10 @@ set -euo pipefail
 
 ALGORITHM="{algorithm}"
 DESIGN="{design}"
+BASE_DIR="{base_dir}"
 FULL_DATASET="{full_dataset}"
 ABC_RC="{abc_rc}"
+METADATA_UPDATER="{metadata_updater}"
 INPUT_SOURCE="{input_source}"
 OUTPUT_TIER="{output_tier}"
 INPUT_LABEL="{input_label}"
@@ -245,6 +249,7 @@ INPUT_ROOT="{input_root}"
 OUTPUT_ROOT="optimized_aigs/${{ALGORITHM}}/${{OUTPUT_TIER}}"
 LOG_ROOT="optimized_aigs/logs/${{ALGORITHM}}/${{OUTPUT_TIER}}"
 DONE_ROOT="optimized_aigs/done/${{ALGORITHM}}/${{OUTPUT_TIER}}"
+METADATA_CSV="${{FULL_DATASET}}/metadata/stats/${{DESIGN}}.csv"
 
 if [[ ! -d "${{FULL_DATASET}}/${{INPUT_ROOT}}" ]]; then
   echo "✗ Missing input root: ${{FULL_DATASET}}/${{INPUT_ROOT}}"
@@ -253,7 +258,7 @@ fi
 
 {abc_rc_check}in_dir="${{FULL_DATASET}}/${{INPUT_ROOT}}/${{DESIGN}}"
 out_dir="${{FULL_DATASET}}/${{OUTPUT_ROOT}}/${{DESIGN}}"
-mkdir -p "$out_dir" "${{FULL_DATASET}}/${{LOG_ROOT}}" "${{FULL_DATASET}}/${{DONE_ROOT}}"
+mkdir -p "$out_dir" "${{FULL_DATASET}}/${{LOG_ROOT}}" "${{FULL_DATASET}}/${{DONE_ROOT}}" "${{FULL_DATASET}}/metadata/stats"
 
 if [[ ! -d "$in_dir" ]]; then
   echo "✗ Missing design input directory: $in_dir"
@@ -398,6 +403,20 @@ if [[ $failed -gt 0 ]]; then
   exit 1
 fi
 
+if [[ "$DRY_RUN" != "true" ]]; then
+    if [[ -f "$METADATA_UPDATER" ]]; then
+        python3 "$METADATA_UPDATER" \
+            --full-dataset "$FULL_DATASET" \
+            --design "$DESIGN" \
+            --algorithm "$ALGORITHM" \
+            --tier "$OUTPUT_TIER" \
+            --output-dir "$out_dir" \
+            --metadata-csv "$METADATA_CSV" | tee -a "$log_file"
+    else
+        echo "⚠ Metadata updater not found: $METADATA_UPDATER" | tee -a "$log_file"
+    fi
+fi
+
 echo "algorithm=$ALGORITHM" > "$done_file"
 echo "design=$DESIGN" >> "$done_file"
 echo "input_source=$INPUT_SOURCE" >> "$done_file"
@@ -426,7 +445,9 @@ def write_design_zip(
         if zip_path.exists():
             zip_path.unlink()
 
-        with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        with zipfile.ZipFile(
+            zip_path, "w", compression=zipfile.ZIP_DEFLATED
+        ) as archive:
             for script_path in sorted(tmp_root.glob("*.sh")):
                 archive.write(script_path, arcname=script_path.name)
 
@@ -449,6 +470,7 @@ def main() -> None:
     runtime_config_dir = opt_root / "config"
     runtime_config_path = runtime_config_dir / "optimization_config.json"
     abc_rc = base_dir / "abc.rc"
+    metadata_updater = base_dir / "dataset_tools" / "update_optimization_metadata.py"
 
     config = load_config(config_path)
     available_designs = discover_designs(base_aigs_dir)
@@ -472,7 +494,9 @@ def main() -> None:
     for algorithm in selected_algorithms:
         for tier in ("tier1", "tier2", "final"):
             for design in designs:
-                (opt_root / algorithm / tier / design).mkdir(parents=True, exist_ok=True)
+                (opt_root / algorithm / tier / design).mkdir(
+                    parents=True, exist_ok=True
+                )
 
     runtime = config.get("runtime", {})
     generated_script_count = 0
@@ -487,8 +511,10 @@ def main() -> None:
                 scripts_for_design[script_name] = render_shard_script(
                     algorithm=algorithm,
                     design=design,
+                    base_dir=str(base_dir),
                     full_dataset=str(full_dataset),
                     abc_rc=str(abc_rc),
+                    metadata_updater=str(metadata_updater),
                     input_source=input_source,
                     runtime=runtime,
                     algo_cfg=config["algorithms"][algorithm],

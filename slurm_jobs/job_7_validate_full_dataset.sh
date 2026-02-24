@@ -371,21 +371,52 @@ def sampled_path_exists(rel_path):
     if not rel_path:
         return False
 
-    abs_path = os.path.join(FULL_DATASET, rel_path)
-    if os.path.exists(abs_path):
-        return True
+    normalized_rel = rel_path.strip().lstrip("/")
+    candidates = [
+        os.path.join(FULL_DATASET, normalized_rel),
+        os.path.join(FULL_DATASET, "base_aigs", normalized_rel),
+    ]
+
+    for candidate in candidates:
+        if os.path.exists(candidate):
+            return True
+
+    parts = normalized_rel.split("/")
+
+    # Handle zip-preserved logical paths like:
+    #   <design>/syn<recipe>.zip/<design>_syn<recipe>_step<step>.aig
+    # or
+    #   base_aigs/<design>/syn<recipe>.zip/<design>_syn<recipe>_step<step>.aig
+    if len(parts) >= 3 and parts[-2].endswith(".zip"):
+        zip_parts = parts[:-1]
+        zip_rel = os.path.join(*zip_parts)
+        zip_candidates = [
+            os.path.join(FULL_DATASET, zip_rel),
+            os.path.join(FULL_DATASET, "base_aigs", zip_rel),
+        ]
+        for zip_candidate in zip_candidates:
+            if os.path.exists(zip_candidate):
+                return True
 
     # If file_path points to extracted step AIG, allow zip-preserved layout fallback:
+    # <design>/<design>_syn<recipe>_step<step>.aig -> base_aigs/<design>/syn<recipe>.zip
     # base_aigs/<design>/<design>_syn<recipe>_step<step>.aig -> base_aigs/<design>/syn<recipe>.zip
-    base_name = os.path.basename(rel_path)
+    base_name = os.path.basename(normalized_rel)
     match = re.match(r"(.+)_syn(\d+)_step\d+\.aig$", base_name)
     if not match:
         return False
 
     recipe_id = match.group(2)
-    design_dir = os.path.dirname(abs_path)
-    fallback_zip = os.path.join(design_dir, f"syn{recipe_id}.zip")
-    return os.path.exists(fallback_zip)
+    design_dir_rel = os.path.dirname(normalized_rel)
+    fallback_candidates = [
+        os.path.join(FULL_DATASET, design_dir_rel, f"syn{recipe_id}.zip"),
+        os.path.join(FULL_DATASET, "base_aigs", design_dir_rel, f"syn{recipe_id}.zip"),
+    ]
+    for fallback_zip in fallback_candidates:
+        if os.path.exists(fallback_zip):
+            return True
+
+    return False
 
 # Load manifest/summary if present
 manifest = {}
