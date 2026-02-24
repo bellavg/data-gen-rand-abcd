@@ -19,6 +19,7 @@ import json
 import os
 import shutil
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
 try:
@@ -451,6 +452,26 @@ def create_dataset_summary(full_dataset_path):
     return summary
 
 
+def process_design_metadata(design, sources, full_dataset_path):
+    """
+    Process metadata for a single design.
+    Returns: (design, success, message)
+    """
+    if design in RANDOM_DESIGNS and sources["random"]:
+        for random_source in sources["random"]:
+            if collect_random_metadata(random_source, full_dataset_path, design):
+                return design, True, "random"
+        return design, False, "Random metadata not found"
+
+    if design in OPENABC_DESIGNS and sources["openabc"]:
+        for openabc_source in sources["openabc"]:
+            if collect_openabc_metadata(openabc_source, full_dataset_path, design):
+                return design, True, "openabc"
+        return design, False, "OpenABC metadata not found"
+
+    return design, False, "No source found"
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Collect and organize metadata for Full AIG Dataset"
@@ -503,32 +524,46 @@ def main():
     designs_to_process = [args.design] if args.design else ALL_DESIGNS
 
     success_count = 0
-    total_count = 0
+    total_count = len(designs_to_process)
 
-    for design in designs_to_process:
-        print(f"\nProcessing {design}...")
-        total_count += 1
+    if args.workers > 1 and len(designs_to_process) > 1:
+        worker_count = min(args.workers, len(designs_to_process))
+        print(f"\nProcessing designs in parallel with {worker_count} workers...")
 
-        if design in RANDOM_DESIGNS and sources["random"]:
-            # Process Random AIG design
-            for random_source in sources["random"]:
-                if collect_random_metadata(
-                    random_source, args.full_dataset_path, design
-                ):
-                    success_count += 1
-                    break
+        with ThreadPoolExecutor(max_workers=worker_count) as executor:
+            futures = {
+                executor.submit(
+                    process_design_metadata,
+                    design,
+                    sources,
+                    args.full_dataset_path,
+                ): design
+                for design in designs_to_process
+            }
 
-        elif design in OPENABC_DESIGNS and sources["openabc"]:
-            # Process OpenABC-D design
-            for openabc_source in sources["openabc"]:
-                if collect_openabc_metadata(
-                    openabc_source, args.full_dataset_path, design
-                ):
-                    success_count += 1
-                    break
-
-        else:
-            print(f"  No source found for {design}")
+            for future in as_completed(futures):
+                design = futures[future]
+                try:
+                    _, success, message = future.result()
+                    if success:
+                        success_count += 1
+                        print(f"  ✓ {design}: processed ({message})")
+                    else:
+                        print(f"  ✗ {design}: {message}")
+                except (OSError, ValueError) as exc:
+                    print(f"  ✗ {design}: unexpected error - {exc}")
+    else:
+        for design in designs_to_process:
+            print(f"\nProcessing {design}...")
+            _, success, message = process_design_metadata(
+                design,
+                sources,
+                args.full_dataset_path,
+            )
+            if success:
+                success_count += 1
+            else:
+                print(f"  {message} for {design}")
 
     # Validation
     if args.validate:

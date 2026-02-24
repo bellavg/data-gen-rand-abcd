@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=create_full_dataset
-#SBATCH --time=06:00:00
+#SBATCH --time=18:00:00
 #SBATCH -N 1
 #SBATCH --ntasks-per-node=1
 #SBATCH --partition=genoa
@@ -121,13 +121,27 @@ fi
 
 echo "Creating FULL_DATASET from available sources..."
 echo "This will:"
-echo "  1. Reorganize Random and OpenABC-D AIG files into unified structure"
+echo "  1. Reorganize Random and OpenABC-D data into unified structure"
+echo "     (preserving synthesized syn*.zip in base_aigs for speed)"
 echo "  2. Collect metadata into canonical CSV files"
 echo "  3. Write manifest and dataset summary"
 echo ""
+echo "Rerun behavior:"
+echo "  - Safe to rerun this job if interrupted"
+echo "  - Existing AIGs already present under base_aigs are preserved"
+echo "  - Existing files are checked (size/zip sanity) and bad ones are recopied"
+echo "  - Metadata is regenerated to keep summaries consistent"
+echo ""
+
+WORKERS="${SLURM_CPUS_PER_TASK:-24}"
+if ! [[ "$WORKERS" =~ ^[0-9]+$ ]] || [ "$WORKERS" -lt 1 ]; then
+    WORKERS=4
+fi
+echo "Using metadata workers: $WORKERS"
+echo ""
 
 # Build command for combined dataset
-CMD_ARGS="--output /scratch-shared/$USER/FULL_DATASET --workers 4"
+CMD_ARGS="--output /scratch-shared/$USER/FULL_DATASET --workers $WORKERS --keep-zipped-aigs --verify-existing"
 if [ "$OPENABC_AVAILABLE" = true ]; then
     # Combined run: random + OpenABC-D
     python3 create_full_dataset.py \
@@ -170,11 +184,12 @@ if [ -d "$OUTPUT_DATASET" ]; then
     
     # Check for some actual content
     aig_count=$(find "$OUTPUT_DATASET/base_aigs" -name "*.aig" 2>/dev/null | wc -l)
-    if [ "$aig_count" -eq 0 ]; then
-        echo "✗ No AIG files found in base_aigs directory"
+    zip_count=$(find "$OUTPUT_DATASET/base_aigs" -name "*.zip" 2>/dev/null | wc -l)
+    if [ "$aig_count" -eq 0 ] && [ "$zip_count" -eq 0 ]; then
+        echo "✗ No AIG or ZIP files found in base_aigs directory"
         validation_failed=true
     else
-        echo "✓ Found $aig_count AIG files"
+        echo "✓ Found $aig_count AIG files and $zip_count ZIP files in base_aigs"
     fi
     
     csv_count=$(find "$OUTPUT_DATASET/metadata" -name "*.csv" 2>/dev/null | wc -l)
@@ -321,8 +336,9 @@ if [ -d "$OUTPUT_DATASET" ]; then
     # Count files in different directories
     if [ -d "$OUTPUT_DATASET/base_aigs" ]; then
         AIG_COUNT=$(find "$OUTPUT_DATASET/base_aigs" -name "*.aig" | wc -l)
+        AIG_ZIP_COUNT=$(find "$OUTPUT_DATASET/base_aigs" -name "*.zip" | wc -l)
         AIG_SIZE=$(du -sh "$OUTPUT_DATASET/base_aigs" | cut -f1)
-        echo "AIG files created: $AIG_COUNT (Size: $AIG_SIZE)"
+        echo "Base AIG payload: $AIG_COUNT .aig files, $AIG_ZIP_COUNT .zip files (Size: $AIG_SIZE)"
     fi
     
     if [ -d "$OUTPUT_DATASET/metadata/stats" ]; then
@@ -340,6 +356,23 @@ if [ -d "$OUTPUT_DATASET" ]; then
     echo ""
     echo "Dataset directory structure:"
     ls -la "$OUTPUT_DATASET"
+
+    echo ""
+    echo "📂 FULL DATASET STRUCTURE (max depth 2)"
+    echo "========================================"
+    find "$OUTPUT_DATASET" -maxdepth 2 -type d | sort
+
+    echo ""
+    echo "📂 base_aigs per-design contents"
+    echo "================================"
+    for design_dir in "$OUTPUT_DATASET"/base_aigs/*; do
+        [ -d "$design_dir" ] || continue
+        design_name=$(basename "$design_dir")
+        design_aigs=$(find "$design_dir" -maxdepth 1 -type f -name "*.aig" | wc -l)
+        design_zips=$(find "$design_dir" -maxdepth 1 -type f -name "*.zip" | wc -l)
+        design_other=$(find "$design_dir" -maxdepth 1 -type f | wc -l)
+        echo "  - $design_name: $design_aigs aig, $design_zips zip, $design_other total top-level files"
+    done
     
     echo ""
     echo "📁 Directory sizes breakdown:"
