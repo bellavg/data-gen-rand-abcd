@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "notes": "Canonical optimization config source. Edit this file, then re-run job_7_generate_optimization_scripts.sh.",
+  "notes": "Canonical optimization config source. Edit this file, then re-run slurm_jobs/job_8_make_optimize_scripts.sh.",
   "runtime": {
     "timeout_seconds": 600,
     "threads": 1,

@@ -494,6 +494,12 @@ def main():
     parser.add_argument(
         "--openabc-source", help="Override OpenABC-D dataset source path"
     )
+    parser.add_argument(
+        "--source-scope",
+        choices=["all", "random", "openabc"],
+        default="all",
+        help="Limit processing to a dataset source type",
+    )
 
     args = parser.parse_args()
 
@@ -521,7 +527,21 @@ def main():
     print(f"Found OpenABC-D sources: {sources['openabc']}")
 
     # Process designs
-    designs_to_process = [args.design] if args.design else ALL_DESIGNS
+    if args.design:
+        designs_to_process = [args.design]
+    elif args.source_scope == "random":
+        designs_to_process = RANDOM_DESIGNS
+    elif args.source_scope == "openabc":
+        designs_to_process = OPENABC_DESIGNS
+    else:
+        designs_to_process = ALL_DESIGNS
+
+    if args.source_scope == "random" and not sources["random"]:
+        print("Error: --source-scope random requires a Random AIG source")
+        sys.exit(1)
+    if args.source_scope == "openabc" and not sources["openabc"]:
+        print("Error: --source-scope openabc requires an OpenABC-D source")
+        sys.exit(1)
 
     success_count = 0
     total_count = len(designs_to_process)

@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Dict, List
 
 ALGORITHMS = ["Orchestrate", "Deepsyn", "Syn4", "C2RS"]
+RANDOM_AIG_DESIGNS = ["128", "256", "512", "1024", "2048", "4096", "8192", "16384"]
 
 
 def parse_args() -> argparse.Namespace:
@@ -37,6 +38,21 @@ def parse_args() -> argparse.Namespace:
         "--config",
         default=None,
         help="Path to optimization config JSON (default: <base-dir>/dataset_tools/optimization_config.json)",
+    )
+    parser.add_argument(
+        "--design-group",
+        choices=["all", "random", "openabc"],
+        default="all",
+        help="Design subset to target (default: all)",
+    )
+    parser.add_argument(
+        "--designs",
+        nargs="+",
+        default=None,
+        help=(
+            "Explicit design names to include. Accepts space-separated and/or comma-separated values "
+            "(e.g., --designs 128 256 or --designs 128,256)."
+        ),
     )
     return parser.parse_args()
 
@@ -63,6 +79,50 @@ def discover_designs(base_aigs_dir: Path) -> List[str]:
     if not designs:
         raise ValueError(f"No design directories found in: {base_aigs_dir}")
     return designs
+
+
+def normalize_design_inputs(raw_designs: List[str] | None) -> List[str]:
+    if not raw_designs:
+        return []
+    normalized: List[str] = []
+    for token in raw_designs:
+        for piece in token.split(","):
+            design = piece.strip()
+            if design:
+                normalized.append(design)
+    return sorted(set(normalized))
+
+
+def select_designs(
+    available_designs: List[str],
+    design_group: str,
+    explicit_designs: List[str],
+) -> List[str]:
+    available = set(available_designs)
+
+    if design_group == "random":
+        selected = available.intersection(RANDOM_AIG_DESIGNS)
+    elif design_group == "openabc":
+        selected = available.difference(RANDOM_AIG_DESIGNS)
+    else:
+        selected = set(available_designs)
+
+    if explicit_designs:
+        requested = set(explicit_designs)
+        missing = sorted(requested.difference(available))
+        if missing:
+            raise ValueError(
+                "Requested designs not found in base_aigs: " + ", ".join(missing)
+            )
+        selected = selected.intersection(requested)
+
+    selected_list = sorted(selected)
+    if not selected_list:
+        raise ValueError(
+            "No designs selected after applying filters. "
+            f"design_group={design_group}, explicit_designs={explicit_designs or '[]'}"
+        )
+    return selected_list
 
 
 def shell_quote_single(value: str) -> str:
@@ -105,57 +165,108 @@ ABC_RC=\"{abc_rc}\"
 TIER=\"${{TIER:-1}}\"
 DRY_RUN=\"${{DRY_RUN:-{str(runtime.get("dry_run", True)).lower()}}}\"
 TIMEOUT_SECONDS=\"${{TIMEOUT_SECONDS:-{int(runtime.get("timeout_seconds", 600))}}}\"
-THREADS=\"${{THREADS:-{int(runtime.get("threads", 1))}}}\"
-MAX_RETRIES=\"${{MAX_RETRIES:-{int(runtime.get("max_retries", 2))}}}\"
+run_one_input() {{
+    local input_for_cmd="$1"
+    local logical_input_id="$2"
+    local filename="$3"
+    local output_aig="${{out_dir}}/${{filename}}"
 
-COMMAND_TEMPLATE='{command_template_escaped}'
+    if [[ -f "$output_aig" ]]; then
+        skipped=$((skipped + 1))
+        return 0
+    fi
 
-if [[ \"$TIER\" != \"1\" && \"$TIER\" != \"2\" ]]; then
-  echo \"✗ Invalid TIER=$TIER (must be 1 or 2)\"
-  exit 1
-fi
+    local seed_hex
+    local seed
+    seed_hex=$(printf "%s" "$logical_input_id" | shasum | awk '{{print $1}}' | cut -c1-8)
+    seed=$((16#$seed_hex))
 
-if [[ \"$TIER\" == \"1\" ]]; then
-  INPUT_ROOT=\"base_aigs\"
+    local cmd
+    cmd="$COMMAND_TEMPLATE"
+    cmd="${{cmd//\{{input_aig\}}/$input_for_cmd}}"
+    cmd="${{cmd//\{{output_aig\}}/$output_aig}}"
+    cmd="${{cmd//\{{timeout_seconds\}}/$TIMEOUT_SECONDS}}"
+    cmd="${{cmd//\{{threads\}}/$THREADS}}"
+    cmd="${{cmd//\{{seed\}}/$seed}}"
+    cmd="${{cmd//\{{abc_rc\}}/$ABC_RC}}"
+
+    processed=$((processed + 1))
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+        echo "[DRY_RUN] $cmd" | tee -a "$log_file"
+        created=$((created + 1))
+        if [[ "$ALGORITHM" == "Deepsyn" ]]; then
+            echo "$seed" > "${{output_aig%.aig}}.seed.txt"
+        fi
+        return 0
+    fi
+
+    local ok=false
+    local attempt=0
+    while [[ "$ok" == "false" && $attempt -le $MAX_RETRIES ]]; do
+        if eval "$cmd"; then
+            ok=true
+        else
+            attempt=$((attempt + 1))
+        fi
+    done
+
+    if [[ "$ok" == "true" ]]; then
+        created=$((created + 1))
+        if [[ "$ALGORITHM" == "Deepsyn" ]]; then
+            echo "$seed" > "${{output_aig%.aig}}.seed.txt"
+        fi
+        return 0
+    fi
+
+    failed=$((failed + 1))
+    echo "✗ Failed: $logical_input_id" | tee -a "$log_file"
+    return 1
+}}
+
+if [[ "$TIER" == "1" ]]; then
+    if ! command -v unzip >/dev/null 2>&1; then
+        echo "✗ Missing required tool: unzip" | tee -a "$log_file"
+        exit 1
+    fi
+
+    while IFS= read -r -d '' input_aig; do
+        filename="$(basename "$input_aig")"
+        run_one_input "$input_aig" "$input_aig" "$filename"
+    done < <(find "$in_dir" -maxdepth 1 -type f -name "*_orig.aig" -print0 | sort -z)
+
+    while IFS= read -r -d '' zip_path; do
+        while IFS= read -r member; do
+            [[ -z "$member" ]] && continue
+            filename="$(basename "$member")"
+            logical_input="$zip_path::$member"
+            input_for_cmd="$logical_input"
+            tmp_input=""
+
+            if [[ "$DRY_RUN" != "true" ]]; then
+                tmp_input="$(mktemp "${{TMPDIR:-/tmp}}/opt_input_${{DESIGN}}_XXXXXX.aig")"
+                if ! unzip -p "$zip_path" "$member" > "$tmp_input"; then
+                    rm -f "$tmp_input"
+                    failed=$((failed + 1))
+                    echo "✗ Failed to extract: $zip_path::$member" | tee -a "$log_file"
+                    continue
+                fi
+                input_for_cmd="$tmp_input"
+            fi
+
+            run_one_input "$input_for_cmd" "$logical_input" "$filename"
+
+            if [[ -n "$tmp_input" ]]; then
+                rm -f "$tmp_input"
+            fi
+        done < <(unzip -Z1 "$zip_path" '*.aig' | sort)
+    done < <(find "$in_dir" -maxdepth 1 -type f -name 'syn*.zip' -print0 | sort -z)
 else
-  INPUT_ROOT=\"optimized_aigs/${{ALGORITHM}}/tier1\"
+    while IFS= read -r -d '' input_aig; do
+        filename="$(basename "$input_aig")"
+        run_one_input "$input_aig" "$input_aig" "$filename"
+    done < <(find "$in_dir" -type f -name "*.aig" -print0 | sort -z)
 fi
-OUTPUT_ROOT=\"optimized_aigs/${{ALGORITHM}}/tier${{TIER}}\"
-LOG_ROOT=\"optimized_aigs/logs/${{ALGORITHM}}/tier${{TIER}}\"
-DONE_ROOT=\"optimized_aigs/done/${{ALGORITHM}}/tier${{TIER}}\"
-
-if [[ ! -d \"${{FULL_DATASET}}/${{INPUT_ROOT}}\" ]]; then
-  echo \"✗ Missing input root: ${{FULL_DATASET}}/${{INPUT_ROOT}}\"
-  exit 1
-fi
-
-{abc_rc_check}
-in_dir=\"${{FULL_DATASET}}/${{INPUT_ROOT}}/${{DESIGN}}\"
-out_dir=\"${{FULL_DATASET}}/${{OUTPUT_ROOT}}/${{DESIGN}}\"
-mkdir -p \"$out_dir\" \"${{FULL_DATASET}}/${{LOG_ROOT}}\" \"${{FULL_DATASET}}/${{DONE_ROOT}}\"
-
-if [[ ! -d \"$in_dir\" ]]; then
-  echo \"✗ Missing design input directory: $in_dir\"
-  exit 1
-fi
-
-log_file=\"${{FULL_DATASET}}/${{LOG_ROOT}}/${{DESIGN}}.log\"
-done_file=\"${{FULL_DATASET}}/${{DONE_ROOT}}/${{DESIGN}}.done\"
-
-if [[ -f \"$done_file\" ]]; then
-  echo \"✓ Already completed: $done_file\"
-  exit 0
-fi
-
-echo \"==========================================\" | tee -a \"$log_file\"
-echo \"Optimization shard runner\" | tee -a \"$log_file\"
-echo \"Algorithm: $ALGORITHM\" | tee -a \"$log_file\"
-echo \"Design:    $DESIGN\" | tee -a \"$log_file\"
-echo \"Tier:      $TIER\" | tee -a \"$log_file\"
-echo \"Input:     $in_dir\" | tee -a \"$log_file\"
-echo \"Output:    $out_dir\" | tee -a \"$log_file\"
-echo \"DRY_RUN:   $DRY_RUN\" | tee -a \"$log_file\"
-echo \"==========================================\" | tee -a \"$log_file\"
 
 processed=0
 created=0
@@ -256,7 +367,13 @@ def main() -> None:
     abc_rc = base_dir / "abc.rc"
 
     config = load_config(config_path)
-    designs = discover_designs(base_aigs_dir)
+    available_designs = discover_designs(base_aigs_dir)
+    requested_designs = normalize_design_inputs(args.designs)
+    designs = select_designs(
+        available_designs=available_designs,
+        design_group=args.design_group,
+        explicit_designs=requested_designs,
+    )
 
     scripts_dir.mkdir(parents=True, exist_ok=True)
     manifests_dir.mkdir(parents=True, exist_ok=True)
@@ -302,6 +419,9 @@ def main() -> None:
         "runtime_config_copy": str(runtime_config_path),
         "scripts_dir": str(scripts_dir),
         "algorithms": ALGORITHMS,
+        "design_group": args.design_group,
+        "requested_designs": requested_designs,
+        "available_design_count": len(available_designs),
         "design_count": len(designs),
         "designs": designs,
         "script_count": len(generated_scripts),
@@ -318,6 +438,8 @@ def main() -> None:
     print(f"Runtime config copy: {runtime_config_path}")
     print(f"Scripts dir: {scripts_dir}")
     print(f"Manifest: {manifest_path}")
+    print(f"Design group: {args.design_group}")
+    print(f"Requested designs: {requested_designs if requested_designs else '[]'}")
     print(f"Designs: {len(designs)}")
     print(f"Scripts: {len(generated_scripts)}")
 
