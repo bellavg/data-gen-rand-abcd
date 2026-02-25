@@ -36,10 +36,10 @@ find "$STAT_DIR" -type f | head -n 20
 
 echo "\nInspecting CSV headers and sample content to detect per-recipe/step columns..."
 
-python3 - <<'PY'
-import glob, os, pandas as pd
+python3 - "$STAT_DIR" <<'PY'
+import sys, glob, os, pandas as pd
 
-stat_dir = os.path.normpath(os.environ.get('STAT_DIR'))
+stat_dir = os.path.normpath(sys.argv[1])
 inspect_paths = []
 
 for sub in ('finalAig','adp'):
