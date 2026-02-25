@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=opt_orch
+#SBATCH --job-name=8a_opt_orch
 #SBATCH --time=24:00:00
 #SBATCH -N 1
 #SBATCH --ntasks-per-node=1

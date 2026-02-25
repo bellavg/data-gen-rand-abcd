@@ -4,7 +4,7 @@
 #SBATCH -N 1
 #SBATCH --ntasks-per-node=1
 #SBATCH --partition=genoa
-#SBATCH --output=logs/gen_opt_scripts_%j.out
+#SBATCH --output=logs/8_gen_opt_scripts_%j.out
 
 # Job 8: Generate Optimization Bulk Scripts
 # Mirrors the Job 2/3 pattern:

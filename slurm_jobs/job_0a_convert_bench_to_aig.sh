@@ -1,12 +1,13 @@
 #!/bin/bash
 #SBATCH -p genoa
 #SBATCH -t 24:00:00
-#SBATCH --job-name=openabc_bench_to_aig
-#SBATCH --nodes=1
-#SBATCH --ntasks=1
+#SBATCH --job-name=0a_sopenabc_bench_to_aig
 #SBATCH --output=logs/0a_openabc_bench_to_aig_%j.out
 
 set -euo pipefail
+
+# Ensure log directory exists (SBATCH --output uses logs/...)
+mkdir -p logs
 
 echo "=========================================="
 echo "JOB 0A: Convert OpenABC BENCH -> AIG in FULL_DATASET"
@@ -21,7 +22,7 @@ module load 2025
 module load foss/2025a
 module load p7zip/17.05-GCCcore-14.2.0
 
-for cmd in unzip zip 7z find awk wc mktemp; do
+for cmd in unzip zip 7z find awk wc mktemp xargs; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
         echo "ERROR: Required command not found: $cmd"
         exit 1
@@ -126,6 +127,9 @@ for design in "${OPENABC_DESIGNS[@]}"; do
         tmp_aig="$tmp_root/aig"
         mkdir -p "$tmp_bench" "$tmp_aig"
 
+        # Ensure temporary directory is removed on any early exit from this iteration.
+        trap 'rm -rf "$tmp_root"' EXIT
+
         # Try unzip first (common case), then fallback to 7z for odd zip layouts.
         unzip -o -q "$syn_zip" "*.bench" -d "$tmp_bench" >/dev/null 2>&1 || true
 
@@ -141,11 +145,11 @@ for design in "${OPENABC_DESIGNS[@]}"; do
             continue
         fi
 
-        find "$tmp_bench" -type f \( -iname "*.bench" \) | while read -r bench_file; do
+        while read -r bench_file; do
             bench_base="$(basename "$bench_file" .bench)"
             aig_file="$tmp_aig/${bench_base}.aig"
             convert_bench_to_aig "$bench_file" "$aig_file"
-        done
+        done < <(find "$tmp_bench" -type f -iname "*.bench")
 
         aig_count="$(find "$tmp_aig" -type f -name "*.aig" | wc -l)"
         if [ "$aig_count" -ne "$bench_count" ]; then
@@ -155,10 +159,13 @@ for design in "${OPENABC_DESIGNS[@]}"; do
         fi
 
         new_zip="$tmp_root/new.zip"
-        (cd "$tmp_aig" && zip -q -j "$new_zip" ./*.aig)
+        # Create zip robustly even with many files or unusual names
+        (cd "$tmp_aig" && find . -type f -name '*.aig' -print0 | xargs -0 zip -q -j "$new_zip")
 
         mv "$new_zip" "$syn_zip"
         rm -rf "$tmp_root"
+        # Clear the per-iteration trap now that tmp_root was removed successfully
+        trap - EXIT
 
         converted_zip=$((converted_zip + 1))
     done
