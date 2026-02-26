@@ -145,11 +145,32 @@ for design in "${OPENABC_DESIGNS[@]}"; do
             continue
         fi
 
-        while read -r bench_file; do
+        # Convert extracted .bench files to .aig in parallel using a small worker pool.
+        # Build a null-delimited list of bench/aig pairs and run a tiny helper script
+        # with xargs -0 -n2 -P "$WORKERS" to safely parallelize ABC invocations.
+        pairs_file="$tmp_root/pairs0"
+        convert_script="$tmp_root/convert_one.sh"
+
+        >"$pairs_file"
+        while IFS= read -r -d '' bench_file; do
             bench_base="$(basename "$bench_file" .bench)"
             aig_file="$tmp_aig/${bench_base}.aig"
-            convert_bench_to_aig "$bench_file" "$aig_file"
-        done < <(find "$tmp_bench" -type f -iname "*.bench")
+            printf '%s\0%s\0' "$bench_file" "$aig_file" >>"$pairs_file"
+        done < <(find "$tmp_bench" -type f -iname "*.bench" -print0)
+
+        cat >"$convert_script" <<'SH'
+#!/bin/bash
+bench="$1"
+aig="$2"
+"$ABC_BIN" -c "read_bench '$bench'; strash; write '$aig'" >/dev/null 2>&1
+SH
+        chmod +x "$convert_script"
+
+        if [ -s "$pairs_file" ]; then
+            xargs -0 -n2 -P "$WORKERS" "$convert_script" <"$pairs_file"
+        fi
+
+        rm -f "$pairs_file" "$convert_script"
 
         aig_count="$(find "$tmp_aig" -type f -name "*.aig" | wc -l)"
         if [ "$aig_count" -ne "$bench_count" ]; then

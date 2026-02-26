@@ -204,14 +204,43 @@ def collect_openabc_metadata(openabc_source, full_dataset_path, design):
         full_dataset_path, "metadata", "stats", f"{design}.csv"
     )
 
-    # Look for design-specific CSV files in statistics folder
+    # Prefer deriving metadata directly from the AIG files present in FULL_DATASET/base_aigs
+    # This is robust when job_0a has converted bench->aig and packed AIGs into syn*.zip
+    design_aig_dir = os.path.join(full_dataset_path, "base_aigs", design)
+    if os.path.isdir(design_aig_dir):
+        # If syn*.zip archives exist, extract AIGs and compute metrics directly
+        zip_glob = glob.glob(os.path.join(design_aig_dir, "syn*.zip"))
+        orig_aig = os.path.join(design_aig_dir, f"{design}_orig.aig")
+        if zip_glob:
+            try:
+                df = collect_openabc_metadata_from_aigs(design_aig_dir, design)
+                df.to_csv(target_metadata_path, index=False)
+                print(f"  ✓ Generated metadata for {design} from AIG payloads (zips)")
+                return True
+            except Exception as e:  # noqa: BLE001
+                print(f"  ✗ Error generating metadata from AIGs for {design}: {e}")
+
+        # Fallback: if an orig AIG exists, synthesize a single-row CSV for it
+        if os.path.isfile(orig_aig):
+            try:
+                row = collect_single_aig_metadata(
+                    orig_aig, design, recipe_id=None, step_id=None
+                )
+                pd.DataFrame([row], columns=CANONICAL_HEADER.split(",")).to_csv(
+                    target_metadata_path, index=False
+                )
+                print(f"  ✓ Wrote metadata for {design} from orig AIG")
+                return True
+            except Exception as e:
+                print(f"  ✗ Error processing orig AIG for {design}: {e}")
+
+    # Otherwise fall back to statistics files as before
     possible_files = [
         # finalAig folder has graph characteristics
         os.path.join(stats_path, "finalAig", f"processed_{design}.csv"),
         os.path.join(stats_path, "finalAig", f"{design}.csv"),
         # adp folder has area/delay/power info
-        os.path.join(stats_path, "adp", f"{design}.csv"),
-        # Direct in statistics folder
+        os.path.join(stats_path, "adp", f"ad_{design}.csv"),
         os.path.join(stats_path, f"{design}.csv"),
         os.path.join(stats_path, f"processed_{design}.csv"),
         # Check for PKL files that might need conversion
@@ -269,6 +298,249 @@ def collect_openabc_metadata(openabc_source, full_dataset_path, design):
     except (FileNotFoundError, pd.errors.EmptyDataError, ValueError) as e:
         print(f"  ✗ Error processing {design}: {e}")
         return False
+
+
+def collect_openabc_metadata_from_aigs(design_aig_dir, design):
+    """
+    Extract AIG files from syn*.zip and the orig AIG and compute canonical metadata rows.
+    Returns a DataFrame with canonical columns.
+    """
+    import tempfile
+
+    rows = []
+    header_cols = CANONICAL_HEADER.split(",")
+
+    # helper to process a single aig file path
+    def process_aig_file(aig_path, recipe_id=None, step_id=None):
+        info = collect_single_aig_metadata(
+            aig_path, design, recipe_id=recipe_id, step_id=step_id
+        )
+        rows.append(info)
+
+    # process orig.aig if present
+    orig_path = os.path.join(design_aig_dir, f"{design}_orig.aig")
+    if os.path.isfile(orig_path):
+        process_aig_file(orig_path, recipe_id=None, step_id=None)
+
+    # iterate syn*.zip
+    for zipf in sorted(glob.glob(os.path.join(design_aig_dir, "syn*.zip"))):
+        # infer recipe id from filename: syn{N}.zip
+        base = os.path.basename(zipf)
+        try:
+            recipe_num = int(base.replace("syn", "").replace(".zip", ""))
+        except Exception:
+            recipe_num = None
+
+        with tempfile.TemporaryDirectory(prefix="genmeta_") as td:
+            try:
+                # extract only .aig files
+                import subprocess
+
+                subprocess.run(["unzip", "-q", zipf, "*.aig", "-d", td], check=True)
+            except Exception:
+                # try 7z fallback
+                try:
+                    subprocess.run(
+                        ["7z", "x", zipf, f"-o{td}", "*.aig", "-y"], check=True
+                    )
+                except Exception:
+                    continue
+
+            for root, _, files in os.walk(td):
+                for fn in files:
+                    if fn.lower().endswith(".aig"):
+                        full = os.path.join(root, fn)
+                        # try to extract step id from filename pattern *_step{N}.aig
+                        step = None
+                        import re
+
+                        m = re.search(r"_step(\d+)", fn)
+                        if m:
+                            step = int(m.group(1))
+                        else:
+                            # default to final step (21)
+                            step = 21
+                        process_aig_file(full, recipe_id=recipe_num, step_id=step)
+
+    df = pd.DataFrame(rows, columns=header_cols)
+
+    # Coerce recipe_id and step_id to nullable integers where possible
+    if "recipe_id" in df.columns:
+        df["recipe_id"] = df["recipe_id"].replace("", pd.NA)
+        try:
+            df["recipe_id"] = df["recipe_id"].astype("Int64")
+        except Exception:
+            pass
+    if "step_id" in df.columns:
+        df["step_id"] = df["step_id"].replace("", pd.NA)
+        try:
+            df["step_id"] = df["step_id"].astype("Int64")
+        except Exception:
+            pass
+
+    # Ensure algorithm column exists and is string
+    if "algorithm" not in df.columns:
+        df["algorithm"] = ""
+    df["algorithm"] = df["algorithm"].fillna("").astype(str)
+
+    # Set tier_id for original AIG rows to 0, leave others as NA/blank
+    if "tier_id" in df.columns:
+        df["tier_id"] = df["tier_id"].replace("", pd.NA)
+        # original rows have file_path ending with '_orig.aig'
+        orig_mask = df["file_path"].astype(str).str.endswith("_orig.aig")
+        df.loc[orig_mask, "tier_id"] = 0
+        try:
+            df["tier_id"] = df["tier_id"].astype("Int64")
+        except Exception:
+            pass
+
+    # Ensure numeric columns have proper dtypes
+    for c in ("nodes", "edges", "num_PI", "num_PO", "depth"):
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0).astype(int)
+    for c in ("avg_fanout",):
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0.0).astype(float)
+    if "max_fanout" in df.columns:
+        df["max_fanout"] = (
+            pd.to_numeric(df["max_fanout"], errors="coerce").fillna(0).astype(int)
+        )
+
+    # Sort: place original AIG rows first, then by recipe_id, then step_id
+    def sort_key(row):
+        # orig -> recipe_id NA; set recipe_sort = -1 to put first
+        rid = row["recipe_id"]
+        sid = row["step_id"]
+        recipe_sort = -1 if pd.isna(rid) else int(rid)
+        step_sort = -1 if pd.isna(sid) else int(sid)
+        return (recipe_sort, step_sort)
+
+    try:
+        df = df.sort_values(by=["recipe_id", "step_id"], na_position="first")
+    except Exception:
+        # fallback: no-op
+        pass
+
+    return df
+
+
+def collect_single_aig_metadata(aig_path, design, recipe_id=None, step_id=None):
+    """
+    Parse a single AIG (AAG) file to extract metrics. Returns an ordered list matching CANONICAL_HEADER.
+    """
+    # default values
+    file_rel = None
+    nodes = 0
+    edges = 0
+    num_PI = 0
+    num_PO = 0
+    depth = 0
+    avg_fanout = 0.0
+    max_fanout = 0
+
+    # attempt to parse AAG (textual AIGER) header
+    try:
+        with open(aig_path, "r", errors="ignore") as f:
+            first = f.readline().strip().split()
+            if first and first[0] == "aag":
+                # aag M I L O A
+                _, M, I, L, O, A = first[:6]
+                num_PI = int(I)
+                num_PO = int(O)
+                nodes = int(A)
+                edges = nodes * 2
+
+                # parse gates to compute depth and fanout
+                # map literal -> node index (literal//2)
+                gates = []
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    parts = line.split()
+                    if len(parts) < 3:
+                        continue
+                    lhs = int(parts[0]) // 2
+                    rhs0 = int(parts[1]) // 2
+                    rhs1 = int(parts[2]) // 2
+                    gates.append((lhs, rhs0, rhs1))
+
+                # build graph
+                children = {}
+                fanout = {}
+                for lhs, r0, r1 in gates:
+                    children.setdefault(lhs, []).extend([r0, r1])
+                    for r in (r0, r1):
+                        fanout[r] = fanout.get(r, 0) + 1
+
+                # compute depth via topological-like DP; inputs have depth 0
+                depths = {}
+                # find all nodes
+                all_nodes = (
+                    set([lhs for lhs, _, _ in gates])
+                    | set([r for _, r, _ in gates])
+                    | set([r for _, _, r in gates])
+                )
+                # Build reverse mapping: node -> parents
+                parents = {}
+                for lhs, r0, r1 in gates:
+                    parents.setdefault(r0, []).append(lhs)
+                    parents.setdefault(r1, []).append(lhs)
+
+                # seed input depths as 0 for literals that never appear as lhs
+                for n in all_nodes:
+                    if n not in children:
+                        depths[n] = 0
+
+                # propagate
+                for _ in range(len(gates) + 5):
+                    for lhs, r0, r1 in gates:
+                        d0 = depths.get(r0, 0)
+                        d1 = depths.get(r1, 0)
+                        newd = max(d0, d1) + 1
+                        if depths.get(lhs, -1) != newd:
+                            depths[lhs] = newd
+
+                if depths:
+                    depth = max(depths.values())
+
+                if fanout:
+                    vals = list(fanout.values())
+                    avg_fanout = float(sum(vals)) / len(vals)
+                    max_fanout = max(vals)
+                else:
+                    avg_fanout = 0.0
+                    max_fanout = 0
+
+    except Exception:
+        # fallback: leave defaults
+        pass
+
+    # build canonical file_path relative to FULL_DATASET root
+    base_name = os.path.basename(aig_path)
+    if recipe_id is None:
+        file_path = f"base_aigs/{design}/{design}_orig.aig"
+    else:
+        file_path = (
+            f"base_aigs/{design}/{design}_syn{int(recipe_id)}_step{int(step_id)}.aig"
+        )
+
+    row = [
+        file_path,
+        design,
+        "" if recipe_id is None else int(recipe_id),
+        "" if step_id is None else int(step_id),
+        0 if (recipe_id is None and base_name.endswith("_orig.aig")) else "",
+        "",  # algorithm empty for base and for these stats
+        int(nodes),
+        int(edges),
+        int(num_PI),
+        int(num_PO),
+        int(depth),
+        float(round(avg_fanout, 3)),
+        int(max_fanout),
+    ]
+    return row
 
 
 def convert_to_canonical_format(df, design, _source_type):
@@ -348,6 +620,13 @@ def convert_to_canonical_format(df, design, _source_type):
     # Build canonical file_path from recipe_id/step_id with robust fallback to orig.
     recipe_vals = pd.to_numeric(canonical_df["recipe_id"], errors="coerce")
     step_vals = pd.to_numeric(canonical_df["step_id"], errors="coerce")
+
+    # OpenABC statistics often report per-recipe final-AIG metrics with `sid` but
+    # without an explicit `step_id`. When recipe is present but step is missing,
+    # treat it as the final step (21) so the generated `file_path` points to
+    # the expected `*_syn{recipe}_step21.aig` file rather than the orig AIG.
+    if _source_type == "openabc":
+        step_vals = step_vals.fillna(21)
     recipe_int = recipe_vals.round().astype("Int64")
     step_int = step_vals.round().astype("Int64")
     generated_file_path = recipe_int.combine(
