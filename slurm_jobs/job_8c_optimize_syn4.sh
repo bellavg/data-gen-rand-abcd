@@ -94,9 +94,33 @@ while IFS= read -r design_zip; do
 
     if unzip -q "$design_zip" "optimizeBulk_Syn4_*_${SOURCE_LABEL}.sh" -d "$tmp_extract_dir" 2>/dev/null; then
         find "$tmp_extract_dir" -type f -name 'optimizeBulk_Syn4_*.sh' -exec chmod +x {} +
-        while IFS= read -r script_file; do
-            INPUT_SOURCE="$INPUT_SOURCE" DRY_RUN="$DRY_RUN" bash "$script_file"
-        done < <(find "$tmp_extract_dir" -type f -name 'optimizeBulk_Syn4_*.sh' | sort)
+        mapfile -t script_list < <(find "$tmp_extract_dir" -type f -name 'optimizeBulk_Syn4_*.sh' | sort)
+        if [ "${#script_list[@]}" -eq 0 ]; then
+            rm -rf "$tmp_extract_dir"
+            continue
+        fi
+
+        if [ -n "${PARALLELISM:-}" ]; then
+            :
+        elif [ -n "${SLURM_CPUS_ON_NODE:-}" ]; then
+            PARALLELISM="$SLURM_CPUS_ON_NODE"
+        elif [ -n "${SLURM_CPUS_PER_TASK:-}" ]; then
+            PARALLELISM="$SLURM_CPUS_PER_TASK"
+        elif command -v nproc >/dev/null 2>&1; then
+            PARALLELISM=$(nproc)
+        else
+            PARALLELISM=4
+        fi
+
+        if command -v parallel >/dev/null 2>&1; then
+            printf "%s\n" "${script_list[@]}" | parallel -j "$PARALLELISM" INPUT_SOURCE="$INPUT_SOURCE" DRY_RUN="$DRY_RUN" bash {}
+        else
+            for f in "${script_list[@]}"; do
+                INPUT_SOURCE="$INPUT_SOURCE" DRY_RUN="$DRY_RUN" bash "$f" &
+                while [ "$(jobs -rp | wc -l)" -ge "$PARALLELISM" ]; do sleep 1; done
+            done
+            wait
+        fi
     fi
 
     rm -rf "$tmp_extract_dir"

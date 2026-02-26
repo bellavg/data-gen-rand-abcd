@@ -158,16 +158,36 @@ for design in "${OPENABC_DESIGNS[@]}"; do
             printf '%s\0%s\0' "$bench_file" "$aig_file" >>"$pairs_file"
         done < <(find "$tmp_bench" -type f -iname "*.bench" -print0)
 
-        cat >"$convert_script" <<'SH'
+        mkdir -p "$tmp_root/abc_logs"
+
+        # Create a converter helper that logs ABC output per-bench and records failures
+        cat >"$convert_script" <<SH
 #!/bin/bash
-bench="$1"
-aig="$2"
-"$ABC_BIN" -c "read_bench '$bench'; strash; write '$aig'" >/dev/null 2>&1
+bench="\$1"
+aig="\$2"
+logdir="$tmp_root/abc_logs"
+mkdir -p "${logdir}"
+logfile="${logdir}/$(basename "\$bench").log"
+"$ABC_BIN" -c "read_bench '\$bench'; strash; write '\$aig'" >"\$logfile" 2>&1
+rc=\$?
+if [ \$rc -ne 0 ]; then
+  printf '%s %s %d\n' "$(date '+%Y-%m-%dT%H:%M:%S')" "\$bench" \$rc >>"$tmp_root/failed.lst"
+fi
+# Always exit zero so the xargs pool doesn't cause the outer script to exit (we handle failures via failed.lst)
+exit 0
 SH
         chmod +x "$convert_script"
 
         if [ -s "$pairs_file" ]; then
-            xargs -0 -n2 -P "$WORKERS" "$convert_script" <"$pairs_file"
+            xargs -0 -n2 -P "$WORKERS" "$convert_script" <"$pairs_file" || true
+        fi
+
+        # If any conversions failed, persist a summary to the dataset-level error log
+        if [ -f "$tmp_root/failed.lst" ] && [ -s "$tmp_root/failed.lst" ]; then
+            mkdir -p "$FULL_DATASET_DIR/logs"
+            echo "FAILED conversions in $(basename "$syn_zip") (design=$design):" >>"$FULL_DATASET_DIR/convert_errors.log"
+            sed -n '1,100p' "$tmp_root/failed.lst" >>"$FULL_DATASET_DIR/convert_errors.log"
+            echo "logs at: $tmp_root/abc_logs" >>"$FULL_DATASET_DIR/convert_errors.log"
         fi
 
         rm -f "$pairs_file" "$convert_script"

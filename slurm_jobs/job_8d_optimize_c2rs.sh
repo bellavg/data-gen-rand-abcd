@@ -94,9 +94,38 @@ while IFS= read -r design_zip; do
 
     if unzip -q "$design_zip" "optimizeBulk_C2RS_*_${SOURCE_LABEL}.sh" -d "$tmp_extract_dir" 2>/dev/null; then
         find "$tmp_extract_dir" -type f -name 'optimizeBulk_C2RS_*.sh' -exec chmod +x {} +
-        while IFS= read -r script_file; do
-            INPUT_SOURCE="$INPUT_SOURCE" DRY_RUN="$DRY_RUN" bash "$script_file"
-        done < <(find "$tmp_extract_dir" -type f -name 'optimizeBulk_C2RS_*.sh' | sort)
+        # Gather shard scripts and run them with optional parallelism.
+        mapfile -t script_list < <(find "$tmp_extract_dir" -type f -name 'optimizeBulk_C2RS_*.sh' | sort)
+        if [ "${#script_list[@]}" -eq 0 ]; then
+            rm -rf "$tmp_extract_dir"
+            continue
+        fi
+
+        # Determine parallelism: prefer explicit env override, then SLURM-provided values,
+        # then `nproc`, otherwise fall back to 4.
+        if [ -n "${PARALLELISM:-}" ]; then
+            : # use provided PARALLELISM
+        elif [ -n "${SLURM_CPUS_ON_NODE:-}" ]; then
+            PARALLELISM="$SLURM_CPUS_ON_NODE"
+        elif [ -n "${SLURM_CPUS_PER_TASK:-}" ]; then
+            PARALLELISM="$SLURM_CPUS_PER_TASK"
+        elif command -v nproc >/dev/null 2>&1; then
+            PARALLELISM=$(nproc)
+        else
+            PARALLELISM=4
+        fi
+
+        # Generated shard scripts already check for existing outputs and skip them.
+        # Run the shard scripts in parallel, passing through INPUT_SOURCE and DRY_RUN.
+        if command -v parallel >/dev/null 2>&1; then
+            printf "%s\n" "${script_list[@]}" | parallel -j "$PARALLELISM" INPUT_SOURCE="$INPUT_SOURCE" DRY_RUN="$DRY_RUN" bash {}
+        else
+            for f in "${script_list[@]}"; do
+                INPUT_SOURCE="$INPUT_SOURCE" DRY_RUN="$DRY_RUN" bash "$f" &
+                while [ "$(jobs -rp | wc -l)" -ge "$PARALLELISM" ]; do sleep 1; done
+            done
+            wait
+        fi
     fi
 
     rm -rf "$tmp_extract_dir"
