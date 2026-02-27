@@ -6,7 +6,7 @@
     "threads": 1,
     "chunk_size": 5000,
     "max_retries": 2,
-    "dry_run": true
+    "dry_run": false
   },
   "tier_policy": {
     "same_parameters_across_tiers": true,

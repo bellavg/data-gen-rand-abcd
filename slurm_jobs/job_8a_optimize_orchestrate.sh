@@ -31,7 +31,7 @@ SCRIPT_ZIP_ROOT="${FULL_DATASET}/synScripts/optimization"
 
 TIER="${TIER:-}"
 INPUT_SOURCE="${INPUT_SOURCE:-}"
-DRY_RUN="${DRY_RUN:-true}"
+DRY_RUN="${DRY_RUN:-false}"
 
 if [ -n "$TIER" ] && [ "$TIER" != "1" ] && [ "$TIER" != "2" ] && [ "$TIER" != "3" ]; then
     echo "✗ ERROR: Invalid TIER=$TIER (must be 1, 2, or 3)"
