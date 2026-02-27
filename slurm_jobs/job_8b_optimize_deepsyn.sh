@@ -31,7 +31,7 @@ SCRIPT_ZIP_ROOT="${FULL_DATASET}/synScripts/optimization"
 
 TIER="${TIER:-}"
 INPUT_SOURCE="${INPUT_SOURCE:-}"
-DRY_RUN="${DRY_RUN:-true}"
+DRY_RUN="${DRY_RUN:-false}"
 TIMEOUT_SECONDS="${TIMEOUT_SECONDS:-600}"
 
 if [ -n "$TIER" ] && [ "$TIER" != "1" ] && [ "$TIER" != "2" ] && [ "$TIER" != "3" ]; then
