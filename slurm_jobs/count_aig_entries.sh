@@ -16,7 +16,8 @@ OPENABC_DESIGNS=(
     "spi" "ss_pcm" "tinyRocket" "tv80" "usb_phy" "vga_lcd" "wb_conmax" "wb_dma"
 )
 
-EXPECTED_PER_ZIP=20
+EXPECTED_PER_ZIP=21
+EXPECTED_ZIPS_PER_DESIGN=1500
 
 total_zips=0
 total_aigs=0
@@ -32,6 +33,8 @@ for design in "${OPENABC_DESIGNS[@]}"; do
     design_zips=0
     design_aigs=0
     design_benches=0
+    declare -A seen_idx=()
+    nonmatching=()
 
     while IFS= read -r -d '' zipfile; do
         design_zips=$((design_zips+1))
@@ -51,9 +54,42 @@ for design in "${OPENABC_DESIGNS[@]}"; do
             echo "PROBLEM: $(basename "$zipfile") (design=$design): aig=$aig_count bench=$bench_count"
         fi
 
+        # Record syn index if the zip filename matches syn<NUM>.zip
+        name=$(basename "$zipfile")
+        if [[ $name =~ ^syn([0-9]+)\.zip$ ]]; then
+            idx=${BASH_REMATCH[1]}
+            seen_idx[$idx]=1
+        else
+            nonmatching+=("$name")
+        fi
+
     done < <(find "$design_dir" -maxdepth 1 -type f -name 'syn*.zip' -print0)
 
     echo "$design: zips=$design_zips aigs=$design_aigs benches=$design_benches"
+
+    # Check continuity of syn indices for this design
+    if [ "$design_zips" -ne "$EXPECTED_ZIPS_PER_DESIGN" ]; then
+        missing_list=()
+        for ((i=0;i<EXPECTED_ZIPS_PER_DESIGN;i++)); do
+            if [ -z "${seen_idx[$i]:-}" ]; then
+                missing_list+=("$i")
+            fi
+        done
+
+        if [ ${#missing_list[@]} -gt 0 ]; then
+            problem_zips=$((problem_zips+1))
+            echo "  MISSING syn indices for $design: count=${#missing_list[@]}"
+            # Print first 200 missing indices for brevity
+            printf '    %s\n' "${missing_list[@]:0:200}"
+        fi
+    fi
+
+    if [ ${#nonmatching[@]} -gt 0 ]; then
+        echo "  WARNING: non-matching zip names in $design: ${nonmatching[*]:0:20}"
+    fi
+
+    # Unset associative array for next iteration
+    unset seen_idx
 done
 
 echo ""
