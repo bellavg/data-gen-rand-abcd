@@ -28,7 +28,7 @@ export PATH="$HOME/abc:$PATH"
 FULL_DATASET="${FULL_DATASET:-/scratch-shared/$USER/FULL_DATASET}"
 SCRIPT_ZIP_ROOT="${FULL_DATASET}/synScripts/optimization"
 
-TIER="${TIER:-}"
+TIER="${TIER:-1}"
 INPUT_SOURCE="${INPUT_SOURCE:-}"
 DRY_RUN="${DRY_RUN:-false}"
 
@@ -100,6 +100,14 @@ while IFS= read -r design_zip; do
             continue
         fi
 
+        # Disable embedded metadata updater in extracted shard scripts so
+        # Job 8 only performs optimization and does not collect metadata.
+        for s in "${script_list[@]}"; do
+            if grep -q '^METADATA_UPDATER=' "$s" 2>/dev/null; then
+                sed -i.bak 's|^METADATA_UPDATER=.*$|METADATA_UPDATER=""|' "$s" || true
+            fi
+        done
+
         if [ -n "${PARALLELISM:-}" ]; then
             :
         elif [ -n "${SLURM_CPUS_ON_NODE:-}" ]; then
@@ -120,6 +128,15 @@ while IFS= read -r design_zip; do
                 while [ "$(jobs -rp | wc -l)" -ge "$PARALLELISM" ]; do sleep 1; done
             done
             wait
+        fi
+        # After shard scripts run, save the raw shard scripts and logs to metadata/raw_logs
+        design_name="$(basename "$design_zip" .zip)"
+        dest_dir="$FULL_DATASET/metadata/raw_logs/Syn4/tier${TIER}/${design_name}"
+        mkdir -p "$dest_dir"
+        cp -a "$tmp_extract_dir"/*.sh "$dest_dir/" 2>/dev/null || true
+        log_path="$FULL_DATASET/optimized_aigs/logs/Syn4/tier${TIER}/${design_name}.log"
+        if [ -f "$log_path" ]; then
+            mv -f "$log_path" "$dest_dir/"
         fi
     fi
 

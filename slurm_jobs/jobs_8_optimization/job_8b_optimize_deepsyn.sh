@@ -29,10 +29,10 @@ BASE_DIR="$HOME/data-gen-rand-abcd"
 FULL_DATASET="${FULL_DATASET:-/scratch-shared/$USER/FULL_DATASET}"
 SCRIPT_ZIP_ROOT="${FULL_DATASET}/synScripts/optimization"
 
-TIER="${TIER:-}"
+TIER="${TIER:-1}"
 INPUT_SOURCE="${INPUT_SOURCE:-}"
 DRY_RUN="${DRY_RUN:-false}"
-TIMEOUT_SECONDS="${TIMEOUT_SECONDS:-600}"
+
 
 if [ -n "$TIER" ] && [ "$TIER" != "1" ] && [ "$TIER" != "2" ] && [ "$TIER" != "3" ]; then
     echo "✗ ERROR: Invalid TIER=$TIER (must be 1, 2, or 3)"
@@ -70,14 +70,9 @@ echo "  Script zip root: $SCRIPT_ZIP_ROOT"
 echo "  TIER override: ${TIER:-<none>}"
 echo "  INPUT_SOURCE: $INPUT_SOURCE"
 echo "  DRY_RUN:      $DRY_RUN"
-echo "  TIMEOUT_SECONDS: $TIMEOUT_SECONDS"
 echo ""
 
-if ! [[ "$TIMEOUT_SECONDS" =~ ^[0-9]+$ ]] || [ "$TIMEOUT_SECONDS" -le 0 ]; then
-    echo "✗ ERROR: TIMEOUT_SECONDS must be a positive integer (got: $TIMEOUT_SECONDS)"
-    echo "  Example: sbatch --export=ALL,TIMEOUT_SECONDS=600 slurm_jobs/job_8b_optimize_deepsyn.sh"
-    exit 1
-fi
+
 
 if [ ! -d "$SCRIPT_ZIP_ROOT" ]; then
     echo "✗ ERROR: Missing generated script zip root: $SCRIPT_ZIP_ROOT"
@@ -109,6 +104,14 @@ while IFS= read -r design_zip; do
             continue
         fi
 
+        # Disable embedded metadata updater in extracted shard scripts so
+        # Job 8 only performs optimization and does not collect metadata.
+        for s in "${script_list[@]}"; do
+            if grep -q '^METADATA_UPDATER=' "$s" 2>/dev/null; then
+                sed -i.bak 's|^METADATA_UPDATER=.*$|METADATA_UPDATER=""|' "$s" || true
+            fi
+        done
+
         if [ -n "${PARALLELISM:-}" ]; then
             :
         elif [ -n "${SLURM_CPUS_ON_NODE:-}" ]; then
@@ -122,13 +125,22 @@ while IFS= read -r design_zip; do
         fi
 
         if command -v parallel >/dev/null 2>&1; then
-            printf "%s\n" "${script_list[@]}" | parallel -j "$PARALLELISM" INPUT_SOURCE="$INPUT_SOURCE" DRY_RUN="$DRY_RUN" TIMEOUT_SECONDS="$TIMEOUT_SECONDS" bash {}
+            printf "%s\n" "${script_list[@]}" | parallel -j "$PARALLELISM" INPUT_SOURCE="$INPUT_SOURCE" DRY_RUN="$DRY_RUN" bash {}
         else
             for f in "${script_list[@]}"; do
-                INPUT_SOURCE="$INPUT_SOURCE" DRY_RUN="$DRY_RUN" TIMEOUT_SECONDS="$TIMEOUT_SECONDS" bash "$f" &
+                INPUT_SOURCE="$INPUT_SOURCE" DRY_RUN="$DRY_RUN" bash "$f" &
                 while [ "$(jobs -rp | wc -l)" -ge "$PARALLELISM" ]; do sleep 1; done
             done
             wait
+        fi
+        # After shard scripts run, save the raw shard scripts and logs to metadata/raw_logs
+        design_name="$(basename "$design_zip" .zip)"
+        dest_dir="$FULL_DATASET/metadata/raw_logs/Deepsyn/tier${TIER}/${design_name}"
+        mkdir -p "$dest_dir"
+        cp -a "$tmp_extract_dir"/*.sh "$dest_dir/" 2>/dev/null || true
+        log_path="$FULL_DATASET/optimized_aigs/logs/Deepsyn/tier${TIER}/${design_name}.log"
+        if [ -f "$log_path" ]; then
+            mv -f "$log_path" "$dest_dir/"
         fi
     fi
 

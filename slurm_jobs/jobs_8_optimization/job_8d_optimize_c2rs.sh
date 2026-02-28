@@ -1,18 +1,18 @@
 #!/bin/bash
-#SBATCH --job-name=8a_opt_orch
+#SBATCH --job-name=opt_c2rs
 #SBATCH --time=24:00:00
 #SBATCH -N 1
 #SBATCH --ntasks-per-node=1
 #SBATCH --partition=genoa
-#SBATCH --output=logs/opt_orchestrate_%j.out
+#SBATCH --output=logs/opt_c2rs_%j.out
 
-# Step 8a: Run Orchestrate Optimization
-# Executes generated bulk script for Orchestrate.
+# Step 8d: Run C2RS Optimization
+# Executes generated bulk script for C2RS.
 
 set -e
 
 echo "=========================================="
-echo "STEP 8a: Running Orchestrate Optimization"
+echo "STEP 8d: Running C2RS Optimization"
 echo "=========================================="
 echo "Job ID: $SLURM_JOB_ID"
 echo "Running on: $(hostname)"
@@ -25,11 +25,10 @@ module load foss/2025a
 module load Python/3.13.1-GCCcore-14.2.0
 export PATH="$HOME/abc:$PATH"
 
-BASE_DIR="$HOME/data-gen-rand-abcd"
 FULL_DATASET="${FULL_DATASET:-/scratch-shared/$USER/FULL_DATASET}"
 SCRIPT_ZIP_ROOT="${FULL_DATASET}/synScripts/optimization"
 
-TIER="${TIER:-}"
+TIER="${TIER:-1}"
 INPUT_SOURCE="${INPUT_SOURCE:-}"
 DRY_RUN="${DRY_RUN:-false}"
 
@@ -82,27 +81,38 @@ if ! command -v abc >/dev/null 2>&1 && [ "$DRY_RUN" != "true" ]; then
     exit 1
 fi
 
-script_count=$(find "$SCRIPT_ZIP_ROOT" -type f -name '*.zip' -exec sh -c 'for z in "$@"; do unzip -Z1 "$z" "$0" 2>/dev/null; done' "optimizeBulk_Orchestrate_*_${SOURCE_LABEL}.sh" {} + | wc -l | tr -d ' ')
+script_count=$(find "$SCRIPT_ZIP_ROOT" -type f -name '*.zip' -exec sh -c 'for z in "$@"; do unzip -Z1 "$z" "$0" 2>/dev/null; done' "optimizeBulk_C2RS_*_${SOURCE_LABEL}.sh" {} + | wc -l | tr -d ' ')
 if [ "$script_count" -eq 0 ]; then
-    echo "✗ ERROR: No Orchestrate shard scripts found in $SCRIPT_ZIP_ROOT for input source $INPUT_SOURCE"
+    echo "✗ ERROR: No C2RS shard scripts found in $SCRIPT_ZIP_ROOT for input source $INPUT_SOURCE"
     exit 1
 fi
 
 echo "Found ${script_count} shard scripts"
 
 while IFS= read -r design_zip; do
-    tmp_extract_dir="$(mktemp -d "${TMPDIR:-/tmp}/opt_orch_${SLURM_JOB_ID:-local}_XXXXXX")"
+    tmp_extract_dir="$(mktemp -d "${TMPDIR:-/tmp}/opt_c2rs_${SLURM_JOB_ID:-local}_XXXXXX")"
 
-    if unzip -q "$design_zip" "optimizeBulk_Orchestrate_*_${SOURCE_LABEL}.sh" -d "$tmp_extract_dir" 2>/dev/null; then
-        find "$tmp_extract_dir" -type f -name 'optimizeBulk_Orchestrate_*.sh' -exec chmod +x {} +
-        mapfile -t script_list < <(find "$tmp_extract_dir" -type f -name 'optimizeBulk_Orchestrate_*.sh' | sort)
+    if unzip -q "$design_zip" "optimizeBulk_C2RS_*_${SOURCE_LABEL}.sh" -d "$tmp_extract_dir" 2>/dev/null; then
+        find "$tmp_extract_dir" -type f -name 'optimizeBulk_C2RS_*.sh' -exec chmod +x {} +
+        # Gather shard scripts and run them with optional parallelism.
+        mapfile -t script_list < <(find "$tmp_extract_dir" -type f -name 'optimizeBulk_C2RS_*.sh' | sort)
         if [ "${#script_list[@]}" -eq 0 ]; then
             rm -rf "$tmp_extract_dir"
             continue
         fi
 
+        # Disable embedded metadata updater in extracted shard scripts so
+        # Job 8 only performs optimization and does not collect metadata.
+        for s in "${script_list[@]}"; do
+            if grep -q '^METADATA_UPDATER=' "$s" 2>/dev/null; then
+                sed -i.bak 's|^METADATA_UPDATER=.*$|METADATA_UPDATER=""|' "$s" || true
+            fi
+        done
+
+        # Determine parallelism: prefer explicit env override, then SLURM-provided values,
+        # then `nproc`, otherwise fall back to 4.
         if [ -n "${PARALLELISM:-}" ]; then
-            :
+            : # use provided PARALLELISM
         elif [ -n "${SLURM_CPUS_ON_NODE:-}" ]; then
             PARALLELISM="$SLURM_CPUS_ON_NODE"
         elif [ -n "${SLURM_CPUS_PER_TASK:-}" ]; then
@@ -113,6 +123,8 @@ while IFS= read -r design_zip; do
             PARALLELISM=4
         fi
 
+        # Generated shard scripts already check for existing outputs and skip them.
+        # Run the shard scripts in parallel, passing through INPUT_SOURCE and DRY_RUN.
         if command -v parallel >/dev/null 2>&1; then
             printf "%s\n" "${script_list[@]}" | parallel -j "$PARALLELISM" INPUT_SOURCE="$INPUT_SOURCE" DRY_RUN="$DRY_RUN" bash {}
         else
@@ -122,6 +134,15 @@ while IFS= read -r design_zip; do
             done
             wait
         fi
+        # After shard scripts run, save the raw shard scripts and logs to metadata/raw_logs
+        design_name="$(basename "$design_zip" .zip)"
+        dest_dir="$FULL_DATASET/metadata/raw_logs/C2RS/tier${TIER}/${design_name}"
+        mkdir -p "$dest_dir"
+        cp -a "$tmp_extract_dir"/*.sh "$dest_dir/" 2>/dev/null || true
+        log_path="$FULL_DATASET/optimized_aigs/logs/C2RS/tier${TIER}/${design_name}.log"
+        if [ -f "$log_path" ]; then
+            mv -f "$log_path" "$dest_dir/"
+        fi
     fi
 
     rm -rf "$tmp_extract_dir"
@@ -129,7 +150,7 @@ done < <(find "$SCRIPT_ZIP_ROOT" -type f -name '*.zip' | sort)
 
 echo ""
 echo "=========================================="
-echo "Step 8a Complete"
+echo "Step 8d Complete"
 echo "=========================================="
 echo "End time: $(date)"
 
