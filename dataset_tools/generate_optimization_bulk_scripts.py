@@ -200,232 +200,87 @@ def render_shard_script(
     runtime: Dict,
     algo_cfg: Dict,
 ) -> str:
-    command_template = str(algo_cfg.get("command_template", "")).strip()
-    if not command_template:
-        raise ValueError(f"Missing command_template for algorithm {algorithm}")
+        command_template = str(algo_cfg.get("command_template", "")).strip()
+        if not command_template:
+                raise ValueError(f"Missing command_template for algorithm {algorithm}")
 
-    command_template_escaped = shell_quote_single(command_template)
-    needs_abc_rc = True
-    abc_rc_check = (
-        (
-            'if [[ ! -f "$ABC_RC" ]]; then\n'
-            '  echo "✗ Missing abc.rc: $ABC_RC"\n'
-            "  exit 1\n"
-            "fi\n"
+        command_template_escaped = shell_quote_single(command_template)
+
+        output_tier = INPUT_SOURCE_TO_OUTPUT[input_source]
+        input_label = INPUT_SOURCE_TO_LABEL[input_source]
+        input_root = (
+                "base_aigs"
+                if input_source == "base_aigs"
+                else f"optimized_aigs/${{ALGORITHM}}/{input_source}"
         )
-        if needs_abc_rc
-        else ""
-    )
 
-    output_tier = INPUT_SOURCE_TO_OUTPUT[input_source]
-    input_label = INPUT_SOURCE_TO_LABEL[input_source]
-    input_root = (
-        "base_aigs"
-        if input_source == "base_aigs"
-        else f"optimized_aigs/${{ALGORITHM}}/{input_source}"
-    )
-
-    return f"""#!/bin/bash
+        return f"""#!/bin/bash
 set -euo pipefail
 
 ALGORITHM="{algorithm}"
 DESIGN="{design}"
-BASE_DIR="{base_dir}"
 FULL_DATASET="{full_dataset}"
 ABC_RC="{abc_rc}"
-METADATA_UPDATER="{metadata_updater}"
 INPUT_SOURCE="{input_source}"
 OUTPUT_TIER="{output_tier}"
 INPUT_LABEL="{input_label}"
-
-DRY_RUN="${{DRY_RUN:-{str(runtime.get("dry_run", True)).lower()}}}"
-TIMEOUT_SECONDS="${{TIMEOUT_SECONDS:-{int(runtime.get("timeout_seconds", 600))}}}"
-THREADS="${{THREADS:-{int(runtime.get("threads", 1))}}}"
-MAX_RETRIES="${{MAX_RETRIES:-{int(runtime.get("max_retries", 2))}}}"
 
 COMMAND_TEMPLATE='{command_template_escaped}'
 
 INPUT_ROOT="{input_root}"
 OUTPUT_ROOT="optimized_aigs/${{ALGORITHM}}/${{OUTPUT_TIER}}"
-LOG_ROOT="optimized_aigs/logs/${{ALGORITHM}}/${{OUTPUT_TIER}}"
-DONE_ROOT="optimized_aigs/done/${{ALGORITHM}}/${{OUTPUT_TIER}}"
-METADATA_CSV="${{FULL_DATASET}}/metadata/stats/${{DESIGN}}.csv"
+RAW_LOG_ROOT="metadata/raw_logs/${{DESIGN}}/${{OUTPUT_TIER}}/${{ALGORITHM}}"
 
-if [[ ! -d "${{FULL_DATASET}}/${{INPUT_ROOT}}" ]]; then
-  echo "✗ Missing input root: ${{FULL_DATASET}}/${{INPUT_ROOT}}"
-  exit 1
-fi
-
-{abc_rc_check}in_dir="${{FULL_DATASET}}/${{INPUT_ROOT}}/${{DESIGN}}"
+in_dir="${{FULL_DATASET}}/${{INPUT_ROOT}}/${{DESIGN}}"
 out_dir="${{FULL_DATASET}}/${{OUTPUT_ROOT}}/${{DESIGN}}"
-mkdir -p "$out_dir" "${{FULL_DATASET}}/${{LOG_ROOT}}" "${{FULL_DATASET}}/${{DONE_ROOT}}" "${{FULL_DATASET}}/metadata/stats"
+log_dir="${{FULL_DATASET}}/${{RAW_LOG_ROOT}}"
+
+mkdir -p "$out_dir" "$log_dir"
 
 if [[ ! -d "$in_dir" ]]; then
-  echo "✗ Missing design input directory: $in_dir"
-  exit 1
+    echo "✗ Missing design input directory: $in_dir" >&2
+    exit 1
 fi
-
-log_file="${{FULL_DATASET}}/${{LOG_ROOT}}/${{DESIGN}}.log"
-done_file="${{FULL_DATASET}}/${{DONE_ROOT}}/${{DESIGN}}.done"
-
-if [[ -f "$done_file" ]]; then
-  echo "✓ Already completed: $done_file"
-  exit 0
-fi
-
-echo "==========================================" | tee -a "$log_file"
-echo "Optimization shard runner" | tee -a "$log_file"
-echo "Algorithm: $ALGORITHM" | tee -a "$log_file"
-echo "Design:    $DESIGN" | tee -a "$log_file"
-echo "Input src: $INPUT_SOURCE" | tee -a "$log_file"
-echo "Output:    $OUTPUT_TIER" | tee -a "$log_file"
-echo "Input:     $in_dir" | tee -a "$log_file"
-echo "Output:    $out_dir" | tee -a "$log_file"
-echo "DRY_RUN:   $DRY_RUN" | tee -a "$log_file"
-echo "==========================================" | tee -a "$log_file"
 
 processed=0
 created=0
-skipped=0
 failed=0
 
-run_one_input() {{
-  local input_for_cmd="$1"
-  local logical_input_id="$2"
-  local filename="$3"
-  local output_aig="${{out_dir}}/${{filename}}"
+for input_aig in $(find "$in_dir" -type f -name "*.aig" | sort); do
+    filename="$(basename "$input_aig")"
+    output_aig="$out_dir/$filename"
+    log_file="$log_dir/${filename}.log"
 
-  if [[ -f "$output_aig" ]]; then
-    skipped=$((skipped + 1))
-    return 0
-  fi
+    cmd="$COMMAND_TEMPLATE"
+    cmd="${{cmd//\{{input_aig\}}/$input_aig}}"
+    cmd="${{cmd//\{{output_aig\}}/$output_aig}}"
+    cmd="${{cmd//\{{abc_rc\}}/$ABC_RC}}"
 
-  local seed_hex
-  local seed
-  seed_hex=$(printf "%s" "$logical_input_id" | shasum | awk '{{print $1}}' | cut -c1-8)
-  seed=$((16#$seed_hex))
-
-  local cmd
-  cmd="$COMMAND_TEMPLATE"
-  cmd="${{cmd//\{{input_aig\}}/$input_for_cmd}}"
-  cmd="${{cmd//\{{output_aig\}}/$output_aig}}"
-  cmd="${{cmd//\{{timeout_seconds\}}/$TIMEOUT_SECONDS}}"
-  cmd="${{cmd//\{{threads\}}/$THREADS}}"
-  cmd="${{cmd//\{{seed\}}/$seed}}"
-  cmd="${{cmd//\{{abc_rc\}}/$ABC_RC}}"
-
-  processed=$((processed + 1))
-
-  if [[ "$DRY_RUN" == "true" ]]; then
-    echo "[DRY_RUN] $cmd" | tee -a "$log_file"
-    created=$((created + 1))
-    if [[ "$ALGORITHM" == "Deepsyn" ]]; then
-      echo "$seed" > "${{output_aig%.aig}}.seed.txt"
-    fi
-    return 0
-  fi
-
-  local ok=false
-  local attempt=0
-  while [[ "$ok" == "false" && $attempt -le $MAX_RETRIES ]]; do
-    if eval "$cmd"; then
-      ok=true
+    echo "Running: $cmd" > "$log_file"
+    if eval "$cmd" >> "$log_file" 2>&1; then
+        created=$((created + 1))
     else
-      attempt=$((attempt + 1))
+        failed=$((failed + 1))
     fi
-  done
+    processed=$((processed + 1))
+done
 
-  if [[ "$ok" == "true" ]]; then
-    created=$((created + 1))
-    if [[ "$ALGORITHM" == "Deepsyn" ]]; then
-      echo "$seed" > "${{output_aig%.aig}}.seed.txt"
-    fi
-    return 0
-  fi
-
-  failed=$((failed + 1))
-  echo "✗ Failed: $logical_input_id" | tee -a "$log_file"
-  return 1
-}}
-
-if [[ "$INPUT_SOURCE" == "base_aigs" ]]; then
-  if ! command -v unzip >/dev/null 2>&1; then
-    echo "✗ Missing required tool: unzip" | tee -a "$log_file"
-    exit 1
-  fi
-
-  while IFS= read -r -d '' input_aig; do
-    filename="$(basename "$input_aig")"
-    run_one_input "$input_aig" "$input_aig" "$filename"
-  done < <(find "$in_dir" -maxdepth 1 -type f -name "*_orig.aig" -print0 | sort -z)
-
-  while IFS= read -r -d '' zip_path; do
-    while IFS= read -r member; do
-      [[ -z "$member" ]] && continue
-      filename="$(basename "$member")"
-      logical_input="$zip_path::$member"
-      input_for_cmd="$logical_input"
-      tmp_input=""
-
-      if [[ "$DRY_RUN" != "true" ]]; then
-        tmp_input="$(mktemp "${{TMPDIR:-/tmp}}/opt_input_${{DESIGN}}_XXXXXX.aig")"
-        if ! unzip -p "$zip_path" "$member" > "$tmp_input"; then
-          rm -f "$tmp_input"
-          failed=$((failed + 1))
-          echo "✗ Failed to extract: $zip_path::$member" | tee -a "$log_file"
-          continue
-        fi
-        input_for_cmd="$tmp_input"
-      fi
-
-      run_one_input "$input_for_cmd" "$logical_input" "$filename"
-
-      if [[ -n "$tmp_input" ]]; then
-        rm -f "$tmp_input"
-      fi
-    done < <(unzip -Z1 "$zip_path" '*.aig' | sort)
-  done < <(find "$in_dir" -maxdepth 1 -type f -name 'syn*.zip' -print0 | sort -z)
-else
-  while IFS= read -r -d '' input_aig; do
-    filename="$(basename "$input_aig")"
-    run_one_input "$input_aig" "$input_aig" "$filename"
-  done < <(find "$in_dir" -type f -name "*.aig" -print0 | sort -z)
-fi
-
-echo "" | tee -a "$log_file"
-echo "Summary ($ALGORITHM, $DESIGN, input=$INPUT_SOURCE, output=$OUTPUT_TIER):" | tee -a "$log_file"
-echo "  processed=$processed" | tee -a "$log_file"
-echo "  created=$created" | tee -a "$log_file"
-echo "  skipped=$skipped" | tee -a "$log_file"
-echo "  failed=$failed" | tee -a "$log_file"
+summary_file="$log_dir/summary.json"
+cat > "$summary_file" <<EOF
+{
+    "algorithm": "${ALGORITHM}",
+    "design": "${DESIGN}",
+    "tier": "${OUTPUT_TIER}",
+    "processed": ${processed},
+    "created": ${created},
+    "failed": ${failed},
+    "completed_at": "$(date -Iseconds)"
+}
+EOF
 
 if [[ $failed -gt 0 ]]; then
-  exit 1
+    exit 1
 fi
-
-if [[ "$DRY_RUN" != "true" ]]; then
-    if [[ -f "$METADATA_UPDATER" ]]; then
-        python3 "$METADATA_UPDATER" \
-            --full-dataset "$FULL_DATASET" \
-            --design "$DESIGN" \
-            --algorithm "$ALGORITHM" \
-            --tier "$OUTPUT_TIER" \
-            --output-dir "$out_dir" \
-            --metadata-csv "$METADATA_CSV" | tee -a "$log_file"
-    else
-        echo "⚠ Metadata updater not found: $METADATA_UPDATER" | tee -a "$log_file"
-    fi
-fi
-
-echo "algorithm=$ALGORITHM" > "$done_file"
-echo "design=$DESIGN" >> "$done_file"
-echo "input_source=$INPUT_SOURCE" >> "$done_file"
-echo "output_tier=$OUTPUT_TIER" >> "$done_file"
-echo "processed=$processed" >> "$done_file"
-echo "created=$created" >> "$done_file"
-echo "skipped=$skipped" >> "$done_file"
-echo "failed=$failed" >> "$done_file"
-echo "completed_at=$(date -Iseconds)" >> "$done_file"
 """
 
 
