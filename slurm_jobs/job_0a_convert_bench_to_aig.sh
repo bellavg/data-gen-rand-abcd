@@ -126,14 +126,12 @@ convert_syn_zip_if_needed() {
     zip_counts "$syn_zip"
 
     if [ "$ZIP_CORRUPT" -eq 1 ]; then
-        echo "    * WARNING: cannot read zip payload: $(basename "$syn_zip")"
         zip_content_issues=$((zip_content_issues + 1))
         return
     fi
 
     if [ "$ZIP_BENCH_COUNT" -eq 0 ] && [ "$ZIP_AIG_COUNT" -gt 0 ]; then
         if [ "$ZIP_AIG_COUNT" -lt 20 ] || [ "$ZIP_AIG_COUNT" -gt 21 ]; then
-            echo "    * WARNING: $(basename "$syn_zip") has $ZIP_AIG_COUNT .aig files (expected 20-21)"
             zip_content_issues=$((zip_content_issues + 1))
         fi
         skipped_zip_already_aig=$((skipped_zip_already_aig + 1))
@@ -157,7 +155,6 @@ convert_syn_zip_if_needed() {
     fi
 
     if [ "$bench_count" -eq 0 ]; then
-        echo "    * WARNING: no .bench entries found in $(basename "$syn_zip")"
         rm -rf "$tmp_root"
         return
     fi
@@ -232,23 +229,17 @@ convert_openabc_design() {
         return
     fi
 
-    echo "  - Processing $design"
-
     orig_bench="$design_dir/${design}_orig.bench"
     orig_aig="$design_dir/${design}_orig.aig"
 
     if [ ! -f "$orig_aig" ] && [ -f "$orig_bench" ]; then
         convert_bench_to_aig "$orig_bench" "$orig_aig"
         converted_orig=$((converted_orig + 1))
-        echo "    * Converted ${design}_orig.bench -> ${design}_orig.aig"
-    elif [ ! -f "$orig_aig" ] && [ ! -f "$orig_bench" ]; then
-        echo "    * WARNING: no orig file found (${design}_orig.aig or .bench)"
     fi
 
     if [ -f "$orig_aig" ] && [ -f "$orig_bench" ]; then
         rm -f "$orig_bench"
         removed_orig_bench=$((removed_orig_bench + 1))
-        echo "    * Removed ${design}_orig.bench (AIG exists)"
     fi
 
     for syn_zip in "$design_dir"/syn*.zip; do
