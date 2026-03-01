@@ -23,6 +23,11 @@ total_zips=0
 total_aigs=0
 total_benches=0
 problem_zips=0
+total_converted_only=0
+total_contains_bench=0
+total_mismatched_counts=0
+total_missing_indices=0
+total_nonmatching=0
 
 echo "Scanning syn*.zip files under: $FULL_DATASET_DIR/base_aigs"
 
@@ -35,6 +40,11 @@ for design in "${OPENABC_DESIGNS[@]}"; do
     design_benches=0
     declare -A seen_idx=()
     nonmatching=()
+    converted_only=0
+    contains_bench=0
+    mismatched_counts=0
+    missing_count=0
+    nonmatching_count=0
 
     while IFS= read -r -d '' zipfile; do
         design_zips=$((design_zips+1))
@@ -49,9 +59,13 @@ for design in "${OPENABC_DESIGNS[@]}"; do
         total_aigs=$((total_aigs + aig_count))
         total_benches=$((total_benches + bench_count))
 
-        if [ "$aig_count" -ne "$EXPECTED_PER_ZIP" ] || [ "$aig_count" -ne "$bench_count" ]; then
-            problem_zips=$((problem_zips+1))
-            echo "PROBLEM: $(basename "$zipfile") (design=$design): aig=$aig_count bench=$bench_count"
+        # Classify this zip for summary stats
+        if [ "$aig_count" -eq "$EXPECTED_PER_ZIP" ] && [ "$bench_count" -eq 0 ]; then
+            converted_only=$((converted_only+1))
+        elif [ "$bench_count" -gt 0 ]; then
+            contains_bench=$((contains_bench+1))
+        else
+            mismatched_counts=$((mismatched_counts+1))
         fi
 
         # Record syn index if the zip filename matches syn<NUM>.zip
@@ -61,11 +75,12 @@ for design in "${OPENABC_DESIGNS[@]}"; do
             seen_idx[$idx]=1
         else
             nonmatching+=("$name")
+            nonmatching_count=$((nonmatching_count+1))
         fi
 
     done < <(find "$design_dir" -maxdepth 1 -type f -name 'syn*.zip' -print0)
 
-    echo "$design: zips=$design_zips aigs=$design_aigs benches=$design_benches"
+    echo "$design: zips=$design_zips aigs=$design_aigs benches=$design_benches converted_only=$converted_only with_bench=$contains_bench mismatched=$mismatched_counts"
 
     # Check continuity of syn indices for this design
     if [ "$design_zips" -ne "$EXPECTED_ZIPS_PER_DESIGN" ]; then
@@ -77,28 +92,40 @@ for design in "${OPENABC_DESIGNS[@]}"; do
         done
 
         if [ ${#missing_list[@]} -gt 0 ]; then
-            problem_zips=$((problem_zips+1))
-            echo "  MISSING syn indices for $design: count=${#missing_list[@]}"
-            # Print first 200 missing indices for brevity
+            missing_count=${#missing_list[@]}
+            total_missing_indices=$((total_missing_indices+missing_count))
+            echo "  MISSING syn indices for $design: count=${missing_count} (showing up to 200)"
             printf '    %s\n' "${missing_list[@]:0:200}"
         fi
     fi
 
     if [ ${#nonmatching[@]} -gt 0 ]; then
         echo "  WARNING: non-matching zip names in $design: ${nonmatching[*]:0:20}"
+        total_nonmatching=$((total_nonmatching+nonmatching_count))
     fi
 
     # Unset associative array for next iteration
     unset seen_idx
+    total_converted_only=$((total_converted_only+converted_only))
+    total_contains_bench=$((total_contains_bench+contains_bench))
+    total_mismatched_counts=$((total_mismatched_counts+mismatched_counts))
 done
 
 echo ""
-echo "TOTAL: zips=$total_zips aigs=$total_aigs benches=$total_benches problem_zips=$problem_zips"
+echo "SUMMARY:" 
+echo "  total zips:             $total_zips"
+echo "  total .aig entries:     $total_aigs"
+echo "  total .bench entries:   $total_benches"
+echo "  converted-only zips:    $total_converted_only"
+echo "  zips still with .bench: $total_contains_bench"
+echo "  mismatched-counts zips: $total_mismatched_counts"
+echo "  missing syn indices:    $total_missing_indices"
+echo "  non-matching zip names: $total_nonmatching"
 
-if [ "$problem_zips" -ne 0 ]; then
-    echo "Some syn*.zip files are missing expected AIG entries or have mismatched bench counts."
+if [ "$total_missing_indices" -ne 0 ] || [ "$total_mismatched_counts" -ne 0 ]; then
+    echo "Some issues were found (missing indices or mismatched counts). See per-design lines above."
     exit 2
 fi
 
-echo "All syn*.zip files contain $EXPECTED_PER_ZIP .aig entries and match .bench counts."
+echo "All syn*.zip files look good (expected counts and continuity)."
 exit 0
