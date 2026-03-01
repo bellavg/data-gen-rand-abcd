@@ -4,8 +4,6 @@
 #SBATCH --job-name=openabc_to_fulldataset_bench
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=4
-#SBATCH --mem=32G
 #SBATCH --output=logs/openabc_to_fulldataset_bench_%j.out
 
 set -euo pipefail
