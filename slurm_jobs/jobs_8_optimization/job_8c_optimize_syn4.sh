@@ -11,13 +11,7 @@
 
 set -e
 
-echo "=========================================="
-echo "STEP 8c: Running Syn4 Optimization"
-echo "=========================================="
-echo "Job ID: $SLURM_JOB_ID"
-echo "Running on: $(hostname)"
-echo "Start time: $(date)"
-echo ""
+echo "STEP 8c start: job=${SLURM_JOB_ID:-local} host=$(hostname) time=$(date)"
 
 module purge
 module load 2025
@@ -31,6 +25,7 @@ SCRIPT_ZIP_ROOT="${FULL_DATASET}/synScripts/optimization"
 TIER="${TIER:-1}"
 INPUT_SOURCE="${INPUT_SOURCE:-}"
 DRY_RUN="${DRY_RUN:-false}"
+QUIET_OUTPUT="${QUIET_OUTPUT:-true}"
 
 if [ -n "$TIER" ] && [ "$TIER" != "1" ] && [ "$TIER" != "2" ] && [ "$TIER" != "3" ]; then
     echo "✗ ERROR: Invalid TIER=$TIER (must be 1, 2, or 3)"
@@ -62,14 +57,6 @@ else
     SOURCE_LABEL="tier2"
 fi
 
-echo "Configuration:"
-echo "  FULL_DATASET: $FULL_DATASET"
-echo "  Script zip root: $SCRIPT_ZIP_ROOT"
-echo "  TIER override: ${TIER:-<none>}"
-echo "  INPUT_SOURCE: $INPUT_SOURCE"
-echo "  DRY_RUN:      $DRY_RUN"
-echo ""
-
 if [ ! -d "$SCRIPT_ZIP_ROOT" ]; then
     echo "✗ ERROR: Missing generated script zip root: $SCRIPT_ZIP_ROOT"
     echo "Run slurm_jobs/job_8_make_optimize_scripts.sh first."
@@ -86,8 +73,6 @@ if [ "$script_count" -eq 0 ]; then
     echo "✗ ERROR: No Syn4 shard scripts found in $SCRIPT_ZIP_ROOT for input source $INPUT_SOURCE"
     exit 1
 fi
-
-echo "Found ${script_count} shard scripts"
 
 while IFS= read -r design_zip; do
     tmp_extract_dir="$(mktemp -d "${TMPDIR:-/tmp}/opt_syn4_${SLURM_JOB_ID:-local}_XXXXXX")"
@@ -121,10 +106,18 @@ while IFS= read -r design_zip; do
         fi
 
         if command -v parallel >/dev/null 2>&1; then
-            printf "%s\n" "${script_list[@]}" | parallel -j "$PARALLELISM" INPUT_SOURCE="$INPUT_SOURCE" DRY_RUN="$DRY_RUN" bash {}
+            if [ "$QUIET_OUTPUT" = "true" ]; then
+                printf "%s\n" "${script_list[@]}" | parallel -j "$PARALLELISM" INPUT_SOURCE="$INPUT_SOURCE" DRY_RUN="$DRY_RUN" 'bash {} >/dev/null 2>&1'
+            else
+                printf "%s\n" "${script_list[@]}" | parallel -j "$PARALLELISM" INPUT_SOURCE="$INPUT_SOURCE" DRY_RUN="$DRY_RUN" bash {}
+            fi
         else
             for f in "${script_list[@]}"; do
-                INPUT_SOURCE="$INPUT_SOURCE" DRY_RUN="$DRY_RUN" bash "$f" &
+                if [ "$QUIET_OUTPUT" = "true" ]; then
+                    INPUT_SOURCE="$INPUT_SOURCE" DRY_RUN="$DRY_RUN" bash "$f" >/dev/null 2>&1 &
+                else
+                    INPUT_SOURCE="$INPUT_SOURCE" DRY_RUN="$DRY_RUN" bash "$f" &
+                fi
                 while [ "$(jobs -rp | wc -l)" -ge "$PARALLELISM" ]; do sleep 1; done
             done
             wait
@@ -143,10 +136,6 @@ while IFS= read -r design_zip; do
     rm -rf "$tmp_extract_dir"
 done < <(find "$SCRIPT_ZIP_ROOT" -type f -name '*.zip' | sort)
 
-echo ""
-echo "=========================================="
-echo "Step 8c Complete"
-echo "=========================================="
-echo "End time: $(date)"
+echo "STEP 8c complete: time=$(date)"
 
 # End of job
