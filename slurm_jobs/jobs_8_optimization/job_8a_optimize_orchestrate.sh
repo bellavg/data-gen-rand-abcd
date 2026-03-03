@@ -1,15 +1,12 @@
 #!/bin/bash
 #SBATCH --job-name=8a_opt_orch
-#SBATCH --time=24:00:00
+#SBATCH --time=72:00:00
 #SBATCH -N 1
 #SBATCH --ntasks-per-node=1
 #SBATCH --partition=genoa
-#SBATCH --output=logs/opt_orchestrate_%j.out
+#SBATCH --output=logs/8a_opt_orchestrate_%j.out
 
-# Step 8a: Run Orchestrate Optimization
-# Executes generated bulk script for Orchestrate.
-
-set -e
+set -euo pipefail
 
 echo "STEP 8a start: job=${SLURM_JOB_ID:-local} host=$(hostname) time=$(date)"
 
@@ -19,124 +16,144 @@ module load foss/2025a
 module load Python/3.13.1-GCCcore-14.2.0
 export PATH="$HOME/abc:$PATH"
 
-BASE_DIR="$HOME/data-gen-rand-abcd"
-FULL_DATASET="${FULL_DATASET:-/scratch-shared/$USER/FULL_DATASET}"
-SCRIPT_ZIP_ROOT="${FULL_DATASET}/synScripts/optimization"
-
-TIER="${TIER:-1}"
-INPUT_SOURCE="${INPUT_SOURCE:-}"
-DRY_RUN="${DRY_RUN:-false}"
+ALGORITHM="Orchestrate"
+SOURCE_LABEL="base"
+OUTPUT_TIER="tier1"
 QUIET_OUTPUT="${QUIET_OUTPUT:-true}"
 
-if [ -n "$TIER" ] && [ "$TIER" != "1" ] && [ "$TIER" != "2" ] && [ "$TIER" != "3" ]; then
-    echo "✗ ERROR: Invalid TIER=$TIER (must be 1, 2, or 3)"
-    exit 1
-fi
-
-if [ -n "$INPUT_SOURCE" ] && [ "$INPUT_SOURCE" != "base_aigs" ] && [ "$INPUT_SOURCE" != "tier1" ] && [ "$INPUT_SOURCE" != "tier2" ]; then
-    echo "✗ ERROR: Invalid INPUT_SOURCE=$INPUT_SOURCE (must be base_aigs|tier1|tier2)"
-    exit 1
-fi
-
-if [ -n "$TIER" ]; then
-    case "$TIER" in
-        1) INPUT_SOURCE="base_aigs" ;;
-        2) INPUT_SOURCE="tier1" ;;
-        3) INPUT_SOURCE="tier2" ;;
-    esac
-fi
-
-if [ -z "$INPUT_SOURCE" ]; then
-    INPUT_SOURCE="base_aigs"
-fi
-
-if [ "$INPUT_SOURCE" = "base_aigs" ]; then
-    SOURCE_LABEL="base"
-elif [ "$INPUT_SOURCE" = "tier1" ]; then
-    SOURCE_LABEL="tier1"
-else
-    SOURCE_LABEL="tier2"
-fi
+FULL_DATASET="${FULL_DATASET:-/scratch-shared/$USER/FULL_DATASET}"
+SCRIPT_ZIP_ROOT="$FULL_DATASET/synScripts/optimization"
+MANIFEST_DIR="$FULL_DATASET/optimized_aigs/manifests"
 
 if [ ! -d "$SCRIPT_ZIP_ROOT" ]; then
     echo "✗ ERROR: Missing generated script zip root: $SCRIPT_ZIP_ROOT"
-    echo "Run slurm_jobs/job_8_make_optimize_scripts.sh first."
     exit 1
 fi
 
-if ! command -v abc >/dev/null 2>&1 && [ "$DRY_RUN" != "true" ]; then
+if ! command -v abc >/dev/null 2>&1; then
     echo "✗ ERROR: abc not found in PATH"
     exit 1
 fi
 
-script_count=$(find "$SCRIPT_ZIP_ROOT" -type f -name '*.zip' -exec sh -c 'for z in "$@"; do unzip -Z1 "$z" "$0" 2>/dev/null; done' "optimizeBulk_Orchestrate_*_${SOURCE_LABEL}.sh" {} + | wc -l | tr -d ' ')
-if [ "$script_count" -eq 0 ]; then
-    echo "✗ ERROR: No Orchestrate shard scripts found in $SCRIPT_ZIP_ROOT for input source $INPUT_SOURCE"
+latest_manifest=$(ls -1t "$MANIFEST_DIR"/bulk_scripts_manifest_*.json 2>/dev/null | head -n 1 || true)
+if [ -z "$latest_manifest" ]; then
+    echo "✗ ERROR: No manifest found under: $MANIFEST_DIR"
     exit 1
 fi
 
+expected_designs=$(python3 - "$latest_manifest" "$ALGORITHM" <<'PY'
+import json
+import sys
+
+manifest_path, algorithm = sys.argv[1], sys.argv[2]
+with open(manifest_path, "r", encoding="utf-8") as fh:
+    m = json.load(fh)
+
+if m.get("design_group") != "all":
+    raise SystemExit("manifest design_group is not 'all'")
+if algorithm not in m.get("algorithms", []):
+    raise SystemExit(f"manifest missing algorithm: {algorithm}")
+if "base_aigs" not in m.get("input_sources", []):
+    raise SystemExit("manifest missing input_source: base_aigs")
+
+designs = m.get("designs", [])
+if not designs:
+    raise SystemExit("manifest has zero designs")
+
+print(len(designs))
+PY
+)
+
+script_count=$(find "$SCRIPT_ZIP_ROOT" -type f -name '*.zip' -exec sh -c 'for z in "$@"; do unzip -Z1 "$z" "$0" 2>/dev/null; done' "optimizeBulk_${ALGORITHM}_*_${SOURCE_LABEL}.sh" {} + | wc -l | tr -d ' ')
+if [ "$script_count" -ne "$expected_designs" ]; then
+    echo "✗ ERROR: Expected $expected_designs ${ALGORITHM} shard scripts, found $script_count"
+    exit 1
+fi
+
+if [ -n "${PARALLELISM:-}" ]; then
+    :
+elif [ -n "${SLURM_CPUS_ON_NODE:-}" ]; then
+    PARALLELISM="$SLURM_CPUS_ON_NODE"
+elif [ -n "${SLURM_CPUS_PER_TASK:-}" ]; then
+    PARALLELISM="$SLURM_CPUS_PER_TASK"
+elif command -v nproc >/dev/null 2>&1; then
+    PARALLELISM=$(nproc)
+else
+    PARALLELISM=4
+fi
+
+processed_designs=0
+
 while IFS= read -r design_zip; do
+    design_name="$(basename "$design_zip" .zip)"
+    echo "STEP 8a: starting design ${design_name}"
+
     tmp_extract_dir="$(mktemp -d "${TMPDIR:-/tmp}/opt_orch_${SLURM_JOB_ID:-local}_XXXXXX")"
 
-    if unzip -q "$design_zip" "optimizeBulk_Orchestrate_*_${SOURCE_LABEL}.sh" -d "$tmp_extract_dir" 2>/dev/null; then
+    if unzip -q "$design_zip" "optimizeBulk_${ALGORITHM}_*_${SOURCE_LABEL}.sh" -d "$tmp_extract_dir" 2>/dev/null; then
         find "$tmp_extract_dir" -type f -name 'optimizeBulk_Orchestrate_*.sh' -exec chmod +x {} +
         mapfile -t script_list < <(find "$tmp_extract_dir" -type f -name 'optimizeBulk_Orchestrate_*.sh' | sort)
+
         if [ "${#script_list[@]}" -eq 0 ]; then
             rm -rf "$tmp_extract_dir"
             continue
         fi
 
-        # Disable embedded metadata updater in extracted shard scripts so
-        # Job 8 only performs optimization and does not collect metadata.
-        for s in "${script_list[@]}"; do
-            if grep -q '^METADATA_UPDATER=' "$s" 2>/dev/null; then
-                sed -i.bak 's|^METADATA_UPDATER=.*$|METADATA_UPDATER=""|' "$s" || true
-            fi
-        done
-
-        if [ -n "${PARALLELISM:-}" ]; then
-            :
-        elif [ -n "${SLURM_CPUS_ON_NODE:-}" ]; then
-            PARALLELISM="$SLURM_CPUS_ON_NODE"
-        elif [ -n "${SLURM_CPUS_PER_TASK:-}" ]; then
-            PARALLELISM="$SLURM_CPUS_PER_TASK"
-        elif command -v nproc >/dev/null 2>&1; then
-            PARALLELISM=$(nproc)
-        else
-            PARALLELISM=4
-        fi
-
         if command -v parallel >/dev/null 2>&1; then
             if [ "$QUIET_OUTPUT" = "true" ]; then
-                printf "%s\n" "${script_list[@]}" | parallel -j "$PARALLELISM" INPUT_SOURCE="$INPUT_SOURCE" DRY_RUN="$DRY_RUN" 'bash {} >/dev/null 2>&1'
+                printf "%s\n" "${script_list[@]}" | parallel -j "$PARALLELISM" 'bash {} >/dev/null 2>&1' || {
+                    echo "✗ ERROR: ${ALGORITHM} shard execution failed for ${design_name}"
+                    exit 1
+                }
             else
-                printf "%s\n" "${script_list[@]}" | parallel -j "$PARALLELISM" INPUT_SOURCE="$INPUT_SOURCE" DRY_RUN="$DRY_RUN" bash {}
+                printf "%s\n" "${script_list[@]}" | parallel -j "$PARALLELISM" bash {} || {
+                    echo "✗ ERROR: ${ALGORITHM} shard execution failed for ${design_name}"
+                    exit 1
+                }
             fi
         else
             for f in "${script_list[@]}"; do
                 if [ "$QUIET_OUTPUT" = "true" ]; then
-                    INPUT_SOURCE="$INPUT_SOURCE" DRY_RUN="$DRY_RUN" bash "$f" >/dev/null 2>&1 &
+                    bash "$f" >/dev/null 2>&1 &
                 else
-                    INPUT_SOURCE="$INPUT_SOURCE" DRY_RUN="$DRY_RUN" bash "$f" &
+                    bash "$f" &
                 fi
                 while [ "$(jobs -rp | wc -l)" -ge "$PARALLELISM" ]; do sleep 1; done
             done
-            wait
+            wait || {
+                echo "✗ ERROR: ${ALGORITHM} shard execution failed for ${design_name}"
+                exit 1
+            }
         fi
-        # After shard scripts run, save the raw shard scripts and logs to metadata/raw_logs
-        design_name="$(basename "$design_zip" .zip)"
-        dest_dir="$FULL_DATASET/metadata/raw_logs/Orchestrate/tier${TIER}/${design_name}"
-        mkdir -p "$dest_dir"
-        cp -a "$tmp_extract_dir"/*.sh "$dest_dir/" 2>/dev/null || true
-        log_path="$FULL_DATASET/optimized_aigs/logs/Orchestrate/tier${TIER}/${design_name}.log"
-        if [ -f "$log_path" ]; then
-            mv -f "$log_path" "$dest_dir/"
+
+        summary_path="$FULL_DATASET/metadata/raw_logs/${design_name}/${OUTPUT_TIER}/${ALGORITHM}/summary.json"
+        if [ ! -f "$summary_path" ]; then
+            echo "✗ ERROR: Missing per-design summary: $summary_path"
+            exit 1
         fi
+
+        python3 - "$summary_path" <<'PY'
+import json
+import sys
+
+summary_path = sys.argv[1]
+with open(summary_path, "r", encoding="utf-8") as fh:
+    payload = json.load(fh)
+
+if int(payload.get("failed", 0)) != 0:
+    raise SystemExit(f"failed>0 in {summary_path}")
+PY
+
+        processed_designs=$((processed_designs + 1))
+        echo "STEP 8a: done design ${design_name}"
     fi
 
     rm -rf "$tmp_extract_dir"
 done < <(find "$SCRIPT_ZIP_ROOT" -type f -name '*.zip' | sort)
 
-echo "STEP 8a complete: time=$(date)"
+if [ "$processed_designs" -ne "$expected_designs" ]; then
+    echo "✗ ERROR: Expected to process $expected_designs designs, processed $processed_designs"
+    exit 1
+fi
 
-# End of job
+echo "STEP 8a complete: verified=${processed_designs} time=$(date)"
