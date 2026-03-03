@@ -31,6 +31,7 @@ SCRIPT_ZIP_ROOT="${FULL_DATASET}/synScripts/optimization"
 TIER="${TIER:-1}"
 INPUT_SOURCE="${INPUT_SOURCE:-}"
 DRY_RUN="${DRY_RUN:-false}"
+QUIET_OUTPUT="${QUIET_OUTPUT:-true}"
 
 if [ -n "$TIER" ] && [ "$TIER" != "1" ] && [ "$TIER" != "2" ] && [ "$TIER" != "3" ]; then
     echo "✗ ERROR: Invalid TIER=$TIER (must be 1, 2, or 3)"
@@ -68,6 +69,7 @@ echo "  Script zip root: $SCRIPT_ZIP_ROOT"
 echo "  TIER override: ${TIER:-<none>}"
 echo "  INPUT_SOURCE: $INPUT_SOURCE"
 echo "  DRY_RUN:      $DRY_RUN"
+echo "  QUIET_OUTPUT: $QUIET_OUTPUT"
 echo ""
 
 if [ ! -d "$SCRIPT_ZIP_ROOT" ]; then
@@ -126,10 +128,18 @@ while IFS= read -r design_zip; do
         # Generated shard scripts already check for existing outputs and skip them.
         # Run the shard scripts in parallel, passing through INPUT_SOURCE and DRY_RUN.
         if command -v parallel >/dev/null 2>&1; then
-            printf "%s\n" "${script_list[@]}" | parallel -j "$PARALLELISM" INPUT_SOURCE="$INPUT_SOURCE" DRY_RUN="$DRY_RUN" bash {}
+            if [ "$QUIET_OUTPUT" = "true" ]; then
+                printf "%s\n" "${script_list[@]}" | parallel -j "$PARALLELISM" INPUT_SOURCE="$INPUT_SOURCE" DRY_RUN="$DRY_RUN" 'bash {} >/dev/null 2>&1'
+            else
+                printf "%s\n" "${script_list[@]}" | parallel -j "$PARALLELISM" INPUT_SOURCE="$INPUT_SOURCE" DRY_RUN="$DRY_RUN" bash {}
+            fi
         else
             for f in "${script_list[@]}"; do
-                INPUT_SOURCE="$INPUT_SOURCE" DRY_RUN="$DRY_RUN" bash "$f" &
+                if [ "$QUIET_OUTPUT" = "true" ]; then
+                    INPUT_SOURCE="$INPUT_SOURCE" DRY_RUN="$DRY_RUN" bash "$f" >/dev/null 2>&1 &
+                else
+                    INPUT_SOURCE="$INPUT_SOURCE" DRY_RUN="$DRY_RUN" bash "$f" &
+                fi
                 while [ "$(jobs -rp | wc -l)" -ge "$PARALLELISM" ]; do sleep 1; done
             done
             wait

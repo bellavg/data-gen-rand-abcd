@@ -25,6 +25,37 @@ from typing import Dict, List
 
 ALGORITHMS = ["Orchestrate", "Deepsyn", "Syn4", "C2RS"]
 RANDOM_AIG_DESIGNS = ["128", "256", "512", "1024", "2048", "4096", "8192", "16384"]
+OPENABC_DESIGNS = [
+    "i2c",
+    "spi",
+    "des3_area",
+    "ss_pcm",
+    "usb_phy",
+    "sasc",
+    "wb_dma",
+    "simple_spi",
+    "dynamic_node",
+    "aes",
+    "pci",
+    "ac97_ctrl",
+    "mem_ctrl",
+    "tv80",
+    "fpu",
+    "wb_conmax",
+    "tinyRocket",
+    "aes_xcrypt",
+    "aes_secworks",
+    "jpeg",
+    "bp_be",
+    "ethernet",
+    "vga_lcd",
+    "picosoc",
+    "dft",
+    "idft",
+    "fir",
+    "iir",
+    "sha256",
+]
 INPUT_SOURCES = ["base_aigs", "tier1", "tier2"]
 INPUT_SOURCE_TO_OUTPUT = {
     "base_aigs": "tier1",
@@ -152,20 +183,18 @@ def select_input_sources(requested_input_source: str) -> List[str]:
         return list(INPUT_SOURCES)
     return [requested_input_source]
 
-
 def select_designs(
     available_designs: List[str],
     design_group: str,
     explicit_designs: List[str],
 ) -> List[str]:
     available = set(available_designs)
-
-    if design_group == "random":
-        selected = available.intersection(RANDOM_AIG_DESIGNS)
-    elif design_group == "openabc":
-        selected = available.difference(RANDOM_AIG_DESIGNS)
-    else:
-        selected = set(available_designs)
+    group_candidates = {
+        "random": set(RANDOM_AIG_DESIGNS),
+        "openabc": set(OPENABC_DESIGNS),
+        "all": available,
+    }
+    selected = available.intersection(group_candidates[design_group])
 
     if explicit_designs:
         requested = set(explicit_designs)
@@ -176,13 +205,12 @@ def select_designs(
             )
         selected = selected.intersection(requested)
 
-    selected_list = sorted(selected)
-    if not selected_list:
+    if not selected:
         raise ValueError(
             "No designs selected after applying filters. "
             f"design_group={design_group}, explicit_designs={explicit_designs or '[]'}"
         )
-    return selected_list
+    return sorted(selected)
 
 
 def shell_quote_single(value: str) -> str:
@@ -192,29 +220,26 @@ def shell_quote_single(value: str) -> str:
 def render_shard_script(
     algorithm: str,
     design: str,
-    base_dir: str,
     full_dataset: str,
     abc_rc: str,
-    metadata_updater: str,
     input_source: str,
-    runtime: Dict,
     algo_cfg: Dict,
 ) -> str:
-        command_template = str(algo_cfg.get("command_template", "")).strip()
-        if not command_template:
-                raise ValueError(f"Missing command_template for algorithm {algorithm}")
+    command_template = str(algo_cfg.get("command_template", "")).strip()
+    if not command_template:
+        raise ValueError(f"Missing command_template for algorithm {algorithm}")
 
-        command_template_escaped = shell_quote_single(command_template)
+    command_template_escaped = shell_quote_single(command_template)
 
-        output_tier = INPUT_SOURCE_TO_OUTPUT[input_source]
-        input_label = INPUT_SOURCE_TO_LABEL[input_source]
-        input_root = (
-                "base_aigs"
-                if input_source == "base_aigs"
-                else f"optimized_aigs/${{ALGORITHM}}/{input_source}"
-        )
+    output_tier = INPUT_SOURCE_TO_OUTPUT[input_source]
+    input_label = INPUT_SOURCE_TO_LABEL[input_source]
+    input_root = (
+        "base_aigs"
+        if input_source == "base_aigs"
+        else f"optimized_aigs/${{ALGORITHM}}/{input_source}"
+    )
 
-        return f"""#!/bin/bash
+    return f"""#!/bin/bash
 set -euo pipefail
 
 ALGORITHM="{algorithm}"
@@ -242,19 +267,33 @@ if [[ ! -d "$in_dir" ]]; then
     exit 1
 fi
 
+tmp_extract_root="$(mktemp -d "${{TMPDIR:-/tmp}}/opt_${{ALGORITHM}}_${{DESIGN}}_${{INPUT_LABEL}}_XXXXXX")"
+trap 'rm -rf "$tmp_extract_root"' EXIT
+
 processed=0
 created=0
 failed=0
+discovered=0
 
-for input_aig in $(find "$in_dir" -type f -name "*.aig" | sort); do
-    filename="$(basename "$input_aig")"
+run_one() {{
+    local input_aig="$1"
+    local input_ref="$2"
+    local filename
+    local output_aig
+    local log_file
+    local cmd
+    local seed_value
+
+    filename="$(basename "$input_ref")"
     output_aig="$out_dir/$filename"
-    log_file="$log_dir/${filename}.log"
+    log_file="$log_dir/${{filename}}.log"
+    seed_value="$(printf '%s' "$input_ref" | cksum | awk '{{print $1}}')"
 
     cmd="$COMMAND_TEMPLATE"
-    cmd="${{cmd//\{{input_aig\}}/$input_aig}}"
-    cmd="${{cmd//\{{output_aig\}}/$output_aig}}"
-    cmd="${{cmd//\{{abc_rc\}}/$ABC_RC}}"
+    cmd="${{cmd//\\{{input_aig\\}}/$input_aig}}"
+    cmd="${{cmd//\\{{output_aig\\}}/$output_aig}}"
+    cmd="${{cmd//\\{{abc_rc\\}}/$ABC_RC}}"
+    cmd="${{cmd//\\{{seed\\}}/$seed_value}}"
 
     echo "Running: $cmd" > "$log_file"
     if eval "$cmd" >> "$log_file" 2>&1; then
@@ -263,19 +302,54 @@ for input_aig in $(find "$in_dir" -type f -name "*.aig" | sort); do
         failed=$((failed + 1))
     fi
     processed=$((processed + 1))
-done
+}}
+
+if [[ "$INPUT_SOURCE" == "base_aigs" ]]; then
+    while IFS= read -r -d '' input_aig; do
+        discovered=$((discovered + 1))
+        run_one "$input_aig" "$input_aig"
+    done < <(find "$in_dir" -maxdepth 1 -type f -name "*.aig" -print0)
+
+    while IFS= read -r -d '' zip_file; do
+        while IFS= read -r member_path; do
+            [[ -z "$member_path" ]] && continue
+            discovered=$((discovered + 1))
+
+            member_file="$(basename "$member_path")"
+            extracted_input="$tmp_extract_root/${{member_file}}"
+
+            if unzip -p "$zip_file" "$member_path" > "$extracted_input"; then
+                run_one "$extracted_input" "$member_file"
+            else
+                echo "✗ Failed to extract $member_path from $zip_file" >&2
+                failed=$((failed + 1))
+            fi
+        done < <(unzip -Z1 "$zip_file" '*.aig' 2>/dev/null | sort)
+    done < <(find "$in_dir" -maxdepth 1 -type f -name "syn*.zip" -print0)
+else
+    while IFS= read -r -d '' input_aig; do
+        discovered=$((discovered + 1))
+        run_one "$input_aig" "$input_aig"
+    done < <(find "$in_dir" -type f -name "*.aig" -print0)
+fi
+
+if [[ $discovered -eq 0 ]]; then
+    echo "✗ No input AIGs discovered under: $in_dir (input_source=$INPUT_SOURCE)" >&2
+    exit 1
+fi
 
 summary_file="$log_dir/summary.json"
 cat > "$summary_file" <<EOF
-{
-    "algorithm": "${ALGORITHM}",
-    "design": "${DESIGN}",
-    "tier": "${OUTPUT_TIER}",
-    "processed": ${processed},
-    "created": ${created},
-    "failed": ${failed},
+{{
+    "algorithm": "$ALGORITHM",
+    "design": "$DESIGN",
+    "tier": "$OUTPUT_TIER",
+    "discovered": $discovered,
+    "processed": $processed,
+    "created": $created,
+    "failed": $failed,
     "completed_at": "$(date -Iseconds)"
-}
+}}
 EOF
 
 if [[ $failed -gt 0 ]]; then
@@ -325,7 +399,6 @@ def main() -> None:
     runtime_config_dir = opt_root / "config"
     runtime_config_path = runtime_config_dir / "optimization_config.json"
     abc_rc = base_dir / "abc.rc"
-    metadata_updater = base_dir / "dataset_tools" / "update_optimization_metadata.py"
 
     config = load_config(config_path)
     available_designs = discover_designs(base_aigs_dir)
@@ -347,13 +420,12 @@ def main() -> None:
     shutil.copyfile(config_path, runtime_config_path)
 
     for algorithm in selected_algorithms:
-        for tier in ("tier1", "tier2", "final"):
+        for tier in ("tier1", "tier2", "tier3"):
             for design in designs:
                 (opt_root / algorithm / tier / design).mkdir(
                     parents=True, exist_ok=True
                 )
 
-    runtime = config.get("runtime", {})
     generated_script_count = 0
     generated_zips: List[str] = []
 
@@ -366,12 +438,9 @@ def main() -> None:
                 scripts_for_design[script_name] = render_shard_script(
                     algorithm=algorithm,
                     design=design,
-                    base_dir=str(base_dir),
                     full_dataset=str(full_dataset),
                     abc_rc=str(abc_rc),
-                    metadata_updater=str(metadata_updater),
                     input_source=input_source,
-                    runtime=runtime,
                     algo_cfg=config["algorithms"][algorithm],
                 )
                 generated_script_count += 1
@@ -405,7 +474,7 @@ def main() -> None:
         "output_mapping": {
             "base_aigs": "tier1",
             "tier1": "tier2",
-            "tier2": "final",
+            "tier2": "tier3",
         },
     }
     with manifest_path.open("w", encoding="utf-8") as handle:

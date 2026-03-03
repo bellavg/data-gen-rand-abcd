@@ -15,7 +15,7 @@ set -e
 
 # ================= USER SETTINGS (EDIT HERE) =================
 # Design scope: random | openabcd | all
-DEFAULT_DESIGN_GROUP="${DEFAULT_DESIGN_GROUP:-random}"
+DEFAULT_DESIGN_GROUP="${DEFAULT_DESIGN_GROUP:-all}"
 # Algorithms: all | Orchestrate,Deepsyn,Syn4,C2RS
 DEFAULT_ALGORITHMS="${DEFAULT_ALGORITHMS:-all}"
 # Optional explicit design override: e.g. "128,256"
@@ -51,15 +51,15 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         -h|--help)
-            echo "Usage: sbatch slurm_jobs/job_8_make_optimize_scripts.sh [--design-group all|random|openabc|openabcd] [--designs 'd1,d2,...'] [--algorithms all|Orchestrate,Deepsyn,Syn4,C2RS] [--input-source all|base_aigs|tier1|tier2]"
+            echo "Usage: sbatch slurm_jobs/jobs_8_optimization/job_8_make_optimize_scripts.sh [--design-group all|random|openabc|openabcd] [--designs 'd1,d2,...'] [--algorithms all|Orchestrate,Deepsyn,Syn4,C2RS] [--input-source all|base_aigs|tier1|tier2]"
             echo ""
             echo "Examples:"
-            echo "  sbatch slurm_jobs/job_8_make_optimize_scripts.sh --design-group random"
-            echo "  sbatch slurm_jobs/job_8_make_optimize_scripts.sh --designs '128,256,512'"
-            echo "  sbatch slurm_jobs/job_8_make_optimize_scripts.sh --design-group random --designs '128,256'"
-            echo "  sbatch slurm_jobs/job_8_make_optimize_scripts.sh --design-group random --algorithms C2RS"
-            echo "  sbatch slurm_jobs/job_8_make_optimize_scripts.sh --input-source tier1 --algorithms 'C2RS,Syn4'"
-            echo "  sbatch slurm_jobs/job_8_make_optimize_scripts.sh --input-source all --algorithms C2RS"
+            echo "  sbatch slurm_jobs/jobs_8_optimization/job_8_make_optimize_scripts.sh --design-group all"
+            echo "  sbatch slurm_jobs/jobs_8_optimization/job_8_make_optimize_scripts.sh --designs '128,256,512'"
+            echo "  sbatch slurm_jobs/jobs_8_optimization/job_8_make_optimize_scripts.sh --design-group random --designs '128,256'"
+            echo "  sbatch slurm_jobs/jobs_8_optimization/job_8_make_optimize_scripts.sh --design-group openabc --algorithms C2RS"
+            echo "  sbatch slurm_jobs/jobs_8_optimization/job_8_make_optimize_scripts.sh --input-source tier1 --algorithms 'C2RS,Syn4'"
+            echo "  sbatch slurm_jobs/jobs_8_optimization/job_8_make_optimize_scripts.sh --input-source all --algorithms C2RS"
             exit 0
             ;;
         *)
@@ -99,21 +99,12 @@ if [[ "$ALGORITHMS" != "all" ]]; then
     done
 fi
 
-echo "=========================================="
-echo "STEP 8: Generating Optimization Bulk Scripts"
-echo "=========================================="
-echo "Job ID: $SLURM_JOB_ID"
-echo "Running on: $(hostname)"
-echo "Start time: $(date)"
-echo ""
+echo "STEP 8 start: job=${SLURM_JOB_ID:-local} host=$(hostname) time=$(date)"
 
 module purge
 module load 2025
 module load foss/2025a
 module load Python/3.13.1-GCCcore-14.2.0
-
-echo "Loaded modules: 2025, foss/2025a, Python/3.13.1"
-echo ""
 
 BASE_DIR="$HOME/data-gen-rand-abcd"
 FULL_DATASET="${FULL_DATASET:-/scratch-shared/$USER/FULL_DATASET}"
@@ -121,21 +112,9 @@ GEN_SCRIPT="${BASE_DIR}/dataset_tools/generate_optimization_bulk_scripts.py"
 CONFIG_FILE="${BASE_DIR}/dataset_tools/optimization_config.json"
 SCRIPTS_ZIP_ROOT="${FULL_DATASET}/synScripts/optimization"
 
-echo "Configuration:"
-echo "  Base directory: $BASE_DIR"
-echo "  Full dataset:   $FULL_DATASET"
-echo "  Generator:      $GEN_SCRIPT"
-echo "  Config source:  $CONFIG_FILE"
-echo "  Design group:   $DESIGN_GROUP"
-echo "  Designs:        ${DESIGNS:-<all in selected group>}"
-echo "  Algorithms:     $ALGORITHMS"
-echo "  Input source:   $INPUT_SOURCE"
-echo "  Script zip root:$SCRIPTS_ZIP_ROOT"
-echo ""
-
 if [ ! -d "$FULL_DATASET" ]; then
     echo "✗ ERROR: FULL_DATASET not found: $FULL_DATASET"
-    echo "  Override path: FULL_DATASET=/path/to/FULL_DATASET sbatch slurm_jobs/job_8_make_optimize_scripts.sh"
+    echo "  Override path: FULL_DATASET=/path/to/FULL_DATASET sbatch slurm_jobs/jobs_8_optimization/job_8_make_optimize_scripts.sh"
     exit 1
 fi
 
@@ -154,7 +133,6 @@ if [ ! -f "$CONFIG_FILE" ]; then
     exit 1
 fi
 
-echo "Generating optimization bulk scripts..."
 GEN_ARGS=(
     --base-dir "$BASE_DIR"
     --full-dataset "$FULL_DATASET"
@@ -170,72 +148,68 @@ fi
 
 python3 "$GEN_SCRIPT" "${GEN_ARGS[@]}"
 
-echo ""
-echo "Verifying generated script zip bundles..."
-if [[ "$ALGORITHMS" == "all" ]]; then
-    algorithms_to_check=(Orchestrate Deepsyn Syn4 C2RS)
-else
-    IFS=',' read -r -a algorithms_to_check <<< "$ALGORITHMS"
-fi
-
-if [[ "$INPUT_SOURCE" == "all" ]]; then
-    source_labels=(base tier1 tier2)
-elif [[ "$INPUT_SOURCE" == "base_aigs" ]]; then
-    source_labels=(base)
-elif [[ "$INPUT_SOURCE" == "tier1" ]]; then
-    source_labels=(tier1)
-else
-    source_labels=(tier2)
-fi
-
 if [ ! -d "$SCRIPTS_ZIP_ROOT" ]; then
     echo "✗ ERROR: Script zip root not found: $SCRIPTS_ZIP_ROOT"
     exit 1
 fi
 
-zip_count=$(find "$SCRIPTS_ZIP_ROOT" -type f -name '*.zip' | wc -l | tr -d ' ')
-if [ "$zip_count" -eq 0 ]; then
-    echo "✗ ERROR: No design zip bundles found in: $SCRIPTS_ZIP_ROOT"
+MANIFEST_DIR="${FULL_DATASET}/optimized_aigs/manifests"
+latest_manifest=$(ls -1t "$MANIFEST_DIR"/bulk_scripts_manifest_*.json 2>/dev/null | head -n 1 || true)
+if [ -z "$latest_manifest" ]; then
+    echo "✗ ERROR: No manifest found under: $MANIFEST_DIR"
     exit 1
 fi
 
-echo "Found ${zip_count} design zip bundles"
+verify_result=$(python3 - "$latest_manifest" "$SCRIPTS_ZIP_ROOT" <<'PY'
+import json
+import sys
+import zipfile
+from pathlib import Path
 
-for algorithm in "${algorithms_to_check[@]}"; do
-    algorithm="$(echo "$algorithm" | xargs)"
-    for source_label in "${source_labels[@]}"; do
-        pattern="optimizeBulk_${algorithm}_*_${source_label}.sh"
-        match_count=$(find "$SCRIPTS_ZIP_ROOT" -type f -name '*.zip' -exec sh -c 'for z in "$@"; do unzip -Z1 "$z" "$0" 2>/dev/null; done' "$pattern" {} + | wc -l | tr -d ' ')
-        if [ "$match_count" -gt 0 ]; then
-            echo "  ✓ ${algorithm} (${source_label}): ${match_count} scripts in zip bundles"
-        else
-            echo "  ✗ ${algorithm} (${source_label}): No scripts found in zip bundles"
-            exit 1
-        fi
-    done
-done
+manifest_path = Path(sys.argv[1])
+zip_root = Path(sys.argv[2])
 
-echo ""
-echo "=========================================="
-echo "Step 8 Complete"
-echo "=========================================="
-echo ""
-total_scripts=$(find "$SCRIPTS_ZIP_ROOT" -type f -name '*.zip' -exec sh -c 'for z in "$@"; do unzip -Z1 "$z" "optimizeBulk_*.sh" 2>/dev/null; done' _ {} + | wc -l | tr -d ' ')
-echo "Generated: ${total_scripts} optimization shard scripts"
-echo "Location: $SCRIPTS_ZIP_ROOT"
-echo ""
-echo "Next step: Submit per-algorithm jobs"
-echo ""
-echo "Tier 1 (default):"
-echo "  sbatch slurm_jobs/job_8a_optimize_orchestrate.sh"
-echo "  sbatch slurm_jobs/job_8b_optimize_deepsyn.sh"
-echo "  sbatch slurm_jobs/job_8c_optimize_syn4.sh"
-echo "  sbatch slurm_jobs/job_8d_optimize_c2rs.sh"
-echo ""
-echo "Tier 2 (same jobs, set TIER=2):"
-echo "  sbatch --export=ALL,TIER=2 slurm_jobs/job_8a_optimize_orchestrate.sh"
-echo "  sbatch --export=ALL,TIER=2 slurm_jobs/job_8b_optimize_deepsyn.sh"
-echo "  sbatch --export=ALL,TIER=2 slurm_jobs/job_8c_optimize_syn4.sh"
-echo "  sbatch --export=ALL,TIER=2 slurm_jobs/job_8d_optimize_c2rs.sh"
-echo ""
-echo "End time: $(date)"
+manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+designs = manifest.get("designs", [])
+algorithms = manifest.get("algorithms", [])
+input_sources = manifest.get("input_sources", [])
+label_map = {"base_aigs": "base", "tier1": "tier1", "tier2": "tier2"}
+
+expected = len(designs) * len(algorithms) * len(input_sources)
+actual = 0
+missing = []
+missing_zips = []
+
+for design in designs:
+    zip_path = zip_root / f"{design}.zip"
+    if not zip_path.exists():
+        missing_zips.append(str(zip_path))
+        continue
+
+    with zipfile.ZipFile(zip_path, "r") as archive:
+        members = set(archive.namelist())
+
+    for algorithm in algorithms:
+        for source in input_sources:
+            label = label_map[source]
+            script_name = f"optimizeBulk_{algorithm}_{design}_{label}.sh"
+            if script_name in members:
+                actual += 1
+            else:
+                missing.append(script_name)
+
+print(f"expected={expected} actual={actual} designs={len(designs)} algs={len(algorithms)} sources={len(input_sources)}")
+
+if missing_zips:
+    print("missing_design_zips=" + str(len(missing_zips)))
+if missing:
+    print("missing_scripts=" + str(len(missing)))
+
+if missing_zips or missing or actual != expected:
+    sys.exit(1)
+PY
+)
+
+echo "Verification: ${verify_result}"
+
+echo "STEP 8 complete: manifest=${latest_manifest} time=$(date)"
