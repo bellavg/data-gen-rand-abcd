@@ -3,12 +3,12 @@
 #SBATCH --time=78:00:00
 #SBATCH -N 1
 #SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=64
+#SBATCH --cpus-per-task=72
 #SBATCH --partition=genoa
 #SBATCH --output=logs/8a_opt_orchestrate_%j.out
 
 # Resource notes:
-# - Default CPUs per task is set to 64 for higher throughput.
+# - Default CPUs per task is set to 72 for higher throughput.
 # - Snellius billing is in 24-core chunks on shared Genoa nodes.
 # - Override at submit time, e.g.:
 #   sbatch --cpus-per-task=24  slurm_jobs/jobs_8_optimization/job_8a_optimize_orchestrate.sh
@@ -31,7 +31,7 @@ DESIGN_GROUP="${DESIGN_GROUP:-all}"
 DESIGNS="${DESIGNS:-}"
 
 # Worker count used inside generated optimizeBulk scripts.
-export OPT_SCRIPT_PARALLELISM="${OPT_SCRIPT_PARALLELISM:-${SLURM_CPUS_PER_TASK:-64}}"
+export OPT_SCRIPT_PARALLELISM="${OPT_SCRIPT_PARALLELISM:-${SLURM_CPUS_PER_TASK:-72}}"
 
 BASE_DIR="${BASE_DIR:-$HOME/data-gen-rand-abcd}"
 GEN_SCRIPT="${GEN_SCRIPT:-$BASE_DIR/dataset_tools/generate_optimization_bulk_scripts.py}"
