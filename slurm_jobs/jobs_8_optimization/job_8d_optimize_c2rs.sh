@@ -3,12 +3,12 @@
 #SBATCH --time=72:00:00
 #SBATCH -N 1
 #SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=72
+#SBATCH --cpus-per-task=192
 #SBATCH --partition=genoa
 #SBATCH --output=logs/8d_opt_c2rs_%j.out
 
 # Resource notes:
-# - Default CPUs per task is set to 72 for higher throughput.
+# - Default CPUs per task is set to 192 for max node-level throughput.
 # - Snellius billing is in 24-core chunks on shared Genoa nodes.
 # - Override at submit time, e.g.:
 #   sbatch --cpus-per-task=24  slurm_jobs/jobs_8_optimization/job_8d_optimize_c2rs.sh
@@ -31,7 +31,7 @@ DESIGN_GROUP="${DESIGN_GROUP:-all}"
 DESIGNS="${DESIGNS:-}"
 
 # Worker count used inside generated optimizeBulk scripts.
-export OPT_SCRIPT_PARALLELISM="${OPT_SCRIPT_PARALLELISM:-${SLURM_CPUS_PER_TASK:-72}}"
+export OPT_SCRIPT_PARALLELISM="${OPT_SCRIPT_PARALLELISM:-${SLURM_CPUS_PER_TASK:-192}}"
 
 BASE_DIR="${BASE_DIR:-$HOME/data-gen-rand-abcd}"
 GEN_SCRIPT="${GEN_SCRIPT:-$BASE_DIR/dataset_tools/generate_optimization_bulk_scripts.py}"
@@ -132,6 +132,7 @@ if [ "$script_count" -ne "$expected_designs" ]; then
 fi
 
 processed_designs=0
+skipped_designs=0
 
 designs_file="$(mktemp "${TMPDIR:-/tmp}/opt8d_designs_${SLURM_JOB_ID:-local}_XXXXXX")"
 trap 'rm -f "$designs_file"' EXIT
@@ -152,6 +153,27 @@ while IFS= read -r design_name; do
         echo "✗ ERROR: Missing design zip: $design_zip"
         exit 1
     fi
+
+    summary_path="$FULL_DATASET/metadata/raw_logs/${design_name}/${OUTPUT_TIER}/${ALGORITHM}/summary.json"
+    if [ -f "$summary_path" ]; then
+        if python3 - "$summary_path" <<'PY'
+import json
+import sys
+
+summary_path = sys.argv[1]
+with open(summary_path, "r", encoding="utf-8") as fh:
+    payload = json.load(fh)
+
+if int(payload.get("failed", 0)) != 0:
+    raise SystemExit(1)
+PY
+        then
+            skipped_designs=$((skipped_designs + 1))
+            echo "STEP 8d: skipping design ${design_name} (summary already clean)"
+            continue
+        fi
+    fi
+
     echo "STEP 8d: starting design ${design_name}"
 
     tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/opt_c2rs_${SLURM_JOB_ID:-local}_XXXXXX")"
@@ -160,7 +182,6 @@ while IFS= read -r design_name; do
     chmod +x "$tmp_dir/$script_file"
     bash "$tmp_dir/$script_file"
 
-    summary_path="$FULL_DATASET/metadata/raw_logs/${design_name}/${OUTPUT_TIER}/${ALGORITHM}/summary.json"
     if [ ! -f "$summary_path" ]; then
         echo "✗ ERROR: Missing per-design summary: $summary_path"
         rm -rf "$tmp_dir"
@@ -184,9 +205,9 @@ PY
     rm -rf "$tmp_dir"
 done < "$designs_file"
 
-if [ "$processed_designs" -ne "$expected_designs" ]; then
-    echo "✗ ERROR: Expected to process $expected_designs designs, processed $processed_designs"
+if [ $((processed_designs + skipped_designs)) -ne "$expected_designs" ]; then
+    echo "✗ ERROR: Expected total $expected_designs designs, processed=$processed_designs skipped=$skipped_designs"
     exit 1
 fi
 
-echo "STEP 8d complete: verified=${processed_designs} time=$(date)"
+echo "STEP 8d complete: processed=${processed_designs} skipped=${skipped_designs} total=${expected_designs} time=$(date)"
