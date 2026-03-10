@@ -8,7 +8,7 @@ Artifacts are generated per:
 - input tier (base_aigs, tier1, tier2)
 
 Scripts are stored as zipped bundles per design under:
-  FULL_DATASET/synScripts/optimization/{design}.zip
+    FULL_DATASET/synScripts/optimization/{algorithm}/{design}.zip
 """
 
 from __future__ import annotations
@@ -224,6 +224,7 @@ def render_shard_script(
     abc_rc: str,
     input_source: str,
     algo_cfg: Dict,
+    runtime_timeout_seconds: int,
 ) -> str:
     command_template = str(algo_cfg.get("command_template", "")).strip()
     if not command_template:
@@ -249,6 +250,7 @@ ABC_RC="{abc_rc}"
 INPUT_SOURCE="{input_source}"
 OUTPUT_TIER="{output_tier}"
 INPUT_LABEL="{input_label}"
+RUNTIME_TIMEOUT_SECONDS="{runtime_timeout_seconds}"
 
 COMMAND_TEMPLATE='{command_template_escaped}'
 
@@ -270,73 +272,139 @@ fi
 tmp_extract_root="$(mktemp -d "${{TMPDIR:-/tmp}}/opt_${{ALGORITHM}}_${{DESIGN}}_${{INPUT_LABEL}}_XXXXXX")"
 trap 'rm -rf "$tmp_extract_root"' EXIT
 
-processed=0
-created=0
-failed=0
-discovered=0
+local_out_dir="$tmp_extract_root/out"
+local_log_dir="$tmp_extract_root/log"
+mkdir -p "$local_out_dir" "$local_log_dir"
+
+WORKERS="${{OPT_SCRIPT_PARALLELISM:-${{SLURM_CPUS_PER_TASK:-64}}}}"
+
+if ! [[ "$WORKERS" =~ ^[0-9]+$ ]] || [[ "$WORKERS" -le 0 ]]; then
+    echo "✗ Invalid worker count: $WORKERS" >&2
+    exit 1
+fi
 
 run_one() {{
     local input_aig="$1"
     local input_ref="$2"
     local filename
     local output_aig
+    local local_output_aig
     local log_file
+    local local_log_file
     local cmd
     local seed_value
 
     filename="$(basename "$input_ref")"
     output_aig="$out_dir/$filename"
+    local_output_aig="$local_out_dir/$filename"
     log_file="$log_dir/${{filename}}.log"
+    local_log_file="$local_log_dir/${{filename}}.log"
     seed_value="$(printf '%s' "$input_ref" | cksum | awk '{{print $1}}')"
 
     cmd="$COMMAND_TEMPLATE"
     cmd="${{cmd//\\{{input_aig\\}}/$input_aig}}"
-    cmd="${{cmd//\\{{output_aig\\}}/$output_aig}}"
+    cmd="${{cmd//\\{{output_aig\\}}/$local_output_aig}}"
     cmd="${{cmd//\\{{abc_rc\\}}/$ABC_RC}}"
     cmd="${{cmd//\\{{seed\\}}/$seed_value}}"
+    cmd="${{cmd//\\{{timeout_seconds\\}}/$RUNTIME_TIMEOUT_SECONDS}}"
 
-    echo "Running: $cmd" > "$log_file"
-    if eval "$cmd" >> "$log_file" 2>&1; then
-        created=$((created + 1))
-    else
-        failed=$((failed + 1))
+    echo "Running: $cmd" > "$local_log_file"
+    if eval "$cmd" >> "$local_log_file" 2>&1; then
+        mv -f "$local_output_aig" "$output_aig"
+        mv -f "$local_log_file" "$log_file"
+        return 0
     fi
-    processed=$((processed + 1))
+
+    rm -f "$local_output_aig"
+    mv -f "$local_log_file" "$log_file"
+    return 1
 }}
+
+run_task() {{
+    local source_type="$1"
+    local source_path="$2"
+    local source_ref="$3"
+
+    if [[ "$source_type" == "file" ]]; then
+        run_one "$source_path" "$source_ref"
+        return
+    fi
+
+    if [[ "$source_type" == "zip" ]]; then
+        local member_file
+        local extracted_input
+        member_file="$(basename "$source_ref")"
+        extracted_input="$(mktemp "$tmp_extract_root/in_XXXXXX.aig")"
+        if unzip -p "$source_path" "$source_ref" > "$extracted_input"; then
+            run_one "$extracted_input" "$member_file"
+        else
+            echo "✗ Failed to extract $source_ref from $source_path" >&2
+            rm -f "$extracted_input"
+            return 1
+        fi
+        rm -f "$extracted_input"
+        return
+    fi
+
+    echo "✗ Unknown task source type: $source_type" >&2
+    return 1
+}}
+
+task_file="$tmp_extract_root/tasks.tsv"
+touch "$task_file"
 
 if [[ "$INPUT_SOURCE" == "base_aigs" ]]; then
     while IFS= read -r -d '' input_aig; do
-        discovered=$((discovered + 1))
-        run_one "$input_aig" "$input_aig"
+        printf "file\t%s\t%s\n" "$input_aig" "$input_aig" >> "$task_file"
     done < <(find "$in_dir" -maxdepth 1 -type f -name "*.aig" -print0)
 
     while IFS= read -r -d '' zip_file; do
         while IFS= read -r member_path; do
             [[ -z "$member_path" ]] && continue
-            discovered=$((discovered + 1))
-
-            member_file="$(basename "$member_path")"
-            extracted_input="$tmp_extract_root/${{member_file}}"
-
-            if unzip -p "$zip_file" "$member_path" > "$extracted_input"; then
-                run_one "$extracted_input" "$member_file"
-            else
-                echo "✗ Failed to extract $member_path from $zip_file" >&2
-                failed=$((failed + 1))
-            fi
+            printf "zip\t%s\t%s\n" "$zip_file" "$member_path" >> "$task_file"
         done < <(unzip -Z1 "$zip_file" '*.aig' 2>/dev/null | sort)
     done < <(find "$in_dir" -maxdepth 1 -type f -name "syn*.zip" -print0)
 else
     while IFS= read -r -d '' input_aig; do
-        discovered=$((discovered + 1))
-        run_one "$input_aig" "$input_aig"
+        printf "file\t%s\t%s\n" "$input_aig" "$input_aig" >> "$task_file"
     done < <(find "$in_dir" -type f -name "*.aig" -print0)
 fi
+
+discovered="$(wc -l < "$task_file" | tr -d ' ')"
 
 if [[ $discovered -eq 0 ]]; then
     echo "✗ No input AIGs discovered under: $in_dir (input_source=$INPUT_SOURCE)" >&2
     exit 1
 fi
+
+active_jobs=0
+created=0
+failed=0
+
+while IFS=$'\t' read -r source_type source_path source_ref; do
+    run_task "$source_type" "$source_path" "$source_ref" &
+    active_jobs=$((active_jobs + 1))
+
+    if [ "$active_jobs" -ge "$WORKERS" ]; then
+        if wait -n; then
+            created=$((created + 1))
+        else
+            failed=$((failed + 1))
+        fi
+        active_jobs=$((active_jobs - 1))
+    fi
+done < "$task_file"
+
+while [ "$active_jobs" -gt 0 ]; do
+    if wait -n; then
+        created=$((created + 1))
+    else
+        failed=$((failed + 1))
+    fi
+    active_jobs=$((active_jobs - 1))
+done
+
+processed=$((created + failed))
 
 summary_file="$log_dir/summary.json"
 cat > "$summary_file" <<EOF
@@ -401,6 +469,11 @@ def main() -> None:
     abc_rc = base_dir / "abc.rc"
 
     config = load_config(config_path)
+    runtime_cfg = config.get("runtime", {})
+    runtime_timeout_seconds = int(runtime_cfg.get("timeout_seconds", 600))
+    if runtime_timeout_seconds <= 0:
+        raise ValueError("runtime.timeout_seconds must be a positive integer")
+
     available_designs = discover_designs(base_aigs_dir)
     requested_designs = normalize_inputs(args.designs)
     requested_algorithms = normalize_inputs(args.algorithms)
@@ -429,9 +502,11 @@ def main() -> None:
     generated_script_count = 0
     generated_zips: List[str] = []
 
-    for design in designs:
-        scripts_for_design: Dict[str, str] = {}
-        for algorithm in selected_algorithms:
+    for algorithm in selected_algorithms:
+        algo_zip_dir = synscripts_opt_dir / algorithm
+        algo_zip_dir.mkdir(parents=True, exist_ok=True)
+        for design in designs:
+            scripts_for_design: Dict[str, str] = {}
             for input_source in selected_input_sources:
                 label = INPUT_SOURCE_TO_LABEL[input_source]
                 script_name = f"optimizeBulk_{algorithm}_{design}_{label}.sh"
@@ -442,12 +517,13 @@ def main() -> None:
                     abc_rc=str(abc_rc),
                     input_source=input_source,
                     algo_cfg=config["algorithms"][algorithm],
+                    runtime_timeout_seconds=runtime_timeout_seconds,
                 )
                 generated_script_count += 1
 
-        zip_path = synscripts_opt_dir / f"{design}.zip"
-        write_design_zip(zip_path, scripts_for_design)
-        generated_zips.append(str(zip_path))
+            zip_path = algo_zip_dir / f"{design}.zip"
+            write_design_zip(zip_path, scripts_for_design)
+            generated_zips.append(str(zip_path))
 
     manifest_path = (
         manifests_dir
@@ -469,7 +545,7 @@ def main() -> None:
         "designs": designs,
         "zip_count": len(generated_zips),
         "script_count": generated_script_count,
-        "zip_layout": "synScripts/optimization/{design}.zip",
+        "zip_layout": "synScripts/optimization/{algorithm}/{design}.zip",
         "script_layout": "optimizeBulk_{algorithm}_{design}_{base|tier1|tier2}.sh",
         "output_mapping": {
             "base_aigs": "tier1",
