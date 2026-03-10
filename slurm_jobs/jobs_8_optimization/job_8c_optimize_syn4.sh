@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=opt_syn4
-#SBATCH --time=72:00:00
+#SBATCH --time=78:00:00
 #SBATCH -N 1
 #SBATCH --ntasks-per-node=1
 #SBATCH --partition=genoa
@@ -83,9 +83,53 @@ else
 fi
 
 processed_designs=0
+skipped_designs=0
+
+# Temporary hardcoded resume list for designs already completed in a prior run.
+SKIP_DESIGNS=(
+    "1024"
+    "128"
+    "16384"
+    "2048"
+    "256"
+    "4096"
+    "512"
+    "8192"
+    "ac97_ctrl"
+    "aes"
+    "aes_secworks"
+    "aes_xcrypt"
+    "bp_be"
+    "des3_area"
+)
 
 while IFS= read -r design_zip; do
     design_name="$(basename "$design_zip" .zip)"
+
+    if [[ " ${SKIP_DESIGNS[*]} " == *" ${design_name} "* ]]; then
+        summary_path="$FULL_DATASET/metadata/raw_logs/${design_name}/${OUTPUT_TIER}/${ALGORITHM}/summary.json"
+        if [ ! -f "$summary_path" ]; then
+            echo "✗ ERROR: Missing per-design summary for skipped design: $summary_path"
+            exit 1
+        fi
+
+        python3 - "$summary_path" <<'PY'
+import json
+import sys
+
+summary_path = sys.argv[1]
+with open(summary_path, "r", encoding="utf-8") as fh:
+    payload = json.load(fh)
+
+if int(payload.get("failed", 0)) != 0:
+    raise SystemExit(f"failed>0 in {summary_path}")
+PY
+
+        skipped_designs=$((skipped_designs + 1))
+        echo "STEP 8c: skipping design ${design_name} (hardcoded completed, summary verified)"
+        continue
+    fi
+
     echo "STEP 8c: starting design ${design_name}"
 
     tmp_extract_dir="$(mktemp -d "${TMPDIR:-/tmp}/opt_syn4_${SLURM_JOB_ID:-local}_XXXXXX")"
@@ -151,9 +195,9 @@ PY
     rm -rf "$tmp_extract_dir"
 done < <(find "$SCRIPT_ZIP_ROOT" -type f -name '*.zip' | sort)
 
-if [ "$processed_designs" -ne "$expected_designs" ]; then
-    echo "✗ ERROR: Expected to process $expected_designs designs, processed $processed_designs"
+if [ $((processed_designs + skipped_designs)) -ne "$expected_designs" ]; then
+    echo "✗ ERROR: Expected total $expected_designs designs, processed=$processed_designs skipped=$skipped_designs"
     exit 1
 fi
 
-echo "STEP 8c complete: verified=${processed_designs} time=$(date)"
+echo "STEP 8c complete: processed=${processed_designs} skipped=${skipped_designs} total=${expected_designs} time=$(date)"
