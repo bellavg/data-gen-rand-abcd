@@ -183,6 +183,7 @@ def select_input_sources(requested_input_source: str) -> List[str]:
         return list(INPUT_SOURCES)
     return [requested_input_source]
 
+
 def select_designs(
     available_designs: List[str],
     design_group: str,

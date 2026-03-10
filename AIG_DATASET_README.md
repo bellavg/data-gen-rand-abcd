@@ -86,9 +86,12 @@ FULL_DATASET/
 │     ├─ {design}_orig.aig        # original AIG
 │     ├─ ...                     
 │     └─ syn{recipe_id}.zip       # each zip stores step AIGs for that recipe
-├─ synScripts/                    # zipped synthesis scripts per design 
+├─ synScripts/                    # zipped synthesis scripts and optimization runner scripts
 |  ├─ ...
-│  └─ {design}.zip                # inside: abc{recipe_id}.script #todo add line about synScripts for the algorithms algorihtm-design.zip
+│  ├─ {design}.zip                # synthesis recipes (inside: abc{recipe_id}.script)
+│  └─ optimization/
+│     └─ {algorithm}/
+│        └─ {design}.zip          # inside: optimizeBulk_{algorithm}_{design}_{base|tier1|tier2}.sh
 ├─ optimized_aigs/                # algorithm outputs (tiered)
 |  ├─ ...
 │  └─ {algorithm}/               
