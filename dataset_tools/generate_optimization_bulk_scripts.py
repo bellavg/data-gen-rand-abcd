@@ -311,6 +311,11 @@ run_one() {{
 
     echo "Running: $cmd" > "$local_log_file"
     if eval "$cmd" >> "$local_log_file" 2>&1; then
+        if [[ ! -f "$local_output_aig" ]]; then
+            echo "✗ Command exited 0 but did not produce output: $local_output_aig" >> "$local_log_file"
+            mv -f "$local_log_file" "$log_file"
+            return 1
+        fi
         mv -f "$local_output_aig" "$output_aig"
         mv -f "$local_log_file" "$log_file"
         return 0
