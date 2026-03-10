@@ -26,7 +26,7 @@
       "record_seed": true,
       "seed_mode": "deterministic_by_input_path",
       "max_passes": 20,
-      "command_template": "abc -c 'source {abc_rc}; read {input_aig}; strash; &get; &deepsyn -S {seed}; &put; write {output_aig}'"
+      "command_template": "abc -c 'source {abc_rc}; read {input_aig}; strash; &get; &deepsyn -S {seed} -T {timeout_seconds}; &put; write {output_aig}'"
     },
     "Syn4": {
       "engine": "syn4",
