@@ -2,7 +2,7 @@
   "schema_version": 1,
   "notes": "Canonical optimization config source. Edit this file, then re-run slurm_jobs/job_8_make_optimize_scripts.sh.",
   "runtime": {
-    "timeout_seconds": 600,
+    "timeout_seconds": 1200,
     "threads": 1,
     "chunk_size": 5000,
     "max_retries": 2,
