@@ -27,11 +27,10 @@ export PATH="$HOME/abc:$PATH"
 ALGORITHM="Deepsyn"
 SOURCE_LABEL="base"
 OUTPUT_TIER="tier1"
-DESIGN_GROUP="${DESIGN_GROUP:-all}"
-DESIGNS="${DESIGNS:-}"
+TARGET_DESIGN="${TARGET_DESIGN:-${DESIGN:-${DESIGNS:-}}}"
 
 # Worker count used inside generated optimizeBulk scripts.
-export OPT_SCRIPT_PARALLELISM="${OPT_SCRIPT_PARALLELISM:-72}"
+export OPT_SCRIPT_PARALLELISM="${OPT_SCRIPT_PARALLELISM:-${SLURM_CPUS_PER_TASK:-72}}"
 
 BASE_DIR="${BASE_DIR:-$HOME/data-gen-rand-abcd}"
 GEN_SCRIPT="${GEN_SCRIPT:-$BASE_DIR/dataset_tools/generate_optimization_bulk_scripts.py}"
@@ -56,18 +55,22 @@ if ! command -v abc >/dev/null 2>&1; then
     exit 1
 fi
 
-echo "STEP 8b: regenerating optimization scripts (algorithm=${ALGORITHM}, input_source=base_aigs, design_group=${DESIGN_GROUP})"
+if [ -z "$TARGET_DESIGN" ]; then
+    echo "✗ ERROR: TARGET_DESIGN is required for per-design mode."
+    echo "  Example: TARGET_DESIGN=1024 sbatch slurm_jobs/jobs_8_optimization/job_8b_optimize_deepsyn.sh"
+    exit 1
+fi
+
+echo "STEP 8b: regenerating optimization scripts (algorithm=${ALGORITHM}, input_source=base_aigs, design=${TARGET_DESIGN})"
 GEN_ARGS=(
     --base-dir "$BASE_DIR"
     --full-dataset "$FULL_DATASET"
     --config "$CONFIG_FILE"
-    --design-group "$DESIGN_GROUP"
+    --design-group all
     --algorithms "$ALGORITHM"
     --input-source base_aigs
+    --designs "$TARGET_DESIGN"
 )
-if [ -n "$DESIGNS" ]; then
-    GEN_ARGS+=(--designs "$DESIGNS")
-fi
 python3 "$GEN_SCRIPT" "${GEN_ARGS[@]}"
 
 if [ ! -d "$SCRIPT_ZIP_ROOT" ]; then
@@ -81,11 +84,11 @@ if [ -z "$latest_manifest" ]; then
     exit 1
 fi
 
-expected_designs=$(python3 - "$latest_manifest" "$ALGORITHM" <<'PY'
+python3 - "$latest_manifest" "$ALGORITHM" "$TARGET_DESIGN" <<'PY'
 import json
 import sys
 
-manifest_path, algorithm = sys.argv[1], sys.argv[2]
+manifest_path, algorithm, target_design = sys.argv[1], sys.argv[2], sys.argv[3]
 with open(manifest_path, "r", encoding="utf-8") as fh:
     m = json.load(fh)
 
@@ -95,69 +98,20 @@ if "base_aigs" not in m.get("input_sources", []):
     raise SystemExit("manifest missing input_source: base_aigs")
 
 designs = m.get("designs", [])
-if not designs:
-    raise SystemExit("manifest has zero designs")
-
-print(len(designs))
+if designs != [target_design]:
+    raise SystemExit(f"manifest design mismatch: expected [{target_design}], got {designs}")
 PY
-)
+echo "STEP 8b config: parallelism=${OPT_SCRIPT_PARALLELISM}"
 
-script_count=$(python3 - "$latest_manifest" "$SCRIPT_ZIP_ROOT" "$ALGORITHM" "$SOURCE_LABEL" <<'PY'
-import json
-import sys
-import zipfile
-from pathlib import Path
-
-manifest_path = Path(sys.argv[1])
-zip_root = Path(sys.argv[2])
-algorithm = sys.argv[3]
-source_label = sys.argv[4]
-
-manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-count = 0
-for design in manifest.get("designs", []):
-    zip_path = zip_root / f"{design}.zip"
-    if not zip_path.exists():
-        continue
-    script_name = f"optimizeBulk_{algorithm}_{design}_{source_label}.sh"
-    with zipfile.ZipFile(zip_path, "r") as archive:
-        if script_name in archive.namelist():
-            count += 1
-print(count)
-PY
-)
-if [ "$script_count" -ne "$expected_designs" ]; then
-    echo "✗ ERROR: Expected $expected_designs ${ALGORITHM} shard scripts, found $script_count"
+design_zip="$SCRIPT_ZIP_ROOT/${TARGET_DESIGN}.zip"
+if [ ! -f "$design_zip" ]; then
+    echo "✗ ERROR: Missing design zip: $design_zip"
     exit 1
 fi
 
-processed_designs=0
-skipped_designs=0
-echo "STEP 8b config: parallelism=${OPT_SCRIPT_PARALLELISM}"
-
-designs_file="$(mktemp "${TMPDIR:-/tmp}/opt8b_designs_${SLURM_JOB_ID:-local}_XXXXXX")"
-trap 'rm -f "$designs_file"' EXIT
-python3 - "$latest_manifest" > "$designs_file" <<'PY'
-import json
-import sys
-
-with open(sys.argv[1], "r", encoding="utf-8") as fh:
-    m = json.load(fh)
-for design in m.get("designs", []):
-    print(design)
-PY
-
-while IFS= read -r design_name; do
-    [ -z "$design_name" ] && continue
-    design_zip="$SCRIPT_ZIP_ROOT/${design_name}.zip"
-    if [ ! -f "$design_zip" ]; then
-        echo "✗ ERROR: Missing design zip: $design_zip"
-        exit 1
-    fi
-
-    summary_path="$FULL_DATASET/metadata/raw_logs/${design_name}/${OUTPUT_TIER}/${ALGORITHM}/summary.json"
-    if [ -f "$summary_path" ]; then
-        if python3 - "$summary_path" <<'PY'
+summary_path="$FULL_DATASET/metadata/raw_logs/${TARGET_DESIGN}/${OUTPUT_TIER}/${ALGORITHM}/summary.json"
+if [ -f "$summary_path" ]; then
+    if python3 - "$summary_path" <<'PY'
 import json
 import sys
 
@@ -168,28 +122,28 @@ with open(summary_path, "r", encoding="utf-8") as fh:
 if int(payload.get("failed", 0)) != 0:
     raise SystemExit(1)
 PY
-        then
-            skipped_designs=$((skipped_designs + 1))
-            echo "STEP 8b: skipping design ${design_name} (summary already clean)"
-            continue
-        fi
+    then
+        echo "STEP 8b: skipping design ${TARGET_DESIGN} (summary already clean)"
+        echo "STEP 8b complete: processed=0 skipped=1 total=1 time=$(date)"
+        exit 0
     fi
+fi
 
-    echo "STEP 8b: starting design ${design_name}"
+echo "STEP 8b: starting design ${TARGET_DESIGN}"
 
-    tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/opt_deepsyn_${SLURM_JOB_ID:-local}_XXXXXX")"
-    script_file="optimizeBulk_${ALGORITHM}_${design_name}_${SOURCE_LABEL}.sh"
-    unzip -q "$design_zip" "$script_file" -d "$tmp_dir"
-    chmod +x "$tmp_dir/$script_file"
-    bash "$tmp_dir/$script_file"
+tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/opt_deepsyn_${SLURM_JOB_ID:-local}_XXXXXX")"
+trap 'rm -rf "$tmp_dir"' EXIT
+script_file="optimizeBulk_${ALGORITHM}_${TARGET_DESIGN}_${SOURCE_LABEL}.sh"
+unzip -q "$design_zip" "$script_file" -d "$tmp_dir"
+chmod +x "$tmp_dir/$script_file"
+bash "$tmp_dir/$script_file"
 
-    if [ ! -f "$summary_path" ]; then
-        echo "✗ ERROR: Missing per-design summary: $summary_path"
-        rm -rf "$tmp_dir"
-        exit 1
-    fi
+if [ ! -f "$summary_path" ]; then
+    echo "✗ ERROR: Missing per-design summary: $summary_path"
+    exit 1
+fi
 
-    python3 - "$summary_path" <<'PY'
+python3 - "$summary_path" <<'PY'
 import json
 import sys
 
@@ -201,14 +155,5 @@ if int(payload.get("failed", 0)) != 0:
     raise SystemExit(f"failed>0 in {summary_path}")
 PY
 
-    processed_designs=$((processed_designs + 1))
-    echo "STEP 8b: done design ${design_name}"
-    rm -rf "$tmp_dir"
-done < "$designs_file"
-
-if [ $((processed_designs + skipped_designs)) -ne "$expected_designs" ]; then
-    echo "✗ ERROR: Expected total $expected_designs designs, processed=$processed_designs skipped=$skipped_designs"
-    exit 1
-fi
-
-echo "STEP 8b complete: processed=${processed_designs} skipped=${skipped_designs} total=${expected_designs} time=$(date)"
+echo "STEP 8b: done design ${TARGET_DESIGN}"
+echo "STEP 8b complete: processed=1 skipped=0 total=1 time=$(date)"
