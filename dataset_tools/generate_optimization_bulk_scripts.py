@@ -225,7 +225,7 @@ def render_shard_script(
     abc_rc: str,
     input_source: str,
     algo_cfg: Dict,
-    runtime_timeout_seconds: int,
+    timeout_seconds: int | None,
 ) -> str:
     command_template = str(algo_cfg.get("command_template", "")).strip()
     if not command_template:
@@ -241,6 +241,8 @@ def render_shard_script(
         else f"optimized_aigs/${{ALGORITHM}}/{input_source}"
     )
 
+    timeout_seconds_value = "" if timeout_seconds is None else str(timeout_seconds)
+
     return f"""#!/bin/bash
 set -euo pipefail
 
@@ -251,7 +253,7 @@ ABC_RC="{abc_rc}"
 INPUT_SOURCE="{input_source}"
 OUTPUT_TIER="{output_tier}"
 INPUT_LABEL="{input_label}"
-RUNTIME_TIMEOUT_SECONDS="{runtime_timeout_seconds}"
+RUNTIME_TIMEOUT_SECONDS="{timeout_seconds_value}"
 
 COMMAND_TEMPLATE='{command_template_escaped}'
 
@@ -300,7 +302,7 @@ run_one() {{
     local_output_aig="$local_out_dir/$filename"
     log_file="$log_dir/${{filename}}.log"
     local_log_file="$local_log_dir/${{filename}}.log"
-    seed_value="$(printf '%s' "$input_ref" | cksum | awk '{{print $1}}')"
+    seed_value="42"
 
     cmd="$COMMAND_TEMPLATE"
     cmd="${{cmd//\\{{input_aig\\}}/$input_aig}}"
@@ -476,8 +478,8 @@ def main() -> None:
 
     config = load_config(config_path)
     runtime_cfg = config.get("runtime", {})
-    runtime_timeout_seconds = int(runtime_cfg.get("timeout_seconds", 600))
-    if runtime_timeout_seconds <= 0:
+    default_timeout_seconds = int(runtime_cfg.get("timeout_seconds", 10))
+    if default_timeout_seconds <= 0:
         raise ValueError("runtime.timeout_seconds must be a positive integer")
 
     available_designs = discover_designs(base_aigs_dir)
@@ -513,6 +515,10 @@ def main() -> None:
         algo_zip_dir.mkdir(parents=True, exist_ok=True)
         for design in designs:
             scripts_for_design: Dict[str, str] = {}
+            algo_cfg = config["algorithms"][algorithm]
+            timeout_seconds: int | None = None
+            if algorithm == "Deepsyn":
+                timeout_seconds = int(algo_cfg.get("timeout_seconds", default_timeout_seconds))
             for input_source in selected_input_sources:
                 label = INPUT_SOURCE_TO_LABEL[input_source]
                 script_name = f"optimizeBulk_{algorithm}_{design}_{label}.sh"
@@ -522,8 +528,8 @@ def main() -> None:
                     full_dataset=str(full_dataset),
                     abc_rc=str(abc_rc),
                     input_source=input_source,
-                    algo_cfg=config["algorithms"][algorithm],
-                    runtime_timeout_seconds=runtime_timeout_seconds,
+                    algo_cfg=algo_cfg,
+                    timeout_seconds=timeout_seconds,
                 )
                 generated_script_count += 1
 

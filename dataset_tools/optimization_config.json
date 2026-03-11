@@ -2,11 +2,7 @@
   "schema_version": 1,
   "notes": "Canonical optimization config source. Edit this file, then re-run slurm_jobs/job_8_make_optimize_scripts.sh.",
   "runtime": {
-    "timeout_seconds": 1200,
-    "threads": 1,
-    "chunk_size": 5000,
-    "max_retries": 2,
-    "dry_run": false
+    "timeout_seconds": 20
   },
   "tier_policy": {
     "same_parameters_across_tiers": true,
@@ -24,8 +20,8 @@
     "Deepsyn": {
       "engine": "deepsyn",
       "record_seed": true,
-      "seed_mode": "deterministic_by_input_path",
-      "max_passes": 20,
+      "seed_mode": "fixed_42",
+      "timeout_seconds": 20,
       "command_template": "abc -c 'source {abc_rc}; read {input_aig}; strash; &get; &deepsyn -S {seed} -T {timeout_seconds}; &put; write {output_aig}'"
     },
     "Syn4": {
