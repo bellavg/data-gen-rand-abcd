@@ -153,6 +153,13 @@ SKIP_DESIGNS=(
     "aes_xcrypt"
     "bp_be"
     "des3_area"
+    "dft"
+    "dynamic_node"
+    "ethernet"
+    "fir"
+    "fpu"
+    "i2c"
+    "idft"
 )
 
 designs_file="$(mktemp "${TMPDIR:-/tmp}/opt8c_designs_${SLURM_JOB_ID:-local}_XXXXXX")"

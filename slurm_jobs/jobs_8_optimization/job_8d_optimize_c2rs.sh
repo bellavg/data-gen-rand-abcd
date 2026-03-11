@@ -137,6 +137,21 @@ fi
 processed_designs=0
 skipped_designs=0
 
+# Temporary hardcoded resume list for designs already completed in a prior run.
+SKIP_DESIGNS=(
+    "16384"
+    "2048"
+    "256"
+    "4096"
+    "512"
+    "8192"
+    "ac97_ctrl"
+    "aes"
+    "aes_secworks"
+    "aes_xcrypt"
+    "bp_be"
+)
+
 designs_file="$(mktemp "${TMPDIR:-/tmp}/opt8d_designs_${SLURM_JOB_ID:-local}_XXXXXX")"
 trap 'rm -f "$designs_file"' EXIT
 python3 - "$latest_manifest" > "$designs_file" <<'PY'
@@ -158,6 +173,30 @@ while IFS= read -r design_name; do
     fi
 
     summary_path="$FULL_DATASET/metadata/raw_logs/${design_name}/${OUTPUT_TIER}/${ALGORITHM}/summary.json"
+
+    if [[ " ${SKIP_DESIGNS[*]} " == *" ${design_name} "* ]]; then
+        if [ ! -f "$summary_path" ]; then
+            echo "✗ ERROR: Missing per-design summary for skipped design: $summary_path"
+            exit 1
+        fi
+
+        python3 - "$summary_path" <<'PY'
+import json
+import sys
+
+summary_path = sys.argv[1]
+with open(summary_path, "r", encoding="utf-8") as fh:
+    payload = json.load(fh)
+
+if int(payload.get("failed", 0)) != 0:
+    raise SystemExit(f"failed>0 in {summary_path}")
+PY
+
+        skipped_designs=$((skipped_designs + 1))
+        echo "STEP 8d: skipping design ${design_name} (hardcoded completed, summary verified)"
+        continue
+    fi
+
     if [ -f "$summary_path" ]; then
         if python3 - "$summary_path" <<'PY'
 import json
