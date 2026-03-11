@@ -275,10 +275,6 @@ fi
 tmp_extract_root="$(mktemp -d "${{TMPDIR:-/tmp}}/opt_${{ALGORITHM}}_${{DESIGN}}_${{INPUT_LABEL}}_XXXXXX")"
 trap 'rm -rf "$tmp_extract_root"' EXIT
 
-local_out_dir="$tmp_extract_root/out"
-local_log_dir="$tmp_extract_root/log"
-mkdir -p "$local_out_dir" "$local_log_dir"
-
 WORKERS="${{OPT_SCRIPT_PARALLELISM:-${{SLURM_CPUS_PER_TASK:-64}}}}"
 
 if ! [[ "$WORKERS" =~ ^[0-9]+$ ]] || [[ "$WORKERS" -le 0 ]]; then
@@ -291,40 +287,30 @@ run_one() {{
     local input_ref="$2"
     local filename
     local output_aig
-    local local_output_aig
-    local log_file
-    local local_log_file
     local cmd
     local seed_value
 
     filename="$(basename "$input_ref")"
     output_aig="$out_dir/$filename"
-    local_output_aig="$local_out_dir/$filename"
-    log_file="$log_dir/${{filename}}.log"
-    local_log_file="$local_log_dir/${{filename}}.log"
     seed_value="42"
 
     cmd="$COMMAND_TEMPLATE"
     cmd="${{cmd//\\{{input_aig\\}}/$input_aig}}"
-    cmd="${{cmd//\\{{output_aig\\}}/$local_output_aig}}"
+    cmd="${{cmd//\\{{output_aig\\}}/$output_aig}}"
     cmd="${{cmd//\\{{abc_rc\\}}/$ABC_RC}}"
     cmd="${{cmd//\\{{seed\\}}/$seed_value}}"
     cmd="${{cmd//\\{{timeout_seconds\\}}/$RUNTIME_TIMEOUT_SECONDS}}"
 
-    echo "Running: $cmd" > "$local_log_file"
-    if eval "$cmd" >> "$local_log_file" 2>&1; then
-        if [[ ! -f "$local_output_aig" ]]; then
-            echo "✗ Command exited 0 but did not produce output: $local_output_aig" >> "$local_log_file"
-            mv -f "$local_log_file" "$log_file"
+    if eval "$cmd" >/dev/null 2>&1; then
+        if [[ ! -f "$output_aig" ]]; then
+            echo "✗ Command exited 0 but did not produce output: $output_aig" >&2
             return 1
         fi
-        mv -f "$local_output_aig" "$output_aig"
-        mv -f "$local_log_file" "$log_file"
         return 0
     fi
 
-    rm -f "$local_output_aig"
-    mv -f "$local_log_file" "$log_file"
+    echo "✗ Command failed for input: $filename" >&2
+    rm -f "$output_aig"
     return 1
 }}
 
