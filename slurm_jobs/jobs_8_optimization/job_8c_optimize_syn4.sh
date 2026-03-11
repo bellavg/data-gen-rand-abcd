@@ -16,6 +16,9 @@
 
 set -euo pipefail
 
+export TMPDIR="${TMPDIR:-/scratch-shared/$USER/tmp}"
+mkdir -p "$TMPDIR"
+
 echo "STEP 8c start: job=${SLURM_JOB_ID:-local} host=$(hostname) time=$(date)"
 
 module purge

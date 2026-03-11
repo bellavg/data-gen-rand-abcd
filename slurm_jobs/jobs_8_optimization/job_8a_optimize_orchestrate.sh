@@ -16,6 +16,9 @@
 
 set -euo pipefail
 
+export TMPDIR="${TMPDIR:-/scratch-shared/$USER/tmp}"
+mkdir -p "$TMPDIR"
+
 echo "STEP 8a start: job=${SLURM_JOB_ID:-local} host=$(hostname) time=$(date)"
 
 module purge
@@ -148,6 +151,13 @@ SKIP_DESIGNS=(
     "aes"
     "aes_secworks"
     "aes_xcrypt"
+    "bp_be"
+    "des3_area"
+    "dft"
+    "dynamic_node"
+    "ethernet"
+    "fir"
+    "fpu"
 )
 
 designs_file="$(mktemp "${TMPDIR:-/tmp}/opt8a_designs_${SLURM_JOB_ID:-local}_XXXXXX")"
