@@ -31,7 +31,7 @@ DESIGN_GROUP="${DESIGN_GROUP:-all}"
 DESIGNS="${DESIGNS:-}"
 
 # Worker count used inside generated optimizeBulk scripts.
-export OPT_SCRIPT_PARALLELISM="${OPT_SCRIPT_PARALLELISM:-48}"
+export OPT_SCRIPT_PARALLELISM="${OPT_SCRIPT_PARALLELISM:-72}"
 
 BASE_DIR="${BASE_DIR:-$HOME/data-gen-rand-abcd}"
 GEN_SCRIPT="${GEN_SCRIPT:-$BASE_DIR/dataset_tools/generate_optimization_bulk_scripts.py}"
