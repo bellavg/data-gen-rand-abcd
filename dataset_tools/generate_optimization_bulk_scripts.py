@@ -262,7 +262,8 @@ OUTPUT_ROOT="optimized_aigs/${{ALGORITHM}}/${{OUTPUT_TIER}}"
 RAW_LOG_ROOT="metadata/raw_logs/${{DESIGN}}/${{OUTPUT_TIER}}/${{ALGORITHM}}"
 
 in_dir="${{FULL_DATASET}}/${{INPUT_ROOT}}/${{DESIGN}}"
-out_dir="${{FULL_DATASET}}/${{OUTPUT_ROOT}}/${{DESIGN}}"
+out_tier_dir="${{FULL_DATASET}}/${{OUTPUT_ROOT}}"
+output_zip_path="${{out_tier_dir}}/${{DESIGN}}.zip"
 log_dir="${{FULL_DATASET}}/${{RAW_LOG_ROOT}}"
 
 # Prefer scheduler-provided TMPDIR (Snellius scratch-node gives /scratch-node/<user>.<jobid>).
@@ -275,7 +276,7 @@ fi
 mkdir -p "$TMPDIR"
 echo "TMPDIR=$TMPDIR"
 
-mkdir -p "$out_dir" "$log_dir"
+mkdir -p "$out_tier_dir" "$log_dir"
 
 if [[ ! -d "$in_dir" ]]; then
     echo "✗ Missing design input directory: $in_dir" >&2
@@ -375,24 +376,20 @@ run_task() {{
 
     if [[ "$source_type" == "file" ]]; then
         local file_name
-        local output_zip
         file_name="$(basename "$source_ref")"
-        output_zip="$out_dir/syn_plain.zip"
-        run_one "$source_path" "$output_zip" "$file_name"
+        run_one "$source_path" "$output_zip_path" "plain__${{file_name}}"
         return
     fi
 
     if [[ "$source_type" == "zip" ]]; then
         local member_file
         local source_zip_name
-        local output_zip
         local extracted_input
         member_file="$(basename "$source_ref")"
         source_zip_name="$(basename "$source_path")"
-        output_zip="$out_dir/$source_zip_name"
         extracted_input="$(mktemp "$tmp_extract_root/in_XXXXXX.aig")"
         if unzip -p "$source_path" "$source_ref" > "$extracted_input"; then
-            run_one "$extracted_input" "$output_zip" "$member_file"
+            run_one "$extracted_input" "$output_zip_path" "${{source_zip_name}}__${{member_file}}"
         else
             echo "✗ Failed to extract $source_ref from $source_path" >&2
             rm -f "$extracted_input"
@@ -551,10 +548,7 @@ def main() -> None:
     for algorithm in selected_algorithms:
         for input_source in selected_input_sources:
             out_tier = INPUT_SOURCE_TO_OUTPUT[input_source]
-            for design in designs:
-                (opt_root / algorithm / out_tier / design).mkdir(
-                    parents=True, exist_ok=True
-                )
+            (opt_root / algorithm / out_tier).mkdir(parents=True, exist_ok=True)
 
     generated_script_count = 0
     generated_zips: List[str] = []
