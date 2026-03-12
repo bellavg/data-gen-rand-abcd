@@ -152,7 +152,10 @@ if [ ! -d "$SCRIPT_ZIP_ROOT" ]; then
     exit 1
 fi
 
-latest_manifest=$(ls -1t "$MANIFEST_DIR"/bulk_scripts_manifest_*.json 2>/dev/null | head -n 1 || true)
+latest_manifest="$MANIFEST_DIR/bulk_scripts_manifest.json"
+if [ ! -f "$latest_manifest" ]; then
+    latest_manifest=$(ls -1t "$MANIFEST_DIR"/bulk_scripts_manifest_*.json 2>/dev/null | head -n 1 || true)
+fi
 if [ -z "$latest_manifest" ]; then
     echo "✗ ERROR: No manifest found under: $MANIFEST_DIR"
     exit 1
