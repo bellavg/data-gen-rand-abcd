@@ -5,6 +5,7 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=72
 #SBATCH --partition=genoa
+#SBATCH --constraint=scratch-node
 #SBATCH --output=logs/8c_opt_syn4_%j.out
 
 # Resource notes:
@@ -16,8 +17,13 @@
 
 set -euo pipefail
 
-export TMPDIR="${TMPDIR:-/scratch-shared/$USER/tmp}"
+if [[ -n "${TMPDIR:-}" ]]; then
+    :
+else
+    export TMPDIR="/scratch-shared/$USER/tmp"
+fi
 mkdir -p "$TMPDIR"
+echo "TMPDIR=$TMPDIR"
 
 echo "STEP 8c start: job=${SLURM_JOB_ID:-local} host=$(hostname) time=$(date)"
 
@@ -43,6 +49,71 @@ CONFIG_FILE="${CONFIG_FILE:-$BASE_DIR/dataset_tools/optimization_config.json}"
 FULL_DATASET="${FULL_DATASET:-/scratch-shared/$USER/FULL_DATASET}"
 SCRIPT_ZIP_ROOT="$FULL_DATASET/synScripts/optimization/$ALGORITHM"
 MANIFEST_DIR="$FULL_DATASET/optimized_aigs/manifests"
+
+zip_loose_outputs_for_design() {
+    local design_name="$1"
+    local out_dir="$FULL_DATASET/optimized_aigs/$ALGORITHM/$OUTPUT_TIER/$design_name"
+
+    if [ ! -d "$out_dir" ]; then
+        return 0
+    fi
+
+    python3 - "$out_dir" "$ALGORITHM" "$design_name" <<'PY'
+import os
+import sys
+import zipfile
+from pathlib import Path
+
+out_dir = Path(sys.argv[1])
+algorithm = sys.argv[2]
+design = sys.argv[3]
+
+loose_aigs = sorted(p for p in out_dir.rglob("*.aig") if p.is_file())
+if not loose_aigs:
+    print(f"STEP zip: no loose outputs to consolidate for design={design}, algorithm={algorithm}")
+    raise SystemExit(0)
+
+zip_path = out_dir / "syn_migrated.zip"
+existing_names: set[str] = set()
+if zip_path.exists():
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        existing_names = set(zf.namelist())
+
+with zipfile.ZipFile(
+    zip_path,
+    "a",
+    compression=zipfile.ZIP_DEFLATED,
+    compresslevel=1,
+    allowZip64=True,
+) as zf:
+    for aig_path in loose_aigs:
+        arcname = aig_path.relative_to(out_dir).as_posix()
+        if arcname in existing_names:
+            stem, ext = os.path.splitext(arcname)
+            idx = 1
+            candidate = f"{stem}__dup{idx}{ext}"
+            while candidate in existing_names:
+                idx += 1
+                candidate = f"{stem}__dup{idx}{ext}"
+            arcname = candidate
+        zf.write(aig_path, arcname=arcname)
+        existing_names.add(arcname)
+
+for aig_path in loose_aigs:
+    aig_path.unlink(missing_ok=True)
+
+for maybe_dir in sorted((p for p in out_dir.rglob("*") if p.is_dir()), reverse=True):
+    try:
+        maybe_dir.rmdir()
+    except OSError:
+        pass
+
+print(
+    f"STEP zip: consolidated {len(loose_aigs)} loose outputs into {zip_path} "
+    f"for design={design}, algorithm={algorithm}"
+)
+PY
+}
 
 if [ ! -f "$GEN_SCRIPT" ]; then
     echo "✗ ERROR: Optimization generator script not found: $GEN_SCRIPT"
@@ -160,6 +231,7 @@ SKIP_DESIGNS=(
     "fpu"
     "i2c"
     "idft"
+    "iir"
 )
 
 designs_file="$(mktemp "${TMPDIR:-/tmp}/opt8c_designs_${SLURM_JOB_ID:-local}_XXXXXX")"
@@ -200,6 +272,8 @@ with open(summary_path, "r", encoding="utf-8") as fh:
 if int(payload.get("failed", 0)) != 0:
     raise SystemExit(f"failed>0 in {summary_path}")
 PY
+
+    zip_loose_outputs_for_design "$design_name"
 
         skipped_designs=$((skipped_designs + 1))
         echo "STEP 8c: skipping design ${design_name} (hardcoded completed, summary verified)"
