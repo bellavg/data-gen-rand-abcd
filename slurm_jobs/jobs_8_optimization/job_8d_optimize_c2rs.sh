@@ -52,28 +52,34 @@ MANIFEST_DIR="$FULL_DATASET/optimized_aigs/manifests"
 
 zip_loose_outputs_for_design() {
     local design_name="$1"
-    local out_dir="$FULL_DATASET/optimized_aigs/$ALGORITHM/$OUTPUT_TIER/$design_name"
+    local out_tier_dir="$FULL_DATASET/optimized_aigs/$ALGORITHM/$OUTPUT_TIER"
+    local out_zip="$out_tier_dir/$design_name.zip"
+    local legacy_out_dir="$out_tier_dir/$design_name"
 
-    if [ ! -d "$out_dir" ]; then
-        return 0
-    fi
+    mkdir -p "$out_tier_dir"
 
-    python3 - "$out_dir" "$ALGORITHM" "$design_name" <<'PY'
+    python3 - "$out_zip" "$legacy_out_dir" "$ALGORITHM" "$design_name" <<'PY'
 import os
 import sys
 import zipfile
 from pathlib import Path
 
-out_dir = Path(sys.argv[1])
-algorithm = sys.argv[2]
-design = sys.argv[3]
+zip_path = Path(sys.argv[1])
+legacy_dir = Path(sys.argv[2])
+algorithm = sys.argv[3]
+design = sys.argv[4]
 
-loose_aigs = sorted(p for p in out_dir.rglob("*.aig") if p.is_file())
+loose_aigs = sorted(p for p in legacy_dir.rglob("*.aig") if legacy_dir.is_dir() and p.is_file())
 if not loose_aigs:
-    print(f"STEP zip: no loose outputs to consolidate for design={design}, algorithm={algorithm}")
+    if zip_path.is_file():
+        print(f"STEP zip: design already stored in {zip_path} for design={design}, algorithm={algorithm}")
+    else:
+        raise SystemExit(
+            f"missing optimized design zip and no loose outputs to migrate for design={design}, "
+            f"algorithm={algorithm}, expected_zip={zip_path}"
+        )
     raise SystemExit(0)
 
-zip_path = out_dir / "syn_migrated.zip"
 existing_names: set[str] = set()
 if zip_path.exists():
     with zipfile.ZipFile(zip_path, "r") as zf:
@@ -87,7 +93,7 @@ with zipfile.ZipFile(
     allowZip64=True,
 ) as zf:
     for aig_path in loose_aigs:
-        arcname = aig_path.relative_to(out_dir).as_posix()
+        arcname = aig_path.relative_to(legacy_dir).as_posix()
         if arcname in existing_names:
             stem, ext = os.path.splitext(arcname)
             idx = 1
@@ -102,11 +108,16 @@ with zipfile.ZipFile(
 for aig_path in loose_aigs:
     aig_path.unlink(missing_ok=True)
 
-for maybe_dir in sorted((p for p in out_dir.rglob("*") if p.is_dir()), reverse=True):
+for maybe_dir in sorted((p for p in legacy_dir.rglob("*") if p.is_dir()), reverse=True):
     try:
         maybe_dir.rmdir()
     except OSError:
         pass
+
+try:
+    legacy_dir.rmdir()
+except OSError:
+    pass
 
 print(
     f"STEP zip: consolidated {len(loose_aigs)} loose outputs into {zip_path} "
