@@ -265,6 +265,16 @@ in_dir="${{FULL_DATASET}}/${{INPUT_ROOT}}/${{DESIGN}}"
 out_dir="${{FULL_DATASET}}/${{OUTPUT_ROOT}}/${{DESIGN}}"
 log_dir="${{FULL_DATASET}}/${{RAW_LOG_ROOT}}"
 
+# Prefer scheduler-provided TMPDIR (Snellius scratch-node gives /scratch-node/<user>.<jobid>).
+# If missing, fall back to a stable project-local temp directory.
+if [[ -n "${{TMPDIR:-}}" ]]; then
+    :
+else
+    export TMPDIR="${{FULL_DATASET}}/tmp"
+fi
+mkdir -p "$TMPDIR"
+echo "TMPDIR=$TMPDIR"
+
 mkdir -p "$out_dir" "$log_dir"
 
 if [[ ! -d "$in_dir" ]]; then
@@ -274,6 +284,8 @@ fi
 
 tmp_extract_root="$(mktemp -d "${{TMPDIR:-/tmp}}/opt_${{ALGORITHM}}_${{DESIGN}}_${{INPUT_LABEL}}_XXXXXX")"
 trap 'rm -rf "$tmp_extract_root"' EXIT
+ZIP_WRITE_LOCK="$tmp_extract_root/zip_write.lock"
+touch "$ZIP_WRITE_LOCK"
 
 WORKERS="${{OPT_SCRIPT_PARALLELISM:-${{SLURM_CPUS_PER_TASK:-64}}}}"
 
@@ -284,33 +296,75 @@ fi
 
 run_one() {{
     local input_aig="$1"
-    local input_ref="$2"
-    local filename
-    local output_aig
+    local output_zip_path="$2"
+    local output_member="$3"
+    local output_tmp
     local cmd
     local seed_value
 
-    filename="$(basename "$input_ref")"
-    output_aig="$out_dir/$filename"
+    output_tmp="$(mktemp "$tmp_extract_root/out_XXXXXX.aig")"
     seed_value="42"
 
     cmd="$COMMAND_TEMPLATE"
     cmd="${{cmd//\\{{input_aig\\}}/$input_aig}}"
-    cmd="${{cmd//\\{{output_aig\\}}/$output_aig}}"
+    cmd="${{cmd//\\{{output_aig\\}}/$output_tmp}}"
     cmd="${{cmd//\\{{abc_rc\\}}/$ABC_RC}}"
     cmd="${{cmd//\\{{seed\\}}/$seed_value}}"
     cmd="${{cmd//\\{{timeout_seconds\\}}/$RUNTIME_TIMEOUT_SECONDS}}"
 
     if eval "$cmd" >/dev/null 2>&1; then
-        if [[ ! -f "$output_aig" ]]; then
-            echo "✗ Command exited 0 but did not produce output: $output_aig" >&2
+        if [[ ! -f "$output_tmp" ]]; then
+            echo "✗ Command exited 0 but did not produce output: $output_tmp" >&2
+            rm -f "$output_tmp"
             return 1
         fi
+
+        mkdir -p "$(dirname "$output_zip_path")"
+        flock -x "$ZIP_WRITE_LOCK" python3 - "$output_zip_path" "$output_member" "$output_tmp" <<'PY'
+import os
+import sys
+import zipfile
+from pathlib import Path
+
+zip_path = Path(sys.argv[1])
+member_name = sys.argv[2]
+aig_path = Path(sys.argv[3])
+
+if not aig_path.is_file():
+    raise SystemExit(f"missing temporary output file: {{aig_path}}")
+
+zip_path.parent.mkdir(parents=True, exist_ok=True)
+existing_names: set[str] = set()
+if zip_path.exists():
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        existing_names = set(zf.namelist())
+
+arcname = member_name
+if arcname in existing_names:
+    stem, ext = os.path.splitext(arcname)
+    idx = 1
+    candidate = f"{{stem}}__dup{{idx}}{{ext}}"
+    while candidate in existing_names:
+        idx += 1
+        candidate = f"{{stem}}__dup{{idx}}{{ext}}"
+    arcname = candidate
+
+with zipfile.ZipFile(
+    zip_path,
+    "a",
+    compression=zipfile.ZIP_DEFLATED,
+    compresslevel=1,
+    allowZip64=True,
+) as zf:
+    zf.write(aig_path, arcname=arcname)
+PY
+
+        rm -f "$output_tmp"
         return 0
     fi
 
-    echo "✗ Command failed for input: $filename" >&2
-    rm -f "$output_aig"
+    echo "✗ Command failed for input member: $output_member" >&2
+    rm -f "$output_tmp"
     return 1
 }}
 
@@ -320,17 +374,25 @@ run_task() {{
     local source_ref="$3"
 
     if [[ "$source_type" == "file" ]]; then
-        run_one "$source_path" "$source_ref"
+        local file_name
+        local output_zip
+        file_name="$(basename "$source_ref")"
+        output_zip="$out_dir/syn_plain.zip"
+        run_one "$source_path" "$output_zip" "$file_name"
         return
     fi
 
     if [[ "$source_type" == "zip" ]]; then
         local member_file
+        local source_zip_name
+        local output_zip
         local extracted_input
         member_file="$(basename "$source_ref")"
+        source_zip_name="$(basename "$source_path")"
+        output_zip="$out_dir/$source_zip_name"
         extracted_input="$(mktemp "$tmp_extract_root/in_XXXXXX.aig")"
         if unzip -p "$source_path" "$source_ref" > "$extracted_input"; then
-            run_one "$extracted_input" "$member_file"
+            run_one "$extracted_input" "$output_zip" "$member_file"
         else
             echo "✗ Failed to extract $source_ref from $source_path" >&2
             rm -f "$extracted_input"
@@ -487,9 +549,10 @@ def main() -> None:
     shutil.copyfile(config_path, runtime_config_path)
 
     for algorithm in selected_algorithms:
-        for tier in ("tier1", "tier2", "tier3"):
+        for input_source in selected_input_sources:
+            out_tier = INPUT_SOURCE_TO_OUTPUT[input_source]
             for design in designs:
-                (opt_root / algorithm / tier / design).mkdir(
+                (opt_root / algorithm / out_tier / design).mkdir(
                     parents=True, exist_ok=True
                 )
 
@@ -504,7 +567,9 @@ def main() -> None:
             algo_cfg = config["algorithms"][algorithm]
             timeout_seconds: int | None = None
             if algorithm == "Deepsyn":
-                timeout_seconds = int(algo_cfg.get("timeout_seconds", default_timeout_seconds))
+                timeout_seconds = int(
+                    algo_cfg.get("timeout_seconds", default_timeout_seconds)
+                )
             for input_source in selected_input_sources:
                 label = INPUT_SOURCE_TO_LABEL[input_source]
                 script_name = f"optimizeBulk_{algorithm}_{design}_{label}.sh"
@@ -523,10 +588,7 @@ def main() -> None:
             write_design_zip(zip_path, scripts_for_design)
             generated_zips.append(str(zip_path))
 
-    manifest_path = (
-        manifests_dir
-        / f"bulk_scripts_manifest_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-    )
+    manifest_path = manifests_dir / "bulk_scripts_manifest.json"
     manifest = {
         "generated_at": datetime.now().isoformat(),
         "full_dataset": str(full_dataset),
