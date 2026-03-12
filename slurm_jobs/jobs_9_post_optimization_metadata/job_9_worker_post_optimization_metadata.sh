@@ -144,6 +144,7 @@ echo "=========================================="
 python3 - "$FULL_DATASET" "$ALGORITHM" "$designs_file" <<'PY'
 import json
 import sys
+import zipfile
 from pathlib import Path
 
 full_dataset = Path(sys.argv[1])
@@ -164,6 +165,7 @@ for design in designs_file.read_text(encoding="utf-8").splitlines():
     checked += 1
     summary_path = full_dataset / "metadata" / "raw_logs" / design / "tier1" / algorithm / "summary.json"
     out_dir = full_dataset / "optimized_aigs" / algorithm / "tier1" / design
+    out_zip = full_dataset / "optimized_aigs" / algorithm / "tier1" / f"{design}.zip"
 
     if not summary_path.is_file():
         errors.append(f"missing summary: {summary_path}")
@@ -190,11 +192,16 @@ for design in designs_file.read_text(encoding="utf-8").splitlines():
     if failed != 0:
         errors.append(f"failed!=0 in {summary_path}: {failed}")
 
-    if not out_dir.is_dir():
-        errors.append(f"missing output directory: {out_dir}")
+    if out_dir.is_dir():
+        aig_count = sum(1 for _ in out_dir.rglob("*.aig"))
+    elif out_zip.is_file():
+        with zipfile.ZipFile(out_zip, "r") as zf:
+            aig_count = sum(
+                1 for name in zf.namelist() if name.lower().endswith(".aig") and not name.endswith("/")
+            )
+    else:
+        errors.append(f"missing output payload for design={design}: dir={out_dir} zip={out_zip}")
         continue
-
-    aig_count = sum(1 for _ in out_dir.rglob("*.aig"))
     if aig_count != discovered:
         errors.append(
             f"tier1 AIG count mismatch for design={design}, algorithm={algorithm}: "
@@ -228,6 +235,7 @@ import json
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+import zipfile
 
 full_dataset = Path(sys.argv[1])
 algorithm = sys.argv[2]
@@ -249,12 +257,21 @@ total_output_aigs = 0
 for design in designs:
     summary_path = full_dataset / "metadata" / "raw_logs" / design / "tier1" / algorithm / "summary.json"
     out_dir = full_dataset / "optimized_aigs" / algorithm / "tier1" / design
+    out_zip = full_dataset / "optimized_aigs" / algorithm / "tier1" / f"{design}.zip"
     if not summary_path.is_file():
         raise SystemExit(f"ERROR: cannot update manifest, summary missing: {summary_path}")
     with summary_path.open("r", encoding="utf-8") as fh:
         payload = json.load(fh)
     total_discovered += int(payload.get("discovered", 0))
-    total_output_aigs += sum(1 for _ in out_dir.rglob("*.aig")) if out_dir.is_dir() else 0
+    if out_dir.is_dir():
+        total_output_aigs += sum(1 for _ in out_dir.rglob("*.aig"))
+    elif out_zip.is_file():
+        with zipfile.ZipFile(out_zip, "r") as zf:
+            total_output_aigs += sum(
+                1
+                for name in zf.namelist()
+                if name.lower().endswith(".aig") and not name.endswith("/")
+            )
 
 opt_status = manifest.setdefault("optimization_status", {})
 algo_status = opt_status.setdefault(algorithm, {})
@@ -322,6 +339,7 @@ echo "=========================================="
 python3 - "$FULL_DATASET" "$ALGORITHM" "$designs_file" <<'PY'
 import csv
 import sys
+import zipfile
 from pathlib import Path
 
 full_dataset = Path(sys.argv[1])
@@ -339,16 +357,22 @@ for design in designs_file.read_text(encoding="utf-8").splitlines():
 
     csv_path = full_dataset / "metadata" / "stats" / f"{design}.csv"
     tier1_dir = full_dataset / "optimized_aigs" / algorithm / "tier1" / design
+    tier1_zip = full_dataset / "optimized_aigs" / algorithm / "tier1" / f"{design}.zip"
 
     if not csv_path.is_file():
         errors.append(f"missing metadata csv: {csv_path}")
         continue
 
-    if not tier1_dir.is_dir():
-        errors.append(f"missing tier1 output dir: {tier1_dir}")
+    if tier1_dir.is_dir():
+        tier1_aig_count = sum(1 for _ in tier1_dir.rglob("*.aig"))
+    elif tier1_zip.is_file():
+        with zipfile.ZipFile(tier1_zip, "r") as zf:
+            tier1_aig_count = sum(
+                1 for name in zf.namelist() if name.lower().endswith(".aig") and not name.endswith("/")
+            )
+    else:
+        errors.append(f"missing tier1 output payload: dir={tier1_dir} zip={tier1_zip}")
         continue
-
-    tier1_aig_count = sum(1 for _ in tier1_dir.rglob("*.aig"))
     tier1_csv_count = 0
     tier0_csv_count = 0
 
@@ -436,6 +460,21 @@ if opt_root.is_dir():
         if p.is_dir() and p.name not in {"manifests", "done"}:
             algorithms.append(p.name)
 
+
+def count_tier1_for_algorithm(alg: str, design: str) -> int:
+    t1_dir = full_dataset / "optimized_aigs" / alg / "tier1" / design
+    t1_zip = full_dataset / "optimized_aigs" / alg / "tier1" / f"{design}.zip"
+    if t1_dir.is_dir():
+        return sum(1 for _ in t1_dir.rglob("*.aig"))
+    if t1_zip.is_file():
+        with zipfile.ZipFile(t1_zip, "r") as zf:
+            return sum(
+                1
+                for name in zf.namelist()
+                if name.lower().endswith(".aig") and not name.endswith("/")
+            )
+    return 0
+
 report = {
     "timestamp": datetime.now().isoformat(),
     "full_dataset": str(full_dataset),
@@ -480,9 +519,8 @@ for design in designs:
         report["totals"]["csv_rows"] += csv_rows
 
     for alg in algorithms:
-        t1_dir = full_dataset / "optimized_aigs" / alg / "tier1" / design
-        if t1_dir.is_dir():
-            count = sum(1 for _ in t1_dir.rglob("*.aig"))
+        count = count_tier1_for_algorithm(alg, design)
+        if count > 0:
             report["algorithms"][alg]["designs_with_tier1_dir"] += 1
             report["algorithms"][alg]["tier1_graphs"] += count
             report["totals"]["tier1_graphs"] += count

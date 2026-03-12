@@ -16,6 +16,8 @@ import argparse
 import csv
 import re
 import subprocess
+import tempfile
+import zipfile
 from pathlib import Path
 from typing import Dict, Iterable, List, Sequence, Tuple
 
@@ -184,54 +186,104 @@ def main() -> None:
         if args.output_dir
         else full_dataset / "optimized_aigs" / args.algorithm / args.tier / args.design
     )
+    output_zip = output_dir.parent / f"{args.design}.zip"
     metadata_csv = (
         Path(args.metadata_csv).expanduser().resolve()
         if args.metadata_csv
         else full_dataset / "metadata" / "stats" / f"{args.design}.csv"
     )
 
-    if not output_dir.exists():
-        print(f"No output directory found, skipping metadata update: {output_dir}")
+    if not output_dir.exists() and not output_zip.exists():
+        print(
+            "No output payload found, skipping metadata update: "
+            f"dir={output_dir} zip={output_zip}"
+        )
         return
 
     tier_id = TIER_TO_ID[args.tier]
     existing_rows = ensure_csv_schema(metadata_csv)
     known_keys = existing_keys(existing_rows)
 
-    candidates = sorted(output_dir.rglob("*.aig"))
     appended_rows: List[Dict[str, str | int | float]] = []
 
-    for aig_path in candidates:
-        rel_path = aig_path.relative_to(full_dataset).as_posix()
-        key = (rel_path, args.algorithm, str(tier_id))
-        if key in known_keys:
-            continue
+    scanned = 0
 
-        stats = extract_stats(aig_path)
-        recipe_id, step_id = parse_recipe_and_step(aig_path.name)
+    if output_dir.exists():
+        for aig_path in sorted(output_dir.rglob("*.aig")):
+            scanned += 1
+            rel_path = aig_path.relative_to(full_dataset).as_posix()
+            key = (rel_path, args.algorithm, str(tier_id))
+            if key in known_keys:
+                continue
 
-        row: Dict[str, str | int | float] = {
-            "file_path": rel_path,
-            "design": args.design,
-            "recipe_id": recipe_id,
-            "step_id": step_id,
-            "tier_id": tier_id,
-            "algorithm": args.algorithm,
-            "nodes": int(stats.get("nodes", 0)),
-            "edges": int(stats.get("edges", 0)),
-            "num_PI": int(stats.get("num_PI", 0)),
-            "num_PO": int(stats.get("num_PO", 0)),
-            "depth": int(stats.get("depth", 0)),
-            "avg_fanout": float(stats.get("avg_fanout", 0.0)),
-            "max_fanout": int(stats.get("max_fanout", 0)),
-        }
-        appended_rows.append(row)
-        known_keys.add(key)
+            stats = extract_stats(aig_path)
+            recipe_id, step_id = parse_recipe_and_step(aig_path.name)
+
+            row: Dict[str, str | int | float] = {
+                "file_path": rel_path,
+                "design": args.design,
+                "recipe_id": recipe_id,
+                "step_id": step_id,
+                "tier_id": tier_id,
+                "algorithm": args.algorithm,
+                "nodes": int(stats.get("nodes", 0)),
+                "edges": int(stats.get("edges", 0)),
+                "num_PI": int(stats.get("num_PI", 0)),
+                "num_PO": int(stats.get("num_PO", 0)),
+                "depth": int(stats.get("depth", 0)),
+                "avg_fanout": float(stats.get("avg_fanout", 0.0)),
+                "max_fanout": int(stats.get("max_fanout", 0)),
+            }
+            appended_rows.append(row)
+            known_keys.add(key)
+    elif output_zip.exists():
+        rel_zip = output_zip.relative_to(full_dataset).as_posix()
+        with tempfile.TemporaryDirectory(prefix="upd_opt_meta_") as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            with zipfile.ZipFile(output_zip, "r") as archive:
+                members = sorted(
+                    name
+                    for name in archive.namelist()
+                    if name.lower().endswith(".aig") and not name.endswith("/")
+                )
+
+                for member in members:
+                    scanned += 1
+                    logical_path = f"{rel_zip}::{member}"
+                    key = (logical_path, args.algorithm, str(tier_id))
+                    if key in known_keys:
+                        continue
+
+                    extracted_path = tmp_root / member
+                    extracted_path.parent.mkdir(parents=True, exist_ok=True)
+                    with archive.open(member) as src, extracted_path.open("wb") as dst:
+                        dst.write(src.read())
+
+                    stats = extract_stats(extracted_path)
+                    recipe_id, step_id = parse_recipe_and_step(Path(member).name)
+
+                    row = {
+                        "file_path": logical_path,
+                        "design": args.design,
+                        "recipe_id": recipe_id,
+                        "step_id": step_id,
+                        "tier_id": tier_id,
+                        "algorithm": args.algorithm,
+                        "nodes": int(stats.get("nodes", 0)),
+                        "edges": int(stats.get("edges", 0)),
+                        "num_PI": int(stats.get("num_PI", 0)),
+                        "num_PO": int(stats.get("num_PO", 0)),
+                        "depth": int(stats.get("depth", 0)),
+                        "avg_fanout": float(stats.get("avg_fanout", 0.0)),
+                        "max_fanout": int(stats.get("max_fanout", 0)),
+                    }
+                    appended_rows.append(row)
+                    known_keys.add(key)
 
     append_rows(metadata_csv, appended_rows)
     print(
         f"Metadata update complete: design={args.design} algorithm={args.algorithm} "
-        f"tier={args.tier} scanned={len(candidates)} appended={len(appended_rows)}"
+        f"tier={args.tier} scanned={scanned} appended={len(appended_rows)}"
     )
 
 

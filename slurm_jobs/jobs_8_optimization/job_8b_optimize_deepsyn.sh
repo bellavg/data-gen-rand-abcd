@@ -49,82 +49,6 @@ FULL_DATASET="${FULL_DATASET:-/scratch-shared/$USER/FULL_DATASET}"
 SCRIPT_ZIP_ROOT="$FULL_DATASET/synScripts/optimization/$ALGORITHM"
 MANIFEST_DIR="$FULL_DATASET/optimized_aigs/manifests"
 
-zip_loose_outputs_for_design() {
-    local design_name="$1"
-    local out_tier_dir="$FULL_DATASET/optimized_aigs/$ALGORITHM/$OUTPUT_TIER"
-    local out_zip="$out_tier_dir/$design_name.zip"
-    local legacy_out_dir="$out_tier_dir/$design_name"
-
-    mkdir -p "$out_tier_dir"
-
-    python3 - "$out_zip" "$legacy_out_dir" "$ALGORITHM" "$design_name" <<'PY'
-import os
-import sys
-import zipfile
-from pathlib import Path
-
-zip_path = Path(sys.argv[1])
-legacy_dir = Path(sys.argv[2])
-algorithm = sys.argv[3]
-design = sys.argv[4]
-
-loose_aigs = sorted(p for p in legacy_dir.rglob("*.aig") if legacy_dir.is_dir() and p.is_file())
-if not loose_aigs:
-    if zip_path.is_file():
-        print(f"STEP zip: design already stored in {zip_path} for design={design}, algorithm={algorithm}")
-    else:
-        raise SystemExit(
-            f"missing optimized design zip and no loose outputs to migrate for design={design}, "
-            f"algorithm={algorithm}, expected_zip={zip_path}"
-        )
-    raise SystemExit(0)
-
-existing_names: set[str] = set()
-if zip_path.exists():
-    with zipfile.ZipFile(zip_path, "r") as zf:
-        existing_names = set(zf.namelist())
-
-with zipfile.ZipFile(
-    zip_path,
-    "a",
-    compression=zipfile.ZIP_DEFLATED,
-    compresslevel=1,
-    allowZip64=True,
-) as zf:
-    for aig_path in loose_aigs:
-        arcname = aig_path.relative_to(legacy_dir).as_posix()
-        if arcname in existing_names:
-            stem, ext = os.path.splitext(arcname)
-            idx = 1
-            candidate = f"{stem}__dup{idx}{ext}"
-            while candidate in existing_names:
-                idx += 1
-                candidate = f"{stem}__dup{idx}{ext}"
-            arcname = candidate
-        zf.write(aig_path, arcname=arcname)
-        existing_names.add(arcname)
-
-for aig_path in loose_aigs:
-    aig_path.unlink(missing_ok=True)
-
-for maybe_dir in sorted((p for p in legacy_dir.rglob("*") if p.is_dir()), reverse=True):
-    try:
-        maybe_dir.rmdir()
-    except OSError:
-        pass
-
-try:
-    legacy_dir.rmdir()
-except OSError:
-    pass
-
-print(
-    f"STEP zip: consolidated {len(loose_aigs)} loose outputs into {zip_path} "
-    f"for design={design}, algorithm={algorithm}"
-)
-PY
-}
-
 if [ ! -f "$GEN_SCRIPT" ]; then
     echo "✗ ERROR: Optimization generator script not found: $GEN_SCRIPT"
     exit 1
@@ -198,25 +122,13 @@ if [ ! -f "$design_zip" ]; then
 fi
 
 summary_path="$FULL_DATASET/metadata/raw_logs/${TARGET_DESIGN}/${OUTPUT_TIER}/${ALGORITHM}/summary.json"
-if [ -f "$summary_path" ]; then
-    if python3 - "$summary_path" <<'PY'
-import json
-import sys
+output_tier_dir="$FULL_DATASET/optimized_aigs/$ALGORITHM/$OUTPUT_TIER"
+output_zip="$output_tier_dir/${TARGET_DESIGN}.zip"
+legacy_output_dir="$output_tier_dir/${TARGET_DESIGN}"
 
-summary_path = sys.argv[1]
-with open(summary_path, "r", encoding="utf-8") as fh:
-    payload = json.load(fh)
-
-if int(payload.get("failed", 0)) != 0:
-    raise SystemExit(1)
-PY
-    then
-        zip_loose_outputs_for_design "$TARGET_DESIGN"
-        echo "STEP 8b: skipping design ${TARGET_DESIGN} (summary already clean)"
-        echo "STEP 8b complete: processed=0 skipped=1 total=1 time=$(date)"
-        exit 0
-    fi
-fi
+mkdir -p "$output_tier_dir"
+rm -f "$output_zip"
+rm -rf "$legacy_output_dir"
 
 echo "STEP 8b: starting design ${TARGET_DESIGN}"
 
@@ -232,17 +144,34 @@ if [ ! -f "$summary_path" ]; then
     exit 1
 fi
 
-python3 - "$summary_path" <<'PY'
+python3 - "$summary_path" "$output_zip" <<'PY'
 import json
 import sys
+import zipfile
+from pathlib import Path
 
 summary_path = sys.argv[1]
+output_zip_path = Path(sys.argv[2])
 with open(summary_path, "r", encoding="utf-8") as fh:
     payload = json.load(fh)
 
 if int(payload.get("failed", 0)) != 0:
     raise SystemExit(f"failed>0 in {summary_path}")
+
+if not output_zip_path.is_file():
+    raise SystemExit(f"missing output zip: {output_zip_path}")
+
+with zipfile.ZipFile(output_zip_path, "r") as zf:
+    aig_count = sum(1 for name in zf.namelist() if name.lower().endswith(".aig"))
+
+expected = int(payload.get("created", -1))
+if expected <= 0:
+    raise SystemExit(f"non-positive created count in {summary_path}: {expected}")
+if aig_count != expected:
+    raise SystemExit(
+        f"output zip aig count mismatch for {output_zip_path}: zip_aigs={aig_count}, summary_created={expected}"
+    )
 PY
 
 echo "STEP 8b: done design ${TARGET_DESIGN}"
-echo "STEP 8b complete: processed=1 skipped=0 total=1 time=$(date)"
+echo "STEP 8b complete: processed=1 skipped=0 total=1 output_zip=${output_zip} time=$(date)"
