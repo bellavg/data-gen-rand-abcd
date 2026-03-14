@@ -265,6 +265,7 @@ in_dir="${{FULL_DATASET}}/${{INPUT_ROOT}}/${{DESIGN}}"
 out_tier_dir="${{FULL_DATASET}}/${{OUTPUT_ROOT}}"
 output_zip_path="${{out_tier_dir}}/${{DESIGN}}.zip"
 log_dir="${{FULL_DATASET}}/${{RAW_LOG_ROOT}}"
+in_zip="${{FULL_DATASET}}/${{INPUT_ROOT}}/${{DESIGN}}.zip"
 
 # Prefer scheduler-provided TMPDIR (Snellius scratch-node gives /scratch-node/<user>.<jobid>).
 # If missing, fall back to a stable project-local temp directory.
@@ -278,9 +279,16 @@ echo "TMPDIR=$TMPDIR"
 
 mkdir -p "$out_tier_dir" "$log_dir"
 
-if [[ ! -d "$in_dir" ]]; then
-    echo "✗ Missing design input directory: $in_dir" >&2
-    exit 1
+if [[ "$INPUT_SOURCE" == "base_aigs" ]]; then
+    if [[ ! -d "$in_dir" ]]; then
+        echo "✗ Missing design input directory: $in_dir" >&2
+        exit 1
+    fi
+else
+    if [[ ! -f "$in_zip" && ! -d "$in_dir" ]]; then
+        echo "✗ Missing design input zip/dir for input_source=$INPUT_SOURCE: zip=$in_zip dir=$in_dir" >&2
+        exit 1
+    fi
 fi
 
 tmp_extract_root="$(mktemp -d "${{TMPDIR:-/tmp}}/opt_${{ALGORITHM}}_${{DESIGN}}_${{INPUT_LABEL}}_XXXXXX")"
@@ -418,9 +426,25 @@ if [[ "$INPUT_SOURCE" == "base_aigs" ]]; then
         done < <(unzip -Z1 "$zip_file" '*.aig' 2>/dev/null | sort)
     done < <(find "$in_dir" -maxdepth 1 -type f -name "syn*.zip" -print0)
 else
-    while IFS= read -r -d '' input_aig; do
-        printf "file\t%s\t%s\n" "$input_aig" "$input_aig" >> "$task_file"
-    done < <(find "$in_dir" -type f -name "*.aig" -print0)
+    if [[ -f "$in_zip" ]]; then
+        while IFS= read -r member_path; do
+            [[ -z "$member_path" ]] && continue
+            printf "zip\t%s\t%s\n" "$in_zip" "$member_path" >> "$task_file"
+        done < <(unzip -Z1 "$in_zip" '*.aig' 2>/dev/null | sort)
+    fi
+
+    if [[ -d "$in_dir" ]]; then
+        while IFS= read -r -d '' input_aig; do
+            printf "file\t%s\t%s\n" "$input_aig" "$input_aig" >> "$task_file"
+        done < <(find "$in_dir" -type f -name "*.aig" -print0)
+
+        while IFS= read -r -d '' legacy_zip; do
+            while IFS= read -r member_path; do
+                [[ -z "$member_path" ]] && continue
+                printf "zip\t%s\t%s\n" "$legacy_zip" "$member_path" >> "$task_file"
+            done < <(unzip -Z1 "$legacy_zip" '*.aig' 2>/dev/null | sort)
+        done < <(find "$in_dir" -type f -name "*.zip" -print0)
+    fi
 fi
 
 discovered="$(wc -l < "$task_file" | tr -d ' ')"
