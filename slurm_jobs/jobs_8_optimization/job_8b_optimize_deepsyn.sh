@@ -87,37 +87,17 @@ if [ ! -d "$SCRIPT_ZIP_ROOT" ]; then
     exit 1
 fi
 
-latest_manifest="$MANIFEST_DIR/bulk_scripts_manifest.json"
-if [ ! -f "$latest_manifest" ]; then
-    latest_manifest=$(ls -1t "$MANIFEST_DIR"/bulk_scripts_manifest_*.json 2>/dev/null | head -n 1 || true)
-fi
-if [ -z "$latest_manifest" ]; then
-    echo "✗ ERROR: No manifest found under: $MANIFEST_DIR"
-    exit 1
-fi
-
-python3 - "$latest_manifest" "$ALGORITHM" "$TARGET_DESIGN" <<'PY'
-import json
-import sys
-
-manifest_path, algorithm, target_design = sys.argv[1], sys.argv[2], sys.argv[3]
-with open(manifest_path, "r", encoding="utf-8") as fh:
-    m = json.load(fh)
-
-if algorithm not in m.get("algorithms", []):
-    raise SystemExit(f"manifest missing algorithm: {algorithm}")
-if "base_aigs" not in m.get("input_sources", []):
-    raise SystemExit("manifest missing input_source: base_aigs")
-
-designs = m.get("designs", [])
-if designs != [target_design]:
-    raise SystemExit(f"manifest design mismatch: expected [{target_design}], got {designs}")
-PY
 echo "STEP 8b config: parallelism=${OPT_SCRIPT_PARALLELISM}"
 
 design_zip="$SCRIPT_ZIP_ROOT/${TARGET_DESIGN}.zip"
 if [ ! -f "$design_zip" ]; then
     echo "✗ ERROR: Missing design zip: $design_zip"
+    exit 1
+fi
+
+script_file="optimizeBulk_${ALGORITHM}_${TARGET_DESIGN}_${SOURCE_LABEL}.sh"
+if ! unzip -Z1 "$design_zip" | grep -qx "$script_file"; then
+    echo "✗ ERROR: Generated design zip missing script: $script_file in $design_zip"
     exit 1
 fi
 
@@ -134,7 +114,6 @@ echo "STEP 8b: starting design ${TARGET_DESIGN}"
 
 tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/opt_deepsyn_${SLURM_JOB_ID:-local}_XXXXXX")"
 trap 'rm -rf "$tmp_dir"' EXIT
-script_file="optimizeBulk_${ALGORITHM}_${TARGET_DESIGN}_${SOURCE_LABEL}.sh"
 unzip -q "$design_zip" "$script_file" -d "$tmp_dir"
 chmod +x "$tmp_dir/$script_file"
 bash "$tmp_dir/$script_file"
