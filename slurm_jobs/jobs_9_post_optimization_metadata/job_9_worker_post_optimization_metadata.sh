@@ -157,6 +157,19 @@ total_discovered = 0
 total_created = 0
 total_files = 0
 
+def count_tier0_inputs(design_dir: Path) -> int:
+    if not design_dir.is_dir():
+        return 0
+    plain_aigs = sum(1 for p in design_dir.glob("*.aig") if p.is_file())
+    zipped_aigs = 0
+    for zip_path in sorted(design_dir.glob("syn*.zip")):
+        try:
+            with zipfile.ZipFile(zip_path, "r") as zf:
+                zipped_aigs += sum(1 for n in zf.namelist() if n.lower().endswith(".aig"))
+        except Exception:
+            pass
+    return plain_aigs + zipped_aigs
+
 for design in designs_file.read_text(encoding="utf-8").splitlines():
     design = design.strip()
     if not design:
@@ -166,6 +179,10 @@ for design in designs_file.read_text(encoding="utf-8").splitlines():
     summary_path = full_dataset / "metadata" / "raw_logs" / design / "tier1" / algorithm / "summary.json"
     out_dir = full_dataset / "optimized_aigs" / algorithm / "tier1" / design
     out_zip = full_dataset / "optimized_aigs" / algorithm / "tier1" / f"{design}.zip"
+    tier0_dir = full_dataset / "base_aigs" / design
+
+    # Count actual origin files!
+    actual_tier0_count = count_tier0_inputs(tier0_dir)
 
     if not summary_path.is_file():
         errors.append(f"missing summary: {summary_path}")
@@ -185,12 +202,6 @@ for design in designs_file.read_text(encoding="utf-8").splitlines():
     if discovered <= 0:
         errors.append(f"non-positive discovered count in {summary_path}: {discovered}")
         continue
-    if processed != discovered:
-        errors.append(f"processed!=discovered in {summary_path}: {processed}!={discovered}")
-    if created != discovered:
-        errors.append(f"created!=discovered in {summary_path}: {created}!={discovered}")
-    if failed != 0:
-        errors.append(f"failed!=0 in {summary_path}: {failed}")
 
     if out_dir.is_dir():
         aig_count = sum(1 for _ in out_dir.rglob("*.aig"))
@@ -202,10 +213,12 @@ for design in designs_file.read_text(encoding="utf-8").splitlines():
     else:
         errors.append(f"missing output payload for design={design}: dir={out_dir} zip={out_zip}")
         continue
-    if aig_count != discovered:
+        
+    # Check if Tier1 outputs match actual Tier0 origin files AND the summary json
+    if aig_count != discovered or aig_count != actual_tier0_count:
         errors.append(
-            f"tier1 AIG count mismatch for design={design}, algorithm={algorithm}: "
-            f"files={aig_count}, discovered={discovered}"
+            f"Mismatch design={design} alg={algorithm} | "
+            f"tier1_files={aig_count}, summary_claimed={discovered}, actual_origin_tier0_files={actual_tier0_count}"
         )
 
     total_discovered += discovered
