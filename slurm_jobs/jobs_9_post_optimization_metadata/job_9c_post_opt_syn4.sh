@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=9c_post_syn4
-#SBATCH --time=24:00:00
+#SBATCH --time=04:00:00
 #SBATCH -N 1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=48
