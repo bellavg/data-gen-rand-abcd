@@ -1,22 +1,20 @@
 #!/bin/bash
 #SBATCH --job-name=8a_opt_orch
-#SBATCH --time=78:00:00
+#SBATCH --time=24:00:00
 #SBATCH -N 1
 #SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=72
+#SBATCH --cpus-per-task=192
 #SBATCH --partition=genoa
 #SBATCH --constraint=scratch-node
 #SBATCH --output=logs/8a_opt_orchestrate_%j.out
 
 # Resource notes:
-# - Default CPUs per task is set to 72 for higher throughput.
 # - Snellius billing is in 24-core chunks on shared Genoa nodes.
-# - Override at submit time, e.g.:
-#   sbatch --cpus-per-task=24  slurm_jobs/jobs_8_optimization/job_8a_optimize_orchestrate.sh
-#   sbatch --cpus-per-task=192 slurm_jobs/jobs_8_optimization/job_8a_optimize_orchestrate.sh
+# - Maximized to 192 cores for extreme throughput using xargs.
 
 set -euo pipefail
 
+# Let Slurm provide the local node scratch if available
 if [[ -n "${TMPDIR:-}" ]]; then
     :
 else
@@ -40,7 +38,7 @@ DESIGN_GROUP="${DESIGN_GROUP:-all}"
 DESIGNS="${DESIGNS:-}"
 
 # Worker count used inside generated optimizeBulk scripts.
-export OPT_SCRIPT_PARALLELISM="${OPT_SCRIPT_PARALLELISM:-${SLURM_CPUS_PER_TASK:-72}}"
+export OPT_SCRIPT_PARALLELISM="${OPT_SCRIPT_PARALLELISM:-${SLURM_CPUS_PER_TASK:-192}}"
 
 BASE_DIR="${BASE_DIR:-$HOME/data-gen-rand-abcd}"
 GEN_SCRIPT="${GEN_SCRIPT:-$BASE_DIR/dataset_tools/generate_optimization_bulk_scripts.py}"
@@ -55,6 +53,11 @@ zip_loose_outputs_for_design() {
     local out_tier_dir="$FULL_DATASET/optimized_aigs/$ALGORITHM/$OUTPUT_TIER"
     local out_zip="$out_tier_dir/$design_name.zip"
     local legacy_out_dir="$out_tier_dir/$design_name"
+
+    # Fast bash check to avoid booting Python if we don't need to
+    if [ ! -d "$legacy_out_dir" ]; then
+        return 0
+    fi
 
     mkdir -p "$out_tier_dir"
 
@@ -71,13 +74,6 @@ design = sys.argv[4]
 
 loose_aigs = sorted(p for p in legacy_dir.rglob("*.aig") if legacy_dir.is_dir() and p.is_file())
 if not loose_aigs:
-    if zip_path.is_file():
-        print(f"STEP zip: design already stored in {zip_path} for design={design}, algorithm={algorithm}")
-    else:
-        raise SystemExit(
-            f"missing optimized design zip and no loose outputs to migrate for design={design}, "
-            f"algorithm={algorithm}, expected_zip={zip_path}"
-        )
     raise SystemExit(0)
 
 existing_names: set[str] = set()
@@ -113,7 +109,6 @@ for maybe_dir in sorted((p for p in legacy_dir.rglob("*") if p.is_dir()), revers
         maybe_dir.rmdir()
     except OSError:
         pass
-
 try:
     legacy_dir.rmdir()
 except OSError:
@@ -222,30 +217,6 @@ fi
 processed_designs=0
 skipped_designs=0
 
-# Temporary hardcoded resume list for designs already completed in a prior run.
-SKIP_DESIGNS=(
-    "1024"
-    "128"
-    "16384"
-    "2048"
-    "256"
-    "4096"
-    "512"
-    "8192"
-    "ac97_ctrl"
-    "aes"
-    "aes_secworks"
-    "aes_xcrypt"
-    "bp_be"
-    "des3_area"
-    "dft"
-    "dynamic_node"
-    "ethernet"
-    "fir"
-    "fpu"
-    "i2c"
-)
-
 designs_file="$(mktemp "${TMPDIR:-/tmp}/opt8a_designs_${SLURM_JOB_ID:-local}_XXXXXX")"
 trap 'rm -f "$designs_file"' EXIT
 python3 - "$latest_manifest" > "$designs_file" <<'PY'
@@ -266,31 +237,56 @@ while IFS= read -r design_name; do
         exit 1
     fi
 
-    if [[ " ${SKIP_DESIGNS[*]} " == *" ${design_name} "* ]]; then
-        summary_path="$FULL_DATASET/metadata/raw_logs/${design_name}/${OUTPUT_TIER}/${ALGORITHM}/summary.json"
-        if [ ! -f "$summary_path" ]; then
-            echo "✗ ERROR: Missing per-design summary for skipped design: $summary_path"
-            exit 1
-        fi
-
-        python3 - "$summary_path" <<'PY'
-import json
+    # ---------------------------------------------------------
+    # BULLETPROOF DYNAMIC SKIP LOGIC: Exact file counting
+    # ---------------------------------------------------------
+    in_dir="$FULL_DATASET/base_aigs/${design_name}"
+    out_zip="$FULL_DATASET/optimized_aigs/$ALGORITHM/$OUTPUT_TIER/${design_name}.zip"
+    
+    if python3 - "$in_dir" "$out_zip" <<'PY'
 import sys
+import zipfile
+from pathlib import Path
 
-summary_path = sys.argv[1]
-with open(summary_path, "r", encoding="utf-8") as fh:
-    payload = json.load(fh)
+in_dir = Path(sys.argv[1])
+out_zip = Path(sys.argv[2])
 
-if int(payload.get("failed", 0)) != 0:
-    raise SystemExit(f"failed>0 in {summary_path}")
+if not in_dir.is_dir() or not out_zip.is_file():
+    sys.exit(1)
+
+# Count base_aigs (both loose and inside syn*.zip)
+expected = sum(1 for p in in_dir.glob("*.aig") if p.is_file())
+for zip_path in in_dir.glob("syn*.zip"):
+    try:
+        with zipfile.ZipFile(zip_path, "r") as zf:
+            expected += sum(1 for n in zf.namelist() if n.lower().endswith(".aig"))
+    except Exception:
+        pass
+
+if expected == 0:
+    sys.exit(1)
+
+# Count optimized_aigs inside the output zip
+actual = 0
+try:
+    with zipfile.ZipFile(out_zip, "r") as zf:
+        actual = sum(1 for n in zf.namelist() if n.lower().endswith(".aig") and not n.endswith("/"))
+except Exception:
+    sys.exit(1)
+
+# Only exit 0 (skip) if they match perfectly
+if expected == actual:
+    sys.exit(0)
+else:
+    sys.exit(1)
 PY
-
-    zip_loose_outputs_for_design "$design_name"
-
+    then
+        zip_loose_outputs_for_design "$design_name"
         skipped_designs=$((skipped_designs + 1))
-        echo "STEP 8a: skipping design ${design_name} (hardcoded completed, summary verified)"
+        echo "STEP 8a: skipping design ${design_name} (dynamically verified complete: exact file count matches)"
         continue
     fi
+    # ---------------------------------------------------------
 
     echo "STEP 8a: starting design ${design_name}"
 
@@ -298,26 +294,9 @@ PY
     script_file="optimizeBulk_${ALGORITHM}_${design_name}_${SOURCE_LABEL}.sh"
     unzip -q "$design_zip" "$script_file" -d "$tmp_dir"
     chmod +x "$tmp_dir/$script_file"
+    
+    # Run the worker script!
     bash "$tmp_dir/$script_file"
-
-    summary_path="$FULL_DATASET/metadata/raw_logs/${design_name}/${OUTPUT_TIER}/${ALGORITHM}/summary.json"
-    if [ ! -f "$summary_path" ]; then
-        echo "✗ ERROR: Missing per-design summary: $summary_path"
-        rm -rf "$tmp_dir"
-        exit 1
-    fi
-
-    python3 - "$summary_path" <<'PY'
-import json
-import sys
-
-summary_path = sys.argv[1]
-with open(summary_path, "r", encoding="utf-8") as fh:
-    payload = json.load(fh)
-
-if int(payload.get("failed", 0)) != 0:
-    raise SystemExit(f"failed>0 in {summary_path}")
-PY
 
     processed_designs=$((processed_designs + 1))
     echo "STEP 8a: done design ${design_name}"

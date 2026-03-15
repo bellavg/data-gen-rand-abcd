@@ -267,16 +267,6 @@ output_zip_path="${{out_tier_dir}}/${{DESIGN}}.zip"
 log_dir="${{FULL_DATASET}}/${{RAW_LOG_ROOT}}"
 in_zip="${{FULL_DATASET}}/${{INPUT_ROOT}}/${{DESIGN}}.zip"
 
-# Prefer scheduler-provided TMPDIR (Snellius scratch-node gives /scratch-node/<user>.<jobid>).
-# If missing, fall back to a stable project-local temp directory.
-if [[ -n "${{TMPDIR:-}}" ]]; then
-    :
-else
-    export TMPDIR="${{FULL_DATASET}}/tmp"
-fi
-mkdir -p "$TMPDIR"
-echo "TMPDIR=$TMPDIR"
-
 mkdir -p "$out_tier_dir" "$log_dir"
 
 if [[ "$INPUT_SOURCE" == "base_aigs" ]]; then
@@ -291,31 +281,96 @@ else
     fi
 fi
 
-tmp_extract_root="$(mktemp -d "${{TMPDIR:-/tmp}}/opt_${{ALGORITHM}}_${{DESIGN}}_${{INPUT_LABEL}}_XXXXXX")"
-trap 'rm -rf "$tmp_extract_root"' EXIT
-ZIP_WRITE_LOCK="$tmp_extract_root/zip_write.lock"
-touch "$ZIP_WRITE_LOCK"
+# ENFORCE LOCAL SCRATCH NODE SPACE
+# Slurm explicitly sets TMPDIR to /scratch-node/<user>.<jobid> on Snellius. 
+# We fallback to /tmp (which is also local to the node) if it is somehow missing.
+LOCAL_SCRATCH="${{TMPDIR:-/tmp}}"
+mkdir -p "$LOCAL_SCRATCH"
 
-WORKERS="${{OPT_SCRIPT_PARALLELISM:-${{SLURM_CPUS_PER_TASK:-64}}}}"
+# Create our working directory purely on the node's local NVMe scratch disk
+tmp_extract_root="$(mktemp -d "$LOCAL_SCRATCH/opt_${{ALGORITHM}}_${{DESIGN}}_${{INPUT_LABEL}}_XXXXXX")"
+trap 'rm -rf "$tmp_extract_root"' EXIT
+
+WORKERS="${{OPT_SCRIPT_PARALLELISM:-${{SLURM_CPUS_PER_TASK:-192}}}}"
 
 if ! [[ "$WORKERS" =~ ^[0-9]+$ ]] || [[ "$WORKERS" -le 0 ]]; then
     echo "✗ Invalid worker count: $WORKERS" >&2
     exit 1
 fi
 
+# Both input processing and output processing happen entirely on local scratch
+INPUT_TMP_DIR="$tmp_extract_root/in"
+OUT_DIR="$tmp_extract_root/out"
+mkdir -p "$INPUT_TMP_DIR" "$OUT_DIR"
+
+echo "Staging inputs to local scratch node space..."
+
+# Pre-stage all inputs into local scratch to eliminate parallel I/O bottlenecks
+if [[ "$INPUT_SOURCE" == "base_aigs" ]]; then
+    find "$in_dir" -maxdepth 1 -name "*.aig" -exec ln -s {{}} "$INPUT_TMP_DIR/" \\;
+    for z in "$in_dir"/syn*.zip; do
+        [[ -f "$z" ]] || continue
+        zname="$(basename "$z")"
+        mkdir -p "$INPUT_TMP_DIR/$zname"
+        unzip -q -j "$z" -d "$INPUT_TMP_DIR/$zname/"
+        for f in "$INPUT_TMP_DIR/$zname"/*.aig; do
+            [[ -f "$f" ]] || continue
+            mv "$f" "$INPUT_TMP_DIR/${{zname}}__$(basename "$f")"
+        done
+        rm -rf "$INPUT_TMP_DIR/$zname"
+    done
+else
+    if [[ -f "$in_zip" ]]; then
+        zname="$(basename "$in_zip")"
+        mkdir -p "$INPUT_TMP_DIR/$zname"
+        unzip -q -j "$in_zip" -d "$INPUT_TMP_DIR/$zname/"
+        for f in "$INPUT_TMP_DIR/$zname"/*.aig; do
+            [[ -f "$f" ]] || continue
+            mv "$f" "$INPUT_TMP_DIR/${{zname}}__$(basename "$f")"
+        done
+        rm -rf "$INPUT_TMP_DIR/$zname"
+    fi
+    if [[ -d "$in_dir" ]]; then
+        find "$in_dir" -maxdepth 1 -name "*.aig" -exec ln -s {{}} "$INPUT_TMP_DIR/" \\;
+        for z in "$in_dir"/*.zip; do
+            [[ -f "$z" ]] || continue
+            zname="$(basename "$z")"
+            mkdir -p "$INPUT_TMP_DIR/$zname"
+            unzip -q -j "$z" -d "$INPUT_TMP_DIR/$zname/"
+            for f in "$INPUT_TMP_DIR/$zname"/*.aig; do
+                [[ -f "$f" ]] || continue
+                mv "$f" "$INPUT_TMP_DIR/${{zname}}__$(basename "$f")"
+            done
+            rm -rf "$INPUT_TMP_DIR/$zname"
+        done
+    fi
+fi
+
+discovered="$(find "$INPUT_TMP_DIR" -maxdepth 1 -name "*.aig" | wc -l | tr -d ' ')"
+
+if [[ $discovered -eq 0 ]]; then
+    echo "✗ No input AIGs discovered under: $in_dir (input_source=$INPUT_SOURCE)" >&2
+    exit 1
+fi
+
+echo "Processing $discovered files with $WORKERS concurrent workers..."
+
+export COMMAND_TEMPLATE
+export ABC_RC
+export RUNTIME_TIMEOUT_SECONDS
+export OUT_DIR
+
 run_one() {{
     local input_aig="$1"
-    local output_zip_path="$2"
-    local output_member="$3"
-    local output_tmp
-    local cmd
-    local seed_value
+    local output_member="$(basename "$input_aig")"
+    if [[ "$output_member" != *".zip__"* ]]; then
+        output_member="plain__${{output_member}}"
+    fi
+    
+    local output_tmp="${{OUT_DIR}}/tmp_${{RANDOM}}_${{BASHPID}}.aig"
+    local seed_value="42"
 
-    output_tmp="$(mktemp "$tmp_extract_root/out_XXXXXX.aig")"
-    seed_value="42"
-
-    cmd="$COMMAND_TEMPLATE"
-    cmd="${{cmd//\\{{input_aig\\}}/$input_aig}}"
+    local cmd="${{COMMAND_TEMPLATE//\\{{input_aig\\}}/$input_aig}}"
     cmd="${{cmd//\\{{output_aig\\}}/$output_tmp}}"
     cmd="${{cmd//\\{{abc_rc\\}}/$ABC_RC}}"
     cmd="${{cmd//\\{{seed\\}}/$seed_value}}"
@@ -323,165 +378,51 @@ run_one() {{
 
     if eval "$cmd" >/dev/null 2>&1; then
         if [[ ! -f "$output_tmp" ]]; then
-            echo "✗ Command exited 0 but did not produce output: $output_tmp" >&2
-            rm -f "$output_tmp"
             return 1
         fi
-
-        mkdir -p "$(dirname "$output_zip_path")"
-        flock -x "$ZIP_WRITE_LOCK" python3 - "$output_zip_path" "$output_member" "$output_tmp" <<'PY'
-import os
-import sys
-import zipfile
-from pathlib import Path
-
-zip_path = Path(sys.argv[1])
-member_name = sys.argv[2]
-aig_path = Path(sys.argv[3])
-
-if not aig_path.is_file():
-    raise SystemExit(f"missing temporary output file: {{aig_path}}")
-
-zip_path.parent.mkdir(parents=True, exist_ok=True)
-existing_names: set[str] = set()
-if zip_path.exists():
-    with zipfile.ZipFile(zip_path, "r") as zf:
-        existing_names = set(zf.namelist())
-
-arcname = member_name
-if arcname in existing_names:
-    stem, ext = os.path.splitext(arcname)
-    idx = 1
-    candidate = f"{{stem}}__dup{{idx}}{{ext}}"
-    while candidate in existing_names:
-        idx += 1
-        candidate = f"{{stem}}__dup{{idx}}{{ext}}"
-    arcname = candidate
-
-with zipfile.ZipFile(
-    zip_path,
-    "a",
-    compression=zipfile.ZIP_DEFLATED,
-    compresslevel=1,
-    allowZip64=True,
-) as zf:
-    zf.write(aig_path, arcname=arcname)
-PY
-
-        rm -f "$output_tmp"
+        
+        local arcname="$output_member"
+        local stem="${{arcname%.*}}"
+        local ext="${{arcname##*.}}"
+        if [[ "$stem" == "$arcname" ]]; then ext="aig"; fi
+        
+        local idx=1
+        local final_path="${{OUT_DIR}}/$arcname"
+        
+        # Atomic lock-free filesystem write check for instantaneous deduplication
+        set -o noclobber
+        while ! {{ > "$final_path" ; }} 2>/dev/null; do
+            final_path="${{OUT_DIR}}/${{stem}}__dup${{idx}}.${{ext}}"
+            ((idx++))
+        done
+        set +o noclobber
+        
+        mv -f "$output_tmp" "$final_path"
         return 0
     fi
-
-    echo "✗ Command failed for input member: $output_member" >&2
     rm -f "$output_tmp"
     return 1
 }}
+export -f run_one
 
-run_task() {{
-    local source_type="$1"
-    local source_path="$2"
-    local source_ref="$3"
+# Use xargs to absolutely blast through the queue with minimal overhead
+find "$INPUT_TMP_DIR" -maxdepth 1 -name "*.aig" -print0 | \\
+    xargs -0 -P "$WORKERS" -n 1 -I {{}} bash -c 'run_one "$1" || echo "FAIL"' _ {{}} > "$tmp_extract_root/failures.log"
 
-    if [[ "$source_type" == "file" ]]; then
-        local file_name
-        file_name="$(basename "$source_ref")"
-        run_one "$source_path" "$output_zip_path" "plain__${{file_name}}"
-        return
-    fi
+failed=$(grep -c "FAIL" "$tmp_extract_root/failures.log" || true)
+created=$(find "$OUT_DIR" -maxdepth 1 -type f -name "*.aig" | wc -l | tr -d ' ')
+processed=$((created + failed))
 
-    if [[ "$source_type" == "zip" ]]; then
-        local member_file
-        local source_zip_name
-        local extracted_input
-        member_file="$(basename "$source_ref")"
-        source_zip_name="$(basename "$source_path")"
-        extracted_input="$(mktemp "$tmp_extract_root/in_XXXXXX.aig")"
-        if unzip -p "$source_path" "$source_ref" > "$extracted_input"; then
-            run_one "$extracted_input" "$output_zip_path" "${{source_zip_name}}__${{member_file}}"
-        else
-            echo "✗ Failed to extract $source_ref from $source_path" >&2
-            rm -f "$extracted_input"
-            return 1
-        fi
-        rm -f "$extracted_input"
-        return
-    fi
-
-    echo "✗ Unknown task source type: $source_type" >&2
-    return 1
-}}
-
-task_file="$tmp_extract_root/tasks.tsv"
-touch "$task_file"
-
-if [[ "$INPUT_SOURCE" == "base_aigs" ]]; then
-    while IFS= read -r -d '' input_aig; do
-        printf "file\t%s\t%s\n" "$input_aig" "$input_aig" >> "$task_file"
-    done < <(find "$in_dir" -maxdepth 1 -type f -name "*.aig" -print0)
-
-    while IFS= read -r -d '' zip_file; do
-        while IFS= read -r member_path; do
-            [[ -z "$member_path" ]] && continue
-            printf "zip\t%s\t%s\n" "$zip_file" "$member_path" >> "$task_file"
-        done < <(unzip -Z1 "$zip_file" '*.aig' 2>/dev/null | sort)
-    done < <(find "$in_dir" -maxdepth 1 -type f -name "syn*.zip" -print0)
-else
-    if [[ -f "$in_zip" ]]; then
-        while IFS= read -r member_path; do
-            [[ -z "$member_path" ]] && continue
-            printf "zip\t%s\t%s\n" "$in_zip" "$member_path" >> "$task_file"
-        done < <(unzip -Z1 "$in_zip" '*.aig' 2>/dev/null | sort)
-    fi
-
-    if [[ -d "$in_dir" ]]; then
-        while IFS= read -r -d '' input_aig; do
-            printf "file\t%s\t%s\n" "$input_aig" "$input_aig" >> "$task_file"
-        done < <(find "$in_dir" -type f -name "*.aig" -print0)
-
-        while IFS= read -r -d '' legacy_zip; do
-            while IFS= read -r member_path; do
-                [[ -z "$member_path" ]] && continue
-                printf "zip\t%s\t%s\n" "$legacy_zip" "$member_path" >> "$task_file"
-            done < <(unzip -Z1 "$legacy_zip" '*.aig' 2>/dev/null | sort)
-        done < <(find "$in_dir" -type f -name "*.zip" -print0)
-    fi
-fi
-
-discovered="$(wc -l < "$task_file" | tr -d ' ')"
-
-if [[ $discovered -eq 0 ]]; then
-    echo "✗ No input AIGs discovered under: $in_dir (input_source=$INPUT_SOURCE)" >&2
-    exit 1
-fi
-
-active_jobs=0
-created=0
-failed=0
-
-while IFS=$'\t' read -r source_type source_path source_ref; do
-    run_task "$source_type" "$source_path" "$source_ref" &
-    active_jobs=$((active_jobs + 1))
-
-    if [ "$active_jobs" -ge "$WORKERS" ]; then
-        if wait -n; then
-            created=$((created + 1))
-        else
-            failed=$((failed + 1))
-        fi
-        active_jobs=$((active_jobs - 1))
-    fi
-done < "$task_file"
-
-while [ "$active_jobs" -gt 0 ]; do
-    if wait -n; then
-        created=$((created + 1))
-    else
+echo "Zipping $created outputs to $output_zip_path..."
+if [[ $created -gt 0 ]]; then
+    mkdir -p "$(dirname "$output_zip_path")"
+    rm -f "$output_zip_path"
+    # Stream the zip directly from local scratch into the designated full dataset folder
+    if ! (cd "$OUT_DIR" && zip -q -r -1 "$output_zip_path" .); then
+        echo "✗ Failed to create final zip: $output_zip_path" >&2
         failed=$((failed + 1))
     fi
-    active_jobs=$((active_jobs - 1))
-done
-
-processed=$((created + failed))
+fi
 
 summary_file="$log_dir/summary.json"
 cat > "$summary_file" <<EOF
@@ -498,6 +439,7 @@ cat > "$summary_file" <<EOF
 EOF
 
 if [[ $failed -gt 0 ]]; then
+    echo "✗ Completed with $failed failures." >&2
     exit 1
 fi
 """
