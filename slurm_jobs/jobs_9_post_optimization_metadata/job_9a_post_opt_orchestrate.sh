@@ -11,5 +11,4 @@ set -euo pipefail
 
 export ALGORITHM="Orchestrate"
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-bash "$SCRIPT_DIR/job_9_worker_post_optimization_metadata.sh"
+bash "$SLURM_SUBMIT_DIR/slurm_jobs/jobs_9_post_optimization_metadata/job_9_worker_post_optimization_metadata.sh"
