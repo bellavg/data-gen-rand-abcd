@@ -3,7 +3,6 @@
 #SBATCH --time=04:00:00
 #SBATCH -N 1
 #SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=48
 #SBATCH --partition=genoa
 #SBATCH --output=logs/9d_post_c2rs_%j.out
 
