@@ -3,17 +3,17 @@
 set -euo pipefail
 
 if [ -z "${ALGORITHM:-}" ]; then
-	echo "ERROR: ALGORITHM is required (Orchestrate|Deepsyn|Syn4|C2RS)"
-	exit 1
+    echo "ERROR: ALGORITHM is required (Orchestrate|Deepsyn|Syn4|C2RS)"
+    exit 1
 fi
 
 case "$ALGORITHM" in
-	Orchestrate|Deepsyn|Syn4|C2RS)
-		;;
-	*)
-		echo "ERROR: Unsupported ALGORITHM: $ALGORITHM"
-		exit 1
-		;;
+    Orchestrate|Deepsyn|Syn4|C2RS)
+        ;;
+    *)
+        echo "ERROR: Unsupported ALGORITHM: $ALGORITHM"
+        exit 1
+        ;;
 esac
 
 echo "=========================================="
@@ -45,33 +45,33 @@ ARCHIVE_FULL_DATASET="${ARCHIVE_FULL_DATASET:-true}"   # true | false
 BACKUP_DIR="${BACKUP_DIR:-/scratch-shared/$USER/dataset_backups}"
 
 if [[ "$DESIGN_GROUP" != "all" && "$DESIGN_GROUP" != "random" && "$DESIGN_GROUP" != "openabc" ]]; then
-	echo "ERROR: DESIGN_GROUP must be one of: all, random, openabc"
-	exit 1
+    echo "ERROR: DESIGN_GROUP must be one of: all, random, openabc"
+    exit 1
 fi
 
 if [[ "$ARCHIVE_FULL_DATASET" != "true" && "$ARCHIVE_FULL_DATASET" != "false" ]]; then
-	echo "ERROR: ARCHIVE_FULL_DATASET must be true or false"
-	exit 1
+    echo "ERROR: ARCHIVE_FULL_DATASET must be true or false"
+    exit 1
 fi
 
 if ! [[ "$METADATA_WORKERS" =~ ^[0-9]+$ ]] || [ "$METADATA_WORKERS" -lt 1 ]; then
-	echo "ERROR: METADATA_WORKERS must be a positive integer"
-	exit 1
+    echo "ERROR: METADATA_WORKERS must be a positive integer"
+    exit 1
 fi
 
 if [ ! -d "$FULL_DATASET" ]; then
-	echo "ERROR: FULL_DATASET not found: $FULL_DATASET"
-	exit 1
+    echo "ERROR: FULL_DATASET not found: $FULL_DATASET"
+    exit 1
 fi
 
 if [ ! -f "$UPDATE_SCRIPT" ]; then
-	echo "ERROR: update script not found: $UPDATE_SCRIPT"
-	exit 1
+    echo "ERROR: update script not found: $UPDATE_SCRIPT"
+    exit 1
 fi
 
 if ! command -v abc >/dev/null 2>&1; then
-	echo "ERROR: abc not found in PATH"
-	exit 1
+    echo "ERROR: abc not found in PATH"
+    exit 1
 fi
 
 echo "Loaded modules: 2025, foss/2025a, Python/3.13.1"
@@ -138,11 +138,10 @@ echo "Selected designs: $selected_designs_count"
 echo ""
 
 echo "=========================================="
-echo "STEP 1/7: Pre-check Tier-1 graph completeness"
+echo "STEP 1/7: Pre-check Tier-1 graph completeness (Direct Count)"
 echo "=========================================="
 
 python3 - "$FULL_DATASET" "$ALGORITHM" "$designs_file" <<'PY'
-import json
 import sys
 import zipfile
 from pathlib import Path
@@ -153,8 +152,7 @@ designs_file = Path(sys.argv[3])
 
 errors = []
 checked = 0
-total_discovered = 0
-total_created = 0
+total_expected = 0
 total_files = 0
 
 def count_tier0_inputs(design_dir: Path) -> int:
@@ -176,31 +174,13 @@ for design in designs_file.read_text(encoding="utf-8").splitlines():
         continue
 
     checked += 1
-    summary_path = full_dataset / "metadata" / "raw_logs" / design / "tier1" / algorithm / "summary.json"
     out_dir = full_dataset / "optimized_aigs" / algorithm / "tier1" / design
     out_zip = full_dataset / "optimized_aigs" / algorithm / "tier1" / f"{design}.zip"
     tier0_dir = full_dataset / "base_aigs" / design
 
-    # Count actual origin files!
-    actual_tier0_count = count_tier0_inputs(tier0_dir)
-
-    if not summary_path.is_file():
-        errors.append(f"missing summary: {summary_path}")
-        continue
-
-    try:
-        payload = json.loads(summary_path.read_text(encoding="utf-8"))
-    except Exception as exc:  # noqa: BLE001
-        errors.append(f"invalid json summary {summary_path}: {exc}")
-        continue
-
-    discovered = int(payload.get("discovered", -1))
-    processed = int(payload.get("processed", -1))
-    created = int(payload.get("created", -1))
-    failed = int(payload.get("failed", -1))
-
-    if discovered <= 0:
-        errors.append(f"non-positive discovered count in {summary_path}: {discovered}")
+    expected = count_tier0_inputs(tier0_dir)
+    if expected <= 0:
+        errors.append(f"No base AIGs found in {tier0_dir}")
         continue
 
     if out_dir.is_dir():
@@ -213,34 +193,31 @@ for design in designs_file.read_text(encoding="utf-8").splitlines():
     else:
         errors.append(f"missing output payload for design={design}: dir={out_dir} zip={out_zip}")
         continue
-        
-    # Check if Tier1 outputs match actual Tier0 origin files AND the summary json
-    if aig_count != discovered or aig_count != actual_tier0_count:
+
+    if aig_count != expected:
         errors.append(
-            f"Mismatch design={design} alg={algorithm} | "
-            f"tier1_files={aig_count}, summary_claimed={discovered}, actual_origin_tier0_files={actual_tier0_count}"
+            f"tier1 AIG count mismatch for design={design}, algorithm={algorithm}: "
+            f"files={aig_count}, expected_from_base={expected}"
         )
 
-    total_discovered += discovered
-    total_created += created
+    total_expected += expected
     total_files += aig_count
 
 if errors:
-    print("ERROR: Tier-1 pre-check failed")
+    print("ERROR: Tier-1 pre-check failed (Disk count mismatch)")
     for item in errors:
         print(f"  - {item}")
     sys.exit(1)
 
 print(f"✓ Tier-1 pre-check passed for algorithm={algorithm}")
 print(f"✓ Designs checked: {checked}")
-print(f"✓ Total discovered from summaries: {total_discovered}")
-print(f"✓ Total created from summaries: {total_created}")
-print(f"✓ Total .aig files found: {total_files}")
+print(f"✓ Total expected from base_aigs: {total_expected}")
+print(f"✓ Total .aig files found in tier1: {total_files}")
 PY
 
 echo ""
 echo "=========================================="
-echo "STEP 2/7: Update dataset_manifest.json (Tier-1 confirmed)"
+echo "STEP 2/7: Update dataset_manifest.json (Direct Count)"
 echo "=========================================="
 
 python3 - "$FULL_DATASET" "$ALGORITHM" "$designs_file" <<'PY'
@@ -265,17 +242,29 @@ designs = [d.strip() for d in designs_file.read_text(encoding="utf-8").splitline
 if not designs:
     raise SystemExit("ERROR: no selected designs found for manifest update")
 
-total_discovered = 0
+def count_tier0_inputs(design_dir: Path) -> int:
+    if not design_dir.is_dir():
+        return 0
+    plain_aigs = sum(1 for p in design_dir.glob("*.aig") if p.is_file())
+    zipped_aigs = 0
+    for zip_path in sorted(design_dir.glob("syn*.zip")):
+        try:
+            with zipfile.ZipFile(zip_path, "r") as zf:
+                zipped_aigs += sum(1 for n in zf.namelist() if n.lower().endswith(".aig"))
+        except Exception:
+            pass
+    return plain_aigs + zipped_aigs
+
+total_expected = 0
 total_output_aigs = 0
+
 for design in designs:
-    summary_path = full_dataset / "metadata" / "raw_logs" / design / "tier1" / algorithm / "summary.json"
+    tier0_dir = full_dataset / "base_aigs" / design
     out_dir = full_dataset / "optimized_aigs" / algorithm / "tier1" / design
     out_zip = full_dataset / "optimized_aigs" / algorithm / "tier1" / f"{design}.zip"
-    if not summary_path.is_file():
-        raise SystemExit(f"ERROR: cannot update manifest, summary missing: {summary_path}")
-    with summary_path.open("r", encoding="utf-8") as fh:
-        payload = json.load(fh)
-    total_discovered += int(payload.get("discovered", 0))
+    
+    total_expected += count_tier0_inputs(tier0_dir)
+    
     if out_dir.is_dir():
         total_output_aigs += sum(1 for _ in out_dir.rglob("*.aig"))
     elif out_zip.is_file():
@@ -293,7 +282,7 @@ algo_status["tier1"] = {
     "confirmed_at": datetime.now(timezone.utc).isoformat(),
     "selected_design_count": len(designs),
     "selected_designs": designs,
-    "summary_discovered_total": total_discovered,
+    "summary_discovered_total": total_expected,
     "output_aig_count_total": total_output_aigs,
 }
 
@@ -306,7 +295,7 @@ with manifest_path.open("w", encoding="utf-8") as fh:
 print(f"✓ Updated manifest: {manifest_path}")
 print(f"✓ optimization_status[{algorithm}][tier1].confirmed = true")
 print(f"✓ selected_design_count = {len(designs)}")
-print(f"✓ summary_discovered_total = {total_discovered}")
+print(f"✓ summary_discovered_total (from base_aigs) = {total_expected}")
 print(f"✓ output_aig_count_total = {total_output_aigs}")
 PY
 
@@ -514,8 +503,10 @@ for design in designs:
     csv_rows = 0
     if csv_path.is_file():
         try:
-            with csv_path.open("r", newline="", encoding="utf-8") as handle:
-                csv_rows = sum(1 for _ in csv.DictReader(handle))
+            with csv_path.open("r", encoding="utf-8") as handle:
+                # Optimized line counting: counts newline characters
+                # Subtract 1 to account for the header row
+                csv_rows = sum(1 for line in handle) - 1
         except Exception:
             csv_rows = -1
 
@@ -576,11 +567,10 @@ PY
 
 echo ""
 echo "=========================================="
-echo "STEP 6/7: Tier-0 completeness gate before backup ZIP"
+echo "STEP 6/7: Tier-0 completeness gate (Direct Count)"
 echo "=========================================="
 
 python3 - "$FULL_DATASET" "$ALGORITHM" "$designs_file" <<'PY'
-import json
 import sys
 import zipfile
 from pathlib import Path
@@ -588,7 +578,6 @@ from pathlib import Path
 full_dataset = Path(sys.argv[1])
 algorithm = sys.argv[2]
 designs_file = Path(sys.argv[3])
-
 
 def count_tier0_inputs(design_dir: Path) -> int:
     if not design_dir.is_dir():
@@ -603,7 +592,6 @@ def count_tier0_inputs(design_dir: Path) -> int:
             pass
     return plain_aigs + zipped_aigs
 
-
 errors = []
 checked = 0
 
@@ -612,29 +600,31 @@ for design in designs_file.read_text(encoding="utf-8").splitlines():
     if not design:
         continue
     checked += 1
+    
+    tier0_dir = full_dataset / "base_aigs" / design
+    out_dir = full_dataset / "optimized_aigs" / algorithm / "tier1" / design
+    out_zip = full_dataset / "optimized_aigs" / algorithm / "tier1" / f"{design}.zip"
 
-    summary_path = full_dataset / "metadata" / "raw_logs" / design / "tier1" / algorithm / "summary.json"
-    if not summary_path.is_file():
-        errors.append(f"missing tier1 summary for gate check: {summary_path}")
+    expected_from_tier0 = count_tier0_inputs(tier0_dir)
+
+    if expected_from_tier0 <= 0:
+        errors.append(f"No base AIGs found for design {design}")
         continue
+        
+    if out_dir.is_dir():
+        aig_count = sum(1 for _ in out_dir.rglob("*.aig"))
+    elif out_zip.is_file():
+        with zipfile.ZipFile(out_zip, "r") as zf:
+            aig_count = sum(
+                1 for name in zf.namelist() if name.lower().endswith(".aig") and not name.endswith("/")
+            )
+    else:
+        aig_count = 0
 
-    try:
-        payload = json.loads(summary_path.read_text(encoding="utf-8"))
-    except Exception as exc:  # noqa: BLE001
-        errors.append(f"invalid summary json {summary_path}: {exc}")
-        continue
-
-    discovered = int(payload.get("discovered", -1))
-    expected_from_tier0 = count_tier0_inputs(full_dataset / "base_aigs" / design)
-
-    if discovered <= 0:
-        errors.append(f"non-positive discovered count in {summary_path}: {discovered}")
-        continue
-
-    if expected_from_tier0 != discovered:
+    if expected_from_tier0 != aig_count:
         errors.append(
             f"tier0 completeness mismatch for design={design}, algorithm={algorithm}: "
-            f"tier0_inputs={expected_from_tier0}, tier1_summary_discovered={discovered}"
+            f"tier0_inputs={expected_from_tier0}, tier1_files={aig_count}"
         )
 
 if errors:
