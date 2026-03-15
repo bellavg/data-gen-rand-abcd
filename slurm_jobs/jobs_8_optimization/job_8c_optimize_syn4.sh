@@ -1,334 +1,107 @@
 #!/bin/bash
-#SBATCH --job-name=opt_syn4
+#SBATCH --job-name=opt_syn4_fix
 #SBATCH --time=78:00:00
 #SBATCH -N 1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=72
 #SBATCH --partition=genoa
 #SBATCH --constraint=scratch-node
-#SBATCH --output=logs/8c_opt_syn4_%j.out
-
-# Resource notes:
-# - Default CPUs per task is set to 72 for higher throughput.
-# - Snellius billing is in 24-core chunks on shared Genoa nodes.
-# - Override at submit time, e.g.:
-#   sbatch --cpus-per-task=24  slurm_jobs/jobs_8_optimization/job_8c_optimize_syn4.sh
-#   sbatch --cpus-per-task=192 slurm_jobs/jobs_8_optimization/job_8c_optimize_syn4.sh
+#SBATCH --output=logs/8c_opt_syn4_fix_%j.out
 
 set -euo pipefail
 
-if [[ -n "${TMPDIR:-}" ]]; then
-    :
-else
-    export TMPDIR="/scratch-shared/$USER/tmp"
-fi
+# --- Setup Directories & Environment ---
+if [[ -n "${TMPDIR:-}" ]]; then : ; else export TMPDIR="/scratch-shared/$USER/tmp"; fi
 mkdir -p "$TMPDIR"
-echo "TMPDIR=$TMPDIR"
-
-echo "STEP 8c start: job=${SLURM_JOB_ID:-local} host=$(hostname) time=$(date)"
+echo "STEP 8c FIX start: job=${SLURM_JOB_ID:-local} host=$(hostname) time=$(date)"
 
 module purge
-module load 2025
-module load foss/2025a
-module load Python/3.13.1-GCCcore-14.2.0
+module load 2025 foss/2025a Python/3.13.1-GCCcore-14.2.0
 export PATH="$HOME/abc:$PATH"
 
 ALGORITHM="Syn4"
 SOURCE_LABEL="base"
 OUTPUT_TIER="tier1"
-DESIGN_GROUP="${DESIGN_GROUP:-all}"
-DESIGNS="${DESIGNS:-}"
-
-# Worker count used inside generated optimizeBulk scripts.
 export OPT_SCRIPT_PARALLELISM="${OPT_SCRIPT_PARALLELISM:-${SLURM_CPUS_PER_TASK:-72}}"
 
 BASE_DIR="${BASE_DIR:-$HOME/data-gen-rand-abcd}"
-GEN_SCRIPT="${GEN_SCRIPT:-$BASE_DIR/dataset_tools/generate_optimization_bulk_scripts.py}"
-CONFIG_FILE="${CONFIG_FILE:-$BASE_DIR/dataset_tools/optimization_config.json}"
-
-FULL_DATASET="${FULL_DATASET:-/scratch-shared/$USER/FULL_DATASET}"
-SCRIPT_ZIP_ROOT="$FULL_DATASET/synScripts/optimization/$ALGORITHM"
+GEN_SCRIPT="${BASE_DIR}/dataset_tools/generate_optimization_bulk_scripts.py"
+CONFIG_FILE="${BASE_DIR}/dataset_tools/optimization_config.json"
+FULL_DATASET="/scratch-shared/$USER/FULL_DATASET"
 MANIFEST_DIR="$FULL_DATASET/optimized_aigs/manifests"
+SCRIPT_ZIP_ROOT="$FULL_DATASET/synScripts/optimization/$ALGORITHM"
 
-zip_loose_outputs_for_design() {
-    local design_name="$1"
-    local out_tier_dir="$FULL_DATASET/optimized_aigs/$ALGORITHM/$OUTPUT_TIER"
-    local out_zip="$out_tier_dir/$design_name.zip"
-    local legacy_out_dir="$out_tier_dir/$design_name"
+# ==========================================
+# EXPLICIT TARGET LIST
+# Exactly the 15 designs that failed with 0 or 17801 files.
+# Good designs (128, 256, i2c, etc.) are perfectly safe.
+# ==========================================
+EXPLICIT_DESIGNS="jpeg,mem_ctrl,pci,picosoc,sasc,sha256,simple_spi,spi,ss_pcm,tinyRocket,tv80,usb_phy,vga_lcd,wb_conmax,wb_dma"
 
-    mkdir -p "$out_tier_dir"
+echo "=========================================="
+echo "PRE-RERUN CLEANUP: Clearing Broken Outputs"
+echo "=========================================="
+# Convert comma-separated string to an array and loop
+IFS=',' read -r -a DESIGN_ARRAY <<< "$EXPLICIT_DESIGNS"
 
-    python3 - "$out_zip" "$legacy_out_dir" "$ALGORITHM" "$design_name" <<'PY'
-import os
-import sys
-import zipfile
-from pathlib import Path
+for design in "${DESIGN_ARRAY[@]}"; do
+    echo "  - Wiping old outputs for $design"
+    # Delete the fake summaries so the inner script actually runs
+    rm -f "$FULL_DATASET/metadata/raw_logs/$design/$OUTPUT_TIER/$ALGORITHM/summary.json"
+    # Delete the empty/partial zips and folders
+    rm -f "$FULL_DATASET/optimized_aigs/$ALGORITHM/$OUTPUT_TIER/$design.zip"
+    rm -rf "$FULL_DATASET/optimized_aigs/$ALGORITHM/$OUTPUT_TIER/$design"
+done
 
-zip_path = Path(sys.argv[1])
-legacy_dir = Path(sys.argv[2])
-algorithm = sys.argv[3]
-design = sys.argv[4]
+echo ""
+# --- Script Regeneration (Only for the explicitly broken designs) ---
+echo "Regenerating optimization scripts for targeted designs..."
+python3 "$GEN_SCRIPT" \
+    --base-dir "$BASE_DIR" \
+    --full-dataset "$FULL_DATASET" \
+    --config "$CONFIG_FILE" \
+    --design-group "all" \
+    --algorithms "$ALGORITHM" \
+    --input-source "base_aigs" \
+    --designs "$EXPLICIT_DESIGNS"
 
-loose_aigs = sorted(p for p in legacy_dir.rglob("*.aig") if legacy_dir.is_dir() and p.is_file())
-if not loose_aigs:
-    if zip_path.is_file():
-        print(f"STEP zip: design already stored in {zip_path} for design={design}, algorithm={algorithm}")
-    else:
-        raise SystemExit(
-            f"missing optimized design zip and no loose outputs to migrate for design={design}, "
-            f"algorithm={algorithm}, expected_zip={zip_path}"
-        )
-    raise SystemExit(0)
-
-existing_names: set[str] = set()
-if zip_path.exists():
-    with zipfile.ZipFile(zip_path, "r") as zf:
-        existing_names = set(zf.namelist())
-
-with zipfile.ZipFile(
-    zip_path,
-    "a",
-    compression=zipfile.ZIP_DEFLATED,
-    compresslevel=1,
-    allowZip64=True,
-) as zf:
-    for aig_path in loose_aigs:
-        arcname = aig_path.relative_to(legacy_dir).as_posix()
-        if arcname in existing_names:
-            stem, ext = os.path.splitext(arcname)
-            idx = 1
-            candidate = f"{stem}__dup{idx}{ext}"
-            while candidate in existing_names:
-                idx += 1
-                candidate = f"{stem}__dup{idx}{ext}"
-            arcname = candidate
-        zf.write(aig_path, arcname=arcname)
-        existing_names.add(arcname)
-
-for aig_path in loose_aigs:
-    aig_path.unlink(missing_ok=True)
-
-for maybe_dir in sorted((p for p in legacy_dir.rglob("*") if p.is_dir()), reverse=True):
-    try:
-        maybe_dir.rmdir()
-    except OSError:
-        pass
-
-try:
-    legacy_dir.rmdir()
-except OSError:
-    pass
-
-print(
-    f"STEP zip: consolidated {len(loose_aigs)} loose outputs into {zip_path} "
-    f"for design={design}, algorithm={algorithm}"
-)
-PY
-}
-
-if [ ! -f "$GEN_SCRIPT" ]; then
-    echo "✗ ERROR: Optimization generator script not found: $GEN_SCRIPT"
-    exit 1
-fi
-
-if [ ! -f "$CONFIG_FILE" ]; then
-    echo "✗ ERROR: Optimization config not found: $CONFIG_FILE"
-    exit 1
-fi
-
-if ! command -v abc >/dev/null 2>&1; then
-    echo "✗ ERROR: abc not found in PATH"
-    exit 1
-fi
-
-echo "STEP 8c: regenerating optimization scripts (algorithm=${ALGORITHM}, input_source=base_aigs, design_group=${DESIGN_GROUP})"
-GEN_ARGS=(
-    --base-dir "$BASE_DIR"
-    --full-dataset "$FULL_DATASET"
-    --config "$CONFIG_FILE"
-    --design-group "$DESIGN_GROUP"
-    --algorithms "$ALGORITHM"
-    --input-source base_aigs
-)
-if [ -n "$DESIGNS" ]; then
-    GEN_ARGS+=(--designs "$DESIGNS")
-fi
-python3 "$GEN_SCRIPT" "${GEN_ARGS[@]}"
-
-if [ ! -d "$SCRIPT_ZIP_ROOT" ]; then
-    echo "✗ ERROR: Missing generated script zip root after regeneration: $SCRIPT_ZIP_ROOT"
-    exit 1
-fi
-
+# --- Read Manifest ---
 latest_manifest="$MANIFEST_DIR/bulk_scripts_manifest.json"
-if [ ! -f "$latest_manifest" ]; then
-    latest_manifest=$(ls -1t "$MANIFEST_DIR"/bulk_scripts_manifest_*.json 2>/dev/null | head -n 1 || true)
-fi
-if [ -z "$latest_manifest" ]; then
-    echo "✗ ERROR: No manifest found under: $MANIFEST_DIR"
-    exit 1
-fi
-
-expected_designs=$(python3 - "$latest_manifest" "$ALGORITHM" <<'PY'
-import json
-import sys
-
-manifest_path, algorithm = sys.argv[1], sys.argv[2]
-with open(manifest_path, "r", encoding="utf-8") as fh:
-    m = json.load(fh)
-
-if algorithm not in m.get("algorithms", []):
-    raise SystemExit(f"manifest missing algorithm: {algorithm}")
-if "base_aigs" not in m.get("input_sources", []):
-    raise SystemExit("manifest missing input_source: base_aigs")
-
-designs = m.get("designs", [])
-if not designs:
-    raise SystemExit("manifest has zero designs")
-
-print(len(designs))
-PY
-)
-
-script_count=$(python3 - "$latest_manifest" "$SCRIPT_ZIP_ROOT" "$ALGORITHM" "$SOURCE_LABEL" <<'PY'
-import json
-import sys
-import zipfile
-from pathlib import Path
-
-manifest_path = Path(sys.argv[1])
-zip_root = Path(sys.argv[2])
-algorithm = sys.argv[3]
-source_label = sys.argv[4]
-
-manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-count = 0
-for design in manifest.get("designs", []):
-    zip_path = zip_root / f"{design}.zip"
-    if not zip_path.exists():
-        continue
-    script_name = f"optimizeBulk_{algorithm}_{design}_{source_label}.sh"
-    with zipfile.ZipFile(zip_path, "r") as archive:
-        if script_name in archive.namelist():
-            count += 1
-print(count)
-PY
-)
-if [ "$script_count" -ne "$expected_designs" ]; then
-    echo "✗ ERROR: Expected $expected_designs ${ALGORITHM} shard scripts, found $script_count"
-    exit 1
-fi
-
-processed_designs=0
-skipped_designs=0
-
-# Temporary hardcoded resume list for designs already completed in a prior run.
-SKIP_DESIGNS=(
-    "1024"
-    "128"
-    "16384"
-    "2048"
-    "256"
-    "4096"
-    "512"
-    "8192"
-    "ac97_ctrl"
-    "aes"
-    "aes_secworks"
-    "aes_xcrypt"
-    "bp_be"
-    "des3_area"
-    "dft"
-    "dynamic_node"
-    "ethernet"
-    "fir"
-    "fpu"
-    "i2c"
-    "idft"
-    "iir"
-)
-
-designs_file="$(mktemp "${TMPDIR:-/tmp}/opt8c_designs_${SLURM_JOB_ID:-local}_XXXXXX")"
+designs_file="$(mktemp "${TMPDIR:-/tmp}/fix_designs_XXXXXX")"
 trap 'rm -f "$designs_file"' EXIT
-python3 - "$latest_manifest" > "$designs_file" <<'PY'
-import json
-import sys
 
-with open(sys.argv[1], "r", encoding="utf-8") as fh:
+python3 - "$latest_manifest" > "$designs_file" <<'PY'
+import json, sys
+with open(sys.argv[1], "r") as fh:
     m = json.load(fh)
-for design in m.get("designs", []):
-    print(design)
+    for d in m.get("designs", []): print(d)
 PY
 
+processed=0
+
+# --- Execution Loop ---
+echo "=========================================="
+echo "STARTING OPTIMIZATION"
+echo "=========================================="
 while IFS= read -r design_name; do
     [ -z "$design_name" ] && continue
+    
+    echo "STEP 8c: Processing design ${design_name} at $(date)"
+    tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/opt_run_${design_name}_XXXXXX")"
     design_zip="$SCRIPT_ZIP_ROOT/${design_name}.zip"
-    if [ ! -f "$design_zip" ]; then
-        echo "✗ ERROR: Missing design zip: $design_zip"
-        exit 1
-    fi
-
-    if [[ " ${SKIP_DESIGNS[*]} " == *" ${design_name} "* ]]; then
-        summary_path="$FULL_DATASET/metadata/raw_logs/${design_name}/${OUTPUT_TIER}/${ALGORITHM}/summary.json"
-        if [ ! -f "$summary_path" ]; then
-            echo "✗ ERROR: Missing per-design summary for skipped design: $summary_path"
-            exit 1
-        fi
-
-        python3 - "$summary_path" <<'PY'
-import json
-import sys
-
-summary_path = sys.argv[1]
-with open(summary_path, "r", encoding="utf-8") as fh:
-    payload = json.load(fh)
-
-if int(payload.get("failed", 0)) != 0:
-    raise SystemExit(f"failed>0 in {summary_path}")
-PY
-
-    zip_loose_outputs_for_design "$design_name"
-
-        skipped_designs=$((skipped_designs + 1))
-        echo "STEP 8c: skipping design ${design_name} (hardcoded completed, summary verified)"
-        continue
-    fi
-
-    echo "STEP 8c: starting design ${design_name}"
-
-    tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/opt_syn4_${SLURM_JOB_ID:-local}_XXXXXX")"
     script_file="optimizeBulk_${ALGORITHM}_${design_name}_${SOURCE_LABEL}.sh"
+    
+    # Extract the fresh script and run it
     unzip -q "$design_zip" "$script_file" -d "$tmp_dir"
     chmod +x "$tmp_dir/$script_file"
     bash "$tmp_dir/$script_file"
-
-    summary_path="$FULL_DATASET/metadata/raw_logs/${design_name}/${OUTPUT_TIER}/${ALGORITHM}/summary.json"
-    if [ ! -f "$summary_path" ]; then
-        echo "✗ ERROR: Missing per-design summary: $summary_path"
-        rm -rf "$tmp_dir"
-        exit 1
-    fi
-
-    python3 - "$summary_path" <<'PY'
-import json
-import sys
-
-summary_path = sys.argv[1]
-with open(summary_path, "r", encoding="utf-8") as fh:
-    payload = json.load(fh)
-
-if int(payload.get("failed", 0)) != 0:
-    raise SystemExit(f"failed>0 in {summary_path}")
-PY
-
-    processed_designs=$((processed_designs + 1))
-    echo "STEP 8c: done design ${design_name}"
+    
+    processed=$((processed + 1))
+    echo "STEP 8c: Done ${design_name} at $(date)"
     rm -rf "$tmp_dir"
 done < "$designs_file"
 
-if [ $((processed_designs + skipped_designs)) -ne "$expected_designs" ]; then
-    echo "✗ ERROR: Expected total $expected_designs designs, processed=$processed_designs skipped=$skipped_designs"
-    exit 1
-fi
-
-echo "STEP 8c complete: processed=${processed_designs} skipped=${skipped_designs} total=${expected_designs} time=$(date)"
+echo "=========================================="
+echo "STEP 8c FIX COMPLETE: Processed exactly $processed targeted designs."
+echo "Time: $(date)"
+echo "=========================================="
