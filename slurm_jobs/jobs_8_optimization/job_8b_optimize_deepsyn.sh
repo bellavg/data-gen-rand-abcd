@@ -3,7 +3,7 @@
 #SBATCH --time=24:00:00
 #SBATCH -N 1
 #SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=72
+#SBATCH --cpus-per-task=192
 #SBATCH --partition=genoa
 #SBATCH --constraint=scratch-node
 #SBATCH --output=logs/8b_opt_deepsyn_%j.out
@@ -11,9 +11,6 @@
 # Resource notes:
 # - Default CPUs per task is set to 72 for higher throughput.
 # - Snellius billing is in 24-core chunks on shared Genoa nodes.
-# - Override at submit time, e.g.:
-#   sbatch --cpus-per-task=24  slurm_jobs/jobs_8_optimization/job_8b_optimize_deepsyn.sh
-#   sbatch --cpus-per-task=192 slurm_jobs/jobs_8_optimization/job_8b_optimize_deepsyn.sh
 
 set -euo pipefail
 
@@ -42,8 +39,8 @@ TARGET_DESIGN="${TARGET_DESIGN:-${DESIGN:-${DESIGNS:-}}}"
 export OPT_SCRIPT_PARALLELISM="${OPT_SCRIPT_PARALLELISM:-${SLURM_CPUS_PER_TASK:-72}}"
 
 BASE_DIR="${BASE_DIR:-$HOME/data-gen-rand-abcd}"
-GEN_SCRIPT="${GEN_SCRIPT:-$BASE_DIR/dataset_tools/generate_optimization_bulk_scripts.py}"
-CONFIG_FILE="${CONFIG_FILE:-$BASE_DIR/dataset_tools/optimization_config.json}"
+GEN_SCRIPT="${BASE_DIR}/dataset_tools/generate_optimization_bulk_scripts.py"
+CONFIG_FILE="${BASE_DIR}/dataset_tools/optimization_config.json"
 
 FULL_DATASET="${FULL_DATASET:-/scratch-shared/$USER/FULL_DATASET}"
 SCRIPT_ZIP_ROOT="$FULL_DATASET/synScripts/optimization/$ALGORITHM"
@@ -106,9 +103,14 @@ output_tier_dir="$FULL_DATASET/optimized_aigs/$ALGORITHM/$OUTPUT_TIER"
 output_zip="$output_tier_dir/${TARGET_DESIGN}.zip"
 legacy_output_dir="$output_tier_dir/${TARGET_DESIGN}"
 
+# ==========================================
+# FIX: PRE-RERUN CLEANUP ("Ghost Run" Prevention)
+# ==========================================
+echo "STEP 8b: Wiping any previous broken outputs for ${TARGET_DESIGN}..."
 mkdir -p "$output_tier_dir"
 rm -f "$output_zip"
 rm -rf "$legacy_output_dir"
+rm -f "$summary_path"  # <-- THIS CRITICAL LINE PREVENTS FALSE SUCCESSES!
 
 echo "STEP 8b: starting design ${TARGET_DESIGN}"
 
@@ -123,6 +125,7 @@ if [ ! -f "$summary_path" ]; then
     exit 1
 fi
 
+# Validation Phase
 python3 - "$summary_path" "$output_zip" <<'PY'
 import json
 import sys
