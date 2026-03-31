@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=4_opt_tier1
+#SBATCH --job-name=4a_opt_Orch
 #SBATCH --time=24:00:00
 #SBATCH -N 1
 #SBATCH --ntasks-per-node=1
@@ -7,22 +7,28 @@
 #SBATCH --partition=genoa
 #SBATCH --constraint=scratch-node
 #SBATCH --array=0-54
-#SBATCH --output=logs/4_opt_tier1_%A_%a.out
+#SBATCH --output=logs/4a_opt_Orch_%A_%a.out
 
 set -euo pipefail
 
+# Let Slurm provide the local node scratch if available
 if [[ -z "${TMPDIR:-}" ]]; then
     export TMPDIR="/scratch-shared/$USER/tmp"
 fi
 mkdir -p "$TMPDIR"
 
-echo "STEP 4: start job=${SLURM_JOB_ID:-local} host=$(hostname) time=$(date)"
+echo "STEP 4a: start job=${SLURM_JOB_ID:-local} host=$(hostname) time=$(date)"
 
 module purge
 module load 2025
 module load foss/2025a
 module load Python/3.13.1-GCCcore-14.2.0
 export PATH="$HOME/abc:$PATH"
+
+# ==========================================
+# ALGORITHM SELECTION (Change this for 4b, 4c, 4d)
+# ==========================================
+ALGORITHM="Orchestrate"
 
 DESIGNS=(
     "128" "256" "512" "1024" "2048" "4096" "8192" "16384"
@@ -36,7 +42,6 @@ DESIGNS=(
 )
 
 DESIGN="${DESIGNS[$SLURM_ARRAY_TASK_ID]}"
-ALGORITHMS=("Orchestrate" "Deepsyn" "Syn4" "C2RS")
 
 # Define base paths 
 BASE_DIR="$HOME/data-gen-rand-abcd"
@@ -45,8 +50,8 @@ PERM_TIER0_DIR="$BASE_DIR/data/designs/$DESIGN/tier0"
 PERM_TIER1_DIR="$BASE_DIR/data/designs/$DESIGN/tier1"
 PERM_LOG_DIR="$BASE_DIR/data/designs/$DESIGN/design_metadata/raw_logs/optimization_logs"
 
-# Create a unique scratch workspace for this specific job
-JOB_SCRATCH="$(mktemp -d "$TMPDIR/tier1_opt_${DESIGN}_XXXXXX")"
+# Create unique scratch workspace for this specific job
+JOB_SCRATCH="$(mktemp -d "$TMPDIR/tier1_${ALGORITHM}_${DESIGN}_XXXXXX")"
 trap 'rm -rf "$JOB_SCRATCH"' EXIT
 
 SCRATCH_IN="$JOB_SCRATCH/in"
@@ -55,7 +60,7 @@ SCRATCH_LOGS="$JOB_SCRATCH/logs"
 mkdir -p "$SCRATCH_IN" "$SCRATCH_OUT" "$SCRATCH_LOGS" "$PERM_LOG_DIR" "$PERM_TIER1_DIR"
 
 echo "=================================================="
-echo " Starting Tier-1 Optimization for: $DESIGN"
+echo " Starting Tier-1 [${ALGORITHM}] for: $DESIGN"
 echo " Cores: $SLURM_CPUS_PER_TASK | Scratch: $JOB_SCRATCH"
 echo "=================================================="
 
@@ -75,20 +80,15 @@ if [[ "$INPUT_COUNT" -eq 0 ]]; then
     exit 1
 fi
 
-for ALGO in "${ALGORITHMS[@]}"; do
-    ALGO_OUT="$SCRATCH_OUT/$ALGO"
-    ALGO_LOG="$SCRATCH_LOGS/$ALGO"
-    PERM_AIG_ZIP="$PERM_TIER1_DIR/${DESIGN}_${ALGO}.zip"
-    PERM_LOG_ZIP="$PERM_LOG_DIR/optimize_${ALGO}_${DESIGN}.zip"
-    
-    mkdir -p "$ALGO_OUT" "$ALGO_LOG"
-    
-    echo ">>> [${ALGO}] Executing on all 192 cores..."
-    # Pass AIG Out AND Log Out scratch directories to the worker script
-    bash "$SCRIPT_ROOT/$ALGO.sh" "$SCRATCH_IN" "$ALGO_OUT" "$ALGO_LOG" 192
-    
-    echo ">>> [${ALGO}] Validating exact AIG count and Zipping..."
-    if ! python3 - "$ALGO_OUT" "$PERM_AIG_ZIP" "$INPUT_COUNT" "$ALGO" <<'PY'
+PERM_AIG_ZIP="$PERM_TIER1_DIR/${DESIGN}_${ALGORITHM}.zip"
+PERM_LOG_ZIP="$PERM_LOG_DIR/optimize_${ALGORITHM}_${DESIGN}.zip"
+
+echo ">>> Executing ${ALGORITHM} on all 192 cores..."
+# Pass AIG Out AND Log Out scratch directories to the worker script
+bash "$SCRIPT_ROOT/${ALGORITHM}.sh" "$SCRATCH_IN" "$SCRATCH_OUT" "$SCRATCH_LOGS" 192
+
+echo ">>> Validating exact AIG count and Zipping..."
+if ! python3 - "$SCRATCH_OUT" "$PERM_AIG_ZIP" "$INPUT_COUNT" "$ALGORITHM" <<'PY'
 import sys
 import zipfile
 from pathlib import Path
@@ -111,18 +111,12 @@ with zipfile.ZipFile(zip_dest, "w", compression=zipfile.ZIP_DEFLATED, compressle
         zf.write(aig, arcname=aig.name)
 sys.exit(0)
 PY
-    then
-        echo "✗ ERROR: Validation failed for $ALGO." >&2
-        exit 1
-    fi
+then
+    echo "✗ ERROR: Validation failed for ${ALGORITHM}. Halting." >&2
+    exit 1
+fi
 
-    echo ">>> [${ALGO}] Zipping Logs directly to permanent storage..."
-    # Navigate to scratch logs and zip them up silently
-    (cd "$ALGO_LOG" && zip -q -r "$PERM_LOG_ZIP" .)
+echo ">>> Zipping Logs directly to permanent storage..."
+(cd "$SCRATCH_LOGS" && zip -q -r "$PERM_LOG_ZIP" .)
 
-    # Free up scratch space immediately
-    rm -rf "$ALGO_OUT" "$ALGO_LOG"
-    echo ">>> [${ALGO}] Complete and scratch space cleared."
-done
-
-echo ">>> Tier-1 Complete for $DESIGN at $(date)"
+echo ">>> Tier-1 [${ALGORITHM}] Complete for $DESIGN at $(date)"
