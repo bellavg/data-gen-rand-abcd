@@ -108,21 +108,22 @@ def generate_all_scripts(home_dir):
                     ]
 
                 # --- Step B: Write the design-specific ABC script ---
-                # This script lives in data/abc_scripts/synthesis_scripts/{design}/
-                # --- Step B: Write the design-specific ABC script ---
+                # Use __SCRATCH__ placeholder for the design dir and __SCRIPTS__ for
+                # the scripts dir. These are replaced with real scratch paths at runtime
+                # by 3_run_synthesis.sh before execution.
                 with open(out_script_path, "w") as f:
-                    # FIX 1: Read the universal base AIG (synX) instead of syn{i}
-                    f.write(f"read_aiger {tier0_dir}/{des}_synX_step0.aig\n")
+                    f.write(f"read_aiger __SCRATCH__/tier0/{des}_synX_step0.aig\n")
                     f.write("strash\n")
 
                     for idx, cmd in enumerate(cmds):
-                        # FIX 2: idx 0 becomes step 1, idx 20 becomes step 21
-                        step_num = idx + 1 
+                        step_num = idx + 1
                         f.write(f"{cmd}\n")
-                        f.write(f"write_aiger {tier0_dir}/{des}_syn{i}_step{step_num}.aig\n")
-                        
+                        f.write(f"write_aiger __SCRATCH__/tier0/{des}_syn{i}_step{step_num}.aig\n")
+
                 # --- Step C: Add command to the design's master .sh file ---
-                master_sh.write(f"abc -f {out_script_path} > {log_path} 2>&1\n")
+                scratch_log = f"__SCRATCH__/design_metadata/raw_logs/synthesis_logs/log_{des}_syn{i}.log"
+                scratch_script = f"__SCRIPTS__/abc{i}.script"
+                master_sh.write(f"abc -f {scratch_script} > {scratch_log} 2>&1\n")
 
         # Make the .sh executable
         os.chmod(master_sh_path, 0o755)
