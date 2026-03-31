@@ -6,6 +6,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
 #SBATCH --partition=genoa
+#SBATCH --constraint=scratch-node
 #SBATCH --output=logs/syn_%A_%a.out
 
 set -euo pipefail
@@ -72,8 +73,11 @@ echo ">> Unzipping scripts to scratch..."
 unzip -q -o "${SYN_SCRIPTS_DIR}/${DESIGN}.zip" -d "$WORK_DIR/scripts"
 
 echo ">> Patching scripts to use scratch paths..."
-# Dynamically replace permanent paths with temporary scratch paths inside generated scripts
-find "$WORK_DIR/scripts/${DESIGN}" -type f -exec sed -i "s|${DESIGN_DIR}|${WORK_DIR}|g" {} +
+# Replace placeholder tokens baked in at generation time with actual scratch paths
+find "$WORK_DIR/scripts/${DESIGN}" -type f -exec sed -i \
+    -e "s|__SCRATCH__|${WORK_DIR}|g" \
+    -e "s|__SCRIPTS__|${WORK_DIR}/scripts/${DESIGN}|g" \
+    {} +
 
 # 5. Execute Synthesis
 echo ">> Executing 200 synthesis recipes for $DESIGN..."
@@ -110,12 +114,11 @@ zip -r -q "${DESIGN}_synthesis_logs.zip" "design_metadata/raw_logs/synthesis_log
 # 8. Move zipped files to Home and Cleanup loose files
 echo ">> Moving zipped archives back to permanent storage..."
 mv -f "${DESIGN}_tier0.zip" "$DESIGN_DIR/tier0.zip"
-mkdir -p "$DESIGN_DIR/design_metadata/raw_logs"
-mv -f "${DESIGN}_synthesis_logs.zip" "$DESIGN_DIR/design_metadata/raw_logs/synthesis_logs.zip"
+mkdir -p "$DESIGN_DIR/design_metadata/raw_logs/synthesis_logs"
+mv -f "${DESIGN}_synthesis_logs.zip" "$DESIGN_DIR/design_metadata/raw_logs/synthesis_logs/synthesis_logs.zip"
 
 echo ">> Deleting original loose files in home directory to free up space..."
 rm -rf "$DESIGN_DIR/tier0"
-rm -rf "$DESIGN_DIR/design_metadata/raw_logs/synthesis_logs"
 
 echo ""
 echo "=========================================="
