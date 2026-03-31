@@ -70,7 +70,7 @@ run_one() {{
     local input_member="$(basename "$input_aig")"
     local tier_name="$(basename "$(dirname "$OUT_DIR")")"
     
-    if [[ "$input_member" =~ (syn[0-9]+(_step[0-9]+)?\.aig)$ ]]; then
+    if [[ "$input_member" =~ (syn[0-9]+(_step[0-9]+)?\\.aig)$ ]]; then
         local suffix="${{BASH_REMATCH[1]}}"
         local output_member="${{DESIGN}}_${{ALGORITHM}}_${{tier_name}}_${{suffix}}"
     else
@@ -93,7 +93,7 @@ run_one() {{
 export -f run_one
 
 find "$INPUT_SRC" -maxdepth 1 -name "*.aig" -print0 | \\
-    xargs -0 -P "$WORKERS" -n 1 -I {{}} bash -c 'run_one "$1"' _ {{}}
+    xargs -0 -P "$WORKERS" -I {{}} bash -c 'run_one "$1"' _ {{}}
 """
 
 def generate_scripts_for_design(home_dir: str, design: str) -> None:
