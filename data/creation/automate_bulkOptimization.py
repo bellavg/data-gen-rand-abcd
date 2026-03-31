@@ -9,20 +9,23 @@ import os
 from pathlib import Path
 from typing import Dict
 
+# ==============================================================================
+# CHANGED: Added 'print_stats;' after read and before write for all algorithms!
+# ==========================================
 CONFIG = {
     "algorithms": {
         "Orchestrate": {
-            "command_template": "abc -c 'source {abc_rc}; read {input_aig}; strash; orchestrate; write {output_aig}'"
+            "command_template": "abc -c 'source {abc_rc}; read {input_aig}; print_stats; strash; orchestrate; print_stats; write {output_aig}'"
         },
         "Deepsyn": {
             "timeout_seconds": 20,
-            "command_template": "abc -c 'source {abc_rc}; read {input_aig}; strash; &get; &deepsyn -S {seed} -T {timeout_seconds}; &put; write {output_aig}'",
+            "command_template": "abc -c 'source {abc_rc}; read {input_aig}; print_stats; strash; &get; &deepsyn -S {seed} -T {timeout_seconds}; &put; print_stats; write {output_aig}'",
         },
         "Syn4": {
-            "command_template": "abc -c 'source {abc_rc}; read {input_aig}; strash; &get; &syn4; &put; write {output_aig}'"
+            "command_template": "abc -c 'source {abc_rc}; read {input_aig}; print_stats; strash; &get; &syn4; &put; print_stats; write {output_aig}'"
         },
         "C2RS": {
-            "command_template": "abc -c 'source {abc_rc}; read {input_aig}; strash; c2rs; write {output_aig}'"
+            "command_template": "abc -c 'source {abc_rc}; read {input_aig}; print_stats; strash; c2rs; print_stats; write {output_aig}'"
         },
     }
 }
