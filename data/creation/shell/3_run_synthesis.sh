@@ -5,7 +5,6 @@
 #SBATCH -N 1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=24      # Claim the full 24-core slice you are charged for
-#SBATCH --mem=42G               # Request the 42GB RAM allocated to 24 cores
 #SBATCH --partition=genoa
 #SBATCH --constraint=scratch-node
 #SBATCH --output=logs/synthesis/syn_%A_%a.out
