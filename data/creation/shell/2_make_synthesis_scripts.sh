@@ -32,10 +32,12 @@ SYN_SCRIPTS_DIR="${BASE_DIR}/data/abc_scripts/synthesis_scripts"
 # Define the designs list to iterate over for zipping
 DESIGNS=(
     "128" "256" "512" "1024" "2048" "4096" "8192" "16384"
-    "ac97_ctrl" "aes" "aes_secworks" "aes_xcrypt" "bp_be" "des3_area"
-    "dft" "dynamic_node" "ethernet" "fir" "fpu" "i2c" "idft" "iir"
-    "jpeg" "mem_ctrl" "pci" "picosoc" "sasc" "sha256" "simple_spi"
-    "spi" "ss_pcm" "tinyRocket" "tv80" "usb_phy" "vga_lcd" "wb_conmax" "wb_dma"
+    "ac97_ctrl" "aes" "aes_secworks" "aes_xcrypt" "apex1" "bc0" "bp_be" "c1355"
+    "c5315" "c6288" "c7552" "dalu" "des3_area" "dft" "div" "dynamic_node"
+    "ethernet" "fir" "fpu" "hyp" "i10" "i2c" "idft" "iir"
+    "jpeg" "k2" "log2" "mainpla" "max" "mem_ctrl" "multiplier" "pci"
+    "picosoc" "sasc" "sha256" "simple_spi" "sin" "spi" "sqrt" "square"
+    "ss_pcm" "tinyRocket" "tv80" "usb_phy" "vga_lcd" "wb_conmax" "wb_dma"
 )
 
 echo "Configuration:"
