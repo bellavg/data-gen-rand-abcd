@@ -7,7 +7,7 @@
 #SBATCH --partition=genoa
 #SBATCH --constraint=scratch-node
 #SBATCH --array=0-54
-#SBATCH --output=logs/4a_opt_Orch_%A_%a.out
+#SBATCH --output=logs/opt_orch/4a_opt_Orch_%A_%a.out
 
 set -euo pipefail
 
