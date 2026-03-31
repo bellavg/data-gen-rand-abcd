@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=syn_array
-#SBATCH --time=01:30:00         # Reduced time: 24x parallel is much faster
+#SBATCH --time=03:00:00         # Reduced time: 24x parallel is much faster
 #SBATCH --array=27-28            # Index 54 is the last design (wb_dma)
 #SBATCH -N 1
 #SBATCH --ntasks=1
