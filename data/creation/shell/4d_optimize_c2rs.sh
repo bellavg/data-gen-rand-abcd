@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=4d_opt_C2RS
-#SBATCH --time=24:00:00
+#SBATCH --time=06:00:00
 #SBATCH -N 1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=192
