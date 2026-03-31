@@ -79,7 +79,7 @@ run_one() {{
     fi
     
     local output_final="${{OUT_DIR}}/${{output_member}}"
-    local log_final="${{LOG_DIR}}/${{output_member%.aig}.log}"
+    local log_final="${{LOG_DIR}}/${{output_member%.aig}}.log"
     local seed_value="$RANDOM"
 
     local cmd="${{COMMAND_TEMPLATE//\\{{input_aig\\}}/$input_aig}}"
