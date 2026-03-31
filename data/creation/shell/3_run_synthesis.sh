@@ -1,17 +1,18 @@
 #!/bin/bash
 #SBATCH --job-name=syn_array
-#SBATCH --time=04:00:00
-#SBATCH --array=3-36
+#SBATCH --time=01:30:00         # Reduced time: 24x parallel is much faster
+#SBATCH --array=3-54            # Index 54 is the last design (wb_dma)
 #SBATCH -N 1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=1
+#SBATCH --cpus-per-task=24      # Claim the full 24-core slice you are charged for
+#SBATCH --mem=42G               # Request the 42GB RAM allocated to 24 cores
 #SBATCH --partition=genoa
 #SBATCH --constraint=scratch-node
 #SBATCH --output=logs/synthesis/syn_%A_%a.out
 
 set -euo pipefail
 
-# 1. Map the array ID to the specific design name
+# 1. Map the array ID to the specific design name (Total: 55 designs)
 DESIGNS=(
     "128" "256" "512" "1024" "2048" "4096" "8192" "16384"
     "ac97_ctrl" "aes" "aes_secworks" "aes_xcrypt" "apex1" "bc0" "bp_be" "c1355"
@@ -29,6 +30,7 @@ echo "JOB: Synthesis for Design $DESIGN"
 echo "=========================================="
 echo "Array Job ID: $SLURM_ARRAY_JOB_ID"
 echo "Task ID: $SLURM_ARRAY_TASK_ID"
+echo "Resources: 24 Cores / 42GB RAM"
 echo "Running on: $(hostname)"
 echo "Start time: $(date)"
 echo ""
@@ -76,22 +78,22 @@ echo ">> Copying abc.rc to scratch scripts directory..."
 cp "${BASE_DIR}/data/abc_scripts/abc.rc" "$WORK_DIR/scripts/${DESIGN}/abc.rc"
 
 echo ">> Patching scripts to use scratch paths..."
-# Replace placeholder tokens baked in at generation time with actual scratch paths
 find "$WORK_DIR/scripts/${DESIGN}" -type f -exec sed -i \
     -e "s|__SCRATCH__|${WORK_DIR}|g" \
     -e "s|__SCRIPTS__|${WORK_DIR}/scripts/${DESIGN}|g" \
     {} +
 
-# 5. Execute Synthesis
-echo ">> Executing 200 synthesis recipes for $DESIGN..."
+# 5. Execute Synthesis (PARALLELIZED)
+echo ">> Executing 200 synthesis recipes for $DESIGN in parallel..."
 cd "$WORK_DIR/scripts/${DESIGN}"
-bash "run_synthesis_${DESIGN}.sh"
+
+# This line uses the 24 cores to run 24 recipes at once
+xargs -a "run_synthesis_${DESIGN}.sh" -I {} -P "$SLURM_CPUS_PER_TASK" bash -c "{}"
 
 # 6. Verification: Check File Counts Before Archiving
 echo ">> Verifying file counts before archiving..."
 cd "$WORK_DIR"
 
-# 1 base (synX_step0) + (200 recipes * 21 steps) = 4,201 AIGs
 EXPECTED_AIGS=4201
 EXPECTED_LOGS=200
 
@@ -103,7 +105,6 @@ echo "   Expected Logs: $EXPECTED_LOGS   | Actual Logs: $ACTUAL_LOGS"
 
 if [ "$ACTUAL_AIGS" -ne "$EXPECTED_AIGS" ] || [ "$ACTUAL_LOGS" -ne "$EXPECTED_LOGS" ]; then
     echo "✗ ERROR: File count mismatch! Synthesis failed or aborted early."
-    echo "         Aborting zip and cleanup. Permanent files remain untouched."
     exit 1
 fi
 
@@ -114,14 +115,14 @@ echo ">> Zipping outputs in scratch..."
 zip -r -q "${DESIGN}_tier0.zip" "tier0/"
 zip -r -q "${DESIGN}_synthesis_logs.zip" "design_metadata/raw_logs/synthesis_logs/"
 
-# 8. Move zipped files to Home and Cleanup loose files
+# 8. Move zipped files to Home and Cleanup
 echo ">> Moving zipped archives back to permanent storage..."
 mv -f "${DESIGN}_tier0.zip" "$DESIGN_DIR/tier0.zip"
 mkdir -p "$DESIGN_DIR/design_metadata/raw_logs"
 mv -f "${DESIGN}_synthesis_logs.zip" "$DESIGN_DIR/design_metadata/raw_logs/synthesis_logs.zip"
 
-echo ">> Deleting original loose files in home directory to free up space..."
-rm -rf "$DESIGN_DIR/tier0"
+# Keep the original data unless you are sure you want to delete it
+# rm -rf "$DESIGN_DIR/tier0" 
 
 echo ""
 echo "=========================================="
