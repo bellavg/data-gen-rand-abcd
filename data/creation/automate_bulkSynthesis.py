@@ -15,24 +15,42 @@ designs = [
     "aes",
     "aes_secworks",
     "aes_xcrypt",
+    "apex1",
+    "bc0",
     "bp_be",
+    "c1355",
+    "c5315",
+    "c6288",
+    "c7552",
+    "dalu",
     "des3_area",
     "dft",
+    "div",
     "dynamic_node",
     "ethernet",
     "fir",
     "fpu",
+    "hyp",
+    "i10",
     "i2c",
     "idft",
     "iir",
     "jpeg",
+    "k2",
+    "log2",
+    "mainpla",
+    "max",
     "mem_ctrl",
+    "multiplier",
     "pci",
     "picosoc",
     "sasc",
     "sha256",
     "simple_spi",
+    "sin",
     "spi",
+    "sqrt",
+    "square",
     "ss_pcm",
     "tinyRocket",
     "tv80",
@@ -41,7 +59,7 @@ designs = [
     "wb_conmax",
     "wb_dma",
 ]
-numRecipes = 500
+numRecipes = 200
 
 
 def generate_all_scripts(home_dir):
@@ -65,7 +83,7 @@ def generate_all_scripts(home_dir):
         os.makedirs(log_dir, exist_ok=True)
 
         # 2. Create a "Runner" shell script for this specific design
-        # This is the .sh that will eventually call ABC for all 1500 recipes
+        # This is the .sh that will eventually call ABC for all 200 recipes
         master_sh_path = os.path.join(des_syn_dir, f"run_synthesis_{des}.sh")
 
         with open(master_sh_path, "w") as master_sh:
