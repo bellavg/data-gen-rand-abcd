@@ -48,8 +48,9 @@ BASE_DIR="$HOME/data-gen-rand-abcd"
 SCRIPT_ROOT="$BASE_DIR/data/abc_scripts/optimization_scripts/$DESIGN"
 PERM_TIER0_DIR="$BASE_DIR/data/designs/$DESIGN/tier0"
 PERM_TIER1_DIR="$BASE_DIR/data/designs/$DESIGN/tier1"
-PERM_LOG_DIR="$BASE_DIR/data/designs/$DESIGN/design_metadata/raw_logs/optimization_logs"
 
+# Appends /tier1/Orchestrate to the path
+PERM_LOG_DIR="$BASE_DIR/data/designs/$DESIGN/design_metadata/raw_logs/optimization_logs/tier1/${ALGORITHM}"
 # Create unique scratch workspace for this specific job
 JOB_SCRATCH="$(mktemp -d "$TMPDIR/tier1_${ALGORITHM}_${DESIGN}_XXXXXX")"
 trap 'rm -rf "$JOB_SCRATCH"' EXIT

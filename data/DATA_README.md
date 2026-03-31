@@ -85,3 +85,5 @@ Variable ranges / notes (for `{...}` values used above):
 - `step_id`: per-recipe step index. Range: `1..21` (synthesized steps). Base AIGs use `{design}_orig.aig`.
 - `tier_id`: generation tier for algorithm outputs. Values: `1` = first-pass, `2` = second-pass. Base AIGs should have an empty `tier_id` in per-design CSV rows.
 - `algorithm`:  `Orchestrate`, `Deepsyn`, `Syn4`, `C2RS`
+
+
