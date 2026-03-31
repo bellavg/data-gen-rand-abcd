@@ -41,7 +41,7 @@ designs = [
     "wb_conmax",
     "wb_dma",
 ]
-numRecipes = 1500
+numRecipes = 500
 
 
 def generate_all_scripts(home_dir):
