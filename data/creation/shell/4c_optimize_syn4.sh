@@ -66,8 +66,7 @@ echo "=================================================="
 
 # 1. GENERATE SCRIPTS ON THE FLY (Fixes dft/mem_ctrl errors)
 echo ">>> Generating runner scripts for $DESIGN..."
-python3 "$BASE_DIR/automate_bulkOptimization.py" --home "$BASE_DIR" --design "$DESIGN"
-
+python3 "$BASE_DIR/data/creation/automate_bulkOptimization.py" --home "$BASE_DIR" --design "$DESIGN"
 unzip -q "$BASE_DIR/data/abc_scripts/optimization_scripts/${DESIGN}.zip" -d "$SCRATCH_SCRIPTS"
 chmod +x "$SCRATCH_SCRIPTS/$DESIGN/"*.sh
 
