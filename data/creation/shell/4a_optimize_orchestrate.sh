@@ -11,7 +11,6 @@
 
 set -euo pipefail
 
-# Let Slurm provide the local node scratch if available
 if [[ -z "${TMPDIR:-}" ]]; then
     export TMPDIR="/scratch-shared/$USER/tmp"
 fi
@@ -26,7 +25,7 @@ module load Python/3.13.1-GCCcore-14.2.0
 export PATH="$HOME/abc:$PATH"
 
 # ==========================================
-# ALGORITHM SELECTION (Change this for 4b, 4c, 4d)
+# ALGORITHM SELECTION 
 # ==========================================
 ALGORITHM="Orchestrate"
 
@@ -43,37 +42,46 @@ DESIGNS=(
 
 DESIGN="${DESIGNS[$SLURM_ARRAY_TASK_ID]}"
 
-# Define base paths 
+# Paths
 BASE_DIR="$HOME/data-gen-rand-abcd"
-SCRIPT_ROOT="$BASE_DIR/data/abc_scripts/optimization_scripts/$DESIGN"
-PERM_TIER0_DIR="$BASE_DIR/data/designs/$DESIGN/tier0"
+PERM_TIER0_DIR="$BASE_DIR/data/designs/$DESIGN"
 PERM_TIER1_DIR="$BASE_DIR/data/designs/$DESIGN/tier1"
-
-# Appends /tier1/Orchestrate to the path
 PERM_LOG_DIR="$BASE_DIR/data/designs/$DESIGN/design_metadata/raw_logs/optimization_logs/tier1/${ALGORITHM}"
-# Create unique scratch workspace for this specific job
+
+# Scratch setup
 JOB_SCRATCH="$(mktemp -d "$TMPDIR/tier1_${ALGORITHM}_${DESIGN}_XXXXXX")"
 trap 'rm -rf "$JOB_SCRATCH"' EXIT
 
 SCRATCH_IN="$JOB_SCRATCH/in"
 SCRATCH_OUT="$JOB_SCRATCH/out"
 SCRATCH_LOGS="$JOB_SCRATCH/logs"
-mkdir -p "$SCRATCH_IN" "$SCRATCH_OUT" "$SCRATCH_LOGS" "$PERM_LOG_DIR" "$PERM_TIER1_DIR"
+SCRATCH_SCRIPTS="$JOB_SCRATCH/scripts"
+
+mkdir -p "$SCRATCH_IN" "$SCRATCH_OUT" "$SCRATCH_LOGS" "$SCRATCH_SCRIPTS" "$PERM_LOG_DIR" "$PERM_TIER1_DIR"
 
 echo "=================================================="
 echo " Starting Tier-1 [${ALGORITHM}] for: $DESIGN"
 echo " Cores: $SLURM_CPUS_PER_TASK | Scratch: $JOB_SCRATCH"
 echo "=================================================="
 
-echo ">>> Staging inputs from $PERM_TIER0_DIR to local scratch..."
-if ls "$PERM_TIER0_DIR"/*.zip >/dev/null 2>&1; then
-    for z in "$PERM_TIER0_DIR"/*.zip; do
-        unzip -q "$z" -d "$SCRATCH_IN"
-    done
+# 1. GENERATE SCRIPTS ON THE FLY
+echo ">>> Generating runner scripts for $DESIGN..."
+python3 "$BASE_DIR/automate_bulkOptimization.py" --home "$BASE_DIR" --design "$DESIGN"
+
+unzip -q "$BASE_DIR/data/abc_scripts/optimization_scripts/${DESIGN}.zip" -d "$SCRATCH_SCRIPTS"
+chmod +x "$SCRATCH_SCRIPTS/$DESIGN/"*.sh
+
+# 2. STAGE AIGS
+echo ">>> Staging inputs to local scratch..."
+if [ -f "$PERM_TIER0_DIR/tier0.zip" ]; then
+    unzip -q "$PERM_TIER0_DIR/tier0.zip" -d "$SCRATCH_IN"
+elif [ -f "$PERM_TIER0_DIR/tier0/tier0.zip" ]; then
+    unzip -q "$PERM_TIER0_DIR/tier0/tier0.zip" -d "$SCRATCH_IN"
 fi
-if ls "$PERM_TIER0_DIR"/*.aig >/dev/null 2>&1; then
-    cp "$PERM_TIER0_DIR"/*.aig "$SCRATCH_IN/"
-fi
+
+# Flatten any subfolders hidden inside the zip
+find "$SCRATCH_IN" -mindepth 2 -name "*.aig" -exec mv -t "$SCRATCH_IN" {} +
+find "$SCRATCH_IN" -mindepth 1 -type d -delete 2>/dev/null || true
 
 INPUT_COUNT=$(find "$SCRATCH_IN" -maxdepth 1 -name "*.aig" | wc -l)
 if [[ "$INPUT_COUNT" -eq 0 ]]; then
@@ -84,10 +92,11 @@ fi
 PERM_AIG_ZIP="$PERM_TIER1_DIR/${DESIGN}_${ALGORITHM}.zip"
 PERM_LOG_ZIP="$PERM_LOG_DIR/optimize_${ALGORITHM}_${DESIGN}.zip"
 
+# 3. EXECUTE ALGORITHM
 echo ">>> Executing ${ALGORITHM} on all 192 cores..."
-# Pass AIG Out AND Log Out scratch directories to the worker script
-bash "$SCRIPT_ROOT/${ALGORITHM}.sh" "$SCRATCH_IN" "$SCRATCH_OUT" "$SCRATCH_LOGS" 192
+bash "$SCRATCH_SCRIPTS/$DESIGN/${ALGORITHM}.sh" "$SCRATCH_IN" "$SCRATCH_OUT" "$SCRATCH_LOGS" 192
 
+# 4. VALIDATE AND ZIP OUT
 echo ">>> Validating exact AIG count and Zipping..."
 if ! python3 - "$SCRATCH_OUT" "$PERM_AIG_ZIP" "$INPUT_COUNT" "$ALGORITHM" <<'PY'
 import sys
