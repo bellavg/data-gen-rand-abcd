@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=4b_opt_Deepsyn
-#SBATCH --time=06:00:00
+#SBATCH --time=04:00:00
 #SBATCH -N 1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=192
