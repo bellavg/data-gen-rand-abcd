@@ -1,10 +1,10 @@
 #!/bin/bash
 #SBATCH --job-name=syn_array
-#SBATCH --time=04:00:00
+#SBATCH --time=01:30:00         # Reduced time because 24x parallel is faster
 #SBATCH --array=0-36
 #SBATCH -N 1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=1
+#SBATCH --cpus-per-task=24      # Claim the full 24-core slice you are charged for
 #SBATCH --partition=genoa
 #SBATCH --constraint=scratch-node
 #SBATCH --output=logs/synthesis/syn_%A_%a.out
@@ -29,6 +29,7 @@ echo "JOB: Synthesis for Design $DESIGN"
 echo "=========================================="
 echo "Array Job ID: $SLURM_ARRAY_JOB_ID"
 echo "Task ID: $SLURM_ARRAY_TASK_ID"
+echo "Resources: 24 Cores / 42GB RAM"
 echo "Running on: $(hostname)"
 echo "Start time: $(date)"
 echo ""
@@ -82,10 +83,13 @@ find "$WORK_DIR/scripts/${DESIGN}" -type f -exec sed -i \
     -e "s|__SCRIPTS__|${WORK_DIR}/scripts/${DESIGN}|g" \
     {} +
 
-# 5. Execute Synthesis
-echo ">> Executing 200 synthesis recipes for $DESIGN..."
+# 5. Execute Synthesis (Parallelized Version)
+echo ">> Executing 200 synthesis recipes for $DESIGN in parallel..."
 cd "$WORK_DIR/scripts/${DESIGN}"
-bash "run_synthesis_${DESIGN}.sh"
+
+# Using xargs to run 24 processes simultaneously
+# Each line in run_synthesis.sh is an independent 'abc' command
+xargs -a "run_synthesis_${DESIGN}.sh" -I {} -P "$SLURM_CPUS_PER_TASK" bash -c "{}"
 
 # 6. Verification: Check File Counts Before Archiving
 echo ">> Verifying file counts before archiving..."
