@@ -3,10 +3,10 @@
 # Thesis Project Data — Summary
 This project combines two AIG sources into a unified dataset for downstream ML experiments and algorithm comparison.
 
-- Random AIG dataset: 8 synthetic random start designs (sizes 128–16384) — 252,008 AIGs (per design: 31,501 AIGs — 1 original + 1,500 × 21 = 31,500 synthesized; total 31,501)
-- Converted OpenABC-D: 29 real IP designs converted from BENCH to AIG — 913,529 AIGs (per design: 31,501 AIGs — 1 original + 1,500 × 21 = 31,500 synthesized; total 31,501)
+- Random AIG dataset: 8 synthetic random start designs (sizes 128–16384) — 84,008 AIGs (per design: 10,501 AIGs — 1 original + 500 × 21 = 10,500 synthesized; total 10,501)
+- Converted OpenABC-D: 29 real IP designs converted from BENCH to AIG — 304,529 AIGs (per design: 10,501 AIGs — 1 original + 500 × 21 = 10,500 synthesized; total 10,501)
 
-Total base AIGs (exact): 1,165,537 (≈1.17M)
+Total base AIGs (exact): 388,537 (≈0.39M)
 
 Note: The Random and Converted OpenABC-D datasets are the two source datasets. The "Full Dataset" described in this repository is the combined (union) dataset created by merging those two sources and is the primary dataset for this project.
 
@@ -14,20 +14,20 @@ Planned experiment pipeline (high level):
 
   1) For every base AIG(Tier-0), apply four AIG optimization algorithms (Tier‑1):
     - Orchestrate, Deepsyn (with random seed recorded), Syn4, C2RS
-    - This produces 4 × base_count Tier‑1 outputs: 4,662,148 outputs (≈4.66M files)
+    - This produces 4 × base_count Tier‑1 outputs: 1,554,148 outputs (≈1.55M files)
 
   2) For every Tier‑1 AIG, re-apply the same four algorithms (Tier‑2), using the same timing and hyperparameters as the first pass:
-    - This produces 4 × Tier1_count Tier‑2 outputs: 18,648,592 outputs (≈18.65M files)
+    - This produces 4 × Tier1_count Tier‑2 outputs: 6,216,592 outputs (≈6.22M files)
 
 Storage/scale note: the two-tier expansion is very large (tens of millions of files). Plan storage, I/O and compute accordingly.
 
 Visual pipeline (ASCII):
 
-  [Base AIGs (Tier-0) 1,165,537 (≈1.17M)]
+  [Base AIGs (Tier-0) 388,537 (≈0.39M)]
       |
-      |-- apply 4 algos --> [Tier-1 AIGs 4,662,148 (≈4.66M)]
+      |-- apply 4 algos --> [Tier-1 AIGs 1,554,148 (≈1.55M)]
                     |
-                    |-- apply 4 algos --> [Tier-2 AIGs 18,648,592 (≈18.65M)]
+                    |-- apply 4 algos --> [Tier-2 AIGs 6,216,592 (≈6.22M)]
 
 All algorithms use the same timing constraints and hyperparameters per your plan; Deepsyn runs will record the RNG seed used for reproducibility.
 
@@ -46,7 +46,7 @@ data/
 │  │     └─ {algorithm}.sh         # e.g. data/abc_scripts/optimization_scripts/i2c/Orchestrate.sh
 │  ├─ reference_scripts/           # reference synthesis scripts 
 │  │  ├─ abc0.script
-│  │  └─ ... (abc{recipe_id}.script up to abc1499.script)
+│  │  └─ ... (abc{recipe_id}.script up to abc499.script)
 │  └─ synthesis_scripts/           # synthesis recipe scripts (per-design)
 │     └─ {design_name}/
 │        └─ abc{recipe_id}.script
@@ -81,7 +81,7 @@ data/
 ```
 Variable ranges / notes (for `{...}` values used above):
 - `design_name`: `128, 256, 512, 1024, 2048, 4096, 8192, 16384, i2c, spi, des3_area, ss_pcm, usb_phy, sasc, wb_dma, simple_spi, dynamic_node, aes, pci, ac97_ctrl, mem_ctrl, tv80, fpu, wb_conmax, tinyRocket, aes_xcrypt, aes_secworks, jpeg, bp_be, ethernet, vga_lcd, picosoc, dft, idft, fir, iir, sha256` (random-size names plus the 29 OpenABC‑D designs in one list).
-- `recipe_id`: synthesis recipe identifier. Range: `0..1499`.
+- `recipe_id`: synthesis recipe identifier. Range: `0..499`.
 - `step_id`: per-recipe step index. Range: `1..21` (synthesized steps). Base AIGs use `{design}_orig.aig`.
 - `tier_id`: generation tier for algorithm outputs. Values: `1` = first-pass, `2` = second-pass. Base AIGs should have an empty `tier_id` in per-design CSV rows.
 - `algorithm`:  `Orchestrate`, `Deepsyn`, `Syn4`, `C2RS`

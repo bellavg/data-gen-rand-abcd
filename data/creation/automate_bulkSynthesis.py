@@ -91,19 +91,18 @@ def generate_all_scripts(home_dir):
 
                 # --- Step B: Write the design-specific ABC script ---
                 # This script lives in data/abc_scripts/synthesis_scripts/{design}/
+                # --- Step B: Write the design-specific ABC script ---
                 with open(out_script_path, "w") as f:
-                    # Start with the Step 0 AIG
-                    f.write(f"read_aiger {tier0_dir}/{des}_syn{i}_step0.aig\n")
+                    # FIX 1: Read the universal base AIG (synX) instead of syn{i}
+                    f.write(f"read_aiger {tier0_dir}/{des}_synX_step0.aig\n")
                     f.write("strash\n")
 
                     for idx, cmd in enumerate(cmds):
-                        step_num = idx + 1
-                        # Write the result of this command to a new AIG in Tier0
+                        # FIX 2: idx 0 becomes step 1, idx 20 becomes step 21
+                        step_num = idx + 1 
                         f.write(f"{cmd}\n")
-                        f.write(
-                            f"write_aiger {tier0_dir}/{des}_syn{i}_step{step_num}.aig\n"
-                        )
-
+                        f.write(f"write_aiger {tier0_dir}/{des}_syn{i}_step{step_num}.aig\n")
+                        
                 # --- Step C: Add command to the design's master .sh file ---
                 master_sh.write(f"abc -f {out_script_path} > {log_path} 2>&1\n")
 
