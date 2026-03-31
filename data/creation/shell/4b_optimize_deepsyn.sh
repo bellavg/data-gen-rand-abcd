@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=4a_opt_Orch
+#SBATCH --job-name=4b_opt_Deepsyn
 #SBATCH --time=24:00:00
 #SBATCH -N 1
 #SBATCH --ntasks-per-node=1
