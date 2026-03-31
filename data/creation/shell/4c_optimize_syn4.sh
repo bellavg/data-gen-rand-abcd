@@ -7,7 +7,7 @@
 #SBATCH --partition=genoa
 #SBATCH --constraint=scratch-node
 #SBATCH --array=0-54
-#SBATCH --output=logs/4c_opt_Syn4_%A_%a.out
+#SBATCH --output=logs/opt_syn4/4c_opt_Syn4_%A_%a.out
 
 set -euo pipefail
 
