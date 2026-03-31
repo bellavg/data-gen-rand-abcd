@@ -7,7 +7,7 @@
 #SBATCH --cpus-per-task=1
 #SBATCH --partition=genoa
 #SBATCH --constraint=scratch-node
-#SBATCH --output=logs/syn_%A_%a.out
+#SBATCH --output=logs/synthesis/syn_%A_%a.out
 
 set -euo pipefail
 
@@ -114,8 +114,8 @@ zip -r -q "${DESIGN}_synthesis_logs.zip" "design_metadata/raw_logs/synthesis_log
 # 8. Move zipped files to Home and Cleanup loose files
 echo ">> Moving zipped archives back to permanent storage..."
 mv -f "${DESIGN}_tier0.zip" "$DESIGN_DIR/tier0.zip"
-mkdir -p "$DESIGN_DIR/design_metadata/raw_logs/synthesis_logs"
-mv -f "${DESIGN}_synthesis_logs.zip" "$DESIGN_DIR/design_metadata/raw_logs/synthesis_logs/synthesis_logs.zip"
+mkdir -p "$DESIGN_DIR/design_metadata/raw_logs"
+mv -f "${DESIGN}_synthesis_logs.zip" "$DESIGN_DIR/design_metadata/raw_logs/synthesis_logs.zip"
 
 echo ">> Deleting original loose files in home directory to free up space..."
 rm -rf "$DESIGN_DIR/tier0"
