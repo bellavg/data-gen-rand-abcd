@@ -72,6 +72,9 @@ cp -a "$DESIGN_DIR/tier0/." "$WORK_DIR/tier0/"
 echo ">> Unzipping scripts to scratch..."
 unzip -q -o "${SYN_SCRIPTS_DIR}/${DESIGN}.zip" -d "$WORK_DIR/scripts"
 
+echo ">> Copying abc.rc to scratch scripts directory..."
+cp "${BASE_DIR}/data/abc_scripts/abc.rc" "$WORK_DIR/scripts/${DESIGN}/abc.rc"
+
 echo ">> Patching scripts to use scratch paths..."
 # Replace placeholder tokens baked in at generation time with actual scratch paths
 find "$WORK_DIR/scripts/${DESIGN}" -type f -exec sed -i \
