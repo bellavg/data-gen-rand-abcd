@@ -1,0 +1,30 @@
+strash
+write_bench -l /home/abc586/ABC_BENCH_GRAPHS/aes/aes_orig.bench
+resub -z
+resub
+balance
+refactor -z
+rewrite -z
+resub -z
+rewrite
+rewrite
+rewrite
+refactor -z
+rewrite
+rewrite
+resub
+resub
+refactor -z
+refactor
+refactor -z
+rewrite -z
+resub -z
+resub
+write_bench -l /home/abc586/ABC_BENCH_GRAPHS/aes/aes_syn1337.bench
+dch
+map -B 0.9
+topo
+stime -c
+buffer -c
+upsize -c
+dnsize -c

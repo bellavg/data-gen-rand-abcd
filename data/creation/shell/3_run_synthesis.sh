@@ -1,0 +1,1 @@
+# input which design to synthesis with abc 

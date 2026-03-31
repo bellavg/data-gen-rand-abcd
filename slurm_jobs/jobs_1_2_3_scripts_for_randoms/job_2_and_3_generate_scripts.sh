@@ -33,7 +33,7 @@ AUTOMATION_DIR="${BASE_DIR}/OpenABC-master/datagen/automation"
 LIBRARY_FILE="/scratch-shared/$USER/openabc_full/OPENABC_DATASET/lib/nangate45.lib"
 
 # Design list
-DESIGNS=("128" "256" "512" "1024" "2048" "4096" "8192" "16384")
+DESIGNS=()
 
 echo "Configuration:"
 echo "  Base directory: ${BASE_DIR}"
