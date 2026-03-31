@@ -16,7 +16,7 @@ Note: The Random and Converted OpenABC-D datasets are the two source datasets. T
 
 Planned experiment pipeline (high level):
 
-  1) For every base AIG, apply four AIG optimization algorithms (Tier‑1):
+  1) For every base AIG(Tier-0), apply four AIG optimization algorithms (Tier‑1):
     - Orchestrate, Deepsyn (with random seed recorded), Syn4, C2RS
     - This produces 4 × base_count Tier‑1 outputs: 4,662,148 outputs (≈4.66M files)
 
@@ -27,7 +27,7 @@ Storage/scale note: the two-tier expansion is very large (tens of millions of fi
 
 Visual pipeline (ASCII):
 
-  [Base AIGs 1,165,537 (≈1.17M)]
+  [Base AIGs (Tier-0) 1,165,537 (≈1.17M)]
       |
       |-- apply 4 algos --> [Tier-1 AIGs 4,662,148 (≈4.66M)]
                     |
