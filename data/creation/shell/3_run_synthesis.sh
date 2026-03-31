@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=syn_array
 #SBATCH --time=01:30:00         # Reduced time: 24x parallel is much faster
-#SBATCH --array=3-54            # Index 54 is the last design (wb_dma)
+#SBATCH --array=27-28            # Index 54 is the last design (wb_dma)
 #SBATCH -N 1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=24      # Claim the full 24-core slice you are charged for
