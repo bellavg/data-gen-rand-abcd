@@ -1,12 +1,12 @@
 #!/bin/bash
 #SBATCH --job-name=4b_opt_Deep
-#SBATCH --time=04:00:00
+#SBATCH --time=08:00:00
 #SBATCH -N 1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=192
 #SBATCH --partition=genoa
 #SBATCH --constraint=scratch-node
-#SBATCH --array=0-54
+#SBATCH --array=27-28
 #SBATCH --output=logs/opt_deep/4b_opt_Deep_%A_%a.out
 
 set -euo pipefail
