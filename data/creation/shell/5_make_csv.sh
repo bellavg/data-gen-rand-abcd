@@ -1,4 +1,3 @@
-# for both tier 0 and tier 1 metadata 
 #!/bin/bash
 #SBATCH --job-name=5_make_csv
 #SBATCH --time=01:00:00
