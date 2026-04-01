@@ -31,7 +31,7 @@ echo "=================================================="
 
 # Execute the Multiprocessing Python Parser
 # Note: Ensure generate_csv.py is actually located in dataset_tools/
-python3 "$BASE_DIR/dataset_tools/generate_csv.py" \
+python3 "$BASE_DIR/data/creation/generate_csv.py" \
     --design-dir "$DESIGN_DIR" \
     --design-name "$DESIGN" \
     --cpus 24
