@@ -6,8 +6,8 @@ import argparse
 from pathlib import Path
 from concurrent.futures import ProcessPoolExecutor
 
-# Regex to match ABC's print_stats output
-STATS_REGEX = re.compile(r"i/o\s*=\s*(\d+)/\s*(\d+).*?nd\s*=\s*(\d+).*?edge\s*=\s*(\d+).*?lev\s*=\s*(\d+)")
+# Regex updated to capture 'and=' or 'nd=' and skip missing edges
+STATS_REGEX = re.compile(r"i/o\s*=\s*(\d+)/\s*(\d+).*?(?:and|nd)\s*=\s*(\d+).*?lev\s*=\s*(\d+)")
 FILENAME_REGEX = re.compile(r"syn(\d+)_step(\d+)")
 
 def parse_single_log(args):
@@ -26,7 +26,11 @@ def parse_single_log(args):
     step_id = int(match.group(2)) if match else 0
 
     t0_nodes = int(stats[0][2])
-    t1_pi, t1_po, t1_nodes, t1_edges, t1_depth = map(int, stats[-1])
+    
+    # Unpack the 4 found metrics and default edges to 0
+    t1_pi, t1_po, t1_nodes, t1_depth = map(int, stats[-1])
+    t1_edges = 0 
+    
     opt = (t0_nodes - t1_nodes) / t0_nodes if t0_nodes > 0 else 0.0
 
     return {
@@ -43,7 +47,6 @@ def parse_single_log(args):
         "depth": t1_depth,
         "optimizability": round(opt, 4)
     }
-
 def process_logs(design_dir, design_name, num_workers):
     logs_root = Path(design_dir) / "design_metadata" / "raw_logs" / "optimization_logs" / "tier1"
     csv_path = Path(design_dir) / "design_metadata" / f"{design_name}.csv"
