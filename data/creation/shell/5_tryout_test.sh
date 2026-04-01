@@ -5,7 +5,7 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=24
 #SBATCH --partition=genoa
-#SBATCH --output=logs/5_csv/tryout_5_%j.out
+#SBATCH --output=logs/5_csv/aes_tryout_5_%j.out
 
 # --- Safety and Environment ---
 set -euo pipefail
@@ -16,7 +16,7 @@ module load foss/2025a
 module load Python/3.13.1-GCCcore-14.2.0
 
 # --- Hardcoded for Tryout ---
-DESIGN="128"
+DESIGN="aes"
 BASE_DIR="$HOME/data-gen-rand-abcd"
 DESIGN_DIR="$BASE_DIR/data/designs/$DESIGN"
 
