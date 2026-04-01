@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=5_make_csv
-#SBATCH --time=01:00:00
+#SBATCH --time=00:59:00
 #SBATCH -N 1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=24
