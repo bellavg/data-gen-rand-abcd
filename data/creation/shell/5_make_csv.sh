@@ -48,4 +48,4 @@ python3 "$BASE_DIR/data/creation/generate_csv.py" \
     --design-name "$DESIGN" \
     --cpus 24
 
-echo ">>> COMPLETED: CSV saved to $DESIGN_DIR/design_metadata/${DESIGN}.csv"
+echo ">>> Complete for $DESIGN: CSV saved to $DESIGN_DIR/design_metadata/${DESIGN}.csv"
