@@ -24,11 +24,8 @@ SCRATCH_BASE="/scratch-shared/$USER/data-gen-rand-abcd/tier2_aigs/$DESIGN/$ALGO_
 PERM_LOG_DIR="$BASE_DIR/data/designs/$DESIGN/design_metadata/raw_logs/optimization_logs/tier2/$ALGO_TARGET"
 
 # --- Setup Local Compute Scratch ---
-# 1. Force the node to create your user folder first
-mkdir -p "/scratch-node/$USER"
-
-# 2. Now run mktemp safely inside it
-JOB_SCRATCH="$(mktemp -d "/scratch-node/$USER/final_t2_128_${ALGO_TARGET}_XXXXXX")"
+# Use the -t flag to let the system automatically route this to Slurm's approved local scratch
+JOB_SCRATCH="$(mktemp -d -t final_t2_128_${ALGO_TARGET}_XXXXXX)"
 trap 'rm -rf "$JOB_SCRATCH"' EXIT
 
 mkdir -p "$JOB_SCRATCH/in" "$JOB_SCRATCH/tier2" "$JOB_SCRATCH/logs"

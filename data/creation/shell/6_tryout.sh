@@ -30,12 +30,10 @@ mkdir -p logs/tier2/opt_orch
 mkdir -p "$PERM_LOG_DIR"
 mkdir -p "$SCRATCH_BASE"
 
-# --- Setup Local Compute Scratch ---
-# 1. Force the node to create your user folder first
-mkdir -p "/scratch-node/$USER"
 
-# 2. Now run mktemp safely inside it
-JOB_SCRATCH="$(mktemp -d "/scratch-node/$USER/final_t2_128_${ALGO_TARGET}_XXXXXX")"
+# --- Setup Local Compute Scratch ---
+# Use the -t flag to let the system automatically route this to Slurm's approved local scratch
+JOB_SCRATCH="$(mktemp -d -t final_t2_128_${ALGO_TARGET}_XXXXXX)"
 trap 'rm -rf "$JOB_SCRATCH"' EXIT
 
 mkdir -p "$JOB_SCRATCH/in" "$JOB_SCRATCH/tier2" "$JOB_SCRATCH/logs" "$JOB_SCRATCH/scripts"
