@@ -60,4 +60,6 @@ else
     exit 1
 fi
 
-echo ">>> COMPLETED Tier-2 $ALGO_TARGET for $DESIGN"
+echo "=================================================="
+echo " ✅ Complete for $DESIGN: Tier-2 $ALGO_TARGET finished."
+echo "=================================================="
