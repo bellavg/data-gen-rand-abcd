@@ -31,6 +31,10 @@ mkdir -p "$PERM_LOG_DIR"
 mkdir -p "$SCRATCH_BASE"
 
 # --- Setup Local Compute Scratch ---
+# 1. Force the node to create your user folder first
+mkdir -p "/scratch-node/$USER"
+
+# 2. Now run mktemp safely inside it
 JOB_SCRATCH="$(mktemp -d "/scratch-node/$USER/final_t2_128_${ALGO_TARGET}_XXXXXX")"
 trap 'rm -rf "$JOB_SCRATCH"' EXIT
 

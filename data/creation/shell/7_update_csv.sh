@@ -6,7 +6,7 @@
 #SBATCH --cpus-per-task=24
 #SBATCH --partition=genoa
 #SBATCH --array=0-54
-#SBATCH --output=logs/6_csv/6_csv_%A_%a.out
+#SBATCH --output=logs/6_csv/7_csv_%A_%a.out
 
 # --- Safety and Environment ---
 set -euo pipefail

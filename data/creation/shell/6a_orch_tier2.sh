@@ -24,7 +24,12 @@ SCRATCH_BASE="/scratch-shared/$USER/data-gen-rand-abcd/tier2_aigs/$DESIGN/$ALGO_
 PERM_LOG_DIR="$BASE_DIR/data/designs/$DESIGN/design_metadata/raw_logs/optimization_logs/tier2/$ALGO_TARGET"
 
 # --- Setup Local Compute Scratch ---
-JOB_SCRATCH="$(mktemp -d "/scratch-node/$USER/t2_${ALGO_TARGET}_${DESIGN}_XXXXXX")"
+# --- Setup Local Compute Scratch ---
+# 1. Force the node to create your user folder first
+mkdir -p "/scratch-node/$USER"
+
+# 2. Now run mktemp safely inside it
+JOB_SCRATCH="$(mktemp -d "/scratch-node/$USER/final_t2_128_${ALGO_TARGET}_XXXXXX")"
 trap 'rm -rf "$JOB_SCRATCH"' EXIT
 
 mkdir -p "$JOB_SCRATCH/in" "$JOB_SCRATCH/tier2" "$JOB_SCRATCH/logs"
