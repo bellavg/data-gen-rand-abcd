@@ -68,21 +68,27 @@ export COMMAND_TEMPLATE ABC_RC RUNTIME_TIMEOUT_SECONDS OUT_DIR LOG_DIR DESIGN AL
 run_one() {{
     local input_aig="$1"
     local input_member="$(basename "$input_aig")"
-    local tier_name="$(basename "$(dirname "$OUT_DIR")")"
     
-    if [[ "$tier_name" == "tier2" ]]; then
-        # For Tier-2: Preserve the Tier-1 source algorithm in the name
-        # Example: 128_Deepsyn_tier1_syn0_step0.aig -> 128_Deepsyn_Orchestrate_tier2_syn0_step0.aig
-        local output_member="${{input_member/_tier1_/_${{ALGORITHM}}_tier2_}}"
+    # 1. Extract the raw "syn[recipe]_step[step].aig" suffix
+    local suffix=""
+    if [[ "$input_member" =~ (syn[0-9X]+(_step[0-9]+)?\\.aig)$ ]]; then
+        suffix="${{BASH_REMATCH[1]}}"
     else
-        # Original Tier-1 logic
-        if [[ "$input_member" =~ (syn[0-9]+(_step[0-9]+)?\\.aig)$ ]]; then
-            local suffix="${{BASH_REMATCH[1]}}"
-            local output_member="${{DESIGN}}_${{ALGORITHM}}_${{tier_name}}_${{suffix}}"
-        else
-            local suffix="${{input_member#${{DESIGN}}_}}"
-            local output_member="${{DESIGN}}_${{ALGORITHM}}_${{tier_name}}_${{suffix}}"
-        fi
+        suffix="${{input_member##*_}}"
+    fi
+
+    # 2. Dynamically construct clean output names
+    if [[ "$input_member" == *"_tier1_"* ]]; then
+        # TIER-2 LOGIC: Strip out the messy mktemp string and grab the Tier-1 Algo
+        local without_design="${{input_member#${{DESIGN}}_}}"
+        local tier1_algo="${{without_design%%_tier1_*}}"
+        
+        # Format: [design]_[tier 1 algo]_[tier 2 algo]_tier2_syn[recipe]_step[step].aig
+        local output_member="${{DESIGN}}_${{tier1_algo}}_${{ALGORITHM}}_tier2_${{suffix}}"
+    else
+        # TIER-1 LOGIC: Standard clean format
+        # Format: [design]_[tier 1 algo]_tier1_syn[recipe]_step[step].aig
+        local output_member="${{DESIGN}}_${{ALGORITHM}}_tier1_${{suffix}}"
     fi
     
     local output_final="${{OUT_DIR}}/${{output_member}}"
