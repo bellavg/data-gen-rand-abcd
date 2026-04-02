@@ -44,9 +44,10 @@ echo "=================================================="
 
 # Execute the updated Multiprocessing Python Parser
 # This script now looks in both tier1/ and tier2/ folders
-python3 "$BASE_DIR/dataset_tools/generate_csv.py" \
+# (Fixed the path to point to data/creation/generate_csv.py)
+python3 "$BASE_DIR/data/creation/generate_csv.py" \
     --design-dir "$DESIGN_DIR" \
     --design-name "$DESIGN" \
     --cpus 24
 
-echo ">>> COMPLETED: Final Dataset saved to $DESIGN_DIR/design_metadata/${DESIGN}.csv"
+echo ">>> Completed for $DESIGN: Final Dataset saved to $DESIGN_DIR/design_metadata/${DESIGN}.csv"
