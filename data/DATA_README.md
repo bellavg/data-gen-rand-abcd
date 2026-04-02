@@ -12,24 +12,22 @@ Note: The Random and Converted OpenABC-D datasets are the two source datasets. T
 
 Planned experiment pipeline (high level):
 
-  1) For every base AIG(Tier-0), apply four AIG optimization algorithms (Tier‑1):
+  1) For every base AIG (Tier-0), apply four AIG optimization algorithms (Tier‑1):
     - Orchestrate, Deepsyn (with random seed recorded), Syn4, C2RS
     - This produces 4 × base_count Tier‑1 outputs: 924,220 outputs (≈0.92M files)
 
-  2) For every Tier‑1 AIG, re-apply the same four algorithms (Tier‑2), using the same timing and hyperparameters as the first pass:
-    - This produces 4 × Tier1_count Tier‑2 outputs: 3,696,880 outputs (≈3.70M files)
-
-Storage/scale note: the two-tier expansion is very large (tens of millions of files). Plan storage, I/O and compute accordingly.
+  2) For every Tier‑1 AIG, re-apply only the other three algorithms the graph has not yet been optimized with (i.e., do not re-apply the same algorithm that produced the Tier‑1 AIG), using the same timing and hyperparameters as the first pass:
+    - This produces 3 × Tier1_count Tier‑2 outputs: 2,772,660 outputs (≈2.77M files)
 
 Visual pipeline (ASCII):
 
   [Base AIGs (Tier-0) 231,055 (≈0.23M)]
       |
       |-- apply 4 algos --> [Tier-1 AIGs 924,220 (≈0.92M)]
-                    |
-                    |-- apply 4 algos --> [Tier-2 AIGs 3,696,880 (≈3.70M)]
+            |
+            |-- apply 3 algos --> [Tier-2 AIGs 2,772,660 (≈2.77M)]
 
-All algorithms use the same timing constraints and hyperparameters per your plan; Deepsyn runs will record the RNG seed used for reproducibility.
+All algorithms use the same timing constraints and hyperparameters; Deepsyn record the RNG seed used for reproducibility.
 
 # Data folder structure
 
