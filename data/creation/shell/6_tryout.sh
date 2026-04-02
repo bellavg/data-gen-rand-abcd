@@ -15,7 +15,7 @@ module purge
 module load 2025
 module load foss/2025a
 module load Python/3.13.1-GCCcore-14.2.0
-
+export PATH="$HOME/abc:$PATH"
 # --- CONFIGURATION (Targeting 128 for Final Run) ---
 DESIGN="128"
 ALGO_TARGET="Orchestrate"
