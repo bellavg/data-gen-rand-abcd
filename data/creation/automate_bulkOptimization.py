@@ -95,12 +95,14 @@ run_one() {{
     cmd="${{cmd//\\{{seed\\}}/$seed_value}}"
     cmd="${{cmd//\\{{timeout_seconds\\}}/$RUNTIME_TIMEOUT_SECONDS}}"
 
-    eval "$cmd" > "$log_final" 2>&1
+    # Execute ABC. Catch errors gracefully so a single crash doesn't abort the entire job.
+    eval "$cmd" > "$log_final" 2>&1 || echo "WARN: ABC failed on $input_member" >> "$log_final"
 }}
 export -f run_one
 
+# Run xargs and force a success return code just in case xargs throws a warning
 find "$INPUT_SRC" -maxdepth 1 -name "*.aig" -print0 | \\
-    xargs -0 -P "$WORKERS" -I {{}} bash -c 'run_one "$1"' _ {{}}
+    xargs -0 -P "$WORKERS" -I {{}} bash -c 'run_one "$1"' _ {{}} || true
 """
 
 def generate_scripts_for_design(home_dir: str, design: str) -> None:
