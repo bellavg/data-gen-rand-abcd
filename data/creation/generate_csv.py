@@ -10,6 +10,7 @@ from concurrent.futures import ProcessPoolExecutor
 # Regex updated to capture 'and=' or 'nd=' and skip missing edges
 STATS_REGEX = re.compile(r"i/o\s*=\s*(\d+)/\s*(\d+).*?(?:and|nd)\s*=\s*(\d+).*?lev\s*=\s*(\d+)")
 FILENAME_REGEX = re.compile(r"syn(\d+)_step(\d+)")
+ALGORITHMS = ["Orchestrate", "Deepsyn", "Syn4", "C2RS"]
 
 def parse_single_log(args):
     zip_path, log_name, design_name, algorithm, tier_id = args
@@ -31,9 +32,22 @@ def parse_single_log(args):
     opt_nodes = (t0_nodes - t1_nodes) / t0_nodes if t0_nodes > 0 else 0.0
     opt_depth = (t0_depth - t1_depth) / t0_depth if t0_depth > 0 else 0.0
 
+    # --- DYNAMIC DESIGN NAME FOR TIER 2 ---
+    # Extracts the Tier-1 algorithm that was used first
+    csv_design_name = design_name
+    if tier_id == 2:
+        # log_name format: {design_name}_{tier1_algo}_{tier2_algo}_tier2_{suffix}.log
+        if log_name.startswith(f"{design_name}_"):
+            remainder = log_name[len(design_name)+1:]
+            for a in ALGORITHMS:
+                if remainder.startswith(f"{a}_"):
+                    csv_design_name = f"{design_name}_{a}"
+                    break
+
     return {
         "file_path": f"base_aigs/{design_name}/tier{tier_id}/{algorithm}/{log_name.replace('.log', '.aig')}",
-        "design": design_name, "recipe_id": recipe_id, "step_id": step_id,
+        "design": csv_design_name, 
+        "recipe_id": recipe_id, "step_id": step_id,
         "tier_id": tier_id, "algorithm": algorithm, "nodes": t1_nodes, "edges": 0,
         "num_PI": t1_pi, "num_PO": t1_po, "depth": t1_depth,
         "optimizability": round(opt_nodes, 4), "depth_optimizability": round(opt_depth, 4)
@@ -55,20 +69,19 @@ def process_logs(design_dir, design_name, num_workers):
                 existing_rows.append(row)
         print(f"    Loaded {len(existing_paths)} existing entries.")
 
-    algorithms = ["Orchestrate", "Deepsyn", "Syn4", "C2RS"]
     tasks = []
 
     for tier in [1, 2]:
         tier_dir = logs_base / f"tier{tier}"
         if not tier_dir.exists(): continue
-        for algo in algorithms:
+        for algo in ALGORITHMS:
             algo_dir = tier_dir / algo
             if not algo_dir.exists(): continue
             for zip_path in algo_dir.glob("*.zip"):
                 with zipfile.ZipFile(zip_path, 'r') as zf:
                     for log_name in zf.namelist():
                         if not log_name.endswith(".log"): continue
-                        # Predict the file_path this log would create
+                        # Predict the file_path this log would create (keeping base design_name for accurate folder paths)
                         pred_path = f"base_aigs/{design_name}/tier{tier}/{algo}/{log_name.replace('.log', '.aig')}"
                         if pred_path not in existing_paths:
                             tasks.append((zip_path, log_name, design_name, algo, tier))
