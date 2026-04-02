@@ -70,12 +70,19 @@ run_one() {{
     local input_member="$(basename "$input_aig")"
     local tier_name="$(basename "$(dirname "$OUT_DIR")")"
     
-    if [[ "$input_member" =~ (syn[0-9]+(_step[0-9]+)?\\.aig)$ ]]; then
-        local suffix="${{BASH_REMATCH[1]}}"
-        local output_member="${{DESIGN}}_${{ALGORITHM}}_${{tier_name}}_${{suffix}}"
+    if [[ "$tier_name" == "tier2" ]]; then
+        # For Tier-2: Preserve the Tier-1 source algorithm in the name
+        # Example: 128_Deepsyn_tier1_syn0_step0.aig -> 128_Deepsyn_Orchestrate_tier2_syn0_step0.aig
+        local output_member="${{input_member/_tier1_/_${{ALGORITHM}}_tier2_}}"
     else
-        local suffix="${{input_member#${{DESIGN}}_}}"
-        local output_member="${{DESIGN}}_${{ALGORITHM}}_${{tier_name}}_${{suffix}}"
+        # Original Tier-1 logic
+        if [[ "$input_member" =~ (syn[0-9]+(_step[0-9]+)?\\.aig)$ ]]; then
+            local suffix="${{BASH_REMATCH[1]}}"
+            local output_member="${{DESIGN}}_${{ALGORITHM}}_${{tier_name}}_${{suffix}}"
+        else
+            local suffix="${{input_member#${{DESIGN}}_}}"
+            local output_member="${{DESIGN}}_${{ALGORITHM}}_${{tier_name}}_${{suffix}}"
+        fi
     fi
     
     local output_final="${{OUT_DIR}}/${{output_member}}"
