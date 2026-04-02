@@ -95,8 +95,8 @@ run_one() {{
     cmd="${{cmd//\\{{seed\\}}/$seed_value}}"
     cmd="${{cmd//\\{{timeout_seconds\\}}/$RUNTIME_TIMEOUT_SECONDS}}"
 
-    # Execute ABC. Catch errors gracefully so a single crash doesn't abort the entire job.
-    eval "$cmd" > "$log_final" 2>&1 || echo "WARN: ABC failed on $input_member" >> "$log_final"
+    # Execute ABC. Catch errors gracefully. Print warning immediately to SLURM output AND save to log.
+    eval "$cmd" > "$log_final" 2>&1 || (echo "⚠️ WARN: ABC failed on $input_member" >&2 && echo "WARN: ABC failed on $input_member" >> "$log_final")
 }}
 export -f run_one
 
