@@ -16,6 +16,7 @@ module purge
 module load 2025
 module load foss/2025a
 module load Python/3.13.1-GCCcore-14.2.0
+module load SciPy-bundle/2025.06-gfbf-2025a
 
 # --- Design List (0-54) ---
 DESIGNS=(
