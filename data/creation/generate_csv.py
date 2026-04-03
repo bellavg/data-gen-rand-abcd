@@ -9,7 +9,8 @@ from concurrent.futures import ProcessPoolExecutor
 
 # Regex updated to capture 'and=' or 'nd=' and skip missing edges
 STATS_REGEX = re.compile(r"i/o\s*=\s*(\d+)/\s*(\d+).*?(?:and|nd)\s*=\s*(\d+).*?lev\s*=\s*(\d+)")
-FILENAME_REGEX = re.compile(r"syn(\d+)_step(\d+)")
+# Updated to handle 'synX' safely!
+FILENAME_REGEX = re.compile(r"syn([0-9X]+)_step(\d+)")
 ALGORITHMS = ["Orchestrate", "Deepsyn", "Syn4", "C2RS"]
 
 def parse_single_log(args):
@@ -22,9 +23,15 @@ def parse_single_log(args):
     stats = STATS_REGEX.findall(content)
     if len(stats) < 2: return None
 
+    # Safely handle the recipe and step IDs, including 'synX'
     match = FILENAME_REGEX.search(log_name)
-    recipe_id = int(match.group(1)) if match else 0
-    step_id = int(match.group(2)) if match else 0
+    if match:
+        recipe_str = match.group(1)
+        recipe_id = 0 if recipe_str == 'X' else int(recipe_str)
+        step_id = int(match.group(2))
+    else:
+        recipe_id = 0
+        step_id = 0
 
     t0_nodes, t0_depth = int(stats[0][2]), int(stats[0][3])
     t1_pi, t1_po, t1_nodes, t1_depth = map(int, stats[-1])
