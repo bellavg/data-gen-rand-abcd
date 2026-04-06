@@ -89,6 +89,10 @@ def aig_to_pytorch_geometric(
     num_pos_aig = aig.num_pos()
     # Fallback to the NetworkX graph if Aig did not expose counts
     num_nodes = G.number_of_nodes()
+    # NetworkX labels may not be 0..N-1; keep a stable topological order and map
+    # node labels to contiguous tensor indices.
+    node_order = list(nx.topological_sort(G))
+    node_to_idx = {node: idx for idx, node in enumerate(node_order)}
     # Initialize path counts to 0 for all nodes
     path_counts = {n: 0 for n in G.nodes()}
     local_sp_feature = {}
@@ -99,7 +103,7 @@ def aig_to_pytorch_geometric(
 
     # 2. Single pass over the nodes in topological order
     # This correctly computes paths and local shortest paths efficiently
-    for n in nx.topological_sort(G):
+    for n in node_order:
         # Index 1 of the 'type' array corresponds to 'pi' (Primary Input)
         if G.nodes[n]["type"][1] == 1.0:
             path_counts[n] = 1
@@ -123,7 +127,7 @@ def aig_to_pytorch_geometric(
         # Store the relative distances as new edges (ignoring self-loops where d=0)
         for tgt, d in lengths.items():
             if d > 0:
-                rel_edge_indices.append([n, tgt])
+                rel_edge_indices.append([node_to_idx[n], node_to_idx[tgt]])
                 rel_edge_dists.append([float(d)])
 
     # 3. Build Node Features Matrix (x) and separate Positional Encodings
@@ -132,8 +136,8 @@ def aig_to_pytorch_geometric(
     pi_path_features = []
     local_sp_features_list = []
 
-    # Iterate exactly from 0 to N-1 to guarantee correct row ordering in the PyG tensors
-    for n in range(num_nodes):
+    # Iterate over node_order to keep row ordering aligned with node_to_idx.
+    for n in node_order:
         data = G.nodes[n]
 
         # Native aigverse one-hot encoded node type -> list of 4 floats
@@ -155,8 +159,7 @@ def aig_to_pytorch_geometric(
 
     # Using edges.data('type') view to avoid extracting unused edge dictionary keys
     for u, v, e_type in G.edges.data("type"):
-        # Use node IDs directly as they are already contiguous integers 0...N-1
-        edge_indices.append([u, v])
+        edge_indices.append([node_to_idx[u], node_to_idx[v]])
 
         # Native aigverse one-hot encoded edge type: [regular, inverted]
         edge_attr_features.append(e_type.tolist())
@@ -194,7 +197,7 @@ def aig_to_pytorch_geometric(
     # Annotate nodes/edges and PI/PO indices for consumers
     data_obj.num_nodes = num_nodes
     data_obj.num_edges = edge_index.size(1)
-    data_obj.num_pis = num_pis_aig 
+    data_obj.num_pis = num_pis_aig
     data_obj.num_pos = num_pos_aig
 
     return data_obj
