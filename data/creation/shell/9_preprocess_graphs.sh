@@ -5,7 +5,6 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=48
 #SBATCH --partition=genoa
-#SBATCH --constraint=scratch-node
 #SBATCH --output=logs/preprocess_%j.out
 
 set -euo pipefail
