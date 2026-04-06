@@ -42,7 +42,14 @@ def summarize_archive_layout(aig_root: Path) -> Dict[str, object]:
         [
             p
             for p in aig_root.iterdir()
-            if p.is_dir() and p.name not in {"design_metadata", "logs"}
+            if p.is_dir()
+            and (
+                (p / "tier0.zip").exists()
+                or (p / "tier0" / "tier0.zip").exists()
+                or (p / "tier0").is_dir()
+                or (p / "tier1").is_dir()
+                or (p / "tier2").is_dir()
+            )
         ]
     )
     design_names = [p.name for p in design_dirs]
