@@ -219,17 +219,17 @@ def build_tier0_row_from_log(design, algo, log_name, content):
     return {
         "file_path": f"base_aigs/{design}/tier0/{suffix}.aig",
         "design": design,
-        "recipe_id": recipe_id,
-        "step_id": step_id,
-        "tier_id": 0,
+        "recipe_id": str(recipe_id),
+        "step_id": str(step_id),
+        "tier_id": "0",
         "algorithm": "",
-        "nodes": t0_nodes,
-        "edges": 0,
-        "num_PI": t0_pi,
-        "num_PO": t0_po,
-        "depth": t0_depth,
-        "optimizability": 0.0,
-        "depth_optimizability": 0.0,
+        "nodes": str(t0_nodes),
+        "edges": "0",
+        "num_PI": str(t0_pi),
+        "num_PO": str(t0_po),
+        "depth": str(t0_depth),
+        "optimizability": "0.0",
+        "depth_optimizability": "0.0",
     }
 
 
@@ -302,6 +302,15 @@ with open(master_in, "r", newline="") as f:
 
     fieldnames = reader.fieldnames
     rows = list(reader)
+
+# Normalize all values to strings so downstream .strip()-based parsing is safe.
+for row in rows:
+    for col in fieldnames:
+        value = row.get(col)
+        if value is None:
+            row[col] = ""
+        elif not isinstance(value, str):
+            row[col] = str(value)
 
 existing_paths = {
     (row.get("file_path") or "").strip()
