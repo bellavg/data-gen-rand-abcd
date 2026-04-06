@@ -1,3 +1,4 @@
+import math
 import os
 import re
 from pathlib import Path
@@ -65,7 +66,7 @@ def aig_to_pytorch_geometric(
 
     Positional Encodings (stored as separate attributes):
         - level: Logic level
-        - pi_paths: Number of paths from Primary Inputs to the node (ignoring edges that skip > max_path_depth levels)
+        - pi_paths: ln(1 + PI-to-node path count)
         - local_sp_sum: Sum of directed shortest path distances within a local neighborhood cutoff
 
     Relative Distance Encodings:
@@ -135,21 +136,6 @@ def aig_to_pytorch_geometric(
     level_features = []
     pi_path_features = []
     local_sp_features_list = []
-    max_path_node = max(path_counts, key=path_counts.get) if path_counts else None
-    max_path_value = path_counts[max_path_node] if max_path_node is not None else 0
-    debug_path_counts = os.getenv("AIG_DEBUG_PATH_COUNTS", "0") == "1"
-    if debug_path_counts and max_path_node is not None:
-        max_bit_length = int(max_path_value).bit_length()
-        approx_log10 = (
-            (max_bit_length - 1) * 0.3010299956639812 if max_bit_length > 0 else 0.0
-        )
-        print(
-            "debug:path_counts "
-            f"aig_path={aig_path} num_nodes={num_nodes} num_edges={G.number_of_edges()} "
-            f"max_path_node={max_path_node} max_path_bit_length={max_bit_length} "
-            f"max_path_approx_log10={approx_log10:.2f}"
-        )
-
     # Iterate over node_order to keep row ordering aligned with node_to_idx.
     for n in node_order:
         data = G.nodes[n]
@@ -159,23 +145,7 @@ def aig_to_pytorch_geometric(
 
         # Separate positional encodings
         level_features.append([float(data.get("level", 0.0))])
-        try:
-            pi_paths_value = float(path_counts[n])
-        except OverflowError as exc:
-            value = path_counts[n]
-            bit_length = int(value).bit_length()
-            approx_log10 = (
-                (bit_length - 1) * 0.3010299956639812 if bit_length > 0 else 0.0
-            )
-            raise OverflowError(
-                "pi_paths overflow while converting path-count to float; "
-                f"aig_path={aig_path}; node_label={n}; node_index={node_to_idx.get(n)}; "
-                f"level={data.get('level', 0)}; in_degree={G.in_degree(n)}; out_degree={G.out_degree(n)}; "
-                f"path_count_bit_length={bit_length}; path_count_approx_log10={approx_log10:.2f}; "
-                f"max_path_node={max_path_node}; max_path_bit_length={int(max_path_value).bit_length() if max_path_node is not None else 0}; "
-                f"num_nodes={num_nodes}; num_edges={G.number_of_edges()}; max_path_depth={max_path_depth}"
-            ) from exc
-        pi_path_features.append([pi_paths_value])
+        pi_path_features.append([math.log(path_counts[n] + 1)])
         local_sp_features_list.append([float(local_sp_feature[n])])
 
     x = torch.tensor(x_features, dtype=torch.float32)
@@ -212,6 +182,44 @@ def aig_to_pytorch_geometric(
     else:
         rel_edge_index = torch.empty((2, 0), dtype=torch.long)
         edge_rel_dist = torch.empty((0, 1), dtype=torch.float32)
+
+    assert x.shape == (num_nodes, 4), (
+        f"x shape mismatch: expected {(num_nodes, 4)} got {tuple(x.shape)}"
+    )
+    assert level_tensor.shape == (num_nodes, 1), (
+        "level shape mismatch: "
+        f"expected {(num_nodes, 1)} got {tuple(level_tensor.shape)}"
+    )
+    assert pi_paths_tensor.shape == (num_nodes, 1), (
+        "pi_paths shape mismatch: "
+        f"expected {(num_nodes, 1)} got {tuple(pi_paths_tensor.shape)}"
+    )
+    assert local_sp_tensor.shape == (num_nodes, 1), (
+        "local_sp_sum shape mismatch: "
+        f"expected {(num_nodes, 1)} got {tuple(local_sp_tensor.shape)}"
+    )
+    assert edge_index.ndim == 2 and edge_index.shape[0] == 2, (
+        f"edge_index shape mismatch: expected [2, E] got {tuple(edge_index.shape)}"
+    )
+    assert edge_attr.ndim == 2 and edge_attr.shape[1] == 2, (
+        f"edge_attr shape mismatch: expected [E, 2] got {tuple(edge_attr.shape)}"
+    )
+    assert edge_attr.shape[0] == edge_index.shape[1], (
+        "edge feature count mismatch: "
+        f"edge_attr rows {edge_attr.shape[0]} != edge_index cols {edge_index.shape[1]}"
+    )
+    assert rel_edge_index.ndim == 2 and rel_edge_index.shape[0] == 2, (
+        "rel_edge_index shape mismatch: "
+        f"expected [2, R] got {tuple(rel_edge_index.shape)}"
+    )
+    assert edge_rel_dist.ndim == 2 and edge_rel_dist.shape[1] == 1, (
+        "edge_rel_dist shape mismatch: "
+        f"expected [R, 1] got {tuple(edge_rel_dist.shape)}"
+    )
+    assert edge_rel_dist.shape[0] == rel_edge_index.shape[1], (
+        "relative edge feature count mismatch: "
+        f"edge_rel_dist rows {edge_rel_dist.shape[0]} != rel_edge_index cols {rel_edge_index.shape[1]}"
+    )
 
     # 5. Create PyTorch Geometric Data object with separated features
     data_obj = Data(
