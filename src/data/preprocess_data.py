@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import argparse
+import shutil
+import sys
 import traceback
+import zipfile
 from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from dataclasses import dataclass
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from time import monotonic
-import sys
-from tqdm import tqdm
 from typing import Dict, List, Tuple
+
+from tqdm import tqdm
 
 from data.data_utils import default_workers, parse_aig_name
 
@@ -23,37 +27,140 @@ class GraphTask:
     design: str
     filename: str
     aig_path: str
+    archive_path: str = ""
+    archive_member: str = ""
 
 
 @dataclass(frozen=True)
 class WorkerConfig:
     final_out_root: str
+    overwrite: bool
+
+
+def summarize_archive_layout(aig_root: Path) -> Dict[str, object]:
+    design_dirs = sorted([p for p in aig_root.iterdir() if p.is_dir()])
+    design_names = [p.name for p in design_dirs]
+
+    tier0_zip_count = 0
+    tier1_zip_count = 0
+    missing_tier0_designs: List[str] = []
+    missing_tier1_designs: List[str] = []
+    missing_tier1_by_design: Dict[str, List[str]] = {}
+
+    for design_dir in design_dirs:
+        design = design_dir.name
+
+        tier0_zip = design_dir / "tier0.zip"
+        tier0_zip_nested = design_dir / "tier0" / "tier0.zip"
+        has_tier0_zip = tier0_zip.exists() or tier0_zip_nested.exists()
+        if has_tier0_zip:
+            tier0_zip_count += 1
+        else:
+            missing_tier0_designs.append(design)
+
+        tier1_dir = design_dir / "tier1"
+        found_algos = set()
+        if tier1_dir.is_dir():
+            for algo in VALID_ALGORITHMS:
+                if (tier1_dir / f"{design}_{algo}.zip").exists():
+                    found_algos.add(algo)
+                    tier1_zip_count += 1
+
+        if len(found_algos) == 0:
+            missing_tier1_designs.append(design)
+
+        missing_algos = sorted(VALID_ALGORITHMS - found_algos)
+        if missing_algos:
+            missing_tier1_by_design[design] = missing_algos
+
+    expected_designs = len(design_names)
+    expected_tier0_zip = expected_designs
+    expected_tier1_zip = expected_designs * len(VALID_ALGORITHMS)
+
+    return {
+        "design_count": expected_designs,
+        "design_names": design_names,
+        "tier0_zip_count": tier0_zip_count,
+        "tier1_zip_count": tier1_zip_count,
+        "expected_tier0_zip": expected_tier0_zip,
+        "expected_tier1_zip": expected_tier1_zip,
+        "missing_tier0_designs": missing_tier0_designs,
+        "missing_tier1_designs": missing_tier1_designs,
+        "missing_tier1_by_design": missing_tier1_by_design,
+    }
 
 
 def discover_graph_tasks(
     aig_root: Path, allow_unmatched_names: bool
-) -> Tuple[List[GraphTask], int]:
+) -> Tuple[List[GraphTask], int, Dict[str, int]]:
     paths = sorted(aig_root.rglob("*.aig"))
     tasks: List[GraphTask] = []
     unmatched = 0
+    source_counts = {
+        "filesystem_aig": 0,
+        "zip_aig": 0,
+        "duplicates_ignored": 0,
+        "zip_files_scanned": 0,
+    }
+    seen_ids = set()
 
-    for path in paths:
-        parsed = parse_aig_name(path.name)
+    def try_add_task(
+        filename: str,
+        aig_path: str,
+        archive_path: str = "",
+        archive_member: str = "",
+    ) -> None:
+        nonlocal unmatched
+
+        parsed = parse_aig_name(filename)
         if parsed is None:
             unmatched += 1
-            continue
+            return
 
         tier_id, algorithm, design = parsed
+        key = (tier_id, algorithm, design, filename)
+        if key in seen_ids:
+            source_counts["duplicates_ignored"] += 1
+            return
+
+        seen_ids.add(key)
         tasks.append(
             GraphTask(
                 task_id=0,
                 tier_id=tier_id,
                 algorithm=algorithm,
                 design=design,
-                filename=path.name,
-                aig_path=str(path),
+                filename=filename,
+                aig_path=aig_path,
+                archive_path=archive_path,
+                archive_member=archive_member,
             )
         )
+
+    for path in paths:
+        source_counts["filesystem_aig"] += 1
+        try_add_task(filename=path.name, aig_path=str(path))
+
+    zip_paths = sorted(aig_root.rglob("*.zip"))
+    for zip_path in zip_paths:
+        source_counts["zip_files_scanned"] += 1
+        try:
+            with zipfile.ZipFile(zip_path, "r") as zf:
+                for info in zf.infolist():
+                    if info.is_dir():
+                        continue
+                    member = info.filename
+                    if not member.lower().endswith(".aig"):
+                        continue
+                    source_counts["zip_aig"] += 1
+                    try_add_task(
+                        filename=Path(member).name,
+                        aig_path=f"{zip_path}::{member}",
+                        archive_path=str(zip_path),
+                        archive_member=member,
+                    )
+        except zipfile.BadZipFile as exc:
+            raise ValueError(f"invalid zip archive encountered: {zip_path}") from exc
 
     if unmatched > 0 and not allow_unmatched_names:
         raise ValueError(
@@ -72,10 +179,12 @@ def discover_graph_tasks(
                 design=task.design,
                 filename=task.filename,
                 aig_path=task.aig_path,
+                archive_path=task.archive_path,
+                archive_member=task.archive_member,
             )
         )
 
-    return tasks_with_id, unmatched
+    return tasks_with_id, unmatched, source_counts
 
 
 def artifact_output_base_path(final_out_root: Path, task: GraphTask) -> Path:
@@ -91,15 +200,16 @@ def graph_output_path(final_out_root: Path, task: GraphTask) -> Path:
     return artifact_output_base_path(final_out_root, task).with_suffix(".pt")
 
 
-def construct_graph_data_placeholder(task: GraphTask) -> object:
+def construct_graph_data_placeholder(aig_path: str) -> object:
     """
     Expected future behavior:
-    - Read AIG from task.aig_path.
+    - Read AIG from aig_path.
     - Construct and return a PyG Data object.
     """
     # Lazy import to keep the main process lightweight.
     from data.data_utils import aig_to_pytorch_geometric
-    return aig_to_pytorch_geometric(task.aig_path)
+
+    return aig_to_pytorch_geometric(aig_path)
 
 
 def save_graph_artifact(out_path: Path, graph_obj: object) -> None:
@@ -128,12 +238,23 @@ def process_task(task: GraphTask, cfg: WorkerConfig) -> Dict[str, str]:
     try:
         graph_path = graph_output_path(Path(cfg.final_out_root), task)
 
-        if graph_path.exists():
+        if graph_path.exists() and not cfg.overwrite:
             result["status"] = "skipped:exists"
             result["output_path"] = str(graph_path)
             return result
 
-        graph_obj = construct_graph_data_placeholder(task)
+        if task.archive_path:
+            with TemporaryDirectory(prefix="preprocess_aig_") as tmp_dir:
+                extracted_path = Path(tmp_dir) / task.filename
+                with zipfile.ZipFile(task.archive_path, "r") as zf:
+                    with (
+                        zf.open(task.archive_member, "r") as src,
+                        open(extracted_path, "wb") as dst,
+                    ):
+                        shutil.copyfileobj(src, dst)
+                graph_obj = construct_graph_data_placeholder(str(extracted_path))
+        else:
+            graph_obj = construct_graph_data_placeholder(task.aig_path)
         if graph_obj is None:
             raise RuntimeError(
                 "graph construction returned None; expected a PyG object"
@@ -167,7 +288,13 @@ def process_tasks_parallel(
     failed_tasks: List[Dict[str, str]] = []
 
     # Progress bar for visual feedback during parallel processing
-    pb = tqdm(total=len(tasks), desc="preprocessing", unit="tasks", file=sys.stderr, disable=not sys.stderr.isatty())
+    pb = tqdm(
+        total=len(tasks),
+        desc="preprocessing",
+        unit="tasks",
+        file=sys.stderr,
+        disable=not sys.stderr.isatty(),
+    )
 
     def drain_completed(pending: Dict[object, int]) -> None:
         nonlocal completed, errors
@@ -238,8 +365,35 @@ def run_pipeline(args: argparse.Namespace) -> int:
     final_out_root = Path(args.final_out).expanduser().resolve()
     final_out_root.mkdir(parents=True, exist_ok=True)
 
-    print(f"discovery: scanning .aig files under {aig_root}")
-    tasks, unmatched = discover_graph_tasks(
+    layout = summarize_archive_layout(aig_root)
+    print(
+        "layout: "
+        f"designs={layout['design_count']} "
+        f"tier0_zip={layout['tier0_zip_count']}/{layout['expected_tier0_zip']} "
+        f"tier1_zip={layout['tier1_zip_count']}/{layout['expected_tier1_zip']} "
+        f"(expected tier1 = designs x {len(VALID_ALGORITHMS)})"
+    )
+    if layout["missing_tier0_designs"]:
+        print(
+            "layout: missing tier0.zip designs (head): "
+            + ", ".join(layout["missing_tier0_designs"][:15])
+        )
+    if layout["missing_tier1_designs"]:
+        print(
+            "layout: missing all tier1 zips designs (head): "
+            + ", ".join(layout["missing_tier1_designs"][:15])
+        )
+
+    missing_tier1_by_design = layout["missing_tier1_by_design"]
+    if missing_tier1_by_design:
+        examples = []
+        for design in sorted(missing_tier1_by_design)[:10]:
+            missing_algos = ",".join(missing_tier1_by_design[design])
+            examples.append(f"{design}:[{missing_algos}]")
+        print("layout: missing tier1 algo zips examples: " + "; ".join(examples))
+
+    print(f"discovery: scanning .aig files under {aig_root} and inside .zip archives")
+    tasks, unmatched, source_counts = discover_graph_tasks(
         aig_root, allow_unmatched_names=bool(args.allow_unmatched_names)
     )
     discovered_total = len(tasks)
@@ -247,6 +401,10 @@ def run_pipeline(args: argparse.Namespace) -> int:
     print(
         "discovery: "
         f"matched={discovered_total} unmatched={unmatched} "
+        f"filesystem_aig={source_counts.get('filesystem_aig', 0)} "
+        f"zip_aig={source_counts.get('zip_aig', 0)} "
+        f"zip_files_scanned={source_counts.get('zip_files_scanned', 0)} "
+        f"duplicates_ignored={source_counts.get('duplicates_ignored', 0)} "
         f"(tier0/tier1 inferred by filename regex)"
     )
 
@@ -255,7 +413,10 @@ def run_pipeline(args: argparse.Namespace) -> int:
 
     stats = process_tasks_parallel(
         tasks=tasks,
-        cfg=WorkerConfig(final_out_root=str(final_out_root)),
+        cfg=WorkerConfig(
+            final_out_root=str(final_out_root),
+            overwrite=bool(args.overwrite),
+        ),
         workers=args.workers,
         max_in_flight=max(args.workers, args.max_in_flight),
         fail_fast=bool(args.fail_fast),
@@ -347,6 +508,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--allow-unmatched-names",
         action="store_true",
         help="Skip .aig files that do not match the tier0/tier1 filename regex",
+    )
+    parser.add_argument(
+        "--overwrite",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Overwrite existing graph artifacts when present (default: disabled)",
     )
     return parser
 
