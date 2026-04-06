@@ -4,9 +4,9 @@ import torch.nn.functional as F
 from torch_geometric.nn import MessagePassing
 
 try:
-    from model_utils import get_pyg_pool, get_norm_layer
+    from model_utils import get_norm_layer
 except ImportError:  # pragma: no cover - fallback for package-style imports
-    from models.model_utils import get_pyg_pool, get_norm_layer
+    from models.model_utils import get_norm_layer
 
 class VanillaMPNNConv(MessagePassing):
     """

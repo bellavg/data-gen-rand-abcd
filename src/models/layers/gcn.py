@@ -11,14 +11,12 @@ from torch_geometric.typing import Adj, OptTensor, SparseTensor
 try:
     from model_utils import (
         get_norm_layer, 
-        get_pyg_pool, 
         validate_positional_encoding, 
         integrate_positional_encoding
     )
 except ImportError:  # pragma: no cover - fallback for package-style imports
     from models.model_utils import (
         get_norm_layer, 
-        get_pyg_pool, 
         validate_positional_encoding, 
         integrate_positional_encoding
     )

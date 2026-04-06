@@ -3,7 +3,6 @@ import torch.nn as nn
 import numpy as np
 import networkx as nx
 from torch_geometric.data import Data
-import torch_geometric.transforms as T
 from torch_geometric.utils import to_scipy_sparse_matrix
 from scipy.sparse.csgraph import shortest_path
 
@@ -11,9 +10,7 @@ from scipy.sparse.csgraph import shortest_path
 # ==============================================================================
 # Highly Scalable Encodings for Massive DAGs / AIGs (O(V + E) complexity)
 # ==============================================================================
-import torch
-from torch_geometric.utils import k_hop_subgraph, to_undirected
-from torch_geometric.data import Data
+from torch_geometric.utils import k_hop_subgraph
 
 class LocalRelativeEncoding:
     """
@@ -66,7 +63,8 @@ class LocalRelativeEncoding:
         queue = [start_node]
         while queue:
             u = queue.pop(0)
-            if dists[u] >= self.max_hops: continue
+            if dists[u] >= self.max_hops:
+                continue
             # Find neighbors of u
             neighbors = edge_index[1][edge_index[0] == u]
             for v in neighbors:
@@ -75,7 +73,7 @@ class LocalRelativeEncoding:
                     dists[v] = dists[u] + 1
                     queue.append(v)
         return dists
-        
+
 
 class FastAIGDepthPE:
     # to do add depth by yoursel fin data rpocessing 
