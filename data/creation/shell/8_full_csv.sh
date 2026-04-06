@@ -20,6 +20,7 @@ WORKERS="${WORKERS:-${SLURM_CPUS_PER_TASK:-24}}"
 DESIGNS_DIR="$BASE_DIR/data/designs"
 MASTER_DIR="$DESIGNS_DIR/design_metadata"
 MASTER_CSV="$MASTER_DIR/full_master.csv"
+PER_ALGO_DIR="$MASTER_DIR"
 REPORT_DIR="$BASE_DIR/logs/8_checks"
 REPORT_PATH="$REPORT_DIR/full_master_report_${SLURM_JOB_ID:-manual}.txt"
 
@@ -39,18 +40,20 @@ JOB_SCRATCH="$(mktemp -d "$SCRATCH_PARENT/final_job8_${SLURM_JOB_ID:-manual}_XXX
 SCRATCH_CSV_ROOT="$JOB_SCRATCH/per_design_csv"
 SCRATCH_ZIP_ROOT="$JOB_SCRATCH/tier1_zip"
 SCRATCH_UNZIP_ROOT="$JOB_SCRATCH/unzipped_tier1"
+SCRATCH_PER_ALGO_DIR="$JOB_SCRATCH/per_algorithm_csv"
 BOOTSTRAP_MASTER="$JOB_SCRATCH/full_master.bootstrap.csv"
 MASTER_TMP="$JOB_SCRATCH/full_master.updated.csv"
 REPORT_TMP="$JOB_SCRATCH/full_master_report.tmp.txt"
 trap 'rm -rf "$JOB_SCRATCH"' EXIT
 
-mkdir -p "$MASTER_DIR" "$REPORT_DIR" "$SCRATCH_CSV_ROOT" "$SCRATCH_ZIP_ROOT" "$SCRATCH_UNZIP_ROOT"
+mkdir -p "$MASTER_DIR" "$PER_ALGO_DIR" "$REPORT_DIR" "$SCRATCH_CSV_ROOT" "$SCRATCH_ZIP_ROOT" "$SCRATCH_UNZIP_ROOT" "$SCRATCH_PER_ALGO_DIR"
 
 echo "=================================================="
 echo " JOB 8: Build full master CSV + add Tier-0 + full stats"
 echo " Time: $(date)"
 echo " Base dir: $BASE_DIR"
 echo " Master output: $MASTER_CSV"
+echo " Per-algorithm CSV dir: $PER_ALGO_DIR"
 echo " Report output: $REPORT_PATH"
 echo " Scratch dir: $JOB_SCRATCH"
 echo " EPS: $EPS"
@@ -98,26 +101,50 @@ fi
 
 echo ">>> Staging tier1 zip logs to scratch..."
 staged_zip_count=0
+staged_design_sources=0
 for design in "${DESIGNS[@]}"; do
-    for algo in Orchestrate Deepsyn Syn4 C2RS; do
-        src_dir="$DESIGNS_DIR/$design/design_metadata/raw_logs/optimization_logs/tier1/$algo"
-        dst_dir="$SCRATCH_ZIP_ROOT/$design/$algo"
+    selected_algo=""
+    selected_zip_count=0
 
-        if [[ -d "$src_dir" ]]; then
-            mkdir -p "$dst_dir"
-            shopt -s nullglob
-            for z in "$src_dir"/*.zip; do
-                cp -f "$z" "$dst_dir/"
-                staged_zip_count=$((staged_zip_count + 1))
-            done
-            shopt -u nullglob
+    # Tier-0 stats are identical across tier1 algorithms for the same input AIG.
+    # Prefer one source algorithm per design to avoid 4x redundant parsing.
+    for algo in Orchestrate Syn4 C2RS Deepsyn; do
+        src_dir="$DESIGNS_DIR/$design/design_metadata/raw_logs/optimization_logs/tier1/$algo"
+        if [[ ! -d "$src_dir" ]]; then
+            continue
         fi
+
+        shopt -s nullglob
+        zips=("$src_dir"/*.zip)
+        shopt -u nullglob
+
+        if [[ ${#zips[@]} -eq 0 ]]; then
+            continue
+        fi
+
+        dst_dir="$SCRATCH_ZIP_ROOT/$design/$algo"
+        mkdir -p "$dst_dir"
+        for z in "${zips[@]}"; do
+            cp -f "$z" "$dst_dir/"
+            staged_zip_count=$((staged_zip_count + 1))
+            selected_zip_count=$((selected_zip_count + 1))
+        done
+        selected_algo="$algo"
+        break
     done
+
+    if [[ -n "$selected_algo" ]]; then
+        staged_design_sources=$((staged_design_sources + 1))
+        echo "Tier0 source for $design: $selected_algo ($selected_zip_count zip[s])"
+    else
+        echo "WARNING: No tier1 zip source found for $design; no new tier0 rows will be derived for this design."
+    fi
 done
 
 echo ">>> Staged $staged_zip_count tier1 zip archive(s) to scratch."
+echo ">>> Tier0 source selected for $staged_design_sources design(s)."
 
-python3 - "$BOOTSTRAP_MASTER" "$MASTER_TMP" "$SCRATCH_ZIP_ROOT" "$EPS" "$WORKERS" "$SCRATCH_UNZIP_ROOT" "${#DESIGNS[@]}" "${DESIGNS[@]}" <<'PY' | tee "$REPORT_TMP"
+python3 - "$BOOTSTRAP_MASTER" "$MASTER_TMP" "$SCRATCH_ZIP_ROOT" "$EPS" "$WORKERS" "$SCRATCH_UNZIP_ROOT" "$SCRATCH_PER_ALGO_DIR" "${#DESIGNS[@]}" "${DESIGNS[@]}" <<'PY' | tee "$REPORT_TMP"
 import csv
 import math
 import re
@@ -133,10 +160,12 @@ zip_root = Path(sys.argv[3])
 eps = float(sys.argv[4])
 workers = max(1, int(sys.argv[5]))
 unzip_root = Path(sys.argv[6])
-expected_designs = int(sys.argv[7])
-designs = sys.argv[8:]
+algo_out_dir = Path(sys.argv[7])
+expected_designs = int(sys.argv[8])
+designs = sys.argv[9:]
 
 algorithms = ["Orchestrate", "Deepsyn", "Syn4", "C2RS"]
+tier0_source_order = ["Orchestrate", "Syn4", "C2RS", "Deepsyn"]
 stats_regex = re.compile(r"i/o\s*=\s*(\d+)/\s*(\d+).*?(?:and|nd)\s*=\s*(\d+).*?lev\s*=\s*(\d+)")
 filename_regex = re.compile(r"syn([0-9X]+)_step(\d+)")
 
@@ -163,6 +192,7 @@ added_tier0 = 0
 tier0_parse_failures = 0
 unzipped_zip_count = 0
 matched_tier1_log_count = 0
+tier0_source_design_count = 0
 
 
 def build_tier0_row_from_log(design, algo, log_name, content):
@@ -281,14 +311,23 @@ existing_paths = {
 
 zip_tasks = []
 for design in designs:
-    for algo in algorithms:
+    chosen_algo = None
+    for algo in tier0_source_order:
         algo_dir = zip_root / design / algo
         if not algo_dir.exists():
             continue
+        if any(algo_dir.glob("*.zip")):
+            chosen_algo = algo
+            break
 
-        for idx, zip_path in enumerate(sorted(algo_dir.glob("*.zip"))):
-            extract_dir = unzip_root / design / algo / f"{zip_path.stem}_{idx}"
-            zip_tasks.append((str(zip_path), str(extract_dir), design, algo))
+    if chosen_algo is None:
+        continue
+
+    tier0_source_design_count += 1
+    algo_dir = zip_root / design / chosen_algo
+    for idx, zip_path in enumerate(sorted(algo_dir.glob("*.zip"))):
+        extract_dir = unzip_root / design / chosen_algo / f"{zip_path.stem}_{idx}"
+        zip_tasks.append((str(zip_path), str(extract_dir), design, chosen_algo))
 
 if zip_tasks:
     active_workers = min(workers, len(zip_tasks))
@@ -318,6 +357,40 @@ with open(master_out, "w", newline="") as f:
     writer.writeheader()
     writer.writerows(rows)
 
+algo_out_dir.mkdir(parents=True, exist_ok=True)
+tier0_rows_shared = []
+rows_by_algo_specific = {algo: [] for algo in algorithms}
+for row in rows:
+    tier_raw = (row.get("tier_id") or "").strip()
+    if tier_raw == "":
+        tier_value = 0
+    else:
+        try:
+            tier_value = int(float(tier_raw))
+        except ValueError:
+            tier_value = -1
+
+    if tier_value == 0:
+        tier0_rows_shared.append(row)
+
+    algo_value = (row.get("algorithm") or "").strip()
+    if algo_value in rows_by_algo_specific:
+        rows_by_algo_specific[algo_value].append(row)
+
+rows_by_algo = {
+    algo: list(tier0_rows_shared) + rows_by_algo_specific[algo]
+    for algo in algorithms
+}
+
+algo_csv_paths = {}
+for algo in algorithms:
+    algo_path = algo_out_dir / f"full_master_{algo}.csv"
+    with open(algo_path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows_by_algo[algo])
+    algo_csv_paths[algo] = algo_path
+
 non_empty_counts = {c: 0 for c in fieldnames}
 tier_counts = Counter()
 algo_counts = Counter()
@@ -339,6 +412,31 @@ algo_opt_min = {}
 algo_opt_max = {}
 algo_depth_opt_min = {}
 algo_depth_opt_max = {}
+
+tier_numeric_counts = Counter()
+tier_node_sum = Counter()
+tier_depth_sum = Counter()
+
+tier0_by_key = {}
+tier1_by_key_algo = {}
+tier2_records = []
+
+
+def parse_tier2_source_algo(file_path, root_design):
+    """Extract tier1 source algorithm from tier2 file name.
+
+    Expected name pattern:
+    {design}_{tier1_algo}_{tier2_algo}_tier2_syn{recipe}_step{step}.aig
+    """
+    name = Path(file_path).name
+    prefix = f"{root_design}_"
+    if not name.startswith(prefix):
+        return None
+    remainder = name[len(prefix):]
+    for algo_name in algorithms:
+        if remainder.startswith(f"{algo_name}_"):
+            return algo_name
+    return None
 
 for line_no, row in enumerate(rows, start=2):
     total_rows += 1
@@ -414,10 +512,47 @@ for line_no, row in enumerate(rows, start=2):
         continue
 
     valid_rows += 1
+    tier_numeric_counts[tier_id] += 1
+    tier_node_sum[tier_id] += nodes
+    tier_depth_sum[tier_id] += depth
+
     if abs(node_opt) <= eps:
         node_opt_zero_total += 1
     if abs(node_opt) <= eps and depth_opt > 0.0:
         match_rows += 1
+
+    recipe_raw = (row.get("recipe_id") or "").strip()
+    step_raw = (row.get("step_id") or "").strip()
+    try:
+        recipe_id_num = int(float(recipe_raw))
+        step_id_num = int(float(step_raw))
+    except ValueError:
+        recipe_id_num = None
+        step_id_num = None
+
+    if root_design and recipe_id_num is not None and step_id_num is not None:
+        if tier_id == 0:
+            key = (root_design, recipe_id_num, step_id_num)
+            if key not in tier0_by_key:
+                tier0_by_key[key] = (nodes, depth, line_no, file_path)
+        elif tier_id == 1 and algorithm not in null_algorithms:
+            key = (root_design, algorithm, recipe_id_num, step_id_num)
+            tier1_by_key_algo[key] = (nodes, depth, line_no, file_path)
+        elif tier_id == 2:
+            source_algo = parse_tier2_source_algo(file_path, root_design)
+            tier2_records.append(
+                (
+                    root_design,
+                    source_algo,
+                    recipe_id_num,
+                    step_id_num,
+                    nodes,
+                    depth,
+                    line_no,
+                    file_path,
+                    algorithm,
+                )
+            )
 
     if algorithm not in null_algorithms:
         algo_range_count[algorithm] += 1
@@ -462,6 +597,107 @@ for line_no, row in enumerate(rows, start=2):
 
 rate_valid = (100.0 * match_rows / valid_rows) if valid_rows else 0.0
 rate_total = (100.0 * match_rows / total_rows) if total_rows else 0.0
+
+t01_checked = 0
+t01_missing_parent = 0
+t01_node_violations = 0
+t01_depth_violations = 0
+t01_samples = []
+
+for (design_name, algo_name, recipe_id_num, step_id_num), (
+    t1_nodes,
+    t1_depth,
+    t1_line,
+    t1_path,
+) in tier1_by_key_algo.items():
+    parent = tier0_by_key.get((design_name, recipe_id_num, step_id_num))
+    if parent is None:
+        t01_missing_parent += 1
+        continue
+
+    t01_checked += 1
+    t0_nodes, t0_depth, t0_line, t0_path = parent
+
+    node_bad = t1_nodes > t0_nodes
+    depth_bad = t1_depth > t0_depth
+    if node_bad:
+        t01_node_violations += 1
+    if depth_bad:
+        t01_depth_violations += 1
+
+    if (node_bad or depth_bad) and len(t01_samples) < 10:
+        t01_samples.append(
+            {
+                "design": design_name,
+                "algo": algo_name,
+                "recipe": recipe_id_num,
+                "step": step_id_num,
+                "t0_nodes": t0_nodes,
+                "t1_nodes": t1_nodes,
+                "t0_depth": t0_depth,
+                "t1_depth": t1_depth,
+                "t0_line": t0_line,
+                "t1_line": t1_line,
+                "t0_path": t0_path,
+                "t1_path": t1_path,
+            }
+        )
+
+t12_checked = 0
+t12_missing_parent = 0
+t12_missing_source = 0
+t12_node_violations = 0
+t12_depth_violations = 0
+t12_samples = []
+
+for (
+    design_name,
+    source_algo,
+    recipe_id_num,
+    step_id_num,
+    t2_nodes,
+    t2_depth,
+    t2_line,
+    t2_path,
+    target_algo,
+) in tier2_records:
+    if source_algo is None:
+        t12_missing_source += 1
+        continue
+
+    parent = tier1_by_key_algo.get((design_name, source_algo, recipe_id_num, step_id_num))
+    if parent is None:
+        t12_missing_parent += 1
+        continue
+
+    t12_checked += 1
+    t1_nodes, t1_depth, t1_line, t1_path = parent
+
+    node_bad = t2_nodes > t1_nodes
+    depth_bad = t2_depth > t1_depth
+    if node_bad:
+        t12_node_violations += 1
+    if depth_bad:
+        t12_depth_violations += 1
+
+    if (node_bad or depth_bad) and len(t12_samples) < 10:
+        t12_samples.append(
+            {
+                "design": design_name,
+                "source_algo": source_algo,
+                "target_algo": target_algo,
+                "recipe": recipe_id_num,
+                "step": step_id_num,
+                "t1_nodes": t1_nodes,
+                "t2_nodes": t2_nodes,
+                "t1_depth": t1_depth,
+                "t2_depth": t2_depth,
+                "t1_line": t1_line,
+                "t2_line": t2_line,
+                "t1_path": t1_path,
+                "t2_path": t2_path,
+            }
+        )
 
 errors = []
 tier0 = tier_counts.get(0, 0)
@@ -540,7 +776,10 @@ print(f"Master input CSV: {master_in}")
 print(f"Master output temp CSV: {master_out}")
 print(f"Scratch zip root: {zip_root}")
 print(f"Scratch extraction root: {unzip_root}")
+print(f"Per-algorithm output temp dir: {algo_out_dir}")
+print("Per-algorithm membership rule: include all tier0 rows + rows where algorithm column equals target algorithm")
 print(f"Parallel workers used: {workers if not zip_tasks else min(workers, len(zip_tasks))}")
+print(f"Designs with a selected tier1 source for tier0: {tier0_source_design_count}")
 print(f"Tier1 zip archives extracted in scratch: {unzipped_zip_count}")
 print(f"Tier1 logs matched for tier0 derivation: {matched_tier1_log_count}")
 print(f"Tier0 rows added this run: {added_tier0}")
@@ -555,6 +794,16 @@ print(f"  tier0: {tier0}")
 print(f"  tier1: {tier1}")
 print(f"  tier2: {tier2}")
 print(f"  other: {other_tiers}")
+
+print("Tier means (valid numeric rows):")
+for tier_value in sorted(tier_numeric_counts.keys()):
+    count = tier_numeric_counts[tier_value]
+    mean_nodes = tier_node_sum[tier_value] / count if count else 0.0
+    mean_depth = tier_depth_sum[tier_value] / count if count else 0.0
+    print(
+        f"  tier{tier_value}: mean_nodes={mean_nodes:.6f}, "
+        f"mean_depth={mean_depth:.6f}, rows={count}"
+    )
 
 print("Algorithm summary (non-empty values):")
 if algo_counts:
@@ -575,6 +824,101 @@ if algo_range_count:
 else:
     print("  none")
 
+print("=== Per-Algorithm CSV Stats ===")
+per_algo_lengths = {}
+for algo in algorithms:
+    algo_rows = rows_by_algo.get(algo, [])
+    per_algo_lengths[algo] = len(algo_rows)
+    tier_breakdown = Counter()
+    algo_valid = 0
+    algo_invalid = 0
+    algo_zero_node = 0
+    algo_zero_node_pos_depth = 0
+    node_opt_min = None
+    node_opt_max = None
+    depth_opt_min = None
+    depth_opt_max = None
+
+    for algo_row in algo_rows:
+        tier_raw = (algo_row.get("tier_id") or "").strip()
+        if tier_raw == "":
+            tier_value = 0
+        else:
+            try:
+                tier_value = int(float(tier_raw))
+            except ValueError:
+                tier_value = -1
+        tier_breakdown[tier_value] += 1
+
+        try:
+            node_opt = float((algo_row.get("optimizability") or "").strip())
+            depth_opt = float((algo_row.get("depth_optimizability") or "").strip())
+        except ValueError:
+            algo_invalid += 1
+            continue
+
+        if not (math.isfinite(node_opt) and math.isfinite(depth_opt)):
+            algo_invalid += 1
+            continue
+
+        algo_valid += 1
+        if abs(node_opt) <= eps:
+            algo_zero_node += 1
+        if abs(node_opt) <= eps and depth_opt > 0.0:
+            algo_zero_node_pos_depth += 1
+
+        if node_opt_min is None or node_opt < node_opt_min:
+            node_opt_min = node_opt
+        if node_opt_max is None or node_opt > node_opt_max:
+            node_opt_max = node_opt
+        if depth_opt_min is None or depth_opt < depth_opt_min:
+            depth_opt_min = depth_opt
+        if depth_opt_max is None or depth_opt > depth_opt_max:
+            depth_opt_max = depth_opt
+
+    tier_text = ", ".join(
+        f"tier{tier_id}={count}" for tier_id, count in sorted(tier_breakdown.items())
+    )
+    if not tier_text:
+        tier_text = "none"
+
+    print(
+        f"  {algo}: path={algo_csv_paths[algo]}, rows={len(algo_rows)}, "
+        f"valid_numeric={algo_valid}, invalid_numeric={algo_invalid}"
+    )
+    print(f"    tier_breakdown: {tier_text}")
+    print(
+        f"    node_opt_zero={algo_zero_node}, "
+        f"node_opt_zero_and_depth_pos={algo_zero_node_pos_depth}"
+    )
+    if node_opt_min is None:
+        print("    ranges: N/A")
+    else:
+        print(
+            f"    ranges: node_opt[{node_opt_min:.6f}, {node_opt_max:.6f}], "
+            f"depth_opt[{depth_opt_min:.6f}, {depth_opt_max:.6f}]"
+        )
+
+if per_algo_lengths:
+    min_algo = min(per_algo_lengths, key=per_algo_lengths.get)
+    max_algo = max(per_algo_lengths, key=per_algo_lengths.get)
+    min_len = per_algo_lengths[min_algo]
+    max_len = per_algo_lengths[max_algo]
+    delta = max_len - min_len
+    denom = max(1, max_len)
+    delta_pct = 100.0 * delta / denom
+    print("Per-algorithm length consistency check:")
+    print(
+        f"  min={min_len} ({min_algo}), max={max_len} ({max_algo}), "
+        f"delta={delta}, delta_pct={delta_pct:.4f}%"
+    )
+    if delta == 0:
+        print("  status: equal")
+    elif delta_pct <= 1.0:
+        print("  status: essentially equal (<=1.0% spread)")
+    else:
+        print("  status: not essentially equal (>1.0% spread)")
+
 print("=== Zero Node + Positive Depth Check ===")
 print(f"Total rows: {total_rows}")
 print(f"Valid numeric rows: {valid_rows}")
@@ -585,6 +929,36 @@ print("Condition: abs(optimizability) <= eps AND depth_optimizability > 0")
 print(f"Matches: {match_rows}")
 print(f"Percent of valid rows: {rate_valid:.6f}%")
 print(f"Percent of total rows: {rate_total:.6f}%")
+
+print("=== Monotonic Sanity Checks ===")
+print("Check A: tier0 should be >= tier1 (same design/recipe/step)")
+print(f"  compared rows: {t01_checked}")
+print(f"  missing tier0 parents: {t01_missing_parent}")
+print(f"  node violations (tier1 > tier0): {t01_node_violations}")
+print(f"  depth violations (tier1 > tier0): {t01_depth_violations}")
+if t01_samples:
+    print("  sample violations:")
+    for s in t01_samples:
+        print(
+            "    - {design} {algo} syn{recipe} step{step}: "
+            "nodes t0={t0_nodes} t1={t1_nodes}, depth t0={t0_depth} t1={t1_depth} "
+            "(lines t0={t0_line}, t1={t1_line})".format(**s)
+        )
+
+print("Check B: tier1 should be >= tier2 (same design/source-algo/recipe/step)")
+print(f"  compared rows: {t12_checked}")
+print(f"  missing tier1 parents: {t12_missing_parent}")
+print(f"  missing tier2 source algo parse: {t12_missing_source}")
+print(f"  node violations (tier2 > tier1): {t12_node_violations}")
+print(f"  depth violations (tier2 > tier1): {t12_depth_violations}")
+if t12_samples:
+    print("  sample violations:")
+    for s in t12_samples:
+        print(
+            "    - {design} {source_algo}->{target_algo} syn{recipe} step{step}: "
+            "nodes t1={t1_nodes} t2={t2_nodes}, depth t1={t1_depth} t2={t2_depth} "
+            "(lines t1={t1_line}, t2={t2_line})".format(**s)
+        )
 
 if max_nodes is None or max_depth is None:
     print("Max nodes: N/A")
@@ -621,6 +995,18 @@ PY
 mv -f "$MASTER_TMP" "$MASTER_CSV"
 mv -f "$REPORT_TMP" "$REPORT_PATH"
 
+algo_csv_moved=0
+for algo in Orchestrate Deepsyn Syn4 C2RS; do
+    src_csv="$SCRATCH_PER_ALGO_DIR/full_master_${algo}.csv"
+    dst_csv="$PER_ALGO_DIR/full_master_${algo}.csv"
+    if [[ -f "$src_csv" ]]; then
+        mv -f "$src_csv" "$dst_csv"
+        algo_csv_moved=$((algo_csv_moved + 1))
+    else
+        echo "WARNING: Missing per-algorithm CSV in scratch: $src_csv"
+    fi
+done
+
 total_lines=$(wc -l < "$MASTER_CSV")
 total_rows=$((total_lines - 1))
 
@@ -629,6 +1015,16 @@ echo " Master CSV completed"
 echo " Designs included from per-design CSVs: $included_count"
 echo " Missing per-design CSVs: $missing_count"
 echo " Total rows written: $total_rows"
+echo " Per-algorithm CSVs moved: $algo_csv_moved / 4"
+for algo in Orchestrate Deepsyn Syn4 C2RS; do
+    algo_csv="$PER_ALGO_DIR/full_master_${algo}.csv"
+    if [[ -f "$algo_csv" ]]; then
+        algo_lines=$(wc -l < "$algo_csv")
+        algo_rows=$((algo_lines - 1))
+        echo "   $algo rows: $algo_rows"
+    fi
+done
 echo " Saved to: $MASTER_CSV"
+echo " Per-algorithm CSV dir: $PER_ALGO_DIR"
 echo " Report saved to: $REPORT_PATH"
 echo "=================================================="
