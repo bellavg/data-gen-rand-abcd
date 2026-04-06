@@ -135,6 +135,20 @@ def aig_to_pytorch_geometric(
     level_features = []
     pi_path_features = []
     local_sp_features_list = []
+    max_path_node = max(path_counts, key=path_counts.get) if path_counts else None
+    max_path_value = path_counts[max_path_node] if max_path_node is not None else 0
+    debug_path_counts = os.getenv("AIG_DEBUG_PATH_COUNTS", "0") == "1"
+    if debug_path_counts and max_path_node is not None:
+        max_bit_length = int(max_path_value).bit_length()
+        approx_log10 = (
+            (max_bit_length - 1) * 0.3010299956639812 if max_bit_length > 0 else 0.0
+        )
+        print(
+            "debug:path_counts "
+            f"aig_path={aig_path} num_nodes={num_nodes} num_edges={G.number_of_edges()} "
+            f"max_path_node={max_path_node} max_path_bit_length={max_bit_length} "
+            f"max_path_approx_log10={approx_log10:.2f}"
+        )
 
     # Iterate over node_order to keep row ordering aligned with node_to_idx.
     for n in node_order:
@@ -145,7 +159,23 @@ def aig_to_pytorch_geometric(
 
         # Separate positional encodings
         level_features.append([float(data.get("level", 0.0))])
-        pi_path_features.append([float(path_counts[n])])
+        try:
+            pi_paths_value = float(path_counts[n])
+        except OverflowError as exc:
+            value = path_counts[n]
+            bit_length = int(value).bit_length()
+            approx_log10 = (
+                (bit_length - 1) * 0.3010299956639812 if bit_length > 0 else 0.0
+            )
+            raise OverflowError(
+                "pi_paths overflow while converting path-count to float; "
+                f"aig_path={aig_path}; node_label={n}; node_index={node_to_idx.get(n)}; "
+                f"level={data.get('level', 0)}; in_degree={G.in_degree(n)}; out_degree={G.out_degree(n)}; "
+                f"path_count_bit_length={bit_length}; path_count_approx_log10={approx_log10:.2f}; "
+                f"max_path_node={max_path_node}; max_path_bit_length={int(max_path_value).bit_length() if max_path_node is not None else 0}; "
+                f"num_nodes={num_nodes}; num_edges={G.number_of_edges()}; max_path_depth={max_path_depth}"
+            ) from exc
+        pi_path_features.append([pi_paths_value])
         local_sp_features_list.append([float(local_sp_feature[n])])
 
     x = torch.tensor(x_features, dtype=torch.float32)
