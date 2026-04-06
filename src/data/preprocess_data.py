@@ -298,6 +298,7 @@ def process_tasks_parallel(
     workers: int,
     max_in_flight: int,
     fail_fast: bool,
+    progress_every: int,
 ) -> Dict[str, object]:
     status_counts: Dict[str, int] = {}
     submitted = 0
@@ -334,7 +335,7 @@ def process_tasks_parallel(
                 )
                 print(result.get("error", ""))
 
-            if completed % 500 == 0:
+            if progress_every > 0 and completed % progress_every == 0:
                 print(
                     f"processing progress: completed={completed} submitted={submitted} total={len(tasks)}"
                 )
@@ -354,7 +355,7 @@ def process_tasks_parallel(
                 pending[fut] = task.task_id
                 submitted += 1
 
-                if submitted % 500 == 0:
+                if progress_every > 0 and submitted % progress_every == 0:
                     print(
                         f"processing queued: submitted={submitted} in_flight={len(pending)} total={len(tasks)}"
                     )
@@ -438,6 +439,7 @@ def run_pipeline(args: argparse.Namespace) -> int:
         workers=args.workers,
         max_in_flight=max(args.workers, args.max_in_flight),
         fail_fast=bool(args.fail_fast),
+        progress_every=args.progress_every,
     )
 
     submitted = int(stats["submitted"])
@@ -532,6 +534,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         action=argparse.BooleanOptionalAction,
         default=False,
         help="Overwrite existing graph artifacts when present (default: disabled)",
+    )
+    parser.add_argument(
+        "--progress-every",
+        type=int,
+        default=10000,
+        help="Print queue/completion updates every N tasks (default: 10000). Set 0 to disable.",
     )
     return parser
 
