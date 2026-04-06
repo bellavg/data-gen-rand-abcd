@@ -6,6 +6,8 @@ from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from dataclasses import dataclass
 from pathlib import Path
 from time import monotonic
+import sys
+from tqdm import tqdm
 from typing import Dict, List, Tuple
 
 from data.data_utils import default_workers, parse_aig_name
@@ -164,6 +166,9 @@ def process_tasks_parallel(
     errors = 0
     failed_tasks: List[Dict[str, str]] = []
 
+    # Progress bar for visual feedback during parallel processing
+    pb = tqdm(total=len(tasks), desc="preprocessing", unit="tasks", file=sys.stderr, disable=not sys.stderr.isatty())
+
     def drain_completed(pending: Dict[object, int]) -> None:
         nonlocal completed, errors
         done, _ = wait(set(pending.keys()), return_when=FIRST_COMPLETED)
@@ -192,24 +197,27 @@ def process_tasks_parallel(
             if fail_fast and status == "error":
                 raise RuntimeError("fail-fast enabled and a worker error occurred")
 
-    with ProcessPoolExecutor(max_workers=workers) as executor:
-        pending: Dict[object, int] = {}
+    try:
+        with ProcessPoolExecutor(max_workers=workers) as executor:
+            pending: Dict[object, int] = {}
 
-        for task in tasks:
-            while len(pending) >= max_in_flight:
+            for task in tasks:
+                while len(pending) >= max_in_flight:
+                    drain_completed(pending)
+
+                fut = executor.submit(process_task, task, cfg)
+                pending[fut] = task.task_id
+                submitted += 1
+
+                if submitted % 500 == 0:
+                    print(
+                        f"processing queued: submitted={submitted} in_flight={len(pending)} total={len(tasks)}"
+                    )
+
+            while pending:
                 drain_completed(pending)
-
-            fut = executor.submit(process_task, task, cfg)
-            pending[fut] = task.task_id
-            submitted += 1
-
-            if submitted % 500 == 0:
-                print(
-                    f"processing queued: submitted={submitted} in_flight={len(pending)} total={len(tasks)}"
-                )
-
-        while pending:
-            drain_completed(pending)
+    finally:
+        pb.close()
 
     return {
         "submitted": submitted,

@@ -38,7 +38,6 @@ python -m data.preprocess_data \
   --aig-root "$AIG_ROOT" \
   --final-out "$FINAL_OUT" \
   --workers "$WORKERS" \
-  --allow-unmatched-names \
-  --progress
+  --allow-unmatched-names 
 
 echo "Finished: $(date)"
