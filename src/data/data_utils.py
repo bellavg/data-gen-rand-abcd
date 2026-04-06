@@ -29,6 +29,10 @@ def default_workers() -> int:
 TIER1_NAME_RE = re.compile(
     r"^(?P<design>.+?)_(?P<algorithm>Orchestrate|Deepsyn|Syn4|C2RS)_tier1_syn(?P<recipe>[0-9X]+)_step(?P<step>\d+)\.aig$"
 )
+TIER1_EXT_NAME_RE = re.compile(
+    r"^(?P<design>.+?)_(?P<algorithm>Orchestrate|Deepsyn|Syn4|C2RS)_tier1_"
+    r"(?:Orchestrate|Deepsyn|Syn4|C2RS)_.+_syn(?P<recipe>[0-9X]+)_step(?P<step>\d+)\.aig$"
+)
 TIER0_NAME_RE = re.compile(
     r"^(?P<design>.+?)_syn(?P<recipe>[0-9X]+)_step(?P<step>\d+)\.aig$"
 )
@@ -43,6 +47,10 @@ def parse_aig_name(name: str) -> Optional[Tuple[int, str, str]]:
     match_t1 = TIER1_NAME_RE.match(name)
     if match_t1:
         return 1, match_t1.group("algorithm"), match_t1.group("design")
+
+    match_t1_ext = TIER1_EXT_NAME_RE.match(name)
+    if match_t1_ext:
+        return 1, match_t1_ext.group("algorithm"), match_t1_ext.group("design")
 
     # If the name claims tier1 but does not match the strict tier1 pattern, skip it.
     if "_tier1_" in name:
