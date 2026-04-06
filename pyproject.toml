@@ -15,7 +15,6 @@ dependencies = [
     "scipy>=1.10",
     "torch>=2.1",
     "torch-geometric>=2.5",
-    "torch-scatter>=2.1",
     "tqdm>=4.66",
 ]
 

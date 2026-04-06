@@ -97,7 +97,6 @@ def construct_graph_data_placeholder(task: GraphTask) -> object:
     """
     # Lazy import to keep the main process lightweight.
     from data.data_utils import aig_to_pytorch_geometric
-
     return aig_to_pytorch_geometric(task.aig_path)
 
 
@@ -158,27 +157,12 @@ def process_tasks_parallel(
     workers: int,
     max_in_flight: int,
     fail_fast: bool,
-    show_progress: bool,
 ) -> Dict[str, object]:
     status_counts: Dict[str, int] = {}
     submitted = 0
     completed = 0
     errors = 0
     failed_tasks: List[Dict[str, str]] = []
-    progress_bar = None
-
-    if show_progress:
-        try:
-            from tqdm import tqdm
-
-            progress_bar = tqdm(
-                total=len(tasks),
-                desc="graphs",
-                unit="graph",
-                dynamic_ncols=True,
-            )
-        except Exception:
-            print("progress: tqdm unavailable, using periodic log updates")
 
     def drain_completed(pending: Dict[object, int]) -> None:
         nonlocal completed, errors
@@ -187,8 +171,6 @@ def process_tasks_parallel(
             pending.pop(fut, None)
             result = fut.result()
             completed += 1
-            if progress_bar is not None:
-                progress_bar.update(1)
 
             status = result["status"]
             status_counts[status] = status_counts.get(status, 0) + 1
@@ -202,7 +184,7 @@ def process_tasks_parallel(
                 )
                 print(result.get("error", ""))
 
-            if progress_bar is None and completed % 500 == 0:
+            if completed % 500 == 0:
                 print(
                     f"processing progress: completed={completed} submitted={submitted} total={len(tasks)}"
                 )
@@ -221,16 +203,13 @@ def process_tasks_parallel(
             pending[fut] = task.task_id
             submitted += 1
 
-            if progress_bar is None and submitted % 500 == 0:
+            if submitted % 500 == 0:
                 print(
                     f"processing queued: submitted={submitted} in_flight={len(pending)} total={len(tasks)}"
                 )
 
         while pending:
             drain_completed(pending)
-
-    if progress_bar is not None:
-        progress_bar.close()
 
     return {
         "submitted": submitted,
@@ -272,7 +251,6 @@ def run_pipeline(args: argparse.Namespace) -> int:
         workers=args.workers,
         max_in_flight=max(args.workers, args.max_in_flight),
         fail_fast=bool(args.fail_fast),
-        show_progress=bool(args.progress),
     )
 
     submitted = int(stats["submitted"])
@@ -361,12 +339,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--allow-unmatched-names",
         action="store_true",
         help="Skip .aig files that do not match the tier0/tier1 filename regex",
-    )
-    parser.add_argument(
-        "--progress",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Show a tqdm progress bar during graph processing (default: enabled)",
     )
     return parser
 
