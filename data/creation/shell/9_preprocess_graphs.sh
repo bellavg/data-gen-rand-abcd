@@ -50,6 +50,7 @@ python -m data.preprocess_data \
   --final-out "$FINAL_OUT" \
   --workers "$WORKERS" \
   --allow-unmatched-names \
+  --overwrite \
   "$FAIL_FAST_FLAG"
 
 echo "Finished: $(date)"
