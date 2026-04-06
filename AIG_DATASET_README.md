@@ -12,7 +12,7 @@
 
 ### Models 
 
-X
+X - [node features (types), edge indices, edge features(types)]
 
 
 Y - [node optimizability, depth optimizability]

@@ -92,7 +92,6 @@ def generate_all_scripts(home_dir):
             for i in range(numRecipes):
                 ref_path = os.path.join(ref_scripts_dir, f"abc{i}.script")
                 out_script_path = os.path.join(des_syn_dir, f"abc{i}.script")
-                log_path = os.path.join(log_dir, f"log_{des}_syn{i}.log")
 
                 if not os.path.exists(ref_path):
                     continue

@@ -5,14 +5,13 @@ import torch_geometric.nn as pyg_nn
 from torch import Tensor
 from torch_geometric.nn import GINEConv
 from torch_geometric.typing import Adj, OptTensor
-from src.layers.positional_encoding import validate_positional_encoding, integrate_positional_encoding
 
 # Adopted from: https://github.com/LUOyk1999/GNNPlus/blob/main/GNNPlus/layer/gine_conv_layer.py 
 
 try:
-	from model_utils import get_norm_layer, get_pyg_pool
+	from model_utils import get_norm_layer
 except ImportError:  # pragma: no cover - fallback for package-style imports
-	from models.model_utils import get_norm_layer, get_pyg_pool
+	from models.model_utils import get_norm_layer
 
 
 def _get_activation(name: str) -> nn.Module:

@@ -2,7 +2,6 @@ from typing import Any, Dict, Optional
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torch import Tensor
 from torch_geometric.nn import GINEConv, GPSConv
 from torch_geometric.typing import Adj, OptTensor
@@ -15,9 +14,9 @@ except Exception:  # pragma: no cover
 	PerformerAttention = None
 
 try:
-	from model_utils import get_norm_layer, get_pyg_pool
+	from model_utils import get_norm_layer
 except ImportError:  # pragma: no cover - fallback for package-style imports
-	from models.model_utils import get_norm_layer, get_pyg_pool
+	from models.model_utils import get_norm_layer
 
 
 def _get_activation(name: str) -> nn.Module:

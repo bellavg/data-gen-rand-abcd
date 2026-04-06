@@ -1,9 +1,7 @@
-import os
 import re
 import csv
 import zipfile
 import argparse
-import pandas as pd
 from pathlib import Path
 from concurrent.futures import ProcessPoolExecutor
 
@@ -28,10 +26,12 @@ def parse_single_log(args):
     try:
         with zipfile.ZipFile(zip_path, 'r') as zf:
             content = zf.read(log_name).decode('utf-8')
-    except: return None
-        
+    except Exception:
+        return None
+
     stats = STATS_REGEX.findall(content)
-    if len(stats) < 2: return None
+    if len(stats) < 2:
+        return None
 
     # Safely handle the recipe and step IDs, including 'synX'
     match = FILENAME_REGEX.search(log_name)
@@ -77,7 +77,7 @@ def parse_tier0_from_tier1_log(args):
     try:
         with zipfile.ZipFile(zip_path, 'r') as zf:
             content = zf.read(log_name).decode('utf-8')
-    except:
+    except Exception:
         return None
 
     stats = STATS_REGEX.findall(content)
@@ -122,7 +122,7 @@ def process_logs(design_dir, design_name, num_workers):
     existing_paths = set()
     existing_rows = []
     if csv_path.exists():
-        print(f">>> Found existing CSV. Loading processed paths...")
+        print(">>> Found existing CSV. Loading processed paths...")
         with open(csv_path, 'r') as f:
             reader = csv.DictReader(f)
             for row in reader:
@@ -136,14 +136,17 @@ def process_logs(design_dir, design_name, num_workers):
 
     for tier in [1, 2]:
         tier_dir = logs_base / f"tier{tier}"
-        if not tier_dir.exists(): continue
+        if not tier_dir.exists():
+            continue
         for algo in ALGORITHMS:
             algo_dir = tier_dir / algo
-            if not algo_dir.exists(): continue
+            if not algo_dir.exists():
+                continue
             for zip_path in algo_dir.glob("*.zip"):
                 with zipfile.ZipFile(zip_path, 'r') as zf:
                     for log_name in zf.namelist():
-                        if not log_name.endswith(".log"): continue
+                        if not log_name.endswith(".log"):
+                            continue
                         # Predict the file_path this log would create (keeping base design_name for accurate folder paths)
                         pred_path = f"base_aigs/{design_name}/tier{tier}/{algo}/{log_name.replace('.log', '.aig')}"
 
