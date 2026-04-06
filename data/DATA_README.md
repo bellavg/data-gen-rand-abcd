@@ -66,19 +66,19 @@ data/
    │  │     └─ {design_name}_{algorithm}_tier1_syn{recipe_id}_step{step_id}.{ext}  # e.g. i2c_Orchestrate_tier1_syn42_step7.aig
    │  ├─ tier2/                     # algorithm outputs (second pass)
    │  │  └─ {algorithm}/
-  │  │     └─ {design_name}_{tier1_algorithm}_{tier2_algorithm}_tier2_syn{recipe_id}_step{step_id}.{ext}  # e.g. i2c_Orchestrate_Syn4_tier2_syn42_step7.aig
-  │  └─ design metadata/                     
-  │     ├─ raw_logs/                     # raw log outputs
-  │     │  ├─ synthesis_logs/            # ABC synthesis run logs (zipped as {design}_synthesis_logs.zip)
-  │     │  │  └─ log_{design}_syn{recipe_id}.log
-  │     │  └─ optimization_logs/         # optimizer / orchestrator logs
-  │     │     ├─ tier1/
-  │     │     │  └─ {algorithm}/
-  │     │     │     └─ optimize_{algorithm}_{design}.zip  # contains {design}_{algorithm}_tier1_syn{recipe_id}_step{step}.log
-  │     │     └─ tier2/
-  │     │        └─ {algorithm}/
-  │     │           └─ opt_t2_{algorithm}_{design}.zip   # contains {design}_{tier1_algorithm}_{algorithm}_tier2_syn{recipe_id}_step{step}.log
-  │     └─ {design}.csv                  # per-design stats CSV (one row per AIG)
+   │  │     └─ {design_name}_{tier1_algorithm}_{tier2_algorithm}_tier2_syn{recipe_id}_step{step_id}.{ext}  # e.g. i2c_Orchestrate_Syn4_tier2_syn42_step7.aig
+   │  └─ design metadata/                     
+   │     ├─ raw_logs/                     # raw log outputs
+   │     │  ├─ synthesis_logs/            # ABC synthesis run logs (zipped as {design}_synthesis_logs.zip)
+   │     │  │  └─ log_{design}_syn{recipe_id}.log
+   │     │  └─ optimization_logs/         # optimizer / orchestrator logs
+   │     │     ├─ tier1/
+   │     │     │  └─ {algorithm}/
+   │     │     │     └─ optimize_{algorithm}_{design}.zip  # contains {design}_{algorithm}_tier1_syn{recipe_id}_step{step}.log
+   │     │     └─ tier2/
+   │     │        └─ {algorithm}/
+   │     │           └─ opt_t2_{algorithm}_{design}.zip   # contains {design}_{tier1_algorithm}_{algorithm}_tier2_syn{recipe_id}_step{step}.log
+   │     └─ {design}.csv                  # per-design stats CSV (one row per AIG)
    └─ ...                          # repeated per-design folders
 
 

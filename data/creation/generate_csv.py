@@ -13,6 +13,16 @@ STATS_REGEX = re.compile(r"i/o\s*=\s*(\d+)/\s*(\d+).*?(?:and|nd)\s*=\s*(\d+).*?l
 FILENAME_REGEX = re.compile(r"syn([0-9X]+)_step(\d+)")
 ALGORITHMS = ["Orchestrate", "Deepsyn", "Syn4", "C2RS"]
 
+
+def predict_tier0_file_path(log_name, design_name, algorithm):
+    """Map a Tier-1 optimization log name to its Tier-0 input AIG path."""
+    prefix = f"{design_name}_{algorithm}_tier1_"
+    if not log_name.startswith(prefix) or not log_name.endswith(".log"):
+        return None
+    suffix = log_name[len(prefix):]
+    aig_name = suffix[:-4] + ".aig"
+    return f"base_aigs/{design_name}/tier0/{aig_name}"
+
 def parse_single_log(args):
     zip_path, log_name, design_name, algorithm, tier_id = args
     try:
@@ -60,6 +70,50 @@ def parse_single_log(args):
         "optimizability": round(opt_nodes, 4), "depth_optimizability": round(opt_depth, 4)
     }
 
+
+def parse_tier0_from_tier1_log(args):
+    """Create a Tier-0 row from the pre-optimization stats in a Tier-1 log."""
+    zip_path, log_name, design_name, algorithm = args
+    try:
+        with zipfile.ZipFile(zip_path, 'r') as zf:
+            content = zf.read(log_name).decode('utf-8')
+    except:
+        return None
+
+    stats = STATS_REGEX.findall(content)
+    if len(stats) < 1:
+        return None
+
+    tier0_path = predict_tier0_file_path(log_name, design_name, algorithm)
+    if not tier0_path:
+        return None
+
+    match = FILENAME_REGEX.search(log_name)
+    if match:
+        recipe_str = match.group(1)
+        recipe_id = 0 if recipe_str == 'X' else int(recipe_str)
+        step_id = int(match.group(2))
+    else:
+        recipe_id = 0
+        step_id = 0
+
+    t0_pi, t0_po, t0_nodes, t0_depth = map(int, stats[0])
+    return {
+        "file_path": tier0_path,
+        "design": design_name,
+        "recipe_id": recipe_id,
+        "step_id": step_id,
+        "tier_id": 0,
+        "algorithm": "",
+        "nodes": t0_nodes,
+        "edges": 0,
+        "num_PI": t0_pi,
+        "num_PO": t0_po,
+        "depth": t0_depth,
+        "optimizability": 0.0,
+        "depth_optimizability": 0.0,
+    }
+
 def process_logs(design_dir, design_name, num_workers):
     logs_base = Path(design_dir) / "design_metadata" / "raw_logs" / "optimization_logs"
     csv_path = Path(design_dir) / "design_metadata" / f"{design_name}.csv"
@@ -77,6 +131,8 @@ def process_logs(design_dir, design_name, num_workers):
         print(f"    Loaded {len(existing_paths)} existing entries.")
 
     tasks = []
+    tier0_tasks = []
+    pending_tier0_paths = set()
 
     for tier in [1, 2]:
         tier_dir = logs_base / f"tier{tier}"
@@ -90,18 +146,35 @@ def process_logs(design_dir, design_name, num_workers):
                         if not log_name.endswith(".log"): continue
                         # Predict the file_path this log would create (keeping base design_name for accurate folder paths)
                         pred_path = f"base_aigs/{design_name}/tier{tier}/{algo}/{log_name.replace('.log', '.aig')}"
+
+                        if tier == 1:
+                            pred_tier0 = predict_tier0_file_path(log_name, design_name, algo)
+                            if pred_tier0 and pred_tier0 not in existing_paths and pred_tier0 not in pending_tier0_paths:
+                                tier0_tasks.append((zip_path, log_name, design_name, algo))
+                                pending_tier0_paths.add(pred_tier0)
+
                         if pred_path not in existing_paths:
                             tasks.append((zip_path, log_name, design_name, algo, tier))
 
-    if not tasks:
+    if not tasks and not tier0_tasks:
         print("✓ All logs already present in CSV. Nothing to do!")
         return
 
-    print(f">>> Found {len(tasks)} NEW logs to parse. Starting {num_workers} workers...")
-    with ProcessPoolExecutor(max_workers=num_workers) as executor:
-        new_results = list(executor.map(parse_single_log, tasks))
+    print(
+        f">>> Found {len(tasks)} NEW tier1/tier2 logs and "
+        f"{len(tier0_tasks)} NEW tier0 rows to parse. Starting {num_workers} workers..."
+    )
 
-    final_rows = existing_rows + [r for r in new_results if r is not None]
+    new_results = []
+    new_tier0_results = []
+
+    with ProcessPoolExecutor(max_workers=num_workers) as executor:
+        if tasks:
+            new_results = list(executor.map(parse_single_log, tasks))
+        if tier0_tasks:
+            new_tier0_results = list(executor.map(parse_tier0_from_tier1_log, tier0_tasks))
+
+    final_rows = existing_rows + [r for r in new_results if r is not None] + [r for r in new_tier0_results if r is not None]
     
     # Save the combined data
     headers = ["file_path", "design", "recipe_id", "step_id", "tier_id", "algorithm", 

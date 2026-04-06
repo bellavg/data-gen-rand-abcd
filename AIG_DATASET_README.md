@@ -12,6 +12,11 @@
 
 ### Models 
 
+X
+
+
+Y - [node optimizability, depth optimizability]
+
 ## Thesis Project - Data Summary
 This project combines two AIG sources into a unified dataset for downstream ML experiments and algorithm comparison.
 
