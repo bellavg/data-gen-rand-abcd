@@ -38,7 +38,13 @@ class WorkerConfig:
 
 
 def summarize_archive_layout(aig_root: Path) -> Dict[str, object]:
-    design_dirs = sorted([p for p in aig_root.iterdir() if p.is_dir()])
+    design_dirs = sorted(
+        [
+            p
+            for p in aig_root.iterdir()
+            if p.is_dir() and p.name not in {"design_metadata", "logs"}
+        ]
+    )
     design_names = [p.name for p in design_dirs]
 
     tier0_zip_count = 0
@@ -141,7 +147,12 @@ def discover_graph_tasks(
         source_counts["filesystem_aig"] += 1
         try_add_task(filename=path.name, aig_path=str(path))
 
-    zip_paths = sorted(aig_root.rglob("*.zip"))
+    zip_paths: List[Path] = []
+    zip_paths.extend(sorted(aig_root.glob("*/tier0.zip")))
+    zip_paths.extend(sorted(aig_root.glob("*/tier0/tier0.zip")))
+    zip_paths.extend(sorted(aig_root.glob("*/tier1/*.zip")))
+    # Keep deterministic ordering and avoid duplicate scan of the same archive path.
+    zip_paths = sorted(set(zip_paths))
     for zip_path in zip_paths:
         source_counts["zip_files_scanned"] += 1
         try:

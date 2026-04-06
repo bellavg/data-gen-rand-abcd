@@ -45,7 +45,7 @@ else
 fi
 
 AIG_DEBUG_PATH_COUNTS="$AIG_DEBUG_PATH_COUNTS" \
-python -m data.preprocess_data \
+python -u -m data.preprocess_data \
   --aig-root "$AIG_ROOT" \
   --final-out "$FINAL_OUT" \
   --workers "$WORKERS" \
