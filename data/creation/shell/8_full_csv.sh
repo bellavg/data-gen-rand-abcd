@@ -102,6 +102,10 @@ fi
 echo ">>> Staging tier1 zip logs to scratch..."
 staged_zip_count=0
 staged_design_sources=0
+source_orchestrate_count=0
+source_syn4_count=0
+source_c2rs_count=0
+source_deepsyn_count=0
 for design in "${DESIGNS[@]}"; do
     selected_algo=""
     selected_zip_count=0
@@ -135,7 +139,12 @@ for design in "${DESIGNS[@]}"; do
 
     if [[ -n "$selected_algo" ]]; then
         staged_design_sources=$((staged_design_sources + 1))
-        echo "Tier0 source for $design: $selected_algo ($selected_zip_count zip[s])"
+        case "$selected_algo" in
+            Orchestrate) source_orchestrate_count=$((source_orchestrate_count + 1)) ;;
+            Syn4) source_syn4_count=$((source_syn4_count + 1)) ;;
+            C2RS) source_c2rs_count=$((source_c2rs_count + 1)) ;;
+            Deepsyn) source_deepsyn_count=$((source_deepsyn_count + 1)) ;;
+        esac
     else
         echo "WARNING: No tier1 zip source found for $design; no new tier0 rows will be derived for this design."
     fi
@@ -143,6 +152,10 @@ done
 
 echo ">>> Staged $staged_zip_count tier1 zip archive(s) to scratch."
 echo ">>> Tier0 source selected for $staged_design_sources design(s)."
+echo ">>> Tier0 source algorithm usage: Orchestrate=$source_orchestrate_count, Syn4=$source_syn4_count, C2RS=$source_c2rs_count, Deepsyn=$source_deepsyn_count"
+if [[ $staged_design_sources -gt 0 && $source_orchestrate_count -eq $staged_design_sources ]]; then
+    echo ">>> Tier0 source note: Orchestrate was selected for all designs in this run."
+fi
 
 python3 - "$BOOTSTRAP_MASTER" "$MASTER_TMP" "$SCRATCH_ZIP_ROOT" "$EPS" "$WORKERS" "$SCRATCH_UNZIP_ROOT" "$SCRATCH_PER_ALGO_DIR" "${#DESIGNS[@]}" "${DESIGNS[@]}" <<'PY' | tee "$REPORT_TMP"
 import csv
@@ -193,6 +206,7 @@ tier0_parse_failures = 0
 unzipped_zip_count = 0
 matched_tier1_log_count = 0
 tier0_source_design_count = 0
+edges_imputed_count = 0
 
 
 def build_tier0_row_from_log(design, algo, log_name, content):
@@ -224,7 +238,7 @@ def build_tier0_row_from_log(design, algo, log_name, content):
         "tier_id": "0",
         "algorithm": "",
         "nodes": str(t0_nodes),
-        "edges": "0",
+        "edges": str((2 * t0_nodes) + t0_po),
         "num_PI": str(t0_pi),
         "num_PO": str(t0_po),
         "depth": str(t0_depth),
@@ -361,6 +375,33 @@ if zip_tasks:
                 existing_paths.add(tier0_path)
                 added_tier0 += 1
 
+# Fill edges where missing/zero using an AIG-style estimate based on available stats.
+# Estimate: edges = 2 * nodes + num_PO
+for row in rows:
+    edges_raw = (row.get("edges") or "").strip()
+    try:
+        edges_val = float(edges_raw) if edges_raw != "" else 0.0
+    except ValueError:
+        edges_val = 0.0
+
+    if edges_val > 0.0:
+        continue
+
+    try:
+        nodes_val = float((row.get("nodes") or "").strip())
+        po_val = float((row.get("num_PO") or "").strip())
+    except ValueError:
+        continue
+
+    if not (math.isfinite(nodes_val) and math.isfinite(po_val)):
+        continue
+
+    est_edges = int(round((2.0 * nodes_val) + po_val))
+    if est_edges < 0:
+        est_edges = 0
+    row["edges"] = str(est_edges)
+    edges_imputed_count += 1
+
 with open(master_out, "w", newline="") as f:
     writer = csv.DictWriter(f, fieldnames=fieldnames)
     writer.writeheader()
@@ -421,6 +462,10 @@ algo_opt_min = {}
 algo_opt_max = {}
 algo_depth_opt_min = {}
 algo_depth_opt_max = {}
+node_zero_by_algo = Counter()
+node_zero_depth_changed_by_algo = Counter()
+node_zero_depth_improved_by_algo = Counter()
+node_zero_depth_worsened_by_algo = Counter()
 
 tier_numeric_counts = Counter()
 tier_node_sum = Counter()
@@ -565,6 +610,14 @@ for line_no, row in enumerate(rows, start=2):
 
     if algorithm not in null_algorithms:
         algo_range_count[algorithm] += 1
+        if abs(node_opt) <= eps:
+            node_zero_by_algo[algorithm] += 1
+            if abs(depth_opt) > eps:
+                node_zero_depth_changed_by_algo[algorithm] += 1
+                if depth_opt > 0.0:
+                    node_zero_depth_improved_by_algo[algorithm] += 1
+                else:
+                    node_zero_depth_worsened_by_algo[algorithm] += 1
         if algorithm not in algo_opt_min:
             algo_opt_min[algorithm] = node_opt
             algo_opt_max[algorithm] = node_opt
@@ -611,7 +664,28 @@ t01_checked = 0
 t01_missing_parent = 0
 t01_node_violations = 0
 t01_depth_violations = 0
-t01_samples = []
+t01_node_stats_by_algo = {
+    a: {
+        "compared": 0,
+        "increase": 0,
+        "equal": 0,
+        "increase_sum": 0.0,
+        "increase_max": 0.0,
+    }
+    for a in algorithms
+}
+t01_depth_stats_by_algo = {
+    a: {
+        "compared": 0,
+        "increase": 0,
+        "equal": 0,
+        "change": 0,
+        "increase_sum": 0.0,
+        "increase_max": 0.0,
+    }
+    for a in algorithms
+}
+t01_depth_increase_designs_by_algo = {a: set() for a in algorithms}
 
 for (design_name, algo_name, recipe_id_num, step_id_num), (
     t1_nodes,
@@ -627,37 +701,66 @@ for (design_name, algo_name, recipe_id_num, step_id_num), (
     t01_checked += 1
     t0_nodes, t0_depth, t0_line, t0_path = parent
 
+    if algo_name in t01_node_stats_by_algo:
+        t01_node_stats_by_algo[algo_name]["compared"] += 1
+        t01_depth_stats_by_algo[algo_name]["compared"] += 1
+
     node_bad = t1_nodes > t0_nodes
+    node_equal = abs(t1_nodes - t0_nodes) <= eps
+    depth_delta = t1_depth - t0_depth
     depth_bad = t1_depth > t0_depth
+    depth_equal = abs(depth_delta) <= eps
     if node_bad:
         t01_node_violations += 1
+        if algo_name in t01_node_stats_by_algo:
+            delta_nodes = t1_nodes - t0_nodes
+            t01_node_stats_by_algo[algo_name]["increase"] += 1
+            t01_node_stats_by_algo[algo_name]["increase_sum"] += delta_nodes
+            if delta_nodes > t01_node_stats_by_algo[algo_name]["increase_max"]:
+                t01_node_stats_by_algo[algo_name]["increase_max"] = delta_nodes
+    elif node_equal and algo_name in t01_node_stats_by_algo:
+        t01_node_stats_by_algo[algo_name]["equal"] += 1
     if depth_bad:
         t01_depth_violations += 1
-
-    if (node_bad or depth_bad) and len(t01_samples) < 10:
-        t01_samples.append(
-            {
-                "design": design_name,
-                "algo": algo_name,
-                "recipe": recipe_id_num,
-                "step": step_id_num,
-                "t0_nodes": t0_nodes,
-                "t1_nodes": t1_nodes,
-                "t0_depth": t0_depth,
-                "t1_depth": t1_depth,
-                "t0_line": t0_line,
-                "t1_line": t1_line,
-                "t0_path": t0_path,
-                "t1_path": t1_path,
-            }
-        )
+        if algo_name in t01_depth_stats_by_algo:
+            t01_depth_stats_by_algo[algo_name]["increase"] += 1
+            t01_depth_stats_by_algo[algo_name]["increase_sum"] += depth_delta
+            if depth_delta > t01_depth_stats_by_algo[algo_name]["increase_max"]:
+                t01_depth_stats_by_algo[algo_name]["increase_max"] = depth_delta
+            t01_depth_increase_designs_by_algo[algo_name].add(design_name)
+    if algo_name in t01_depth_stats_by_algo:
+        if depth_equal:
+            t01_depth_stats_by_algo[algo_name]["equal"] += 1
+        else:
+            t01_depth_stats_by_algo[algo_name]["change"] += 1
 
 t12_checked = 0
 t12_missing_parent = 0
 t12_missing_source = 0
 t12_node_violations = 0
 t12_depth_violations = 0
-t12_samples = []
+t12_node_stats_by_algo = {
+    a: {
+        "compared": 0,
+        "increase": 0,
+        "equal": 0,
+        "increase_sum": 0.0,
+        "increase_max": 0.0,
+    }
+    for a in algorithms
+}
+t12_depth_stats_by_algo = {
+    a: {
+        "compared": 0,
+        "increase": 0,
+        "equal": 0,
+        "change": 0,
+        "increase_sum": 0.0,
+        "increase_max": 0.0,
+    }
+    for a in algorithms
+}
+t12_depth_increase_designs_by_algo = {a: set() for a in algorithms}
 
 for (
     design_name,
@@ -682,31 +785,38 @@ for (
     t12_checked += 1
     t1_nodes, t1_depth, t1_line, t1_path = parent
 
+    if target_algo in t12_node_stats_by_algo:
+        t12_node_stats_by_algo[target_algo]["compared"] += 1
+        t12_depth_stats_by_algo[target_algo]["compared"] += 1
+
     node_bad = t2_nodes > t1_nodes
+    node_equal = abs(t2_nodes - t1_nodes) <= eps
+    depth_delta = t2_depth - t1_depth
     depth_bad = t2_depth > t1_depth
+    depth_equal = abs(depth_delta) <= eps
     if node_bad:
         t12_node_violations += 1
+        if target_algo in t12_node_stats_by_algo:
+            delta_nodes = t2_nodes - t1_nodes
+            t12_node_stats_by_algo[target_algo]["increase"] += 1
+            t12_node_stats_by_algo[target_algo]["increase_sum"] += delta_nodes
+            if delta_nodes > t12_node_stats_by_algo[target_algo]["increase_max"]:
+                t12_node_stats_by_algo[target_algo]["increase_max"] = delta_nodes
+    elif node_equal and target_algo in t12_node_stats_by_algo:
+        t12_node_stats_by_algo[target_algo]["equal"] += 1
     if depth_bad:
         t12_depth_violations += 1
-
-    if (node_bad or depth_bad) and len(t12_samples) < 10:
-        t12_samples.append(
-            {
-                "design": design_name,
-                "source_algo": source_algo,
-                "target_algo": target_algo,
-                "recipe": recipe_id_num,
-                "step": step_id_num,
-                "t1_nodes": t1_nodes,
-                "t2_nodes": t2_nodes,
-                "t1_depth": t1_depth,
-                "t2_depth": t2_depth,
-                "t1_line": t1_line,
-                "t2_line": t2_line,
-                "t1_path": t1_path,
-                "t2_path": t2_path,
-            }
-        )
+        if target_algo in t12_depth_stats_by_algo:
+            t12_depth_stats_by_algo[target_algo]["increase"] += 1
+            t12_depth_stats_by_algo[target_algo]["increase_sum"] += depth_delta
+            if depth_delta > t12_depth_stats_by_algo[target_algo]["increase_max"]:
+                t12_depth_stats_by_algo[target_algo]["increase_max"] = depth_delta
+            t12_depth_increase_designs_by_algo[target_algo].add(design_name)
+    if target_algo in t12_depth_stats_by_algo:
+        if depth_equal:
+            t12_depth_stats_by_algo[target_algo]["equal"] += 1
+        else:
+            t12_depth_stats_by_algo[target_algo]["change"] += 1
 
 errors = []
 tier0 = tier_counts.get(0, 0)
@@ -793,6 +903,7 @@ print(f"Tier1 zip archives extracted in scratch: {unzipped_zip_count}")
 print(f"Tier1 logs matched for tier0 derivation: {matched_tier1_log_count}")
 print(f"Tier0 rows added this run: {added_tier0}")
 print(f"Tier0 parse failures/skips: {tier0_parse_failures}")
+print(f"Edges imputed with estimate (2*nodes + num_PO): {edges_imputed_count}")
 
 print("Column summary (non-empty / total rows):")
 for col in fieldnames:
@@ -945,14 +1056,6 @@ print(f"  compared rows: {t01_checked}")
 print(f"  missing tier0 parents: {t01_missing_parent}")
 print(f"  node violations (tier1 > tier0): {t01_node_violations}")
 print(f"  depth violations (tier1 > tier0): {t01_depth_violations}")
-if t01_samples:
-    print("  sample violations:")
-    for s in t01_samples:
-        print(
-            "    - {design} {algo} syn{recipe} step{step}: "
-            "nodes t0={t0_nodes} t1={t1_nodes}, depth t0={t0_depth} t1={t1_depth} "
-            "(lines t0={t0_line}, t1={t1_line})".format(**s)
-        )
 
 print("Check B: tier1 should be >= tier2 (same design/source-algo/recipe/step)")
 print(f"  compared rows: {t12_checked}")
@@ -960,14 +1063,102 @@ print(f"  missing tier1 parents: {t12_missing_parent}")
 print(f"  missing tier2 source algo parse: {t12_missing_source}")
 print(f"  node violations (tier2 > tier1): {t12_node_violations}")
 print(f"  depth violations (tier2 > tier1): {t12_depth_violations}")
-if t12_samples:
-    print("  sample violations:")
-    for s in t12_samples:
-        print(
-            "    - {design} {source_algo}->{target_algo} syn{recipe} step{step}: "
-            "nodes t1={t1_nodes} t2={t2_nodes}, depth t1={t1_depth} t2={t2_depth} "
-            "(lines t1={t1_line}, t2={t2_line})".format(**s)
-        )
+
+print("=== Node Shrink Counts By Algorithm ===")
+for algo in algorithms:
+    t1_comp = t01_node_stats_by_algo[algo]["compared"]
+    t1_inc = t01_node_stats_by_algo[algo]["increase"]
+    t1_eq = t01_node_stats_by_algo[algo]["equal"]
+    t1_inc_sum = t01_node_stats_by_algo[algo]["increase_sum"]
+    t1_inc_max = t01_node_stats_by_algo[algo]["increase_max"]
+
+    t2_comp = t12_node_stats_by_algo[algo]["compared"]
+    t2_inc = t12_node_stats_by_algo[algo]["increase"]
+    t2_eq = t12_node_stats_by_algo[algo]["equal"]
+    t2_inc_sum = t12_node_stats_by_algo[algo]["increase_sum"]
+    t2_inc_max = t12_node_stats_by_algo[algo]["increase_max"]
+
+    combined_comp = t1_comp + t2_comp
+    combined_inc = t1_inc + t2_inc
+    combined_eq = t1_eq + t2_eq
+    non_shrink = combined_inc + combined_eq
+    shrink = combined_comp - non_shrink
+
+    t1_inc_pct = (100.0 * t1_inc / t1_comp) if t1_comp else 0.0
+    t2_inc_pct = (100.0 * t2_inc / t2_comp) if t2_comp else 0.0
+    combined_inc_pct = (100.0 * combined_inc / combined_comp) if combined_comp else 0.0
+    non_shrink_pct = (100.0 * non_shrink / combined_comp) if combined_comp else 0.0
+    shrink_pct = (100.0 * shrink / combined_comp) if combined_comp else 0.0
+
+    t1_inc_mean = (t1_inc_sum / t1_inc) if t1_inc else 0.0
+    t2_inc_mean = (t2_inc_sum / t2_inc) if t2_inc else 0.0
+
+    print(f"{algo}:")
+    print(
+        f"  Tier1 node increases vs Tier0: {t1_inc:,} / {t1_comp:,} "
+        f"({t1_inc_pct:.2f}%), mean_delta={t1_inc_mean:.2f}, max_delta={t1_inc_max:.0f}"
+    )
+    print(
+        f"  Tier2 node increases vs Tier1: {t2_inc:,} / {t2_comp:,} "
+        f"({t2_inc_pct:.2f}%), mean_delta={t2_inc_mean:.2f}, max_delta={t2_inc_max:.0f}"
+    )
+    print(
+        f"  Combined strict increases: {combined_inc:,} / {combined_comp:,} "
+        f"({combined_inc_pct:.2f}%)"
+    )
+    print(
+        f"  Non-shrink (equal or increase): {non_shrink:,} / {combined_comp:,} "
+        f"({non_shrink_pct:.2f}%), shrink={shrink:,} ({shrink_pct:.2f}%)"
+    )
+
+print("=== Depth Increase + Node-Zero/Depth-Change By Algorithm ===")
+for algo in algorithms:
+    t1_depth_comp = t01_depth_stats_by_algo[algo]["compared"]
+    t1_depth_inc = t01_depth_stats_by_algo[algo]["increase"]
+    t1_depth_eq = t01_depth_stats_by_algo[algo]["equal"]
+    t1_depth_change = t01_depth_stats_by_algo[algo]["change"]
+    t1_depth_inc_sum = t01_depth_stats_by_algo[algo]["increase_sum"]
+    t1_depth_inc_max = t01_depth_stats_by_algo[algo]["increase_max"]
+    t1_depth_inc_mean = (t1_depth_inc_sum / t1_depth_inc) if t1_depth_inc else 0.0
+    t1_depth_inc_pct = (100.0 * t1_depth_inc / t1_depth_comp) if t1_depth_comp else 0.0
+
+    t2_depth_comp = t12_depth_stats_by_algo[algo]["compared"]
+    t2_depth_inc = t12_depth_stats_by_algo[algo]["increase"]
+    t2_depth_eq = t12_depth_stats_by_algo[algo]["equal"]
+    t2_depth_change = t12_depth_stats_by_algo[algo]["change"]
+    t2_depth_inc_sum = t12_depth_stats_by_algo[algo]["increase_sum"]
+    t2_depth_inc_max = t12_depth_stats_by_algo[algo]["increase_max"]
+    t2_depth_inc_mean = (t2_depth_inc_sum / t2_depth_inc) if t2_depth_inc else 0.0
+    t2_depth_inc_pct = (100.0 * t2_depth_inc / t2_depth_comp) if t2_depth_comp else 0.0
+
+    z_node = node_zero_by_algo.get(algo, 0)
+    z_depth_change = node_zero_depth_changed_by_algo.get(algo, 0)
+    z_depth_improved = node_zero_depth_improved_by_algo.get(algo, 0)
+    z_depth_worsened = node_zero_depth_worsened_by_algo.get(algo, 0)
+    z_depth_change_pct = (100.0 * z_depth_change / z_node) if z_node else 0.0
+
+    t1_designs = sorted(t01_depth_increase_designs_by_algo[algo])
+    t2_designs = sorted(t12_depth_increase_designs_by_algo[algo])
+    t1_design_text = ", ".join(t1_designs) if t1_designs else "none"
+    t2_design_text = ", ".join(t2_designs) if t2_designs else "none"
+
+    print(f"{algo}:")
+    print(
+        f"  Tier1 depth increases vs Tier0: {t1_depth_inc:,} / {t1_depth_comp:,} "
+        f"({t1_depth_inc_pct:.2f}%), mean_delta={t1_depth_inc_mean:.2f}, max_delta={t1_depth_inc_max:.0f}"
+    )
+    print(f"  Tier1 depth equal: {t1_depth_eq:,}; depth changed (non-zero delta): {t1_depth_change:,}")
+    print(f"  Tier1 depth-increase designs: {t1_design_text}")
+    print(
+        f"  Tier2 depth increases vs Tier1: {t2_depth_inc:,} / {t2_depth_comp:,} "
+        f"({t2_depth_inc_pct:.2f}%), mean_delta={t2_depth_inc_mean:.2f}, max_delta={t2_depth_inc_max:.0f}"
+    )
+    print(f"  Tier2 depth equal: {t2_depth_eq:,}; depth changed (non-zero delta): {t2_depth_change:,}")
+    print(f"  Tier2 depth-increase designs: {t2_design_text}")
+    print(
+        f"  Node opt == 0 and depth opt changed (!=0): {z_depth_change:,} / {z_node:,} "
+        f"({z_depth_change_pct:.2f}%), improved={z_depth_improved:,}, worsened={z_depth_worsened:,}"
+    )
 
 if max_nodes is None or max_depth is None:
     print("Max nodes: N/A")
