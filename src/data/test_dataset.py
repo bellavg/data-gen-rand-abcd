@@ -98,9 +98,9 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
     def test_getitem_y_shape(self):
         ds = self._make_ds()
         item = ds[0]
-        self.assertEqual(item.y.shape, (2,))
-        self.assertAlmostEqual(item.y[0].item(), 0.1, places=4)
-        self.assertAlmostEqual(item.y[1].item(), 0.2, places=5)
+        self.assertEqual(item.y.shape, (1, 2))
+        self.assertAlmostEqual(item.y[0, 0].item(), 0.1, places=4)
+        self.assertAlmostEqual(item.y[0, 1].item(), 0.2, places=5)
 
     def test_getitem_graph_attributes(self):
         ds = self._make_ds()
@@ -227,10 +227,9 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
         ds1 = AIGGraphRegressionDataset(csv, split="train", cache_dir=cache_dir, seed=5)
         paths1 = [s.graph_path for s in ds1.samples]
 
-        # Overwrite cache file with a corrupted/altered key to prove it is re-read
-        cache_file = next(cache_dir.glob("*_splits.json"))
-        original = json.loads(cache_file.read_text())
         # second call with same args should load from cache and get identical result
+        cache_file = next(cache_dir.glob("*_splits.json"))
+        self.assertTrue(cache_file.is_file())
         ds2 = AIGGraphRegressionDataset(csv, split="train", cache_dir=cache_dir, seed=5)
         paths2 = [s.graph_path for s in ds2.samples]
         self.assertEqual(paths1, paths2)

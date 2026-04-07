@@ -163,7 +163,7 @@ class AIGGraphRegressionDataset(Dataset):
 
         # Keep targets on the Data object for graph-level multi-target regression.
         data_obj.y = torch.tensor(
-            [sample.y_node_opt, sample.y_depth_opt], dtype=torch.float32
+            [[sample.y_node_opt, sample.y_depth_opt]], dtype=torch.float32
         )
         return data_obj
 
