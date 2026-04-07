@@ -2,183 +2,171 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
-from torch_geometric.nn import GCNConv
-from torch_geometric.nn.conv.gcn_conv import gcn_norm
-from torch_geometric.typing import Adj, OptTensor, SparseTensor
-
-# Adopted from: https://github.com/LUOyk1999/GNNPlus/blob/main/GNNPlus/layer/gcn_conv_layer.py 
+from torch_geometric.nn import MessagePassing
+from torch_geometric.typing import Adj
 
 try:
-    from model_utils import (
-        get_norm_layer, 
-        validate_positional_encoding, 
-        integrate_positional_encoding
-    )
+    from model_utils import get_norm_layer
 except ImportError:  # pragma: no cover - fallback for package-style imports
-    from models.model_utils import (
-        get_norm_layer, 
-        validate_positional_encoding, 
-        integrate_positional_encoding
-    )
+    try:
+        from models.model_utils import get_norm_layer
+    except ImportError:
+        from src.models.model_utils import get_norm_layer
 
 
-class GCNConvWithEdges(GCNConv):
-    """Edge-aware GCNConv with message rule ReLU(x_j + edge_attr_projected)."""
+# Adapted from: https://github.com/LUOyk1999/GNNPlus/blob/main/GNNPlus/layer/gcn_conv_layer_e.py
+
+
+class GCNConvWithEdges(MessagePassing):
+    """
+    Edge-aware GCN message-passing layer per the GNN+ paper.
+    """
 
     def __init__(
         self,
         in_channels: int,
         out_channels: int,
         edge_dim: int | None = None,
-        improved: bool = False,
-        cached: bool = False,
-        add_self_loops: bool = False,
-        normalize: bool = True,
         bias: bool = True,
     ):
-        super().__init__(
-            in_channels=in_channels,
-            out_channels=out_channels,
-            improved=improved,
-            cached=cached,
-            add_self_loops=add_self_loops,
-            normalize=normalize,
-            bias=bias,
-        )
-        self.edge_dim = edge_dim
-        self.edge_encoder = (
-            nn.Linear(edge_dim, out_channels, bias=False) if edge_dim is not None else None
-        )
+        # 1. Inherit from MessagePassing and set aggregation to "add"
+        super().__init__(aggr="add")
+        self.lin = nn.Linear(in_channels, out_channels, bias=False)
 
-    def message(self, x_j: Tensor, edge_weight: OptTensor, edge_attr: OptTensor = None) -> Tensor:
-        if edge_attr is not None:
+        # 2. Re-enable the edge encoder projection
+        self.edge_encoder = (
+            nn.Linear(edge_dim, out_channels, bias=False)
+            if edge_dim is not None
+            else None
+        )
+        self.bias_param = nn.Parameter(torch.zeros(out_channels)) if bias else None
+
+        # 3. Use an instance variable to bypass strict PyG inspector dropping kwargs
+        self._edge_attr = None
+
+    def message(self, x_j: Tensor) -> Tensor:
+        # Read the edge attributes stored during forward()
+        ea = self._edge_attr
+        if ea is not None:
             if self.edge_encoder is None:
-                if edge_attr.size(-1) != x_j.size(-1):
+                if ea.size(-1) != x_j.size(-1):
                     raise ValueError(
                         "edge_attr feature size does not match node hidden size. "
-                        "Provide edge_dim in GCNConvWithEdges to enable projection."
+                        "Provide edge_dim to enable projection."
                     )
-                edge_msg = edge_attr
+                edge_msg = ea
             else:
-                edge_msg = self.edge_encoder(edge_attr)
-
-            msg = (x_j + edge_msg).relu()
-        else:
-            msg = x_j.relu()
-
-        if edge_weight is not None:
-            msg = edge_weight.view(-1, 1) * msg
-        return msg
+                edge_msg = self.edge_encoder(ea)
+            # Add edge features to node features and apply ReLU
+            return (x_j + edge_msg).relu()
+        return x_j.relu()
 
     def forward(
         self,
         x: Tensor,
         edge_index: Adj,
-        edge_attr: OptTensor = None,
-        edge_weight: OptTensor = None,
+        edge_attr: Tensor | None = None,
     ) -> Tensor:
-        if self.normalize:
-            if isinstance(edge_index, Tensor):
-                cache = self._cached_edge_index
-                if cache is None:
-                    edge_index, edge_weight = gcn_norm(
-                        edge_index,
-                        edge_weight,
-                        x.size(self.node_dim),
-                        self.improved,
-                        self.add_self_loops,
-                        self.flow,
-                        x.dtype,
-                    )
-                    if self.cached:
-                        self._cached_edge_index = (edge_index, edge_weight)
-                else:
-                    edge_index, edge_weight = cache[0], cache[1]
-            elif isinstance(edge_index, SparseTensor):
-                cache = self._cached_adj_t
-                if cache is None:
-                    edge_index = gcn_norm(
-                        edge_index,
-                        edge_weight,
-                        x.size(self.node_dim),
-                        self.improved,
-                        self.add_self_loops,
-                        self.flow,
-                        x.dtype,
-                    )
-                    if self.cached:
-                        self._cached_adj_t = edge_index
-                else:
-                    edge_index = cache
+        # Temporarily attach edge_attr to self
+        self._edge_attr = edge_attr
 
+        # Apply linear transformation to node features
         x = self.lin(x)
 
-        if edge_attr is not None and isinstance(edge_index, Tensor):
-            edge_count = edge_index.size(1)
-            if edge_attr.size(0) != edge_count:
-                if self.add_self_loops and edge_attr.size(0) < edge_count:
-                    pad_count = edge_count - edge_attr.size(0)
-                    pad = torch.zeros(
-                        pad_count,
-                        edge_attr.size(-1),
-                        device=edge_attr.device,
-                        dtype=edge_attr.dtype,
-                    )
-                    edge_attr = torch.cat([edge_attr, pad], dim=0)
-                else:
-                    raise ValueError(
-                        f"edge_attr rows ({edge_attr.size(0)}) do not match number of edges ({edge_count})."
-                    )
+        # Propagate messages (cleanly, without edge_attr in kwargs)
+        out = self.propagate(edge_index, x=x, size=None)
 
-        out = self.propagate(
-            edge_index,
-            x=x,
-            edge_weight=edge_weight,
-            edge_attr=edge_attr,
-            size=None,
-        )
+        # Clean up
+        self._edge_attr = None
 
-        if self.bias is not None:
-            out = out + self.bias
+        # Add bias if it exists
+        if self.bias_param is not None:
+            out = out + self.bias_param
+
         return out
 
 
+class GCNConvLayer(nn.Module):
+    """
+    Single GCN layer block combining Convolution, Normalization,
+    Residuals, and Feed-Forward Network (FFN) per the GNN+ paper.
+    """
+
+    def __init__(
+        self,
+        dim_in: int,
+        dim_out: int,
+        edge_dim: int | None,
+        dropout: float,
+        norm_type: str,
+    ):
+        super().__init__()
+        self.dropout = dropout
+
+        self.model = GCNConvWithEdges(dim_in, dim_out, edge_dim, bias=True)
+        self.norm_node = get_norm_layer(norm_type, dim_out)
+        self.act = nn.ReLU()
+        self.drop = nn.Dropout(dropout)
+
+        # Feed Forward Network (FFN) - Hardcoded to True per GNN+ paper
+        self.norm1_local = get_norm_layer(norm_type, dim_out)
+        self.ff_linear1 = nn.Linear(dim_out, dim_out * 2)
+        self.ff_linear2 = nn.Linear(dim_out * 2, dim_out)
+        self.ff_act = nn.ReLU()
+        self.norm2 = get_norm_layer(norm_type, dim_out)
+
+    def _ff_block(self, x: Tensor) -> Tensor:
+        x = self.ff_act(self.ff_linear1(x))
+        x = F.dropout(x, p=self.dropout, training=self.training)
+        x = self.ff_linear2(x)
+        return F.dropout(x, p=self.dropout, training=self.training)
+
+    def forward(self, x: Tensor, edge_index: Adj, edge_attr: Tensor | None = None) -> Tensor:
+        x_in = x
+
+        # 1. Message Passing
+        x = self.model(x, edge_index, edge_attr)
+        x = self.norm_node(x)
+        x = self.act(x)
+        x = self.drop(x)
+
+        # 2. Residual Connection - Hardcoded to True per GNN+ paper
+        if x_in.shape == x.shape:
+            x = x_in + x
+
+        # 3. FFN Block - Hardcoded to True per GNN+ paper
+        x = self.norm1_local(x)
+        x = x + self._ff_block(x)
+        x = self.norm2(x)
+
+        return x
+
+
 class GCNEncoder(nn.Module):
-    """Edge-aware GCN encoder with optional positional encodings and configurable normalization."""
+    """Edge-aware GCN+ encoder with hardcoded PE concatenation and Jumping Knowledge (cat)."""
 
     def __init__(
         self,
         in_dim: int,
         hid_dim: int,
-        out_dim: int,
         num_layers: int,
         edge_dim: int | None = None,
         pos_enc_dim: int = 0,
-        pos_enc_mode: str = "concat",
         use_input_proj: bool = True,
         dropout: float = 0.0,
         norm_type: str = "batch",
-        readout: str = "mean",
-        residual: bool = False,
-        improved: bool = False,
-        cached: bool = False,
-        add_self_loops: bool = False,
-        normalize: bool = True,
     ):
         super().__init__()
         if num_layers < 1:
             raise ValueError("num_layers must be >= 1")
 
-        self.dropout = dropout
-        self.residual = residual
+        self.num_layers = num_layers
         self.pos_enc_dim = pos_enc_dim
-        self.pos_enc_mode = pos_enc_mode.lower()
         self.use_input_proj = use_input_proj
 
-        if self.pos_enc_mode not in {"none", "concat", "add"}:
-            raise ValueError(f"Unknown pos_enc_mode: {pos_enc_mode}")
+        # Hardcoded to 'concat' PE
+        effective_in_dim = in_dim + pos_enc_dim if pos_enc_dim > 0 else in_dim
 
-        effective_in_dim = in_dim + pos_enc_dim if self.pos_enc_mode == "concat" and pos_enc_dim > 0 else in_dim
         if self.use_input_proj:
             self.input_proj = nn.Linear(effective_in_dim, hid_dim)
         else:
@@ -187,69 +175,51 @@ class GCNEncoder(nn.Module):
                     f"use_input_proj=False requires effective_in_dim ({effective_in_dim}) == hid_dim ({hid_dim})"
                 )
             self.input_proj = nn.Identity()
-        self.pos_add_proj = (
-            nn.Linear(pos_enc_dim, hid_dim, bias=False)
-            if self.pos_enc_mode == "add" and pos_enc_dim > 0
-            else None
-        )
 
-        self.convs = nn.ModuleList()
-        self.norms = nn.ModuleList()
-
-        for layer_idx in range(num_layers):
-            layer_in_dim = hid_dim if layer_idx == 0 else hid_dim
-            layer_out_dim = out_dim if layer_idx == num_layers - 1 else hid_dim
-            self.convs.append(
-                GCNConvWithEdges(
-                    in_channels=layer_in_dim,
-                    out_channels=layer_out_dim,
+        self.layers = nn.ModuleList()
+        for _ in range(num_layers):
+            self.layers.append(
+                GCNConvLayer(
+                    dim_in=hid_dim,
+                    dim_out=hid_dim,
                     edge_dim=edge_dim,
-                    improved=improved,
-                    cached=cached,
-                    add_self_loops=add_self_loops,
-                    normalize=normalize,
-                    bias=True,
+                    dropout=dropout,
+                    norm_type=norm_type,
                 )
             )
-            self.norms.append(get_norm_layer(norm_type, layer_out_dim))
+
+        # Hardcoded Jumping Knowledge = 'cat' output dimension
+        self.out_dim = hid_dim * (num_layers + 1)
+
+    def _validate_positional_encoding(self, pos_enc: Tensor | None) -> None:
+        if pos_enc is None or self.pos_enc_dim == 0:
+            return
+        if pos_enc.size(-1) != self.pos_enc_dim:
+            raise ValueError(
+                f"Expected pos_enc with feature size {self.pos_enc_dim}, got {pos_enc.size(-1)}"
+            )
+
+    def _integrate_positional_encoding(self, x: Tensor, pos_enc: Tensor | None) -> Tensor:
+        if pos_enc is None or self.pos_enc_dim == 0:
+            return x
+        return torch.cat([x, pos_enc], dim=-1)
 
     def forward(
         self,
         x: Tensor,
         edge_index: Adj,
         batch: Tensor,
-        edge_attr: OptTensor = None,
-        edge_type: OptTensor = None,
-        pos_enc: OptTensor = None,
-        edge_weight: OptTensor = None,
+        edge_attr: Tensor | None = None,
+        pos_enc: Tensor | None = None,
     ) -> Tensor:
-        # edge_type is accepted for interface consistency and is unused in GCN.
-        _ = edge_type
-        
-        # Use our external helper functions!
-        validate_positional_encoding(pos_enc, self.pos_enc_dim, self.pos_enc_mode)
-        x = integrate_positional_encoding(x, pos_enc, self.pos_enc_dim, self.pos_enc_mode)
-        
+        self._validate_positional_encoding(pos_enc)
+        x = self._integrate_positional_encoding(x, pos_enc)
         x = self.input_proj(x)
 
-        if pos_enc is not None and self.pos_add_proj is not None:
-            x = x + self.pos_add_proj(pos_enc)
+        h_list = [x]
+        for layer in self.layers:
+            h_list.append(layer(x=h_list[-1], edge_index=edge_index, edge_attr=edge_attr))
 
-        for layer_idx, (conv, norm) in enumerate(zip(self.convs, self.norms)):
-            x_in = x
-            x = conv(
-                x=x,
-                edge_index=edge_index,
-                edge_attr=edge_attr,
-                edge_weight=edge_weight,
-            )
-            x = norm(x)
+        # Hardcoded Jumping Knowledge = 'cat'
+        return torch.cat(h_list, dim=-1)
 
-            if layer_idx < len(self.convs) - 1:
-                x = F.relu(x)
-                x = F.dropout(x, p=self.dropout, training=self.training)
-
-            if self.residual and x.shape == x_in.shape:
-                x = x + x_in
-
-        return x

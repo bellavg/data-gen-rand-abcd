@@ -1,3 +1,4 @@
+import torch
 import torch.nn as nn
 from torch_geometric.nn import global_mean_pool, global_max_pool, global_add_pool
 
@@ -46,3 +47,18 @@ def dense_pool(x, pool_type):
         return x
     else:
         raise ValueError(f"Unknown pool_type: {pool_type}")
+
+
+def get_batch_positional_encoding(batch: object) -> torch.Tensor | None:
+    """Return the collated `pos_enc` tensor from a PyG Batch (or Data) object.
+
+    - If `batch` has no `pos_enc` attribute, returns `None`.
+    - If `pos_enc` is 1D, it will be unsqueezed to shape `(N, 1)` and cast to float.
+    - Otherwise returns `pos_enc.float()`.
+    """
+    pe = getattr(batch, "pos_enc", None)
+    if pe is None:
+        return None
+    if pe.dim() == 1:
+        pe = pe.unsqueeze(-1)
+    return pe.float()
