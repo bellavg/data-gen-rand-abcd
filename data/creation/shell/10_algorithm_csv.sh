@@ -88,11 +88,6 @@ def _t0_path(design: str, recipe_id: int, step_id: int) -> str:
     return str(graphs_root / "graphs" / "tier0" / design / f"{stem}.pt")
 
 
-def _t1_path(design: str, algo: str, recipe_id: int, step_id: int) -> str:
-    stem = f"{design}_{algo}_tier1_{_recipe_stem(recipe_id, step_id)}"
-    return str(graphs_root / "graphs" / "tier1" / algo / design / f"{stem}.pt")
-
-
 def check_exists_parallel(paths: list[str], n_workers: int) -> list[bool]:
     """Return a bool list indicating whether each .pt path exists on disk."""
     if not paths:
@@ -195,10 +190,11 @@ t2 = t2[t2["_tier1_algo"] != ""].copy()
 
 t1_lookup = (
     t1[["_root_design", "algorithm", "_recipe_id", "_step_id",
-        "nodes", "num_PI", "num_PO", "depth"]]
+        "nodes", "num_PI", "num_PO", "depth", "file_path"]]
     .rename(columns={"algorithm": "_tier1_algo",
                      "nodes": "pre_nodes", "num_PI": "pre_num_PI",
-                     "num_PO": "pre_num_PO", "depth": "pre_depth"})
+                     "num_PO": "pre_num_PO", "depth": "pre_depth",
+                     "file_path": "_t1_file_path"})
     .drop_duplicates(subset=["_root_design", "_tier1_algo", "_recipe_id", "_step_id"])
 )
 
@@ -209,10 +205,13 @@ t2m = t2.merge(
 )
 t2_missing_parent = len(t2) - len(t2m)
 
+# Build unoptimized_graph_path from the actual tier-1 AIG filename stem stored in
+# file_path — the real filenames contain extra components (algo, design, random hash)
+# that cannot be reconstructed from (design, algo, recipe_id, step_id) alone.
 t2m["unoptimized_graph_path"] = [
-    _t1_path(d, a, r, s)
-    for d, a, r, s in zip(
-        t2m["_root_design"], t2m["_tier1_algo"], t2m["_recipe_id"], t2m["_step_id"]
+    str(graphs_root / "graphs" / "tier1" / algo / design / (Path(fp).stem + ".pt"))
+    for algo, design, fp in zip(
+        t2m["_tier1_algo"], t2m["_root_design"], t2m["_t1_file_path"]
     )
 ]
 t2_exists = check_exists_parallel(t2m["unoptimized_graph_path"].tolist(), workers)

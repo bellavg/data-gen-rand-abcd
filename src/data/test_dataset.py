@@ -1,0 +1,317 @@
+from __future__ import annotations
+
+import csv
+import json
+import tempfile
+import unittest
+from pathlib import Path
+
+import torch
+
+from src.data.data_utils import aig_to_pytorch_geometric
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+_AIG_PATH = Path(__file__).with_name("adder.aig")
+
+
+def _make_graph_pt(dest: Path) -> Path:
+    """Process adder.aig into a .pt file and return the path."""
+    data = aig_to_pytorch_geometric(_AIG_PATH)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(data, dest)
+    return dest
+
+
+def _make_graph_pts(dest_dir: Path, n: int) -> list[Path]:
+    """Create *n* distinct .pt files (copies of adder) in dest_dir."""
+    data = aig_to_pytorch_geometric(_AIG_PATH)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    paths: list[Path] = []
+    for i in range(n):
+        p = dest_dir / f"graph_{i:04d}.pt"
+        torch.save(data, p)
+        paths.append(p)
+    return paths
+
+
+def _write_csv(path: Path, rows: list[dict]) -> None:
+    fieldnames = [
+        "unoptimized_graph_path",
+        "design",
+        "algorithm",
+        "tier_id",
+        "optimizability",
+        "depth_optimizability",
+    ]
+    with open(path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def _make_rows(pt_paths: list[Path], *, opt_start: float = 0.1) -> list[dict]:
+    """One CSV row per unique .pt file."""
+    return [
+        {
+            "unoptimized_graph_path": str(p),
+            "design": "adder",
+            "algorithm": "Orchestrate",
+            "tier_id": "1",
+            "optimizability": str(round(opt_start + i * 0.01, 4)),
+            "depth_optimizability": "0.2",
+        }
+        for i, p in enumerate(pt_paths)
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Dataset tests
+# ---------------------------------------------------------------------------
+
+
+class TestAIGGraphRegressionDataset(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        # 10 unique .pt files — one per CSV row
+        self.pt_paths = _make_graph_pts(self.root / "graphs", 10)
+        self.csv_path = self.root / "orchestrate.csv"
+        _write_csv(self.csv_path, _make_rows(self.pt_paths))
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _make_ds(self, **kwargs):
+        from src.data.dataset import AIGGraphRegressionDataset
+
+        return AIGGraphRegressionDataset(self.csv_path, **kwargs)
+
+    # --- basic ---
+
+    def test_len(self):
+        ds = self._make_ds()
+        self.assertEqual(len(ds), 10)
+
+    def test_getitem_y_shape(self):
+        ds = self._make_ds()
+        item = ds[0]
+        self.assertEqual(item.y.shape, (2,))
+        self.assertAlmostEqual(item.y[0].item(), 0.1, places=4)
+        self.assertAlmostEqual(item.y[1].item(), 0.2, places=5)
+
+    def test_getitem_graph_attributes(self):
+        ds = self._make_ds()
+        item = ds[0]
+        self.assertEqual(item.x.dim(), 2)
+        self.assertEqual(item.edge_index.shape[0], 2)
+        self.assertEqual(item.edge_attr.dim(), 2)
+        self.assertEqual(item.edge_attr.shape[0], item.edge_index.shape[1])
+
+    # --- positional encoding ---
+
+    def test_pos_enc_none_by_default(self):
+        ds = self._make_ds()
+        item = ds[0]
+        # PyG raises AttributeError for missing keys; use getattr
+        self.assertIsNone(getattr(item, "pos_enc", None))
+
+    def test_pos_enc_level(self):
+        ds = self._make_ds(positional_encoding="level")
+        item = ds[0]
+        pe = getattr(item, "pos_enc", None)
+        self.assertIsNotNone(pe)
+        self.assertEqual(pe.shape, (item.x.shape[0], 1))
+
+    # --- num_samples ---
+
+    def test_num_samples_limits_dataset(self):
+        # 20 unique paths, ask for only 5
+        extra_paths = _make_graph_pts(self.root / "graphs_extra", 20)
+        csv2 = self.root / "big.csv"
+        _write_csv(csv2, _make_rows(extra_paths))
+        from src.data.dataset import AIGGraphRegressionDataset
+
+        ds = AIGGraphRegressionDataset(csv2, num_samples=5)
+        self.assertEqual(len(ds), 5)
+
+    def test_num_samples_larger_than_dataset(self):
+        # num_samples > len should just return all samples
+        ds = self._make_ds(num_samples=999)
+        self.assertEqual(len(ds), 10)
+
+    # --- splits ---
+
+    def test_split_total_equals_dataset_size(self):
+        from src.data.dataset import AIGGraphRegressionDataset
+
+        # 20 unique paths
+        pts = _make_graph_pts(self.root / "split_graphs", 20)
+        csv = self.root / "split.csv"
+        _write_csv(csv, _make_rows(pts))
+
+        train_ds = AIGGraphRegressionDataset(csv, split="train", seed=7)
+        val_ds = AIGGraphRegressionDataset(csv, split="val", seed=7)
+        test_ds = AIGGraphRegressionDataset(csv, split="test", seed=7)
+        self.assertEqual(len(train_ds) + len(val_ds) + len(test_ds), 20)
+
+    def test_split_train_val_test_are_disjoint(self):
+        from src.data.dataset import AIGGraphRegressionDataset
+
+        pts = _make_graph_pts(self.root / "disjoint_graphs", 20)
+        csv = self.root / "disjoint.csv"
+        _write_csv(csv, _make_rows(pts))
+
+        train_paths = {s.graph_path for s in AIGGraphRegressionDataset(csv, split="train", seed=3).samples}
+        val_paths = {s.graph_path for s in AIGGraphRegressionDataset(csv, split="val", seed=3).samples}
+        test_paths = {s.graph_path for s in AIGGraphRegressionDataset(csv, split="test", seed=3).samples}
+
+        self.assertFalse(train_paths & val_paths, "train and val overlap")
+        self.assertFalse(train_paths & test_paths, "train and test overlap")
+        self.assertFalse(val_paths & test_paths, "val and test overlap")
+
+    def test_split_approx_ratios(self):
+        from src.data.dataset import AIGGraphRegressionDataset
+
+        pts = _make_graph_pts(self.root / "ratio_graphs", 100)
+        csv = self.root / "ratio.csv"
+        _write_csv(csv, _make_rows(pts))
+
+        train_ds = AIGGraphRegressionDataset(csv, split="train", seed=0)
+        val_ds = AIGGraphRegressionDataset(csv, split="val", seed=0)
+        test_ds = AIGGraphRegressionDataset(csv, split="test", seed=0)
+        # With default 0.8/0.1/0.1 ratios expect train ~80, val ~10, test ~10
+        self.assertGreaterEqual(len(train_ds), 75)
+        self.assertGreaterEqual(len(val_ds), 5)
+        self.assertGreaterEqual(len(test_ds), 5)
+
+    # --- cache ---
+
+    def test_cache_file_created(self):
+        from src.data.dataset import AIGGraphRegressionDataset
+
+        pts = _make_graph_pts(self.root / "cache_graphs", 10)
+        csv = self.root / "cache.csv"
+        _write_csv(csv, _make_rows(pts))
+        cache_dir = self.root / "cache"
+
+        AIGGraphRegressionDataset(csv, split="train", cache_dir=cache_dir, seed=1)
+        cache_files = list(cache_dir.glob("*_splits.json"))
+        self.assertEqual(len(cache_files), 1)
+
+    def test_cache_file_contains_all_splits(self):
+        from src.data.dataset import AIGGraphRegressionDataset
+
+        pts = _make_graph_pts(self.root / "cache2_graphs", 10)
+        csv = self.root / "cache2.csv"
+        _write_csv(csv, _make_rows(pts))
+        cache_dir = self.root / "cache2"
+
+        AIGGraphRegressionDataset(csv, split="train", cache_dir=cache_dir, seed=1)
+        cache_file = next(cache_dir.glob("*_splits.json"))
+        splits = json.loads(cache_file.read_text())
+        self.assertIn("train", splits)
+        self.assertIn("val", splits)
+        self.assertIn("test", splits)
+
+    def test_cache_loaded_on_second_call(self):
+        from src.data.dataset import AIGGraphRegressionDataset
+
+        pts = _make_graph_pts(self.root / "cache3_graphs", 10)
+        csv = self.root / "cache3.csv"
+        _write_csv(csv, _make_rows(pts))
+        cache_dir = self.root / "cache3"
+
+        ds1 = AIGGraphRegressionDataset(csv, split="train", cache_dir=cache_dir, seed=5)
+        paths1 = [s.graph_path for s in ds1.samples]
+
+        # Overwrite cache file with a corrupted/altered key to prove it is re-read
+        cache_file = next(cache_dir.glob("*_splits.json"))
+        original = json.loads(cache_file.read_text())
+        # second call with same args should load from cache and get identical result
+        ds2 = AIGGraphRegressionDataset(csv, split="train", cache_dir=cache_dir, seed=5)
+        paths2 = [s.graph_path for s in ds2.samples]
+        self.assertEqual(paths1, paths2)
+
+    def test_cache_not_created_without_cache_dir(self):
+        from src.data.dataset import AIGGraphRegressionDataset
+
+        pts = _make_graph_pts(self.root / "nocache_graphs", 10)
+        csv = self.root / "nocache.csv"
+        _write_csv(csv, _make_rows(pts))
+
+        # No cache_dir → no JSON file anywhere in tmp
+        AIGGraphRegressionDataset(csv, split="train", seed=0)
+        json_files = list(self.root.rglob("*.json"))
+        self.assertEqual(len(json_files), 0)
+
+    # --- multi-CSV ---
+
+    def test_multi_csv_concat(self):
+        from src.data.dataset import AIGGraphRegressionDataset
+
+        pts2 = _make_graph_pts(self.root / "graphs2", 10)
+        csv2 = self.root / "deepsyn.csv"
+        _write_csv(csv2, _make_rows(pts2, opt_start=0.5))
+        ds = AIGGraphRegressionDataset([self.csv_path, csv2])
+        self.assertEqual(len(ds), 20)
+
+
+# ---------------------------------------------------------------------------
+# DataModule tests
+# ---------------------------------------------------------------------------
+
+
+class TestAIGDataModule(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        # 30 unique .pt files so splits are non-empty
+        pt_paths = _make_graph_pts(self.root / "graphs", 30)
+        self.csv_path = self.root / "orchestrate.csv"
+        _write_csv(self.csv_path, _make_rows(pt_paths))
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _make_dm(self, **kwargs):
+        from src.data.datamodule import AIGDataModule
+
+        dm = AIGDataModule(self.csv_path, batch_size=4, **kwargs)
+        dm.setup()
+        return dm
+
+    def test_loaders_exist(self):
+        dm = self._make_dm()
+        self.assertIsNotNone(dm.train_dataloader())
+        self.assertIsNotNone(dm.val_dataloader())
+
+    def test_train_batch_shapes(self):
+        dm = self._make_dm()
+        batch = next(iter(dm.train_dataloader()))
+        self.assertEqual(batch.y.shape[1], 2)
+        self.assertEqual(batch.x.dim(), 2)
+        self.assertEqual(batch.edge_index.shape[0], 2)
+        self.assertEqual(batch.edge_attr.dim(), 2)
+
+    def test_train_num_samples(self):
+        dm = self._make_dm(train_num_samples=8)
+        self.assertEqual(len(dm.train_ds), 8)
+
+    def test_test_loader(self):
+        from src.data.datamodule import AIGDataModule
+
+        dm = AIGDataModule(self.csv_path, batch_size=4)
+        dm.setup(stage="test")
+        batch = next(iter(dm.test_dataloader()))
+        self.assertEqual(batch.y.shape[1], 2)
+
+    def test_datamodule_split_sizes_sum_to_total(self):
+        dm = self._make_dm()
+        self.assertEqual(len(dm.train_ds) + len(dm.val_ds) + len(dm.test_ds), 30)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -10,26 +10,11 @@ import pandas as pd
 import torch
 from torch.utils.data import Dataset
 
-from data.dataset_utils import (
-    graph_input_path_from_csv_row,
-    parse_float,
-    parse_int,
-)
-from src.constants import VALID_ALGORITHMS
-
-
 @dataclass(frozen=True)
 class GraphSample:
-    key: str
     graph_path: str
-    design: str
-    algorithm: str
-    tier_id: int
     y_node_opt: float
     y_depth_opt: float
-
-
-_PE_FIELDS = (None, "level", "pi_paths", "local_sp_sum")
 
 
 def _get_pe(
@@ -52,16 +37,13 @@ class AIGGraphRegressionDataset(Dataset):
     - y[1] = depth optimizability
 
     Required graph attributes loaded from .pt:
-    - x, edge_index, edge_attr
-    - level, pi_paths, local_sp_sum (used to create pos_enc)
+    - x, edge_index, edge_attr, level, pi_paths, local_sp_sum
     """
 
     def __init__(
         self,
-        csv_path: str | Path,
-        graph_root: str | Path,
+        csv_paths: str | Path | List[str | Path],
         *,
-        algorithm: Optional[str] = None,
         positional_encoding: Optional[str] = None,
         split: Optional[str] = None,
         cache_dir: Optional[str | Path] = None,
@@ -69,123 +51,106 @@ class AIGGraphRegressionDataset(Dataset):
         seed: int = 42,
         num_samples: Optional[int] = None,
     ) -> None:
-        self.csv_path = Path(csv_path)
-        self.graph_root = Path(graph_root)
-        self.algorithm = algorithm
+        if isinstance(csv_paths, (str, Path)):
+            self.csv_paths = [Path(csv_paths)]
+        else:
+            self.csv_paths = [Path(p) for p in csv_paths]
         self.positional_encoding = positional_encoding
         self.split = split
         self.cache_dir = Path(cache_dir) if cache_dir is not None else None
         self.split_ratios = split_ratios
-        self.seed = int(seed)
+        self.seed = seed
         self.num_samples = num_samples
 
         self.samples = self._build_samples()
 
     def _read_candidate_samples(self) -> List[GraphSample]:
-        df = pd.read_csv(self.csv_path, dtype=str).fillna("")
-        if self.algorithm is not None:
-            df = df[df["algorithm"].isin(["", self.algorithm])]
+        df = pd.concat(
+            [pd.read_csv(p, dtype=str).fillna("") for p in self.csv_paths],
+            ignore_index=True,
+        )
+        df["optimizability"] = df["optimizability"].astype(float)
+        df["depth_optimizability"] = df["depth_optimizability"].astype(float)
 
-        samples = [
+        return [
             GraphSample(
-                key=row["file_path"],
-                graph_path=str(graph_input_path_from_csv_row(self.graph_root, row)),
-                design=row["design"],
-                algorithm=row["algorithm"],
-                tier_id=parse_int(row.get("tier_id", "0"), default=0),
-                y_node_opt=parse_float(row.get("optimizability", "0"), 0.0),
-                y_depth_opt=parse_float(row.get("depth_optimizability", "0"), 0.0),
+                graph_path=row["unoptimized_graph_path"],
+                y_node_opt=row["optimizability"],
+                y_depth_opt=row["depth_optimizability"],
             )
-            for _, row in df.iterrows()
+            for row in df.to_dict("records")
         ]
-        return samples
-
-    def _split_signature(self) -> str:
-        algo_token = self.algorithm if self.algorithm is not None else "all"
-        ratios_token = "-".join(f"{x:.6f}" for x in self.split_ratios)
-        return f"algo={algo_token}|ratios={ratios_token}|seed={self.seed}"
 
     def _load_or_create_split_keys(self, all_keys: List[str]) -> Dict[str, List[str]]:
         if self.cache_dir is None or self.split is None:
             return self._create_split_keys(all_keys)
 
         self.cache_dir.mkdir(parents=True, exist_ok=True)
-        cache_file = self.cache_dir / f"{self.split}.json"
+        algo_tag = "_".join(p.stem for p in self.csv_paths)
+        cache_file = self.cache_dir / f"{algo_tag}_splits.json"
         if cache_file.is_file():
-            with open(cache_file, "r", encoding="utf-8") as f:
-                payload = json.load(f)
-            if payload.get("signature") == self._split_signature():
-                splits = payload.get("splits", {})
-                if all(name in splits for name in ("train", "val", "test")):
-                    return {
-                        "train": list(splits["train"]),
-                        "val": list(splits["val"]),
-                        "test": list(splits["test"]),
-                    }
+            splits = json.loads(cache_file.read_text())
+            if all(name in splits for name in ("train", "val", "test")):
+                return splits
 
         split_keys = self._create_split_keys(all_keys)
-        payload = {"signature": self._split_signature(), "splits": split_keys}
-        with open(cache_file, "w", encoding="utf-8") as f:
-            json.dump(payload, f, indent=2, sort_keys=True)
+        cache_file.write_text(json.dumps(split_keys, indent=2, sort_keys=True))
         return split_keys
 
     def _create_split_keys(self, all_keys: List[str]) -> Dict[str, List[str]]:
-        train_ratio, val_ratio, test_ratio = self.split_ratios
-        ratio_sum = train_ratio + val_ratio + test_ratio
-        if ratio_sum <= 0:
-            raise ValueError("split_ratios must sum to a positive value")
-
         keys = list(all_keys)
         rng = random.Random(self.seed)
         rng.shuffle(keys)
 
-        train_ratio = train_ratio / ratio_sum
-        val_ratio = val_ratio / ratio_sum
-        # test takes the remainder for exact partitioning.
+        total = sum(self.split_ratios)
+        train_f = self.split_ratios[0] / total
+        val_f = self.split_ratios[1] / total
 
         n = len(keys)
-        n_train = int(n * train_ratio)
-        n_val = int(n * val_ratio)
-        n_test = max(0, n - n_train - n_val)
+        n_train = int(n * train_f)
+        n_val = int(n * val_f)
 
-        train_keys = keys[:n_train]
-        val_keys = keys[n_train : n_train + n_val]
-        test_keys = keys[n_train + n_val : n_train + n_val + n_test]
-        return {"train": train_keys, "val": val_keys, "test": test_keys}
+        return {
+            "train": keys[:n_train],
+            "val": keys[n_train : n_train + n_val],
+            "test": keys[n_train + n_val :],
+        }
 
     def _apply_split(self, samples: List[GraphSample]) -> List[GraphSample]:
         if self.split is None:
             return samples
-
-        all_keys = [s.key for s in samples]
+        all_keys = [s.graph_path for s in samples]
         split_keys = self._load_or_create_split_keys(all_keys)
         selected = set(split_keys[self.split])
-        return [s for s in samples if s.key in selected]
+        return [s for s in samples if s.graph_path in selected]
 
     def _build_samples(self) -> List[GraphSample]:
         samples = self._read_candidate_samples()
         samples = self._apply_split(samples)
         samples = self._apply_num_samples(samples)
+        self._verify_first_sample(samples)
         return samples
+
+    def _verify_first_sample(self, samples: List[GraphSample]) -> None:
+        if not samples:
+            return
+        data_obj = torch.load(samples[0].graph_path, map_location="cpu", weights_only=False)
+        assert data_obj.x.dim() == 2, f"x should be 2D, got shape {data_obj.x.shape}"
+        assert data_obj.edge_index.shape[0] == 2, f"edge_index should be [2, E], got {data_obj.edge_index.shape}"
+        assert data_obj.edge_attr is not None and data_obj.edge_attr.dim() == 2, (
+            f"edge_attr should be 2D, got {getattr(data_obj, 'edge_attr', None)}"
+        )
+        if self.positional_encoding is not None:
+            pe = _get_pe(data_obj, self.positional_encoding)
+            assert pe is not None and pe.shape == (data_obj.x.shape[0], 1), (
+                f"pos_enc should be [N, 1], got {pe.shape if pe is not None else None}"
+            )
 
     def _apply_num_samples(self, samples: List[GraphSample]) -> List[GraphSample]:
         if self.num_samples is None:
             return samples
         rng = random.Random(self.seed)
-        if self.algorithm is not None:
-            k = min(self.num_samples, len(samples))
-            return rng.sample(samples, k)
-        # Mixed: sample num_samples // 4 from each algorithm.
-        per_algo = self.num_samples // len(VALID_ALGORITHMS)
-        grouped: Dict[str, List[GraphSample]] = {a: [] for a in VALID_ALGORITHMS}
-        for s in samples:
-            if s.algorithm in grouped:
-                grouped[s.algorithm].append(s)
-        selected: List[GraphSample] = []
-        for algo, pool in grouped.items():
-            selected.extend(rng.sample(pool, min(per_algo, len(pool))))
-        rng.shuffle(selected)
-        return selected
+        return rng.sample(samples, min(self.num_samples, len(samples)))
 
     def __len__(self) -> int:
         return len(self.samples)
@@ -194,22 +159,12 @@ class AIGGraphRegressionDataset(Dataset):
         sample = self.samples[idx]
         data_obj = torch.load(sample.graph_path, map_location="cpu", weights_only=False)
 
-        # Edge features are required in this project.
-        if getattr(data_obj, "edge_attr", None) is None:
-            raise ValueError(f"Graph is missing edge_attr: {sample.graph_path}")
-
         data_obj.pos_enc = _get_pe(data_obj, self.positional_encoding)
 
         # Keep targets on the Data object for graph-level multi-target regression.
         data_obj.y = torch.tensor(
             [sample.y_node_opt, sample.y_depth_opt], dtype=torch.float32
         )
-
-        # Keep metadata for filtering/debugging/analysis.
-        data_obj.design = sample.design
-        data_obj.algorithm = sample.algorithm
-        data_obj.tier_id = sample.tier_id
-        data_obj.sample_key = sample.key
         return data_obj
 
 
