@@ -9,7 +9,7 @@ from torch_geometric.loader import DataLoader
 
 # Import your models and layers
 from src.models.base_model import UnifiedGraphBaseModel
-from src.models.layers.positional_encodigs import get_pe_transform
+from src.models.layers.positional_encodings import get_pe_transform
 from src.models.lightning_model import AIGRegressionLightningModule
 from src.models.model_utils import get_batch_positional_encoding
 
@@ -317,6 +317,170 @@ class TestPositionalEncodingCompatibility(unittest.TestCase):
 
         loss = lm.training_step(batch, 0)
         self.assertIsInstance(loss, torch.Tensor)
+
+
+class TestEncoderKwargsPropagation(unittest.TestCase):
+    def test_base_model_respects_non_egin_encoder_kwargs(self):
+        data = _make_aig_data(seed=7)
+        batch = Data(batch=torch.zeros(data.num_nodes, dtype=torch.long))
+
+        test_cases = [
+            ("gcn", "layers", 3, 20),
+            ("gine", "layers", 4, 24),
+            ("vanilla_mpnn", "convs", 2, 12),
+        ]
+
+        for encoder_name, layer_attr, num_layers, hid_dim in test_cases:
+            with self.subTest(
+                encoder=encoder_name, num_layers=num_layers, hid_dim=hid_dim
+            ):
+                model = UnifiedGraphBaseModel(
+                    encoder_name=encoder_name,
+                    embed_dim=EMBED_DIM,
+                    node_input_dim=IN_DIM,
+                    edge_attr_dim=EDGE_DIM,
+                    task_out_dim=OUT_DIM,
+                    encoder_kwargs={"num_layers": num_layers, "hid_dim": hid_dim},
+                )
+                model.eval()
+
+                self.assertEqual(model.encoder.num_layers, num_layers)
+                self.assertEqual(model.encoder.out_dim, hid_dim * (num_layers + 1))
+                self.assertEqual(len(getattr(model.encoder, layer_attr)), num_layers)
+
+                out = model(
+                    x=data.x,
+                    edge_index=data.edge_index,
+                    batch=batch.batch,
+                    edge_attr=data.edge_attr,
+                    pos_enc=None,
+                )
+                self.assertEqual(out.shape, (1, OUT_DIM))
+                self.assertEqual(model.head.in_features, hid_dim * (num_layers + 1))
+
+    def test_base_model_respects_egin_encoder_kwargs(self):
+        data = _make_aig_data(seed=8)
+        batch = Data(batch=torch.zeros(data.num_nodes, dtype=torch.long))
+
+        num_layers = 5
+        hid_dim = 18
+
+        model = UnifiedGraphBaseModel(
+            encoder_name="egin",
+            embed_dim=EMBED_DIM,
+            node_input_dim=IN_DIM,
+            edge_attr_dim=EDGE_DIM,
+            task_out_dim=OUT_DIM,
+            encoder_kwargs={"num_layers": num_layers, "hid_dim": hid_dim},
+        )
+        model.eval()
+
+        self.assertEqual(model.encoder.num_layers, num_layers)
+        self.assertEqual(len(model.encoder.mlps), num_layers - 1)
+        self.assertEqual(len(model.encoder.linears_prediction), num_layers)
+        self.assertEqual(model.encoder.edge_dim, EMBED_DIM)
+        self.assertIsInstance(model.head, torch.nn.Identity)
+
+        out = model(
+            x=data.x,
+            edge_index=data.edge_index,
+            batch=batch.batch,
+            edge_attr=data.edge_attr,
+            pos_enc=None,
+        )
+        self.assertEqual(out.shape, (1, OUT_DIM))
+
+    def test_lightning_passes_encoder_kwargs_to_base_model(self):
+        num_layers = 4
+        hid_dim = 14
+
+        lm = AIGRegressionLightningModule(
+            encoder_name="gcn",
+            embed_dim=EMBED_DIM,
+            node_input_dim=IN_DIM,
+            num_edge_types=EDGE_DIM,
+            task_out_dim=OUT_DIM,
+            encoder_kwargs={"num_layers": num_layers, "hid_dim": hid_dim},
+        )
+
+        self.assertEqual(lm.model.encoder.num_layers, num_layers)
+        self.assertEqual(lm.model.encoder.out_dim, hid_dim * (num_layers + 1))
+
+    def test_base_model_respects_transformer_conv_kwargs(self):
+        data = _make_aig_data(seed=9)
+        batch = Data(batch=torch.zeros(data.num_nodes, dtype=torch.long))
+
+        num_layers = 3
+        hid_dim = 10
+        model = UnifiedGraphBaseModel(
+            encoder_name="transformer_conv",
+            embed_dim=EMBED_DIM,
+            node_input_dim=IN_DIM,
+            edge_attr_dim=EDGE_DIM,
+            task_out_dim=OUT_DIM,
+            encoder_kwargs={"num_layers": num_layers, "hid_dim": hid_dim, "heads": 2},
+        )
+        model.eval()
+
+        self.assertEqual(model.encoder.num_layers, num_layers)
+        self.assertEqual(len(model.encoder.layers), num_layers)
+        self.assertEqual(model.encoder.out_dim, hid_dim * (num_layers + 1))
+
+        out = model(
+            x=data.x,
+            edge_index=data.edge_index,
+            batch=batch.batch,
+            edge_attr=data.edge_attr,
+            pos_enc=None,
+        )
+        self.assertEqual(out.shape, (1, OUT_DIM))
+        self.assertEqual(model.head.in_features, hid_dim * (num_layers + 1))
+
+    def test_base_model_respects_graphgps_kwargs(self):
+        data = _make_aig_data(seed=10)
+        batch = Data(batch=torch.zeros(data.num_nodes, dtype=torch.long))
+
+        num_layers = 2
+        hidden_dim = 12
+        model = UnifiedGraphBaseModel(
+            encoder_name="graphgps",
+            embed_dim=EMBED_DIM,
+            node_input_dim=IN_DIM,
+            edge_attr_dim=EDGE_DIM,
+            task_out_dim=OUT_DIM,
+            encoder_kwargs={"num_layers": num_layers, "hidden_dim": hidden_dim},
+        )
+        model.eval()
+
+        self.assertEqual(len(model.encoder.layers), num_layers)
+        self.assertEqual(model.encoder.hidden_dim, hidden_dim)
+        self.assertEqual(model.encoder.out_dim, hidden_dim * (num_layers + 1))
+
+        out = model(
+            x=data.x,
+            edge_index=data.edge_index,
+            batch=batch.batch,
+            edge_attr=data.edge_attr,
+            pos_enc=None,
+        )
+        self.assertEqual(out.shape, (1, OUT_DIM))
+        self.assertEqual(model.head.in_features, hidden_dim * (num_layers + 1))
+
+    def test_lightning_passes_graphgps_kwargs_to_base_model(self):
+        num_layers = 2
+        hidden_dim = 12
+        lm = AIGRegressionLightningModule(
+            encoder_name="graphgps",
+            embed_dim=EMBED_DIM,
+            node_input_dim=IN_DIM,
+            num_edge_types=EDGE_DIM,
+            task_out_dim=OUT_DIM,
+            encoder_kwargs={"num_layers": num_layers, "hidden_dim": hidden_dim},
+        )
+
+        self.assertEqual(len(lm.model.encoder.layers), num_layers)
+        self.assertEqual(lm.model.encoder.hidden_dim, hidden_dim)
+        self.assertEqual(lm.model.encoder.out_dim, hidden_dim * (num_layers + 1))
 
 
 

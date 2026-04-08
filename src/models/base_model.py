@@ -66,17 +66,27 @@ class UnifiedGraphBaseModel(nn.Module):
 
         kwargs = {} if encoder_kwargs is None else dict(encoder_kwargs)
 
-        # Provide sensible defaults for encoder input dims if not supplied
+        # Provide sensible defaults for encoder input dims and hidden sizes.
         kwargs.setdefault("in_dim", embed_dim)
+        kwargs.setdefault("num_layers", 2)
+
+        # GraphGPS uses `hidden_dim` while most other encoders use `hid_dim`.
+        if self.encoder_name == "graphgps":
+            if "hidden_dim" not in kwargs:
+                kwargs["hidden_dim"] = kwargs.get("hid_dim", embed_dim)
+            kwargs.pop("hid_dim", None)
+        else:
+            kwargs.setdefault("hid_dim", embed_dim)
+
         if "edge_dim" not in kwargs:
             if self.edge_attr_proj is not None:
                 kwargs["edge_dim"] = embed_dim
             elif self.edge_attr_dim is not None:
                 kwargs["edge_dim"] = self.edge_attr_dim
 
-        # 2. Inject task_out_dim directly into EGIN since it inherently bypasses the head
+        # EGIN bypasses the shared prediction head and needs output_dim on encoder.
         if self.encoder_name == "egin":
-            kwargs["output_dim"] = task_out_dim
+            kwargs.setdefault("output_dim", task_out_dim)
 
         self.encoder = ENCODER_REGISTRY[encoder_key](**kwargs)
 

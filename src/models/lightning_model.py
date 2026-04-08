@@ -1,6 +1,7 @@
 from typing import Any, Dict, Optional
 
 import pytorch_lightning as pl
+import torch
 import torch.nn.functional as F
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import ReduceLROnPlateau
@@ -28,6 +29,7 @@ class AIGRegressionLightningModule(pl.LightningModule):
         pe_type: str = "none",
         pos_enc_dim: int = 0,
         encoder_kwargs: Optional[Dict[str, Any]] = None,
+        huber_delta: float = 1.0,
         lr: float = 1e-3,
         weight_decay: float = 1e-5,
     ):
@@ -46,6 +48,20 @@ class AIGRegressionLightningModule(pl.LightningModule):
             pos_enc_dim=self.hparams.pos_enc_dim,
             encoder_kwargs=self.hparams.encoder_kwargs,
         )
+        # Provide an example input to initialize lazy modules and produce
+        # accurate model summaries. Use a tiny PyG Batch if available.
+        try:
+            from torch_geometric.data import Batch as PyGBatch
+            from torch_geometric.data import Data
+
+            node_dim = getattr(self.hparams, "node_input_dim", 4)
+            x = torch.zeros((2, node_dim), dtype=torch.float32)
+            edge_index = torch.zeros((2, 0), dtype=torch.long)
+            data = Data(x=x, edge_index=edge_index)
+            self.example_input_array = PyGBatch.from_data_list([data])
+        except Exception:
+            # If PyG isn't installed or construction fails, skip example input.
+            pass
 
     def forward(self, batch):
         """Passes the PyG batch through the base model."""
@@ -65,32 +81,38 @@ class AIGRegressionLightningModule(pl.LightningModule):
 
         # Huber Loss prevents zero-collapse but handles outliers gracefully.
         # delta=1.0 is standard, but you can tune it (e.g., delta=2.0) if needed.
-        loss = F.huber_loss(preds, targets, delta=1.0)
+        loss = F.huber_loss(preds, targets, delta=self.hparams.huber_delta)
 
         # Calculate individual MAEs for human-readable logging (keep as L1)
         mae_node_opt = F.l1_loss(preds[:, 0], targets[:, 0])
         mae_depth_opt = F.l1_loss(preds[:, 1], targets[:, 1])
 
-        # Log metrics (on_step=False, on_epoch=True averages over the epoch)
-        self.log(
-            f"{prefix}/loss",
-            loss,
-            batch_size=batch.num_graphs,
-            sync_dist=True,
-            prog_bar=True,
-        )
-        self.log(
-            f"{prefix}/mae_node",
-            mae_node_opt,
-            batch_size=batch.num_graphs,
-            sync_dist=True,
-        )
-        self.log(
-            f"{prefix}/mae_depth",
-            mae_depth_opt,
-            batch_size=batch.num_graphs,
-            sync_dist=True,
-        )
+        # Log metrics only when attached to a Trainer to avoid warnings in
+        # unit tests that call `training_step`/`validation_step` directly.
+        # Access the internal `_trainer` attribute to avoid invoking the
+        # `trainer` property (which raises when not attached).
+        if getattr(self, "_trainer", None) is not None:
+            # Use batch.num_graphs when available for correct averaging.
+            batch_size = getattr(batch, "num_graphs", None)
+            self.log(
+                f"{prefix}/loss",
+                loss,
+                batch_size=batch_size,
+                sync_dist=True,
+                prog_bar=True,
+            )
+            self.log(
+                f"{prefix}/mae_node",
+                mae_node_opt,
+                batch_size=batch_size,
+                sync_dist=True,
+            )
+            self.log(
+                f"{prefix}/mae_depth",
+                mae_depth_opt,
+                batch_size=batch_size,
+                sync_dist=True,
+            )
 
         return loss
 

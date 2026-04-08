@@ -2,7 +2,6 @@ from models.layers.egin import GraphEGIN
 from models.layers.gcn import GCNEncoder
 from models.layers.gine import GINEEncoder
 from models.layers.graphgps import GraphGPSEncoder
-from models.layers.rgcn import RGCNEncoder
 from models.layers.transformer_conv import TransformerConvEncoder
 from models.layers.vanilla_mpnn import MPNNEncoder
 
@@ -18,8 +17,7 @@ ENCODER_REGISTRY = {
     "graphgps": GraphGPSEncoder,
     "transformer_conv": TransformerConvEncoder,
     "vanilla_mpnn": MPNNEncoder,
-    "rgcn": RGCNEncoder,
-    "egin": GraphEGIN,
+        "egin": GraphEGIN,
 }
 
 

@@ -41,6 +41,7 @@ class AIGDataModule(L.LightningDataModule):
             split_ratios=self.split_ratios,
             seed=self.seed,
             num_samples=num_samples,
+            num_workers=self.num_workers,
         )
 
     def setup(self, stage: Optional[str] = None) -> None:
