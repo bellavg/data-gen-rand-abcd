@@ -21,7 +21,6 @@ echo "=========================================="
 module purge
 module load 2025
 module load Python/3.13.1-GCCcore-14.2.0
-module load SciPy-bundle/2025.06-gfbf-2025a
 
 # 2. Activate Virtual Environment
 VENV_PATH="${VENV_PATH:-/scratch-shared/$USER/.venv}"
@@ -32,16 +31,23 @@ source "$VENV_PATH/bin/activate"
 # can find `hp_tuning.py` when run from the job working directory.
 # Use an absolute BASE_DIR pointing at the repo in the user's home directory.
 BASE_DIR="${BASE_DIR:-$HOME/data-gen-rand-abcd}"
-export PYTHONPATH="$BASE_DIR/src:${PYTHONPATH:-}"
+# Avoid mixing module-provided site-packages (py3.13) with venv (py3.12).
+unset PYTHONPATH
+unset PYTHONHOME
+export PYTHONNOUSERSITE=1
+export PYTHONPATH="$BASE_DIR/src"
 echo "Using BASE_DIR=$BASE_DIR"
 echo "PYTHONPATH=$PYTHONPATH"
+
+# Work from the repository root for editable install and module execution.
+cd "$BASE_DIR"
 
 # 3. Install Local Library (avoid building PyG native extensions in isolated build env)
 # Note: Ensure you run `sbatch run_optuna.sh` from the root of your project
 # where your pyproject.toml is located.
 echo "Preparing environment and installing prebuilt PyG extensions (torch-scatter)..."
-# Upgrade packaging/build tools
-pip install --upgrade pip setuptools wheel
+# Upgrade packaging/build tools while keeping torch's setuptools constraint.
+pip install --upgrade pip "setuptools<82" wheel
 
 # Ensure `torch` is installed in the virtualenv (install a matching wheel if needed)
 if ! python -c "import torch" >/dev/null 2>&1; then
@@ -50,15 +56,15 @@ if ! python -c "import torch" >/dev/null 2>&1; then
     pip install torch==2.11.0
 fi
 
-# Install prebuilt torch-scatter wheel from PyG index (no deps). If a matching
-# wheel is not available (pip falls back to sdist), retry building in the current
-# venv using --no-build-isolation so the build environment can import `torch`.
-echo "Installing torch-scatter from PyG wheels (no deps)..."
-if pip install --no-deps -f https://data.pyg.org/whl/ torch-scatter; then
-    echo "Installed torch-scatter from prebuilt wheel."
-else
-    echo "Prebuilt wheel not found or install failed; retrying build in venv (--no-build-isolation)..."
-    pip install --no-deps --no-build-isolation -f https://data.pyg.org/whl/ torch-scatter
+# Install prebuilt torch-scatter wheel from a matching PyG index. Force binary-only
+# so pip does not fall back to source distribution builds on cluster nodes.
+TORCH_VERSION="$(python -c 'import torch; print(torch.__version__.split("+")[0])')"
+PYG_WHL_URL="${PYG_WHL_URL:-https://data.pyg.org/whl/torch-${TORCH_VERSION}+cu130.html}"
+echo "Installing torch-scatter from: $PYG_WHL_URL"
+if ! pip install --no-deps --only-binary=:all: -f "$PYG_WHL_URL" torch-scatter; then
+    echo "Failed to install binary torch-scatter wheel from $PYG_WHL_URL"
+    echo "Set PYG_WHL_URL explicitly, e.g. torch-${TORCH_VERSION}+cpu.html or torch-${TORCH_VERSION}+cu130.html"
+    exit 1
 fi
 
 # Install local package without dependencies because we've handled them manually
