@@ -33,7 +33,7 @@ class UnifiedGraphBaseModel(nn.Module):
         embed_dim: int,
         node_input_dim: int = 4,  # Default to 4 AIG node types [Const, PI, Gate, PO]
         edge_attr_dim: int | None = None,
-        task_out_dim: int = 2,  # Default to Dual Regression [Node Opt, Depth Opt]
+        task_out_dim: int = 1,  # Default to single-target regression [Node Opt]
         encoder_kwargs: Optional[Dict] = None,
         pe_type: str | None = "none",
         pos_enc_dim: int = 0,
@@ -69,14 +69,7 @@ class UnifiedGraphBaseModel(nn.Module):
         # Provide sensible defaults for encoder input dims and hidden sizes.
         kwargs.setdefault("in_dim", embed_dim)
         kwargs.setdefault("num_layers", 2)
-
-        # GraphGPS uses `hidden_dim` while most other encoders use `hid_dim`.
-        if self.encoder_name == "graphgps":
-            if "hidden_dim" not in kwargs:
-                kwargs["hidden_dim"] = kwargs.get("hid_dim", embed_dim)
-            kwargs.pop("hid_dim", None)
-        else:
-            kwargs.setdefault("hid_dim", embed_dim)
+        kwargs.setdefault("hid_dim", embed_dim)
 
         if "edge_dim" not in kwargs:
             if self.edge_attr_proj is not None:

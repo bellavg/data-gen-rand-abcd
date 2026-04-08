@@ -65,7 +65,7 @@ class GraphGPSEncoder(nn.Module):
         self,
         in_dim: int,
         edge_dim: int,
-        hidden_dim: int,
+        hid_dim: int,
         num_layers: int,
         use_input_proj: bool = True,
         use_edge_proj: bool = True,
@@ -83,27 +83,27 @@ class GraphGPSEncoder(nn.Module):
 
         self.use_input_proj = use_input_proj
         self.use_edge_proj = use_edge_proj
-        self.hidden_dim = hidden_dim
+        self.hid_dim = hid_dim
         self.pos_enc_dim = pos_enc_dim
 
         # Hardcoded to 'concat' PE per GPS paper specifications
         effective_in_dim = in_dim + pos_enc_dim if pos_enc_dim > 0 else in_dim
 
         if self.use_input_proj:
-            self.node_encoder = nn.Linear(effective_in_dim, hidden_dim)
+            self.node_encoder = nn.Linear(effective_in_dim, hid_dim)
         else:
-            if effective_in_dim != hidden_dim:
+            if effective_in_dim != hid_dim:
                 raise ValueError(
-                    f"use_input_proj=False requires in_dim ({effective_in_dim}) == hidden_dim ({hidden_dim})"
+                    f"use_input_proj=False requires in_dim ({effective_in_dim}) == hid_dim ({hid_dim})"
                 )
             self.node_encoder = nn.Identity()
 
         if self.use_edge_proj:
-            self.edge_encoder = nn.Linear(edge_dim, hidden_dim)
+            self.edge_encoder = nn.Linear(edge_dim, hid_dim)
         else:
-            if edge_dim != hidden_dim:
+            if edge_dim != hid_dim:
                 raise ValueError(
-                    f"use_edge_proj=False requires edge_dim ({edge_dim}) == hidden_dim ({hidden_dim})"
+                    f"use_edge_proj=False requires edge_dim ({edge_dim}) == hid_dim ({hid_dim})"
                 )
             self.edge_encoder = nn.Identity()
 
@@ -111,17 +111,17 @@ class GraphGPSEncoder(nn.Module):
         for _ in range(num_layers):
             # Inner MPNN (GINE) for the GPS block
             local_nn = nn.Sequential(
-                nn.Linear(hidden_dim, hidden_dim),
-                get_norm_layer(norm_type, hidden_dim),
+                nn.Linear(hid_dim, hid_dim),
+                get_norm_layer(norm_type, hid_dim),
                 nn.ReLU(),
-                nn.Linear(hidden_dim, hidden_dim),
+                nn.Linear(hid_dim, hid_dim),
             )
-            local_conv = GINEConv(local_nn, edge_dim=hidden_dim)
+            local_conv = GINEConv(local_nn, edge_dim=hid_dim)
 
             # PyG's GPSConv natively handles the parallel Attn, MLPs, Norms, and Residuals
             self.layers.append(
                 GPSConv(
-                    channels=hidden_dim,
+                    channels=hid_dim,
                     conv=local_conv,
                     heads=4,
                     dropout=dropout,
@@ -135,7 +135,7 @@ class GraphGPSEncoder(nn.Module):
         # Ensure redraw_interval is set for Performer stability
         self.redraw_projection = RedrawProjection(self.layers, redraw_interval=1000)
         # Hardcoded Jumping Knowledge = 'cat' output dimension
-        self.out_dim = hidden_dim * (num_layers + 1)
+        self.out_dim = hid_dim * (num_layers + 1)
 
     def _validate_positional_encoding(self, pos_enc: OptTensor) -> None:
         if pos_enc is None or self.pos_enc_dim == 0:

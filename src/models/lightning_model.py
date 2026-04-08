@@ -16,7 +16,7 @@ except ImportError:
 class AIGRegressionLightningModule(pl.LightningModule):
     """
     PyTorch Lightning wrapper for the UnifiedGraphBaseModel.
-    Specifically designed for dual-target AIG regression (Node & Depth Optimizability).
+    Specifically designed for node optimizability AIG regression.
     """
 
     def __init__(
@@ -25,7 +25,7 @@ class AIGRegressionLightningModule(pl.LightningModule):
         embed_dim: int,
         node_input_dim: int = 4,
         num_edge_types: int = 2,
-        task_out_dim: int = 2,
+        task_out_dim: int = 1,
         pe_type: str = "none",
         pos_enc_dim: int = 0,
         encoder_kwargs: Optional[Dict[str, Any]] = None,
@@ -70,7 +70,7 @@ class AIGRegressionLightningModule(pl.LightningModule):
     def _compute_loss_and_metrics(self, batch, batch_idx, prefix: str):
         """
         Helper function to compute loss and log metrics.
-        batch.y is expected to be shape [BatchSize, 2] (Node Opt, Depth Opt)
+        batch.y is expected to be shape [BatchSize, 1] (Node Opt)
         """
         preds = self.forward(batch)
         targets = batch.y
@@ -83,9 +83,8 @@ class AIGRegressionLightningModule(pl.LightningModule):
         # delta=1.0 is standard, but you can tune it (e.g., delta=2.0) if needed.
         loss = F.huber_loss(preds, targets, delta=self.hparams.huber_delta)
 
-        # Calculate individual MAEs for human-readable logging (keep as L1)
+        # Calculate MAE for human-readable logging (keep as L1)
         mae_node_opt = F.l1_loss(preds[:, 0], targets[:, 0])
-        mae_depth_opt = F.l1_loss(preds[:, 1], targets[:, 1])
 
         # Log metrics only when attached to a Trainer to avoid warnings in
         # unit tests that call `training_step`/`validation_step` directly.
@@ -104,12 +103,6 @@ class AIGRegressionLightningModule(pl.LightningModule):
             self.log(
                 f"{prefix}/mae_node",
                 mae_node_opt,
-                batch_size=batch_size,
-                sync_dist=True,
-            )
-            self.log(
-                f"{prefix}/mae_depth",
-                mae_depth_opt,
                 batch_size=batch_size,
                 sync_dist=True,
             )
