@@ -15,7 +15,6 @@ from torch.utils.data import Dataset
 class GraphSample:
     graph_path: str
     y_node_opt: float
-    y_depth_opt: float
 
 
 def _get_pe(
@@ -35,7 +34,6 @@ class AIGGraphRegressionDataset(Dataset):
 
     Targets:
     - y[0] = node optimizability
-    - y[1] = depth optimizability
 
     Required graph attributes loaded from .pt:
     - x, edge_index, edge_attr, level, pi_paths, local_sp_sum
@@ -73,13 +71,11 @@ class AIGGraphRegressionDataset(Dataset):
             ignore_index=True,
         )
         df["optimizability"] = df["optimizability"].astype(float)
-        df["depth_optimizability"] = df["depth_optimizability"].astype(float)
 
         return [
             GraphSample(
                 graph_path=row["unoptimized_graph_path"],
                 y_node_opt=row["optimizability"],
-                y_depth_opt=row["depth_optimizability"],
             )
             for row in df.to_dict("records")
         ]
@@ -168,10 +164,8 @@ class AIGGraphRegressionDataset(Dataset):
 
         data_obj.pos_enc = _get_pe(data_obj, self.positional_encoding)
 
-        # Keep targets on the Data object for graph-level multi-target regression.
-        data_obj.y = torch.tensor(
-            [[sample.y_node_opt, sample.y_depth_opt]], dtype=torch.float32
-        )
+        # Keep targets on the Data object for graph-level regression.
+        data_obj.y = torch.tensor([[sample.y_node_opt]], dtype=torch.float32)
         return data_obj
 
 

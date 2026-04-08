@@ -81,6 +81,23 @@ if ! run_clean pip install --no-deps --only-binary=:all: -f "$PYG_WHL_URL" torch
     exit 1
 fi
 
+# Ensure core runtime dependencies exist in the venv. Editable install below uses
+# --no-deps, so we bootstrap required packages explicitly for fresh environments.
+if ! run_clean python -c "import optuna, pytorch_lightning, lightning, torch_geometric" >/dev/null 2>&1; then
+    echo "Installing missing runtime dependencies (optuna/lightning/pyg + data stack)..."
+    run_clean pip install \
+        "aigverse[adapters]" \
+        "numpy>=1.23" \
+        "networkx>=3.0" \
+        "pandas>=1.5" \
+        "scipy>=1.10" \
+        "torch-geometric>=2.5" \
+        "optuna>=3.0" \
+        "pytorch-lightning>=2.0" \
+        "lightning>=2.0" \
+        "tqdm>=4.66"
+fi
+
 # Install local package without dependencies because we've handled them manually
 run_clean pip install -e '.[dev]' --no-deps
 

@@ -44,7 +44,6 @@ def _write_csv(path: Path, rows: list[dict]) -> None:
         "algorithm",
         "tier_id",
         "optimizability",
-        "depth_optimizability",
     ]
     with open(path, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -61,7 +60,6 @@ def _make_rows(pt_paths: list[Path], *, opt_start: float = 0.1) -> list[dict]:
             "algorithm": "Orchestrate",
             "tier_id": "1",
             "optimizability": str(round(opt_start + i * 0.01, 4)),
-            "depth_optimizability": "0.2",
         }
         for i, p in enumerate(pt_paths)
     ]
@@ -98,9 +96,8 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
     def test_getitem_y_shape(self):
         ds = self._make_ds()
         item = ds[0]
-        self.assertEqual(item.y.shape, (1, 2))
+        self.assertEqual(item.y.shape, (1, 1))
         self.assertAlmostEqual(item.y[0, 0].item(), 0.1, places=4)
-        self.assertAlmostEqual(item.y[0, 1].item(), 0.2, places=5)
 
     def test_getitem_graph_attributes(self):
         ds = self._make_ds()
@@ -290,7 +287,7 @@ class TestAIGDataModule(unittest.TestCase):
     def test_train_batch_shapes(self):
         dm = self._make_dm()
         batch = next(iter(dm.train_dataloader()))
-        self.assertEqual(batch.y.shape[1], 2)
+        self.assertEqual(batch.y.shape[1], 1)
         self.assertEqual(batch.x.dim(), 2)
         self.assertEqual(batch.edge_index.shape[0], 2)
         self.assertEqual(batch.edge_attr.dim(), 2)
@@ -305,7 +302,7 @@ class TestAIGDataModule(unittest.TestCase):
         dm = AIGDataModule(self.csv_path, batch_size=4)
         dm.setup(stage="test")
         batch = next(iter(dm.test_dataloader()))
-        self.assertEqual(batch.y.shape[1], 2)
+        self.assertEqual(batch.y.shape[1], 1)
 
     def test_datamodule_split_sizes_sum_to_total(self):
         dm = self._make_dm()

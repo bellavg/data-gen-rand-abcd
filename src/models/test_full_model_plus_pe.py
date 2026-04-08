@@ -22,7 +22,7 @@ NUM_EDGES = 16
 IN_DIM = 4  # 4 AIG node types [Const, PI, Gate, PO]
 EDGE_DIM = 2  # e.g., standard vs. inverted edges
 EMBED_DIM = 16
-OUT_DIM = 2  # Dual regression [Node Opt, Depth Opt]
+OUT_DIM = 1  # Single-target regression [Node Opt]
 PE_DIM = 8
 
 
@@ -46,7 +46,7 @@ def _make_aig_data(
     edge_index = torch.stack([src, dst], dim=0)
     edge_attr = torch.randn(num_edges, edge_dim, generator=g)
 
-    # Targets for Dual Regression (Node Opt, Depth Opt)
+    # Targets for single-target regression (Node Opt)
     y = torch.rand(1, OUT_DIM, generator=g)
 
     # Pre-computed Positional Encodings
@@ -196,7 +196,7 @@ class TestLightningModelTraining(unittest.TestCase):
     def test_training_and_testing_loop(self):
         """
         Runs a mock training, validation, and testing loop using PyTorch Lightning.
-        Ensures loss calculation and metric logging (Huber, MAE Node, MAE Depth) executes without errors.
+        Ensures loss calculation and metric logging (Huber, MAE Node) executes without errors.
         """
         # Initialize Lightning wrapper
         model = AIGRegressionLightningModule(
@@ -441,20 +441,20 @@ class TestEncoderKwargsPropagation(unittest.TestCase):
         batch = Data(batch=torch.zeros(data.num_nodes, dtype=torch.long))
 
         num_layers = 2
-        hidden_dim = 12
+        hid_dim = 12
         model = UnifiedGraphBaseModel(
             encoder_name="graphgps",
             embed_dim=EMBED_DIM,
             node_input_dim=IN_DIM,
             edge_attr_dim=EDGE_DIM,
             task_out_dim=OUT_DIM,
-            encoder_kwargs={"num_layers": num_layers, "hidden_dim": hidden_dim},
+            encoder_kwargs={"num_layers": num_layers, "hid_dim": hid_dim},
         )
         model.eval()
 
         self.assertEqual(len(model.encoder.layers), num_layers)
-        self.assertEqual(model.encoder.hidden_dim, hidden_dim)
-        self.assertEqual(model.encoder.out_dim, hidden_dim * (num_layers + 1))
+        self.assertEqual(model.encoder.hid_dim, hid_dim)
+        self.assertEqual(model.encoder.out_dim, hid_dim * (num_layers + 1))
 
         out = model(
             x=data.x,
@@ -464,23 +464,23 @@ class TestEncoderKwargsPropagation(unittest.TestCase):
             pos_enc=None,
         )
         self.assertEqual(out.shape, (1, OUT_DIM))
-        self.assertEqual(model.head.in_features, hidden_dim * (num_layers + 1))
+        self.assertEqual(model.head.in_features, hid_dim * (num_layers + 1))
 
     def test_lightning_passes_graphgps_kwargs_to_base_model(self):
         num_layers = 2
-        hidden_dim = 12
+        hid_dim = 12
         lm = AIGRegressionLightningModule(
             encoder_name="graphgps",
             embed_dim=EMBED_DIM,
             node_input_dim=IN_DIM,
             num_edge_types=EDGE_DIM,
             task_out_dim=OUT_DIM,
-            encoder_kwargs={"num_layers": num_layers, "hidden_dim": hidden_dim},
+            encoder_kwargs={"num_layers": num_layers, "hid_dim": hid_dim},
         )
 
         self.assertEqual(len(lm.model.encoder.layers), num_layers)
-        self.assertEqual(lm.model.encoder.hidden_dim, hidden_dim)
-        self.assertEqual(lm.model.encoder.out_dim, hidden_dim * (num_layers + 1))
+        self.assertEqual(lm.model.encoder.hid_dim, hid_dim)
+        self.assertEqual(lm.model.encoder.out_dim, hid_dim * (num_layers + 1))
 
 
 
