@@ -80,16 +80,16 @@ class GraphEGIN(nn.Module):
 
     def __init__(
         self,
+        in_dim: int,
+        hid_dim: int,
         num_layers: int,
-        num_edge_feat: int,
-        input_dim: int,
-        hidden_dim: int,
+        edge_dim: int,
         output_dim: int,
         num_mlp_layers: int = 2,
         dot_update: bool = False,
         edge_mlp: bool = False,
         edge_hidden_dim: int | None = None,
-        final_dropout: float = 0.0,
+        dropout: float = 0.0,
         norm_type: str = "batch",
         pos_enc_dim: int = 0,
     ):
@@ -98,21 +98,21 @@ class GraphEGIN(nn.Module):
             raise ValueError(
                 "num_layers must be >= 2 (input layer + at least one EGIN block)"
             )
-        if num_edge_feat < 1:
-            raise ValueError("num_edge_feat must be >= 1 for EGIN")
+        if edge_dim < 1:
+            raise ValueError("edge_dim must be >= 1 for EGIN")
 
         self.num_layers = num_layers
-        self.num_edge_feat = num_edge_feat
+        self.edge_dim = edge_dim
         self.dot_update = dot_update
         self.edge_mlp = edge_mlp
-        self.final_dropout = final_dropout
+        self.dropout = dropout
         self.pos_enc_dim = pos_enc_dim
 
         # Hardcoded to 'concat' PE
-        effective_input_dim = input_dim + pos_enc_dim if pos_enc_dim > 0 else input_dim
+        effective_input_dim = in_dim + pos_enc_dim if pos_enc_dim > 0 else in_dim
 
         self.edge_hidden_dim = (
-            edge_hidden_dim if edge_hidden_dim is not None else num_edge_feat
+            edge_hidden_dim if edge_hidden_dim is not None else edge_dim
         )
 
         self.mlps = nn.ModuleList()
@@ -121,7 +121,7 @@ class GraphEGIN(nn.Module):
         if self.edge_mlp and not self.dot_update:
             self.edge_mlps = nn.ModuleList(
                 [
-                    nn.Linear(num_edge_feat, self.edge_hidden_dim)
+                    nn.Linear(edge_dim, self.edge_hidden_dim)
                     for _ in range(self.num_layers - 1)
                 ]
             )
@@ -129,26 +129,26 @@ class GraphEGIN(nn.Module):
             self.edge_mlps = None
 
         for layer in range(self.num_layers - 1):
-            node_dim = effective_input_dim if layer == 0 else hidden_dim
+            node_dim = effective_input_dim if layer == 0 else hid_dim
 
             if self.dot_update:
-                mlp_in_dim = node_dim * num_edge_feat
+                mlp_in_dim = node_dim * edge_dim
             elif self.edge_mlp:
                 mlp_in_dim = node_dim + self.edge_hidden_dim
             else:
-                mlp_in_dim = node_dim + num_edge_feat
+                mlp_in_dim = node_dim + edge_dim
 
             self.mlps.append(
                 MLP(
                     num_layers=2, # HARDCODED: Standard expressive depth from paper
                     input_dim=mlp_in_dim,
-                    hidden_dim=hidden_dim,
-                    output_dim=hidden_dim,
-                    dropout=final_dropout,
+                    hidden_dim=hid_dim,
+                    output_dim=hid_dim,
+                    dropout=dropout,
                     norm_type=norm_type,
                 )
             )
-            self.norms.append(get_norm_layer(norm_type, hidden_dim))
+            self.norms.append(get_norm_layer(norm_type, hid_dim))
 
         self.linears_prediction = nn.ModuleList()
         for layer in range(num_layers):
@@ -157,7 +157,7 @@ class GraphEGIN(nn.Module):
                     nn.Linear(effective_input_dim, output_dim)
                 )
             else:
-                self.linears_prediction.append(nn.Linear(hidden_dim, output_dim))
+                self.linears_prediction.append(nn.Linear(hid_dim, output_dim))
 
     def _validate_positional_encoding(self, pos_enc: Tensor | None) -> None:
         if pos_enc is None or self.pos_enc_dim == 0:
@@ -236,9 +236,9 @@ class GraphEGIN(nn.Module):
 
         edge_attr = self._to_2d_edge_attr(edge_attr)
 
-        if edge_attr.size(-1) != self.num_edge_feat:
+        if edge_attr.size(-1) != self.edge_dim:
             raise ValueError(
-                f"Expected edge_attr feature size {self.num_edge_feat}, got {edge_attr.size(-1)}"
+                f"Expected edge_attr feature size {self.edge_dim}, got {edge_attr.size(-1)}"
             )
 
         self._validate_positional_encoding(pos_enc)
@@ -257,7 +257,7 @@ class GraphEGIN(nn.Module):
             logits = self.linears_prediction[layer](pooled_h)
             score_over_layer = score_over_layer + F.dropout(
                 logits,
-                p=self.final_dropout,
+                p=self.dropout,
                 training=self.training,
             )
 

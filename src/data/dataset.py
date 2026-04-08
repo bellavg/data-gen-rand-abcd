@@ -10,6 +10,7 @@ import pandas as pd
 import torch
 from torch.utils.data import Dataset
 
+
 @dataclass(frozen=True)
 class GraphSample:
     graph_path: str
@@ -50,6 +51,7 @@ class AIGGraphRegressionDataset(Dataset):
         split_ratios: Tuple[float, float, float] = (0.8, 0.1, 0.1),
         seed: int = 42,
         num_samples: Optional[int] = None,
+        num_workers: int = 0,
     ) -> None:
         if isinstance(csv_paths, (str, Path)):
             self.csv_paths = [Path(csv_paths)]
@@ -61,6 +63,7 @@ class AIGGraphRegressionDataset(Dataset):
         self.split_ratios = split_ratios
         self.seed = seed
         self.num_samples = num_samples
+        self.num_workers = num_workers
 
         self.samples = self._build_samples()
 
@@ -134,9 +137,13 @@ class AIGGraphRegressionDataset(Dataset):
     def _verify_first_sample(self, samples: List[GraphSample]) -> None:
         if not samples:
             return
-        data_obj = torch.load(samples[0].graph_path, map_location="cpu", weights_only=False)
+        data_obj = torch.load(
+            samples[0].graph_path, map_location="cpu", weights_only=False
+        )
         assert data_obj.x.dim() == 2, f"x should be 2D, got shape {data_obj.x.shape}"
-        assert data_obj.edge_index.shape[0] == 2, f"edge_index should be [2, E], got {data_obj.edge_index.shape}"
+        assert data_obj.edge_index.shape[0] == 2, (
+            f"edge_index should be [2, E], got {data_obj.edge_index.shape}"
+        )
         assert data_obj.edge_attr is not None and data_obj.edge_attr.dim() == 2, (
             f"edge_attr should be 2D, got {getattr(data_obj, 'edge_attr', None)}"
         )
