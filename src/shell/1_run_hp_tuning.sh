@@ -3,9 +3,9 @@
 #SBATCH --time=120:00:00          # 5 days
 #SBATCH --nodes=1                 # Single node to ensure SQLite works correctly
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=36        # 18 cores per GPU worker
+#SBATCH --cpus-per-task=32        # 16 cores per H100 GPU worker (instead of 36)
+#SBATCH --partition=gpu_h100      # Use the H100 partition      # 18 cores per GPU worker
 #SBATCH --gpus=2                  # 2 GPUs
-#SBATCH --partition=gpu
 #SBATCH --output=/scratch-shared/%u/optuna_master_%j.out
 #SBATCH --error=/scratch-shared/%u/optuna_master_%j.err
 
@@ -66,7 +66,7 @@ echo "Using Database: $DB_URL"
 if [[ -n "${SLURM_CPUS_PER_TASK:-}" ]]; then
     NUM_WORKERS=$((SLURM_CPUS_PER_TASK / 2))
 else
-    NUM_WORKERS=${NUM_WORKERS:-18}
+    NUM_WORKERS=${NUM_WORKERS:-16}
 fi
 # Optionally reserve one CPU for OS/overhead by uncommenting the next line
 # NUM_WORKERS=$((NUM_WORKERS - 1))
