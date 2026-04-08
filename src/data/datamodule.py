@@ -3,13 +3,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-import lightning as L
+import pytorch_lightning as pl
 from torch_geometric.loader import DataLoader
 
 from data.dataset import AIGGraphRegressionDataset
 
 
-class AIGDataModule(L.LightningDataModule):
+class AIGDataModule(pl.LightningDataModule):
     def __init__(
         self,
         csv_paths: str | Path | List[str | Path],

@@ -2,6 +2,7 @@ import argparse
 
 import optuna
 import pytorch_lightning as pl
+from pytorch_lightning.callbacks import Callback
 
 # Project Imports
 try:
@@ -13,11 +14,11 @@ try:
     from optuna.integration import PyTorchLightningPruningCallback
 except ModuleNotFoundError:  # pragma: no cover - optional dependency
 
-    class PyTorchLightningPruningCallback:  # type: ignore[no-redef]
+    class PyTorchLightningPruningCallback(Callback):  # type: ignore[no-redef]
         """No-op fallback when optuna-integration is unavailable."""
 
         def __init__(self, *args, **kwargs):
-            pass
+            super().__init__()
 
 
 from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
@@ -86,17 +87,23 @@ def objective(trial: optuna.Trial, args):
         save_top_k=1,
     )
 
+    pruning_cb = PyTorchLightningPruningCallback(trial, monitor="val/mae_node")
+    # Some optuna/lightning version combos provide a callback object that does not
+    # implement Lightning's full callback hook surface (e.g., on_exception).
+    callbacks: list[Callback] = [
+        EarlyStopping(monitor="val/loss", patience=10, mode="min"),
+        checkpoint_cb,
+    ]
+    if hasattr(pruning_cb, "on_exception"):
+        callbacks.insert(0, pruning_cb)
+
     # 5. Trainer with timeouts
     trainer = pl.Trainer(
         max_epochs=100,
         max_time={"minutes": 60},
         accelerator="auto",
         devices=1,
-        callbacks=[
-            PyTorchLightningPruningCallback(trial, monitor="val/mae_node"),
-            EarlyStopping(monitor="val/loss", patience=10, mode="min"),
-            checkpoint_cb,
-        ],
+        callbacks=callbacks,
         logger=False,
         enable_checkpointing=True,
     )

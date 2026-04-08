@@ -107,11 +107,34 @@ CHECKPOINT_DIR="$WORKSPACE/checkpoints"
 LOG_DIR="$WORKSPACE/logs"
 DB_PATH="$WORKSPACE/optuna_study.db"
 DB_URL="sqlite:///${DB_PATH}"
+export DB_URL
 
 mkdir -p "$CHECKPOINT_DIR"
 mkdir -p "$LOG_DIR"
 
 echo "Using Database: $DB_URL"
+
+# Initialize the Optuna study schema once before launching parallel workers.
+# This avoids occasional concurrent CREATE TABLE races on first startup.
+python - <<'PY'
+import optuna
+import os
+
+db_url = os.environ["DB_URL"]
+storage = optuna.storages.RDBStorage(
+    url=db_url,
+    engine_kwargs={"connect_args": {"timeout": 60}},
+)
+optuna.create_study(
+    study_name="aig_optimization_5days",
+    storage=storage,
+    load_if_exists=True,
+    direction="minimize",
+    pruner=optuna.pruners.MedianPruner(n_startup_trials=5, n_warmup_steps=5),
+)
+print(f"Optuna DB ready: {db_url}")
+PY
+
 # 5. Define Input CSVs (use BASE_DIR for portability)
 CSV_1="$BASE_DIR/data/designs/design_metadata/algo_Orchestrate_ml.csv"
 CSV_2="$BASE_DIR/data/designs/design_metadata/algo_Deepsyn_ml.csv"
