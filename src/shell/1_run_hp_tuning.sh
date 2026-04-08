@@ -6,8 +6,8 @@
 #SBATCH --cpus-per-task=32        # 16 cores per H100 GPU worker (instead of 36)
 #SBATCH --partition=gpu_h100      # Use the H100 partition      # 18 cores per GPU worker
 #SBATCH --gpus=2                  # 2 GPUs
-#SBATCH --output=/scratch-shared/%u/optuna_master_%j.out
-#SBATCH --error=/scratch-shared/%u/optuna_master_%j.err
+#SBATCH --output=logs/optuna_%j.out
+
 
 set -euo pipefail
 
