@@ -11,10 +11,13 @@
 
 set -euo pipefail
 
+SCRIPT_VERSION="2026-04-08"
+
 echo "=========================================="
 echo "JOB: Optuna Hyperparameter Tuning (5 Days)"
 echo "Running on: $(hostname)"
 echo "Start time: $(date)"
+echo "Script version: $SCRIPT_VERSION"
 echo "=========================================="
 
 # 1. Setup Environment & Modules
@@ -27,6 +30,13 @@ VENV_PATH="${VENV_PATH:-/scratch-shared/$USER/.venv}"
 echo "Activating virtual environment at: $VENV_PATH"
 source "$VENV_PATH/bin/activate"
 
+# Run package-management commands in a sanitized environment to avoid pulling
+# module-provided Python paths (for example Python/3.13 site-packages) into
+# the venv Python process.
+run_clean() {
+    env -u PYTHONPATH -u PYTHONHOME PYTHONNOUSERSITE=1 "$@"
+}
+
 # Ensure the project src directory is on PYTHONPATH so `python -m hp_tuning`
 # can find `hp_tuning.py` when run from the job working directory.
 # Use an absolute BASE_DIR pointing at the repo in the user's home directory.
@@ -38,6 +48,9 @@ export PYTHONNOUSERSITE=1
 export PYTHONPATH="$BASE_DIR/src"
 echo "Using BASE_DIR=$BASE_DIR"
 echo "PYTHONPATH=$PYTHONPATH"
+echo "python: $(command -v python)"
+echo "pip:    $(command -v pip)"
+run_clean python --version
 
 # Work from the repository root for editable install and module execution.
 cd "$BASE_DIR"
@@ -47,28 +60,29 @@ cd "$BASE_DIR"
 # where your pyproject.toml is located.
 echo "Preparing environment and installing prebuilt PyG extensions (torch-scatter)..."
 # Upgrade packaging/build tools while keeping torch's setuptools constraint.
-pip install --upgrade pip "setuptools<82" wheel
+run_clean pip install --upgrade pip "setuptools<82" wheel
 
 # Ensure `torch` is installed in the virtualenv (install a matching wheel if needed)
-if ! python -c "import torch" >/dev/null 2>&1; then
+if ! run_clean python -c "import torch" >/dev/null 2>&1; then
     echo "Torch not found in venv — installing torch (adjust version as needed)..."
     # Adjust the torch version to match your cluster's CUDA/arch (example below)
-    pip install torch==2.11.0
+    run_clean pip install torch==2.11.0
 fi
 
 # Install prebuilt torch-scatter wheel from a matching PyG index. Force binary-only
 # so pip does not fall back to source distribution builds on cluster nodes.
-TORCH_VERSION="$(python -c 'import torch; print(torch.__version__.split("+")[0])')"
-PYG_WHL_URL="${PYG_WHL_URL:-https://data.pyg.org/whl/torch-${TORCH_VERSION}+cu130.html}"
+TORCH_VERSION="$(run_clean python -c 'import torch; print(torch.__version__.split("+")[0])')"
+CUDA_TAG="$(run_clean python -c 'import torch; v=torch.version.cuda; print("cpu" if v is None else f"cu{v.replace(".", "")}")')"
+PYG_WHL_URL="${PYG_WHL_URL:-https://data.pyg.org/whl/torch-${TORCH_VERSION}+${CUDA_TAG}.html}"
 echo "Installing torch-scatter from: $PYG_WHL_URL"
-if ! pip install --no-deps --only-binary=:all: -f "$PYG_WHL_URL" torch-scatter; then
+if ! run_clean pip install --no-deps --only-binary=:all: -f "$PYG_WHL_URL" torch-scatter; then
     echo "Failed to install binary torch-scatter wheel from $PYG_WHL_URL"
     echo "Set PYG_WHL_URL explicitly, e.g. torch-${TORCH_VERSION}+cpu.html or torch-${TORCH_VERSION}+cu130.html"
     exit 1
 fi
 
 # Install local package without dependencies because we've handled them manually
-pip install -e '.[dev]' --no-deps
+run_clean pip install -e '.[dev]' --no-deps
 
 # 4. Define Output Paths in Scratch
 WORKSPACE="/scratch-shared/$USER/aig_optuna_run"
