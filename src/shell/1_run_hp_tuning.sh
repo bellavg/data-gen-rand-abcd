@@ -28,6 +28,14 @@ VENV_PATH="${VENV_PATH:-/scratch-shared/$USER/.venv}"
 echo "Activating virtual environment at: $VENV_PATH"
 source "$VENV_PATH/bin/activate"
 
+# Ensure the project src directory is on PYTHONPATH so `python -m hp_tuning`
+# can find `hp_tuning.py` when run from the job working directory.
+# Use an absolute BASE_DIR pointing at the repo in the user's home directory.
+BASE_DIR="${BASE_DIR:-$HOME/data-gen-rand-abcd}"
+export PYTHONPATH="$BASE_DIR/src:${PYTHONPATH:-}"
+echo "Using BASE_DIR=$BASE_DIR"
+echo "PYTHONPATH=$PYTHONPATH"
+
 # 3. Install Local Library
 # Note: Ensure you run `sbatch run_optuna.sh` from the root of your project
 # where your setup.py or pyproject.toml is located.
@@ -44,13 +52,25 @@ DB_URL="sqlite:///${DB_PATH}"
 mkdir -p "$CHECKPOINT_DIR"
 mkdir -p "$LOG_DIR"
 
-# 5. Define Input CSVs
-CSV_1="/home/$USER/data-gen-rand-abcd/data/designs/design_metadata/algo_Orchestrate_ml.csv"
-CSV_2="/home/$USER/data-gen-rand-abcd/data/designs/design_metadata/algo_Deepsyn_ml.csv"
-CSV_3="/home/$USER/data-gen-rand-abcd/data/designs/design_metadata/algo_Syn4_ml.csv"
-CSV_4="/home/$USER/data-gen-rand-abcd/data/designs/design_metadata/algo_C2RS_ml.csv"
+echo "Using Database: $DB_URL"
+# 5. Define Input CSVs (use BASE_DIR for portability)
+CSV_1="$BASE_DIR/data/designs/design_metadata/algo_Orchestrate_ml.csv"
+CSV_2="$BASE_DIR/data/designs/design_metadata/algo_Deepsyn_ml.csv"
+CSV_3="$BASE_DIR/data/designs/design_metadata/algo_Syn4_ml.csv"
+CSV_4="$BASE_DIR/data/designs/design_metadata/algo_C2RS_ml.csv"
 
 echo "Using Database: $DB_URL"
+
+# Compute number of DataLoader workers to pass to each worker process.
+# Default: split available CPUs between the two worker processes.
+if [[ -n "${SLURM_CPUS_PER_TASK:-}" ]]; then
+    NUM_WORKERS=$((SLURM_CPUS_PER_TASK / 2))
+else
+    NUM_WORKERS=${NUM_WORKERS:-18}
+fi
+# Optionally reserve one CPU for OS/overhead by uncommenting the next line
+# NUM_WORKERS=$((NUM_WORKERS - 1))
+echo "Using num_workers per process: $NUM_WORKERS"
 
 # 6. Launch Worker 1 (Pinned to GPU 0)
 echo "Starting Worker 1 on GPU 0..."
@@ -58,6 +78,7 @@ CUDA_VISIBLE_DEVICES=0 python -m hp_tuning \
     --db_url "$DB_URL" \
     --checkpoint_dir "$CHECKPOINT_DIR" \
     --csv_paths "$CSV_1" "$CSV_2" "$CSV_3" "$CSV_4" \
+    --num_workers "$NUM_WORKERS" \
     > "$LOG_DIR/worker_0.log" 2>&1 &
 
 # Sleep briefly to ensure Worker 1 initializes the SQLite file before Worker 2 tries to read it
@@ -69,6 +90,7 @@ CUDA_VISIBLE_DEVICES=1 python -m hp_tuning \
     --db_url "$DB_URL" \
     --checkpoint_dir "$CHECKPOINT_DIR" \
     --csv_paths "$CSV_1" "$CSV_2" "$CSV_3" "$CSV_4" \
+    --num_workers "$NUM_WORKERS" \
     > "$LOG_DIR/worker_1.log" 2>&1 &
 
 # 8. Wait for workers to complete or hit the 5-day walltime
