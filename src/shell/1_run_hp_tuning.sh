@@ -36,11 +36,27 @@ export PYTHONPATH="$BASE_DIR/src:${PYTHONPATH:-}"
 echo "Using BASE_DIR=$BASE_DIR"
 echo "PYTHONPATH=$PYTHONPATH"
 
-# 3. Install Local Library
+# 3. Install Local Library (avoid building PyG native extensions in isolated build env)
 # Note: Ensure you run `sbatch run_optuna.sh` from the root of your project
-# where your setup.py or pyproject.toml is located.
-echo "Installing project in editable mode..."
-pip install -e .
+# where your pyproject.toml is located.
+echo "Preparing environment and installing prebuilt PyG extensions (torch-scatter)..."
+# Upgrade packaging/build tools
+pip install --upgrade pip setuptools wheel
+
+# Ensure `torch` is installed in the virtualenv (install a matching wheel if needed)
+if ! python -c "import torch" >/dev/null 2>&1; then
+    echo "Torch not found in venv — installing torch (adjust version as needed)..."
+    # Adjust the torch version to match your cluster's CUDA/arch (example below)
+    pip install torch==2.11.0
+fi
+
+# Install prebuilt torch-scatter wheel from PyG index (no deps). Choose the correct
+# wheel for your torch+CUDA combination at https://data.pyg.org/whl/ and adjust as needed.
+echo "Installing torch-scatter from PyG wheels (no deps)..."
+pip install --no-deps -f https://data.pyg.org/whl/ torch-scatter
+
+# Install local package without dependencies because we've handled them manually
+pip install -e '.[dev]' --no-deps
 
 # 4. Define Output Paths in Scratch
 WORKSPACE="/scratch-shared/$USER/aig_optuna_run"
