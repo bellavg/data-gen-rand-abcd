@@ -50,10 +50,16 @@ if ! python -c "import torch" >/dev/null 2>&1; then
     pip install torch==2.11.0
 fi
 
-# Install prebuilt torch-scatter wheel from PyG index (no deps). Choose the correct
-# wheel for your torch+CUDA combination at https://data.pyg.org/whl/ and adjust as needed.
+# Install prebuilt torch-scatter wheel from PyG index (no deps). If a matching
+# wheel is not available (pip falls back to sdist), retry building in the current
+# venv using --no-build-isolation so the build environment can import `torch`.
 echo "Installing torch-scatter from PyG wheels (no deps)..."
-pip install --no-deps -f https://data.pyg.org/whl/ torch-scatter
+if pip install --no-deps -f https://data.pyg.org/whl/ torch-scatter; then
+    echo "Installed torch-scatter from prebuilt wheel."
+else
+    echo "Prebuilt wheel not found or install failed; retrying build in venv (--no-build-isolation)..."
+    pip install --no-deps --no-build-isolation -f https://data.pyg.org/whl/ torch-scatter
+fi
 
 # Install local package without dependencies because we've handled them manually
 pip install -e '.[dev]' --no-deps
