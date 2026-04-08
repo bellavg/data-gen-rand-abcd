@@ -103,12 +103,24 @@ CSV_4="$BASE_DIR/data/designs/design_metadata/algo_C2RS_ml.csv"
 
 echo "Using Database: $DB_URL"
 
+# Determine how many worker processes to launch based on allocated GPUs.
+WORKER_COUNT=2
+if [[ -n "${SLURM_GPUS:-}" ]] && [[ "${SLURM_GPUS}" =~ ^[0-9]+$ ]]; then
+    if (( SLURM_GPUS < 2 )); then
+        WORKER_COUNT=1
+    fi
+fi
+echo "Launching $WORKER_COUNT Optuna worker process(es)."
+
 # Compute number of DataLoader workers to pass to each worker process.
-# Default: split available CPUs between the two worker processes.
+# Default: split available CPUs across the launched worker processes.
 if [[ -n "${SLURM_CPUS_PER_TASK:-}" ]]; then
-    NUM_WORKERS=$((SLURM_CPUS_PER_TASK / 2))
+    NUM_WORKERS=$((SLURM_CPUS_PER_TASK / WORKER_COUNT))
 else
     NUM_WORKERS=${NUM_WORKERS:-16}
+fi
+if (( NUM_WORKERS < 1 )); then
+    NUM_WORKERS=1
 fi
 # Optionally reserve one CPU for OS/overhead by uncommenting the next line
 # NUM_WORKERS=$((NUM_WORKERS - 1))
@@ -122,21 +134,43 @@ CUDA_VISIBLE_DEVICES=0 python -m hp_tuning \
     --csv_paths "$CSV_1" "$CSV_2" "$CSV_3" "$CSV_4" \
     --num_workers "$NUM_WORKERS" \
     > "$LOG_DIR/worker_0.log" 2>&1 &
+PID0=$!
 
 # Sleep briefly to ensure Worker 1 initializes the SQLite file before Worker 2 tries to read it
 sleep 15 
 
-# 7. Launch Worker 2 (Pinned to GPU 1)
-echo "Starting Worker 2 on GPU 1..."
-CUDA_VISIBLE_DEVICES=1 python -m hp_tuning \
-    --db_url "$DB_URL" \
-    --checkpoint_dir "$CHECKPOINT_DIR" \
-    --csv_paths "$CSV_1" "$CSV_2" "$CSV_3" "$CSV_4" \
-    --num_workers "$NUM_WORKERS" \
-    > "$LOG_DIR/worker_1.log" 2>&1 &
+if (( WORKER_COUNT >= 2 )); then
+    # 7. Launch Worker 2 (Pinned to GPU 1)
+    echo "Starting Worker 2 on GPU 1..."
+    CUDA_VISIBLE_DEVICES=1 python -m hp_tuning \
+        --db_url "$DB_URL" \
+        --checkpoint_dir "$CHECKPOINT_DIR" \
+        --csv_paths "$CSV_1" "$CSV_2" "$CSV_3" "$CSV_4" \
+        --num_workers "$NUM_WORKERS" \
+        > "$LOG_DIR/worker_1.log" 2>&1 &
+    PID1=$!
+fi
 
-# 8. Wait for workers to complete or hit the 5-day walltime
-wait
+# 8. Wait for workers to complete and surface failures in the Slurm log.
+FAIL=0
+if ! wait "$PID0"; then
+    echo "Worker 0 failed. Last 80 lines:"
+    tail -n 80 "$LOG_DIR/worker_0.log" || true
+    FAIL=1
+fi
+
+if (( WORKER_COUNT >= 2 )); then
+    if ! wait "$PID1"; then
+        echo "Worker 1 failed. Last 80 lines:"
+        tail -n 80 "$LOG_DIR/worker_1.log" || true
+        FAIL=1
+    fi
+fi
+
+if (( FAIL != 0 )); then
+    echo "One or more workers failed; exiting non-zero."
+    exit 1
+fi
 
 echo "=========================================="
 echo "JOB complete."
