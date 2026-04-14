@@ -55,9 +55,13 @@ class AIGRegressionLightningModule(pl.LightningModule):
             from torch_geometric.data import Data
 
             node_dim = getattr(self.hparams, "node_input_dim", 4)
+            edge_dim = getattr(self.hparams, "num_edge_types", 2)
             x = torch.zeros((2, node_dim), dtype=torch.float32)
-            edge_index = torch.zeros((2, 0), dtype=torch.long)
-            data = Data(x=x, edge_index=edge_index)
+            # Include at least one edge and matching edge attributes so
+            # edge-aware encoders can run during Lightning model summary.
+            edge_index = torch.tensor([[0], [1]], dtype=torch.long)
+            edge_attr = torch.zeros((1, edge_dim), dtype=torch.float32)
+            data = Data(x=x, edge_index=edge_index, edge_attr=edge_attr)
             self.example_input_array = PyGBatch.from_data_list([data])
         except Exception:
             # If PyG isn't installed or construction fails, skip example input.

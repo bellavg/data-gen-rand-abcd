@@ -1,13 +1,36 @@
-import unittest
+import math
 import os
+import tempfile
+import unittest
+import zipfile
 from collections import defaultdict
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock
 
-import networkx as nx
-import numpy as np
+# Existing imports
+from src.data.data_utils import (
+    _extract_topology,
+    _safe_log1p_int,
+    aig_to_pytorch_geometric,
+    parse_aig_name,
+)
 
-from src.data.data_utils import aig_to_pytorch_geometric
+# Imports for testing preprocess_data.py
+try:
+    from src.data.preprocess_data import (
+        GraphTask,
+        artifact_output_base_path,
+        discover_graph_tasks,
+        graph_output_path,
+    )
+except ImportError:
+    # Fallback to data.preprocess_data if the module isn't in 'src.'
+    from data.preprocess_data import (
+        GraphTask,
+        artifact_output_base_path,
+        discover_graph_tasks,
+        graph_output_path,
+    )
 
 
 class TestAigToPytorchGeometric(unittest.TestCase):
@@ -30,12 +53,6 @@ class TestAigToPytorchGeometric(unittest.TestCase):
         self.assertEqual(data.edge_attr.shape[1], 2)
         self.assertEqual(data.edge_attr.shape[0], data.edge_index.shape[1])
 
-        self.assertEqual(data.rel_edge_index.ndim, 2)
-        self.assertEqual(data.rel_edge_index.shape[0], 2)
-        self.assertEqual(data.edge_rel_dist.ndim, 2)
-        self.assertEqual(data.edge_rel_dist.shape[1], 1)
-        self.assertEqual(data.edge_rel_dist.shape[0], data.rel_edge_index.shape[1])
-
         self.assertEqual(data.num_nodes, data.x.shape[0])
         self.assertEqual(data.num_edges, data.edge_index.shape[1])
         self.assertGreaterEqual(data.num_pis, 0)
@@ -44,33 +61,181 @@ class TestAigToPytorchGeometric(unittest.TestCase):
         for row_sum in data.x.sum(dim=1).tolist():
             self.assertAlmostEqual(row_sum, 1.0, places=6)
 
-    def test_non_contiguous_networkx_labels_are_remapped(self) -> None:
-        class FakeAig:
-            def num_pis(self) -> int:
-                return 1
 
-            def num_pos(self) -> int:
-                return 1
+class TestDataUtilsFunctions(unittest.TestCase):
+    def test_safe_log1p_int(self):
+        # Test normal behaviors
+        self.assertEqual(_safe_log1p_int(0), 0.0)
+        self.assertAlmostEqual(_safe_log1p_int(10), math.log1p(10), places=6)
 
-            def to_networkx(self, levels: bool = True, dtype=np.float32) -> nx.DiGraph:
-                g = nx.DiGraph()
-                g.add_node(10, type=np.array([1.0, 0.0, 0.0, 0.0], dtype=dtype), level=0.0)
-                g.add_node(42, type=np.array([0.0, 1.0, 0.0, 0.0], dtype=dtype), level=0.0)
-                g.add_node(99, type=np.array([0.0, 0.0, 1.0, 0.0], dtype=dtype), level=1.0)
-                g.add_node(120, type=np.array([0.0, 0.0, 0.0, 1.0], dtype=dtype), level=2.0)
+        # Test exceptionally large integer that would normally trigger OverflowError
+        # log1p(2**1000) roughly equals 1000 * log(2)
+        huge_val = 2**1000
+        approx_expected = 1000 * math.log(2.0)
 
-                g.add_edge(42, 99, type=np.array([1.0, 0.0], dtype=dtype))
-                g.add_edge(99, 120, type=np.array([1.0, 0.0], dtype=dtype))
-                return g
+        res = _safe_log1p_int(huge_val)
+        self.assertAlmostEqual(res, approx_expected, delta=0.1)
 
-        with patch("src.data.data_utils.read_aiger_into_aig", return_value=FakeAig()):
-            data = aig_to_pytorch_geometric("dummy.aig")
+        # Test negative value error
+        with self.assertRaises(ValueError):
+            _safe_log1p_int(-5)
 
-        self.assertEqual(data.num_nodes, 4)
-        self.assertEqual(data.edge_index.shape[0], 2)
-        self.assertEqual(data.edge_index.shape[1], 2)
-        self.assertGreaterEqual(int(data.edge_index.min().item()), 0)
-        self.assertLess(int(data.edge_index.max().item()), data.num_nodes)
+    def test_parse_aig_name(self):
+        # Tier 0 Tests
+        self.assertEqual(parse_aig_name("adder_syn1_step0.aig"), (0, "", "adder"))
+        # Tier 1 Tests
+        self.assertEqual(
+            parse_aig_name("adder_Orchestrate_tier1_syn1_step0.aig"),
+            (1, "Orchestrate", "adder"),
+        )
+        self.assertEqual(
+            parse_aig_name("multiplier_Deepsyn_tier1_Deepsyn_v2_synX_step5.aig"),
+            (1, "Deepsyn", "multiplier"),
+        )
+        # Tier 2 outputs should be ignored (fallback to None)
+        self.assertIsNone(
+            parse_aig_name("adder_Orchestrate_Deepsyn_tier2_syn1_step0.aig")
+        )
+
+        # Random/unmatched files
+        self.assertIsNone(parse_aig_name("random_notes.txt"))
+        self.assertIsNone(parse_aig_name("adder_tier1_unmatched.aig"))
+
+
+class TestDataUtilsGraphTopology(unittest.TestCase):
+    def test_two_pos_same_driver(self):
+        """
+        Ensures that if 2 primary outputs are driven by the SAME node in the AIG,
+        _extract_topology accurately generates 2 distinct synthetic PO nodes.
+        """
+        # Mock the Aig
+        aig_mock = MagicMock()
+        aig_mock.nodes.return_value = [0, 1]
+        aig_mock.is_constant.side_effect = lambda n: n == 0
+        aig_mock.is_pi.side_effect = lambda n: n == 1
+        aig_mock.fanins.return_value = []
+
+        # Mock POs: two separate PO objects, both driven by base node 1
+        po1 = MagicMock()
+        po1.get_index.return_value = 1
+        po1.get_complement.return_value = False  # Regular edge
+
+        po2 = MagicMock()
+        po2.get_index.return_value = 1
+        po2.get_complement.return_value = True  # Inverted edge
+
+        aig_mock.pos.return_value = [po1, po2]
+        aig_mock.num_pos.return_value = 2
+        aig_mock.num_pis.return_value = 1
+
+        # Mock DepthAig
+        depth_mock = MagicMock()
+        depth_mock.level.side_effect = lambda n: 0.0 if n == 0 else 1.0
+
+        num_nodes, x, lvl, edges, succ = _extract_topology(aig_mock, depth_mock)
+
+        # We expect 4 nodes total: Constant (0), PI (1), PO1 (2), PO2 (3)
+        self.assertEqual(num_nodes, 4)
+
+        # Check node features (1-hot encoded)
+        self.assertEqual(x[2], [0.0, 0.0, 0.0, 1.0])  # PO1 is PO
+        self.assertEqual(x[3], [0.0, 0.0, 0.0, 1.0])  # PO2 is PO
+
+        # Check Levels (Driver level is 1, so PO should be 2)
+        self.assertEqual(lvl[2], [2.0])
+        self.assertEqual(lvl[3], [2.0])
+
+        # Check Edges: Driver (index 1) to POs (index 2 and 3)
+        # Expected edge format: (u, v, [regular, inverted])
+        self.assertIn((1, 2, [1.0, 0.0]), edges)
+        self.assertIn((1, 3, [0.0, 1.0]), edges)
+
+
+class TestPreprocessData(unittest.TestCase):
+    def setUp(self):
+        self.tmp_dir = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp_dir.name)
+
+    def tearDown(self):
+        self.tmp_dir.cleanup()
+
+    def test_artifact_output_paths(self):
+        base_out = Path("/tmp/out")
+
+        # Test Tier 0 Output path
+        t0_task = GraphTask(1, 0, "", "adder", "adder_syn1_step0.aig", "path", "", "")
+        self.assertEqual(
+            artifact_output_base_path(base_out, t0_task),
+            base_out / "graphs" / "tier0" / "adder" / "adder_syn1_step0",
+        )
+        self.assertEqual(
+            graph_output_path(base_out, t0_task),
+            base_out / "graphs" / "tier0" / "adder" / "adder_syn1_step0.pt",
+        )
+
+        # Test Tier 1 Output path
+        t1_task = GraphTask(
+            2,
+            1,
+            "Orchestrate",
+            "adder",
+            "adder_Orchestrate_tier1_synX_step5.aig",
+            "path",
+            "",
+            "",
+        )
+        self.assertEqual(
+            artifact_output_base_path(base_out, t1_task),
+            base_out
+            / "graphs"
+            / "tier1"
+            / "Orchestrate"
+            / "adder"
+            / "adder_Orchestrate_tier1_synX_step5",
+        )
+
+    def test_discover_graph_tasks(self):
+        """
+        Create a mock filesystem with loose AIGs and a ZIP archive to test discovery logic.
+        The layout needs to match the expected: <root>/<design>/tier0/... and <root>/<design>/tier1/...
+        """
+        # Create design directory first
+        design_dir = self.root / "adder"
+        design_dir.mkdir()
+
+        tier0_dir = design_dir / "tier0"
+        tier0_dir.mkdir()
+
+        tier1_dir = design_dir / "tier1"
+        tier1_dir.mkdir()
+
+        # Add valid and invalid loose files
+        (tier0_dir / "adder_syn1_step0.aig").touch()
+        (tier0_dir / "invalid_name.aig").touch()
+
+        # Add a tier1 zip file matching the expected glob pattern "*/tier1/*.zip"
+        zip_path = tier1_dir / "adder_Orchestrate.zip"
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            zf.writestr("adder_Orchestrate_tier1_syn1_step1.aig", "dummy data")
+            zf.writestr("ignored_member.txt", "not an aig")
+
+        tasks, unmatched, source_counts = discover_graph_tasks(
+            self.root, allow_unmatched_names=True
+        )
+
+        # We expect 2 valid matched tasks (1 loose, 1 in zip). The invalid file is counted as unmatched.
+        self.assertEqual(len(tasks), 2)
+        self.assertEqual(unmatched, 1)
+        self.assertEqual(
+            source_counts["filesystem_aig"], 2
+        )  # It touched 2 files locally
+        self.assertEqual(
+            source_counts["zip_aig"], 1
+        )  # Extracted 1 valid AIG from the zip
+
+        # Test fail on unmatched
+        with self.assertRaises(ValueError):
+            discover_graph_tasks(self.root, allow_unmatched_names=False)
 
 
 class TestDatasetAigNodeLabelAudit(unittest.TestCase):
@@ -150,7 +315,9 @@ class TestDatasetAigNodeLabelAudit(unittest.TestCase):
                             }
                         )
                 except Exception as exc:
-                    errors.append({"design": design, "path": str(path), "error": repr(exc)})
+                    errors.append(
+                        {"design": design, "path": str(path), "error": repr(exc)}
+                    )
 
         print(f"AIG audit checked files: {checked}")
         print(f"AIG audit designs with AIG files: {len(by_design)}")

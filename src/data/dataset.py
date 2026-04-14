@@ -22,6 +22,7 @@ def _get_pe(
 ) -> Optional[torch.Tensor]:
     if positional_encoding is None:
         return None
+
     t = getattr(data_obj, positional_encoding, None)
     if t is None:
         return None
@@ -145,8 +146,9 @@ class AIGGraphRegressionDataset(Dataset):
         )
         if self.positional_encoding is not None:
             pe = _get_pe(data_obj, self.positional_encoding)
-            assert pe is not None and pe.shape == (data_obj.x.shape[0], 1), (
-                f"pos_enc should be [N, 1], got {pe.shape if pe is not None else None}"
+            assert pe is not None and pe.dim() == 2 and pe.shape[0] == data_obj.x.shape[0], (
+                "pos_enc should be 2D with N rows, got "
+                f"{pe.shape if pe is not None else None}"
             )
 
     def _apply_num_samples(self, samples: List[GraphSample]) -> List[GraphSample]:
@@ -161,6 +163,16 @@ class AIGGraphRegressionDataset(Dataset):
     def __getitem__(self, idx: int):
         sample = self.samples[idx]
         data_obj = torch.load(sample.graph_path, map_location="cpu", weights_only=False)
+
+        edge_attr = getattr(data_obj, "edge_attr", None)
+        if edge_attr is None:
+            raise ValueError(
+                f"Loaded graph has edge_attr=None, which is not allowed: {sample.graph_path}"
+            )
+        if edge_attr.dim() != 2:
+            raise ValueError(
+                f"Loaded graph edge_attr must be 2D, got {tuple(edge_attr.shape)}: {sample.graph_path}"
+            )
 
         data_obj.pos_enc = _get_pe(data_obj, self.positional_encoding)
 
