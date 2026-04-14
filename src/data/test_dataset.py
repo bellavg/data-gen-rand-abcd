@@ -161,9 +161,18 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
         csv = self.root / "disjoint.csv"
         _write_csv(csv, _make_rows(pts))
 
-        train_paths = {s.graph_path for s in AIGGraphRegressionDataset(csv, split="train", seed=3).samples}
-        val_paths = {s.graph_path for s in AIGGraphRegressionDataset(csv, split="val", seed=3).samples}
-        test_paths = {s.graph_path for s in AIGGraphRegressionDataset(csv, split="test", seed=3).samples}
+        train_paths = {
+            s.graph_path
+            for s in AIGGraphRegressionDataset(csv, split="train", seed=3).samples
+        }
+        val_paths = {
+            s.graph_path
+            for s in AIGGraphRegressionDataset(csv, split="val", seed=3).samples
+        }
+        test_paths = {
+            s.graph_path
+            for s in AIGGraphRegressionDataset(csv, split="test", seed=3).samples
+        }
 
         self.assertFalse(train_paths & val_paths, "train and val overlap")
         self.assertFalse(train_paths & test_paths, "train and test overlap")

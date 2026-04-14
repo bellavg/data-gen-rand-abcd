@@ -98,7 +98,7 @@ class UnifiedGraphBaseModel(nn.Module):
         x: torch.Tensor,
         edge_index: torch.Tensor,
         batch: torch.Tensor,
-        edge_attr: Optional[torch.Tensor],
+        edge_attr: torch.Tensor,
         pos_enc: Optional[torch.Tensor],
     ) -> torch.Tensor:
         """Passes the fully mapped tensors directly into the selected architecture."""
@@ -120,17 +120,26 @@ class UnifiedGraphBaseModel(nn.Module):
     ) -> torch.Tensor:
         """Projects base graph features and positional encodings into continuous space."""
         x = self.node_embed(x.float())
-        # Map edge_attr into model embedding space when a projection is configured
         if edge_attr is None:
-            edge_attr_emb = None
+            raise ValueError("edge_attr is required and must never be None")
+
+        if edge_attr.dim() == 1:
+            edge_attr = edge_attr.unsqueeze(-1)
+
+        if edge_attr.dim() != 2:
+            raise ValueError(f"edge_attr must be 2D, got shape {tuple(edge_attr.shape)}")
+
+        if edge_attr.size(0) != edge_index.size(1):
+            raise ValueError(
+                "edge_attr row count must match number of edges: "
+                f"edge_attr rows={edge_attr.size(0)} edge_index cols={edge_index.size(1)}"
+            )
+
+        edge_attr = edge_attr.float()
+        if self.edge_attr_proj is not None:
+            edge_attr_emb = self.edge_attr_proj(edge_attr)
         else:
-            if edge_attr.dim() == 1:
-                edge_attr = edge_attr.unsqueeze(-1)
-            edge_attr = edge_attr.float()
-            if self.edge_attr_proj is not None:
-                edge_attr_emb = self.edge_attr_proj(edge_attr)
-            else:
-                edge_attr_emb = edge_attr
+            edge_attr_emb = edge_attr
 
         # 3. Apply the Positional Encoding Projection
         if pos_enc is not None and not isinstance(self.pe_encoder, nn.Identity):

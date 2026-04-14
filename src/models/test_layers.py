@@ -68,7 +68,9 @@ class TestExtractPrecomputedPE(unittest.TestCase):
 
         data = _make_data()
         data.pi_paths = torch.rand(NUM_NODES, 1)
-        t = ExtractPrecomputedPE(source_key="pi_paths", attr_name="pos_enc", discrete=False)
+        t = ExtractPrecomputedPE(
+            source_key="pi_paths", attr_name="pos_enc", discrete=False
+        )
         out = t(data)
         self.assertEqual(out.pos_enc.dtype, torch.float32)
 
@@ -85,7 +87,9 @@ class TestExtractPrecomputedPE(unittest.TestCase):
 
         data = _make_data()
         data.local_sp_sum = torch.rand(NUM_NODES, 1)
-        t = ExtractPrecomputedPE(source_key="local_sp_sum", attr_name="my_pe", discrete=False)
+        t = ExtractPrecomputedPE(
+            source_key="local_sp_sum", attr_name="my_pe", discrete=False
+        )
         out = t(data)
         self.assertIsNotNone(getattr(out, "my_pe", None))
         self.assertEqual(out.my_pe.dtype, torch.float32)
@@ -154,36 +158,6 @@ class TestLearnedDepthEmbedding(unittest.TestCase):
             self.assertEqual(out.shape[1], dim)
 
 
-class TestLearnedRelativeDistanceEmbedding(unittest.TestCase):
-    def setUp(self):
-        from src.models.layers.positional_encodings import LearnedRelativeDistanceEmbedding
-
-        self.model = LearnedRelativeDistanceEmbedding(max_hops=10, embed_dim=PE_DIM)
-
-    def test_output_shape(self):
-        dists = torch.randint(0, 5, (NUM_EDGES, 1))
-        out = self.model(dists)
-        self.assertEqual(out.shape, (NUM_EDGES, PE_DIM))
-
-    def test_flat_input(self):
-        dists = torch.randint(0, 5, (NUM_EDGES,))
-        out = self.model(dists)
-        self.assertEqual(out.shape, (NUM_EDGES, PE_DIM))
-
-    def test_clamping_exceeds_max_hops(self):
-        dists = torch.tensor([[100], [200]])
-        out = self.model(dists)
-        self.assertEqual(out.shape, (2, PE_DIM))
-
-    def test_embed_dim_respected(self):
-        from src.models.layers.positional_encodings import LearnedRelativeDistanceEmbedding
-
-        for dim in [4, 32]:
-            m = LearnedRelativeDistanceEmbedding(max_hops=5, embed_dim=dim)
-            out = m(torch.zeros(3, 1, dtype=torch.long))
-            self.assertEqual(out.shape[1], dim)
-
-
 # ===========================================================================
 # Positional Encoding — factory functions
 # ===========================================================================
@@ -239,15 +213,6 @@ class TestGetPeTransform(unittest.TestCase):
         t = get_pe_transform("local_sp_sum")
         out = t(data)
         self.assertEqual(out.pos_enc.dtype, torch.float32)
-
-    def test_edge_rel_dist_discrete(self):
-        from src.models.layers.positional_encodings import get_pe_transform
-
-        data = _make_data()
-        data.edge_rel_dist = torch.randint(0, 5, (NUM_EDGES, 1)).float()
-        t = get_pe_transform("edge_rel_dist")
-        out = t(data)
-        self.assertEqual(out.pos_enc.dtype, torch.long)
 
     def test_sinusoidal(self):
         from src.models.layers.positional_encodings import get_pe_transform
@@ -308,17 +273,6 @@ class TestGetPosEncLayer(unittest.TestCase):
 
         layer = get_pos_enc_layer("level", pos_enc_dim=PE_DIM, max_depth=100)
         self.assertIsInstance(layer, LearnedDepthEmbedding)
-
-    def test_learned_edge_rel_dist(self):
-        from src.models.layers.positional_encodings import (
-            LearnedRelativeDistanceEmbedding,
-            get_pos_enc_layer,
-        )
-
-        layer = get_pos_enc_layer("learned_edge_rel_dist", pos_enc_dim=PE_DIM, max_hops=10)
-        self.assertIsInstance(layer, LearnedRelativeDistanceEmbedding)
-        out = layer(torch.randint(0, 5, (NUM_EDGES, 1)))
-        self.assertEqual(out.shape, (NUM_EDGES, PE_DIM))
 
     def test_pi_paths_linear(self):
         import torch.nn as nn
@@ -382,10 +336,16 @@ class TestGINEConvLayer(unittest.TestCase):
     def test_layer_norm_type(self):
         from src.models.layers.gine import GINEConvLayer
 
-        layer = GINEConvLayer(hid_dim=HID_DIM, edge_dim=EDGE_DIM, dropout=0.0, norm_type="layer")
+        layer = GINEConvLayer(
+            hid_dim=HID_DIM, edge_dim=EDGE_DIM, dropout=0.0, norm_type="layer"
+        )
         layer.eval()
         _, edge_index, edge_attr, _ = _make_graph()
-        out = layer(x=torch.randn(NUM_NODES, HID_DIM), edge_index=edge_index, edge_attr=edge_attr)
+        out = layer(
+            x=torch.randn(NUM_NODES, HID_DIM),
+            edge_index=edge_index,
+            edge_attr=edge_attr,
+        )
         self.assertEqual(out.shape, (NUM_NODES, HID_DIM))
 
 
@@ -393,7 +353,9 @@ class TestGINEEncoder(unittest.TestCase):
     def _make_enc(self, **kwargs):
         from src.models.layers.gine import GINEEncoder
 
-        defaults = dict(in_dim=IN_DIM, hid_dim=HID_DIM, num_layers=NUM_LAYERS, edge_dim=EDGE_DIM)
+        defaults = dict(
+            in_dim=IN_DIM, hid_dim=HID_DIM, num_layers=NUM_LAYERS, edge_dim=EDGE_DIM
+        )
         defaults.update(kwargs)
         return GINEEncoder(**defaults)
 
@@ -413,7 +375,13 @@ class TestGINEEncoder(unittest.TestCase):
         enc.eval()
         x, edge_index, edge_attr, batch = _make_graph()
         pos_enc = torch.randn(NUM_NODES, PE_DIM)
-        out = enc(x=x, edge_index=edge_index, batch=batch, edge_attr=edge_attr, pos_enc=pos_enc)
+        out = enc(
+            x=x,
+            edge_index=edge_index,
+            batch=batch,
+            edge_attr=edge_attr,
+            pos_enc=pos_enc,
+        )
         self.assertEqual(out.shape, (NUM_NODES, HID_DIM * (NUM_LAYERS + 1)))
 
     def test_wrong_pos_enc_dim_raises(self):
@@ -421,7 +389,13 @@ class TestGINEEncoder(unittest.TestCase):
         x, edge_index, edge_attr, batch = _make_graph()
         wrong_pe = torch.randn(NUM_NODES, PE_DIM + 1)
         with self.assertRaises(ValueError):
-            enc(x=x, edge_index=edge_index, batch=batch, edge_attr=edge_attr, pos_enc=wrong_pe)
+            enc(
+                x=x,
+                edge_index=edge_index,
+                batch=batch,
+                edge_attr=edge_attr,
+                pos_enc=wrong_pe,
+            )
 
     def test_single_layer(self):
         enc = self._make_enc(num_layers=1)
@@ -452,7 +426,11 @@ class TestGCNConvLayer(unittest.TestCase):
         from src.models.layers.gcn import GCNConvLayer
 
         self.layer = GCNConvLayer(
-            dim_in=HID_DIM, dim_out=HID_DIM, edge_dim=EDGE_DIM, dropout=0.0, norm_type="batch"
+            dim_in=HID_DIM,
+            dim_out=HID_DIM,
+            edge_dim=EDGE_DIM,
+            dropout=0.0,
+            norm_type="batch",
         )
         self.layer.eval()
 
@@ -472,11 +450,19 @@ class TestGCNConvLayer(unittest.TestCase):
         from src.models.layers.gcn import GCNConvLayer
 
         layer = GCNConvLayer(
-            dim_in=HID_DIM, dim_out=HID_DIM, edge_dim=EDGE_DIM, dropout=0.0, norm_type="layer"
+            dim_in=HID_DIM,
+            dim_out=HID_DIM,
+            edge_dim=EDGE_DIM,
+            dropout=0.0,
+            norm_type="layer",
         )
         layer.eval()
         _, edge_index, edge_attr, _ = _make_graph()
-        out = layer(x=torch.randn(NUM_NODES, HID_DIM), edge_index=edge_index, edge_attr=edge_attr)
+        out = layer(
+            x=torch.randn(NUM_NODES, HID_DIM),
+            edge_index=edge_index,
+            edge_attr=edge_attr,
+        )
         self.assertEqual(out.shape, (NUM_NODES, HID_DIM))
 
 
@@ -484,7 +470,9 @@ class TestGCNEncoder(unittest.TestCase):
     def _make_enc(self, **kwargs):
         from src.models.layers.gcn import GCNEncoder
 
-        defaults = dict(in_dim=IN_DIM, hid_dim=HID_DIM, num_layers=NUM_LAYERS, edge_dim=EDGE_DIM)
+        defaults = dict(
+            in_dim=IN_DIM, hid_dim=HID_DIM, num_layers=NUM_LAYERS, edge_dim=EDGE_DIM
+        )
         defaults.update(kwargs)
         return GCNEncoder(**defaults)
 

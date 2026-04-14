@@ -37,7 +37,8 @@ def objective(trial: optuna.Trial, args):
     )
     embed_dim = trial.suggest_categorical("embed_dim", [128, 256, 384, 512, 768])
     pe_type = trial.suggest_categorical(
-        "pe_type", ["none", "level", "edge_rel_dist", "pi_paths", "local_sp_sum"]
+        "pe_type",
+        ["none", "level", "pi_paths", "local_sp_sum"],
     )
 
     pos_enc_dim = (

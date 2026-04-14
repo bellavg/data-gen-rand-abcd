@@ -322,6 +322,7 @@ def process_tasks_parallel(
             pending.pop(fut, None)
             result = fut.result()
             completed += 1
+            pb.update(1)
 
             status = result["status"]
             status_counts[status] = status_counts.get(status, 0) + 1

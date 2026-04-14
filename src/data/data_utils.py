@@ -1,18 +1,35 @@
 import math
+import collections
 import os
 import re
 from pathlib import Path
-from typing import Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union
 
 # aigverse.adapters is required to attach the .to_networkx() method to Aig objects
 import aigverse.adapters  # noqa: F401
-import networkx as nx
-import numpy as np
 import torch
 from aigverse import (
     read_aiger_into_aig,
 )
 from torch_geometric.data import Data
+
+
+def _safe_log1p_int(value: int) -> float:
+    """Numerically-stable log(1 + value) for very large Python integers."""
+    if value < 0:
+        raise ValueError(f"expected non-negative path count, got {value}")
+
+    try:
+        return math.log1p(value)
+    except OverflowError:
+        # For very large ints, avoid int->float overflow by estimating log(value)
+        # from the top-most bits: value ~= mantissa * 2**shift.
+        if value == 0:
+            return 0.0
+        bits = value.bit_length()
+        shift = max(0, bits - 53)
+        mantissa = value >> shift
+        return math.log(float(mantissa)) + shift * math.log(2.0)
 
 
 def default_workers() -> int:
@@ -63,173 +80,217 @@ def parse_aig_name(name: str) -> Optional[Tuple[int, str, str]]:
     return None
 
 
+def _extract_topology(
+    aig, depth_aig
+) -> Tuple[
+    int, List[List[float]], List[List[float]], List[tuple], Dict[int, List[int]]
+]:
+    """
+    Extracts the graph topology, creating stable indices for base nodes and synthetic POs.
+    Returns node count, raw features, and edge representations.
+    """
+    base_nodes = list(aig.nodes())
+
+    # Add a check if constant 0 is there; if it is not, add it at the start.
+    if 0 not in base_nodes:
+        base_nodes.insert(0, 0)
+
+    # Ensure deterministic topological progression for path propagation.
+    # Keep constant node first when present.
+    other_nodes_original = [n for n in base_nodes if n != 0]
+
+    # Cheap numeric sort: AIG node IDs are expected to be in ascending
+    # creation/order-of-assignment. Check and assert this invariant so we
+    # catch unexpected ordering during development.
+    other_nodes_sorted = sorted(other_nodes_original)
+    assert (
+        other_nodes_original == other_nodes_sorted
+    ), (
+        "AIG nodes are not in ascending ID order; expected creation-order IDs."
+    )
+
+    base_nodes = ([0] if 0 in base_nodes else []) + other_nodes_sorted
+
+    # Assert that node labels are contiguous 0..(n-1). We rely on this
+    # invariant for stable indexing and topological propagation.
+    num_base_nodes = len(base_nodes)
+    assert (
+        base_nodes == list(range(num_base_nodes))
+    ), f"AIG node labels must be contiguous 0..n-1, got: {base_nodes}"
+    num_nodes = num_base_nodes + aig.num_pos()
+
+    node_to_idx = {n: i for i, n in enumerate(base_nodes)}
+
+    x_features = []
+    level_features = []
+    edges = []
+    successors = collections.defaultdict(list)
+
+    # Process Base Nodes (Constants, PIs, Gates)
+    for n in base_nodes:
+        idx = node_to_idx[n]
+
+        # Determine One-hot node type [const, pi, gate, po]
+        if aig.is_constant(n):
+            ntype = [1.0, 0.0, 0.0, 0.0]
+        elif aig.is_pi(n):
+            ntype = [0.0, 1.0, 0.0, 0.0]
+        else:
+            ntype = [0.0, 0.0, 1.0, 0.0]
+
+        x_features.append(ntype)
+        level_features.append([float(depth_aig.level(n))])
+
+        # Process incoming edges from fanins
+        for f_sig in aig.fanins(n):
+            # Use the documented pyaigverse API: AigSignal exposes
+            # `get_index()` and `get_complement()` methods.
+            try:
+                fanin_node = f_sig.get_index()
+                inv = 1.0 if f_sig.get_complement() else 0.0
+            except AttributeError:
+                raise AttributeError(
+                    f"Unexpected fanin signal object {type(f_sig)}; expected get_index()/get_complement()"
+                )
+
+            u_idx = node_to_idx[fanin_node]
+            v_idx = idx
+            e_type = [1.0 - inv, inv]  # [regular, inverted]
+
+            edges.append((u_idx, v_idx, e_type))
+            successors[u_idx].append(v_idx)
+
+    # Process Synthetic PO Nodes
+    # Iterating over the PO signals ensures we never merge two POs that point
+    # to the same node in the AIG.
+    for i, po_sig in enumerate(aig.pos()):
+        idx = num_base_nodes + i
+
+        ntype = [0.0, 0.0, 0.0, 1.0]  # PO node type
+        x_features.append(ntype)
+
+        # PO depth is +1 to the node driving it
+        driver_idx = node_to_idx[po_sig.get_index()]
+        level_features.append([level_features[driver_idx][0] + 1.0])
+
+        inv = 1.0 if po_sig.get_complement() else 0.0
+        e_type = [1.0 - inv, inv]
+
+        edges.append((driver_idx, idx, e_type))
+        successors[driver_idx].append(idx)
+
+    return num_nodes, x_features, level_features, edges, successors
+
+
+def _compute_paths_and_distances(
+    num_nodes: int,
+    x_features: List[List[float]],
+    level_features: List[List[float]],
+    successors: Dict[int, List[int]],
+    max_path_depth: int,
+    neighborhood_cutoff: int,
+) -> Tuple[List[int], List[List[float]]]:
+    """
+    Computes PI-to-node path counts and local shortest paths via BFS.
+    """
+    path_counts = [0] * num_nodes
+    local_sp_features_list = [0.0] * num_nodes
+
+    # Base nodes are naturally topological, and synthetic POs appear at the end.
+    for n_idx in range(num_nodes):
+        # Initialize paths for PIs
+        if x_features[n_idx][1] == 1.0:
+            path_counts[n_idx] = 1
+
+        # Propagate paths downstream
+        for succ_idx in successors[n_idx]:
+            if level_features[succ_idx][0] - level_features[n_idx][0] <= max_path_depth:
+                path_counts[succ_idx] += path_counts[n_idx]
+
+        # BFS replacing NetworkX's single_source_shortest_path_length
+        distances = {n_idx: 0}
+        queue = collections.deque([(n_idx, 0)])
+
+        while queue:
+            curr, dist = queue.popleft()
+            if dist < neighborhood_cutoff:
+                for nxt in successors[curr]:
+                    if nxt not in distances:
+                        distances[nxt] = dist + 1
+                        queue.append((nxt, dist + 1))
+
+        local_sp_features_list[n_idx] = [float(sum(distances.values()))]
+
+    return path_counts, local_sp_features_list
+
+
+def _build_tensors(
+    x_features: List[List[float]],
+    level_features: List[List[float]],
+    path_counts: List[int],
+    local_sp_features_list: List[List[float]],
+    edges: List[tuple],
+):
+    """
+    Converts raw Python lists into PyTorch tensors for PyTorch Geometric.
+    """
+    x = torch.tensor(x_features, dtype=torch.float32)
+    level_tensor = torch.tensor(level_features, dtype=torch.float32)
+    pi_paths_tensor = torch.tensor(
+        [[_safe_log1p_int(pc)] for pc in path_counts], dtype=torch.float32
+    )
+    local_sp_tensor = torch.tensor(local_sp_features_list, dtype=torch.float32)
+
+    if len(edges) > 0:
+        edge_indices = [[u, v] for u, v, _ in edges]
+        edge_attr_features = [e_type for _, _, e_type in edges]
+        edge_index = torch.tensor(edge_indices, dtype=torch.long).t().contiguous()
+        edge_attr = torch.tensor(edge_attr_features, dtype=torch.float32)
+    else:
+        edge_index = torch.empty((2, 0), dtype=torch.long)
+        edge_attr = torch.empty((0, 2), dtype=torch.float32)
+
+    return x, level_tensor, pi_paths_tensor, local_sp_tensor, edge_index, edge_attr
+
+
 def aig_to_pytorch_geometric(
     aig_path: Union[str, Path], neighborhood_cutoff: int = 2, max_path_depth: int = 10
 ) -> Data:
     """
-    Transforms an aigverse Aig object into a PyTorch Geometric Data object.
-
-    Node Features (x):
-        - One-hot encoded node type (Const, PI, Gate, PO)
-
-    Positional Encodings (stored as separate attributes):
-        - level: Logic level
-        - pi_paths: ln(1 + PI-to-node path count)
-        - local_sp_sum: Sum of directed shortest path distances within a local neighborhood cutoff
-
-    Relative Distance Encodings:
-        - rel_edge_index: Expanded edge index for nodes within neighborhood_cutoff
-        - edge_rel_dist: The shortest path distance for the corresponding edge in rel_edge_index
-
-    Edge Features (edge_attr):
-        - One-hot encoded edge type (Regular, Inverted)
+    Transforms an aigverse Aig object into a PyTorch Geometric Data object
+    directly, avoiding aig.to_networkx() and aig.to_edge_list() bugs.
     """
-    # Read the AIGER file into an Aig object using aigverse.
-    aig_path = str(aig_path)
-    aig = read_aiger_into_aig(aig_path)
+    # Ensure the path is safely converted to a string for C++ bindings
+    path_str = str(aig_path)
 
-    # 1. Convert AIG to a NetworkX DiGraph.
-    # Using np.float32 generates the one-hot arrays directly compatible with PyTorch FloatTensors.
-    # Node types are encoded as [const, pi, gate, po]
-    # Edge types are encoded as [regular, inverted]
-    G = aig.to_networkx(levels=True, dtype=np.float32)
-    # Prefer counts from the Aig object when available (avoid re-parsing semantics).
-    num_pis_aig = aig.num_pis()
-    num_pos_aig = aig.num_pos()
-    # Fallback to the NetworkX graph if Aig did not expose counts
-    num_nodes = G.number_of_nodes()
-    # NetworkX labels may not be 0..N-1; keep a stable topological order and map
-    # node labels to contiguous tensor indices.
-    node_order = list(nx.topological_sort(G))
-    node_to_idx = {node: idx for idx, node in enumerate(node_order)}
-    # Initialize path counts to 0 for all nodes
-    path_counts = {n: 0 for n in G.nodes()}
-    local_sp_feature = {}
+    # Read the AIGER file into an Aig object
+    aig = read_aiger_into_aig(path_str)
 
-    # New lists to store the relative encoding edges and their distances
-    rel_edge_indices = []
-    rel_edge_dists = []
+    # Use DepthAig view to calculate level (depth) properties efficiently.
+    depth_aig = aigverse.DepthAig(aig)
+    # 1. Extract Topology from real Aig
+    num_nodes, x_features, level_features, edges, successors = _extract_topology(
+        aig, depth_aig
+    )
 
-    # 2. Single pass over the nodes in topological order
-    # This correctly computes paths and local shortest paths efficiently
-    for n in node_order:
-        # Index 1 of the 'type' array corresponds to 'pi' (Primary Input)
-        if G.nodes[n]["type"][1] == 1.0:
-            path_counts[n] = 1
+    # 2. Compute Paths and Distances
+    path_counts, local_sp_features = _compute_paths_and_distances(
+        num_nodes,
+        x_features,
+        level_features,
+        successors,
+        max_path_depth,
+        neighborhood_cutoff,
+    )
 
-        # Propagate paths: Add current node's path count to successors
-        # Using G.adj[n] view for faster successor iteration (avoiding method call overhead)
-        for successor in G.adj[n]:
-            # Only propagate if the difference in logic level (depth) is within the max cap
-            if (
-                G.nodes[successor].get("level", 0) - G.nodes[n].get("level", 0)
-                <= max_path_depth
-            ):
-                path_counts[successor] += path_counts[n]
-
-        # Compute local neighborhood distances
-        lengths = nx.single_source_shortest_path_length(
-            G, n, cutoff=neighborhood_cutoff
+    # 3. Build Tensors
+    x, level_tensor, pi_paths_tensor, local_sp_tensor, edge_index, edge_attr = (
+        _build_tensors(
+            x_features, level_features, path_counts, local_sp_features, edges
         )
-        local_sp_feature[n] = sum(lengths.values())
-
-        # Store the relative distances as new edges (ignoring self-loops where d=0)
-        for tgt, d in lengths.items():
-            if d > 0:
-                rel_edge_indices.append([node_to_idx[n], node_to_idx[tgt]])
-                rel_edge_dists.append([float(d)])
-
-    # 3. Build Node Features Matrix (x) and separate Positional Encodings
-    x_features = []
-    level_features = []
-    pi_path_features = []
-    local_sp_features_list = []
-    # Iterate over node_order to keep row ordering aligned with node_to_idx.
-    for n in node_order:
-        data = G.nodes[n]
-
-        # Native aigverse one-hot encoded node type -> list of 4 floats
-        x_features.append(data["type"].tolist())
-
-        # Separate positional encodings
-        level_features.append([float(data.get("level", 0.0))])
-        pi_path_features.append([math.log(path_counts[n] + 1)])
-        local_sp_features_list.append([float(local_sp_feature[n])])
-
-    x = torch.tensor(x_features, dtype=torch.float32)
-    level_tensor = torch.tensor(level_features, dtype=torch.float32)
-    pi_paths_tensor = torch.tensor(pi_path_features, dtype=torch.float32)
-    local_sp_tensor = torch.tensor(local_sp_features_list, dtype=torch.float32)
-
-    # 4. Build Edge Indices (edge_index) and Edge Attributes (edge_attr)
-    edge_indices = []
-    edge_attr_features = []
-
-    # Using edges.data('type') view to avoid extracting unused edge dictionary keys
-    for u, v, e_type in G.edges.data("type"):
-        edge_indices.append([node_to_idx[u], node_to_idx[v]])
-
-        # Native aigverse one-hot encoded edge type: [regular, inverted]
-        edge_attr_features.append(e_type.tolist())
-
-    # Format tensors for PyTorch Geometric (edge_index must be shape [2, E])
-    if len(edge_indices) > 0:
-        edge_index = torch.tensor(edge_indices, dtype=torch.long).t().contiguous()
-        edge_attr = torch.tensor(edge_attr_features, dtype=torch.float32)
-    else:
-        # Fallback for an empty graph
-        edge_index = torch.empty((2, 0), dtype=torch.long)
-        edge_attr = torch.empty((0, 2), dtype=torch.float32)
-
-    # Format relative distances tensors
-    if len(rel_edge_indices) > 0:
-        rel_edge_index = (
-            torch.tensor(rel_edge_indices, dtype=torch.long).t().contiguous()
-        )
-        edge_rel_dist = torch.tensor(rel_edge_dists, dtype=torch.float32)
-    else:
-        rel_edge_index = torch.empty((2, 0), dtype=torch.long)
-        edge_rel_dist = torch.empty((0, 1), dtype=torch.float32)
-
-    assert x.shape == (num_nodes, 4), (
-        f"x shape mismatch: expected {(num_nodes, 4)} got {tuple(x.shape)}"
-    )
-    assert level_tensor.shape == (num_nodes, 1), (
-        "level shape mismatch: "
-        f"expected {(num_nodes, 1)} got {tuple(level_tensor.shape)}"
-    )
-    assert pi_paths_tensor.shape == (num_nodes, 1), (
-        "pi_paths shape mismatch: "
-        f"expected {(num_nodes, 1)} got {tuple(pi_paths_tensor.shape)}"
-    )
-    assert local_sp_tensor.shape == (num_nodes, 1), (
-        "local_sp_sum shape mismatch: "
-        f"expected {(num_nodes, 1)} got {tuple(local_sp_tensor.shape)}"
-    )
-    assert edge_index.ndim == 2 and edge_index.shape[0] == 2, (
-        f"edge_index shape mismatch: expected [2, E] got {tuple(edge_index.shape)}"
-    )
-    assert edge_attr.ndim == 2 and edge_attr.shape[1] == 2, (
-        f"edge_attr shape mismatch: expected [E, 2] got {tuple(edge_attr.shape)}"
-    )
-    assert edge_attr.shape[0] == edge_index.shape[1], (
-        "edge feature count mismatch: "
-        f"edge_attr rows {edge_attr.shape[0]} != edge_index cols {edge_index.shape[1]}"
-    )
-    assert rel_edge_index.ndim == 2 and rel_edge_index.shape[0] == 2, (
-        "rel_edge_index shape mismatch: "
-        f"expected [2, R] got {tuple(rel_edge_index.shape)}"
-    )
-    assert edge_rel_dist.ndim == 2 and edge_rel_dist.shape[1] == 1, (
-        "edge_rel_dist shape mismatch: "
-        f"expected [R, 1] got {tuple(edge_rel_dist.shape)}"
-    )
-    assert edge_rel_dist.shape[0] == rel_edge_index.shape[1], (
-        "relative edge feature count mismatch: "
-        f"edge_rel_dist rows {edge_rel_dist.shape[0]} != rel_edge_index cols {rel_edge_index.shape[1]}"
     )
 
-    # 5. Create PyTorch Geometric Data object with separated features
+    # 4. Create PyTorch Geometric Data object
     data_obj = Data(
         x=x,
         edge_index=edge_index,
@@ -237,13 +298,11 @@ def aig_to_pytorch_geometric(
         level=level_tensor,
         pi_paths=pi_paths_tensor,
         local_sp_sum=local_sp_tensor,
-        rel_edge_index=rel_edge_index,
-        edge_rel_dist=edge_rel_dist,
     )
-    # Annotate nodes/edges and PI/PO indices for consumers
+
     data_obj.num_nodes = num_nodes
     data_obj.num_edges = edge_index.size(1)
-    data_obj.num_pis = num_pis_aig
-    data_obj.num_pos = num_pos_aig
+    data_obj.num_pis = aig.num_pis()
+    data_obj.num_pos = aig.num_pos()
 
     return data_obj

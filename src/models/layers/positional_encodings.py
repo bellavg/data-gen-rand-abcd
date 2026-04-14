@@ -11,7 +11,7 @@ from torch_geometric.data import Data
 class ExtractPrecomputedPE:
     """
     Generic transform that extracts a precomputed feature from the Data object
-    (like 'level', 'pi_paths', 'local_sp_sum', 'edge_rel_dist').
+    (like 'level', 'pi_paths', 'local_sp_sum').
 
     If discrete=True, it casts the tensor to .long() so it can be fed into nn.Embedding.
     If discrete=False, it ensures it is a .float() for nn.Linear.
@@ -83,23 +83,6 @@ class LearnedDepthEmbedding(nn.Module):
         return self.embed(clamped_indices)
 
 
-class LearnedRelativeDistanceEmbedding(nn.Module):
-    """
-    Maps discrete edge hop distances ('edge_rel_dist') to continuous learned vectors.
-    """
-
-    def __init__(self, max_hops: int, embed_dim: int):
-        super().__init__()
-        self.max_hops = max_hops
-        self.embed = nn.Embedding(max_hops + 1, embed_dim)
-
-    def forward(self, dist_indices: torch.Tensor) -> torch.Tensor:
-        clamped_indices = (
-            dist_indices.long().squeeze(-1).clamp(min=0, max=self.max_hops)
-        )
-        return self.embed(clamped_indices)
-
-
 # ==============================================================================
 # Factory Functions for Dynamic Configuration
 # ==============================================================================
@@ -118,7 +101,7 @@ def get_pe_transform(pe_type: str, attr_name: str = "pos_enc", **kwargs):
     # Strip 'learned_' prefix if present so we can just grab the raw data key
     source_key = pe_type.replace("learned_", "")
 
-    if source_key in ["level", "edge_rel_dist"]:
+    if source_key in ["level"]:
         # Discrete pre-computed features (must be cast to long for Embeddings)
         return ExtractPrecomputedPE(
             source_key=source_key, attr_name=attr_name, discrete=True
@@ -153,11 +136,6 @@ def get_pos_enc_layer(
 
     if pe_type in ["learned_level", "level"]:
         return LearnedDepthEmbedding(max_depth=max_depth, embed_dim=pos_enc_dim)
-
-    elif pe_type in ["learned_edge_rel_dist", "edge_rel_dist"]:
-        return LearnedRelativeDistanceEmbedding(
-            max_hops=max_hops, embed_dim=pos_enc_dim
-        )
 
     elif pe_type in [
         "learned_pi_paths",

@@ -231,7 +231,7 @@ class TestTrialOptionModelInstantiation(unittest.TestCase):
 
 	def test_encoder_pe_combinations_instantiate(self):
 		encoders = ["gine", "transformer_conv", "graphgps", "egin"]
-		pe_types = ["none", "level", "edge_rel_dist", "pi_paths", "local_sp_sum"]
+		pe_types = ["none", "level", "pi_paths", "local_sp_sum"]
 
 		for encoder_name in encoders:
 			for pe_type in pe_types:

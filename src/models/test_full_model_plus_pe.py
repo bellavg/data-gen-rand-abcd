@@ -482,6 +482,53 @@ class TestEncoderKwargsPropagation(unittest.TestCase):
         self.assertEqual(lm.model.encoder.hid_dim, hid_dim)
         self.assertEqual(lm.model.encoder.out_dim, hid_dim * (num_layers + 1))
 
+    def test_lightning_example_input_runs_for_edge_aware_encoders(self):
+        for encoder_name in ["transformer_conv", "graphgps"]:
+            with self.subTest(encoder_name=encoder_name):
+                lm = AIGRegressionLightningModule(
+                    encoder_name=encoder_name,
+                    embed_dim=EMBED_DIM,
+                    node_input_dim=IN_DIM,
+                    num_edge_types=EDGE_DIM,
+                    task_out_dim=OUT_DIM,
+                    encoder_kwargs={"num_layers": 2, "hid_dim": 12, "heads": 2},
+                )
+                self.assertTrue(hasattr(lm.example_input_array, "edge_attr"))
+                self.assertIsNotNone(lm.example_input_array.edge_attr)
+                out = lm.forward(lm.example_input_array)
+                self.assertEqual(out.shape[-1], OUT_DIM)
+
+    def test_encoders_fail_on_missing_edge_attr(self):
+        data = _make_aig_data(seed=11)
+        batch = Data(batch=torch.zeros(data.num_nodes, dtype=torch.long))
+
+        for encoder_name in ["gine", "transformer_conv", "graphgps", "egin"]:
+            with self.subTest(encoder_name=encoder_name):
+                kwargs = {"num_layers": 2, "hid_dim": 12}
+                if encoder_name in {"transformer_conv", "graphgps"}:
+                    kwargs["heads"] = 2
+                if encoder_name == "egin":
+                    kwargs["num_layers"] = 3
+
+                model = UnifiedGraphBaseModel(
+                    encoder_name=encoder_name,
+                    embed_dim=EMBED_DIM,
+                    node_input_dim=IN_DIM,
+                    edge_attr_dim=EDGE_DIM,
+                    task_out_dim=OUT_DIM,
+                    encoder_kwargs=kwargs,
+                )
+                model.eval()
+
+                with self.assertRaises(ValueError):
+                    _ = model(
+                        x=data.x,
+                        edge_index=data.edge_index,
+                        batch=batch.batch,
+                        edge_attr=None,
+                        pos_enc=None,
+                    )
+
 
 
 if __name__ == "__main__":
