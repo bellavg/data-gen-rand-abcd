@@ -18,7 +18,7 @@ WORKERS="${WORKERS:-${SLURM_CPUS_PER_TASK:-48}}"
 AIG_DEBUG_PATH_COUNTS="${AIG_DEBUG_PATH_COUNTS:-0}"
 FAIL_FAST="${FAIL_FAST:-1}"
 STAGE_TO_SCRATCH="${STAGE_TO_SCRATCH:-1}"
-STAGE_ONLY_MISSING="${STAGE_ONLY_MISSING:-1}"
+STAGE_ONLY_MISSING="${STAGE_ONLY_MISSING:-0}"
 STAGE_WORKERS="${STAGE_WORKERS:-12}"
 PROGRESS_EVERY="${PROGRESS_EVERY:-10000}"
 
@@ -243,6 +243,7 @@ python -u -m data.preprocess_data \
   --workers "$WORKERS" \
   --progress-every "$PROGRESS_EVERY" \
   --allow-unmatched-names \
+  --overwrite \
   "$FAIL_FAST_FLAG"
 
 echo "Finished: $(date)"
