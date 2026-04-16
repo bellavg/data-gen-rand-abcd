@@ -1,10 +1,10 @@
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 import pytorch_lightning as pl
 import torch
 import torch.nn.functional as F
-from torch.optim import AdamW
-from torch.optim.lr_scheduler import ReduceLROnPlateau
+
+from constants import EDGE_ATTR_DIM, NODE_INPUT_DIM, TASK_OUT_DIM
 
 # Import your unified base model (adjust the path as needed)
 try:
@@ -23,49 +23,31 @@ class AIGRegressionLightningModule(pl.LightningModule):
         self,
         encoder_name: str,
         embed_dim: int,
-        node_input_dim: int = 4,
-        num_edge_types: int = 2,
-        task_out_dim: int = 1,
+        encoder_kwargs: Dict[str, Any],
+        node_input_dim: int = NODE_INPUT_DIM,
+        edge_attr_dim: int = EDGE_ATTR_DIM,
+        task_out_dim: int = TASK_OUT_DIM,
         pe_type: str = "none",
         pos_enc_dim: int = 0,
-        encoder_kwargs: Optional[Dict[str, Any]] = None,
+        project_with_pos_enc: bool = True,  # <--- ADD THIS
         huber_delta: float = 1.0,
         lr: float = 1e-3,
         weight_decay: float = 1e-5,
     ):
         super().__init__()
-        # Save hyperparameters so they are logged automatically and accessible via self.hparams
         self.save_hyperparameters()
 
-        # Instantiate the unified base model
         self.model = UnifiedGraphBaseModel(
             encoder_name=self.hparams.encoder_name,
             embed_dim=self.hparams.embed_dim,
             node_input_dim=self.hparams.node_input_dim,
-            edge_attr_dim=self.hparams.num_edge_types,
+            edge_attr_dim=self.hparams.edge_attr_dim,
             task_out_dim=self.hparams.task_out_dim,
             pe_type=self.hparams.pe_type,
             pos_enc_dim=self.hparams.pos_enc_dim,
             encoder_kwargs=self.hparams.encoder_kwargs,
+            project_with_pos_enc=self.hparams.project_with_pos_enc,  # <--- ADD THIS
         )
-        # Provide an example input to initialize lazy modules and produce
-        # accurate model summaries. Use a tiny PyG Batch if available.
-        try:
-            from torch_geometric.data import Batch as PyGBatch
-            from torch_geometric.data import Data
-
-            node_dim = getattr(self.hparams, "node_input_dim", 4)
-            edge_dim = getattr(self.hparams, "num_edge_types", 2)
-            x = torch.zeros((2, node_dim), dtype=torch.float32)
-            # Include at least one edge and matching edge attributes so
-            # edge-aware encoders can run during Lightning model summary.
-            edge_index = torch.tensor([[0], [1]], dtype=torch.long)
-            edge_attr = torch.zeros((1, edge_dim), dtype=torch.float32)
-            data = Data(x=x, edge_index=edge_index, edge_attr=edge_attr)
-            self.example_input_array = PyGBatch.from_data_list([data])
-        except Exception:
-            # If PyG isn't installed or construction fails, skip example input.
-            pass
 
     def forward(self, batch):
         """Passes the PyG batch through the base model."""
@@ -88,7 +70,8 @@ class AIGRegressionLightningModule(pl.LightningModule):
         loss = F.huber_loss(preds, targets, delta=self.hparams.huber_delta)
 
         # Calculate MAE for human-readable logging (keep as L1)
-        mae_node_opt = F.l1_loss(preds[:, 0], targets[:, 0])
+        # Use squeeze(-1) to convert [N, 1] -> [N] (more robust than explicit column indexing)
+        mae_node_opt = F.l1_loss(preds.squeeze(-1), targets.squeeze(-1))
 
         # Log metrics only when attached to a Trainer to avoid warnings in
         # unit tests that call `training_step`/`validation_step` directly.
@@ -127,27 +110,30 @@ class AIGRegressionLightningModule(pl.LightningModule):
         return self._compute_loss_and_metrics(batch, batch_idx, prefix="test")
 
     def configure_optimizers(self):
-        """Sets up the optimizer and learning rate scheduler."""
-        optimizer = AdamW(
-            self.parameters(),
-            lr=self.hparams.lr,
-            weight_decay=self.hparams.weight_decay,
-        )
+        # 1. Get your initial LR
+        initial_lr = self.hparams.lr
 
-        # Reduce LR on Plateau monitors the validation loss
-        scheduler = ReduceLROnPlateau(
+        # 2. Dynamically set min_lr to be 1/1000th of the initial LR
+        min_lr_value = initial_lr * 1e-3
+
+        # 3. Define your optimizer
+        optimizer = torch.optim.Adam(self.parameters(), lr=initial_lr)
+
+        # 4. Define the scheduler
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             optimizer,
             mode="min",
             factor=0.5,
             patience=20,
-            min_lr=1e-5,
+            min_lr=min_lr_value,  # <--- Safely bounded!
         )
 
         return {
             "optimizer": optimizer,
             "lr_scheduler": {
                 "scheduler": scheduler,
-                "monitor": "val/loss",  # Must match the logged name exactly
+                "monitor": "val_loss",
                 "frequency": 1,
+                "interval": "epoch",
             },
         }

@@ -252,6 +252,88 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
         json_files = list(self.root.rglob("*.json"))
         self.assertEqual(len(json_files), 0)
 
+    def test_pos_enc_continuous_is_float(self):
+        """Test that continuous features like 'pi_paths' are converted to floats."""
+        ds = self._make_ds(positional_encoding="pi_paths")
+        item = ds[0]
+        pe = getattr(item, "pos_enc", None)
+        self.assertIsNotNone(pe)
+        self.assertEqual(pe.shape, (item.x.shape[0], 1))
+        # Unlike 'level' which is a long, continuous PE should be float32
+        self.assertTrue(pe.dtype in [torch.float32, torch.float64])
+
+    # --- edge_attr validation ---
+
+    def test_getitem_raises_value_error_if_edge_attr_missing(self):
+        """Ensure __getitem__ raises ValueError if edge_attr is None."""
+        bad_pt = self.root / "bad_graph.pt"
+        valid_data = torch.load(self.pt_paths[0], weights_only=False)
+        valid_data.edge_attr = None  # Corrupt the data
+        torch.save(valid_data, bad_pt)
+
+        bad_csv = self.root / "bad.csv"
+        _write_csv(
+            bad_csv, [{"unoptimized_graph_path": str(bad_pt), "optimizability": "0.5"}]
+        )
+
+        from src.data.dataset import AIGGraphRegressionDataset
+        with self.assertRaisesRegex(ValueError, "edge_attr=None"):
+            AIGGraphRegressionDataset(bad_csv)
+
+    def test_getitem_raises_value_error_if_edge_attr_1d(self):
+        """Ensure __getitem__ raises ValueError if edge_attr is not 2D."""
+        bad_pt = self.root / "bad_graph_1d.pt"
+        valid_data = torch.load(self.pt_paths[0], weights_only=False)
+        valid_data.edge_attr = torch.tensor([1.0, 0.0])  # 1D instead of 2D
+        torch.save(valid_data, bad_pt)
+
+        bad_csv = self.root / "bad_1d.csv"
+        _write_csv(
+            bad_csv, [{"unoptimized_graph_path": str(bad_pt), "optimizability": "0.5"}]
+        )
+
+        from src.data.dataset import AIGGraphRegressionDataset
+        with self.assertRaisesRegex(ValueError, "edge_attr must be 2D"):
+            AIGGraphRegressionDataset(bad_csv)
+
+    # --- dataset initialization verification ---
+
+    def test_verify_first_sample_raises_assertion_error_on_bad_x(self):
+        """Ensure initialization fails early if the first graph's x attribute is not 2D."""
+        bad_pt = self.root / "bad_x_graph.pt"
+        valid_data = torch.load(self.pt_paths[0], weights_only=False)
+        valid_data.x = torch.rand(10)  # 1D instead of 2D
+        torch.save(valid_data, bad_pt)
+
+        bad_csv = self.root / "bad_x.csv"
+        _write_csv(
+            bad_csv, [{"unoptimized_graph_path": str(bad_pt), "optimizability": "0.5"}]
+        )
+
+        from src.data.dataset import AIGGraphRegressionDataset
+
+        with self.assertRaisesRegex(AssertionError, "x should be 2D"):
+            AIGGraphRegressionDataset(bad_csv)
+
+    # --- seed stability ---
+
+    def test_different_seeds_produce_different_splits(self):
+        """Ensure the RNG splits the data differently when the seed changes."""
+        from src.data.dataset import AIGGraphRegressionDataset
+
+        pts = _make_graph_pts(self.root / "seed_graphs", 30)
+        csv = self.root / "seed.csv"
+        _write_csv(csv, _make_rows(pts))
+
+        ds1 = AIGGraphRegressionDataset(csv, split="train", seed=42)
+        ds2 = AIGGraphRegressionDataset(csv, split="train", seed=99)
+
+        paths1 = [s.graph_path for s in ds1.samples]
+        paths2 = [s.graph_path for s in ds2.samples]
+
+        # It's highly unlikely that two distinct seeds produce the exact same split for 30 elements
+        self.assertNotEqual(paths1, paths2)
+
     # --- multi-CSV ---
 
     def test_multi_csv_concat(self):

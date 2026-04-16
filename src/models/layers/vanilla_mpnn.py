@@ -56,77 +56,28 @@ class VanillaMPNNConv(MessagePassing):
 class MPNNEncoder(nn.Module):
     def __init__(
         self,
-        in_dim,
-        hid_dim,
-        num_layers,
-        edge_dim,
-        pos_enc_dim=0,
-        use_input_proj=True,
-        use_edge_proj=True,
-        dropout=0.0,
-        norm_type="batch",
+        hid_dim: int,
+        num_layers: int,
+        node_input_dim: int,
+        edge_attr_dim: int,
+        output_dim: int,
+        dropout: float = 0.0,
+        norm_type: str = "batch",
+        **kwargs,
     ):
-        super().__init__()
+        super(MPNNEncoder, self).__init__()
         self.num_layers = num_layers
         self.dropout = dropout
-        self.pos_enc_dim = pos_enc_dim
-        self.use_input_proj = use_input_proj
-        self.use_edge_proj = use_edge_proj
-
-        # Hardcoded to 'concat' for Positional Encoding
-        effective_in_dim = in_dim + pos_enc_dim if pos_enc_dim > 0 else in_dim
-
-        if self.use_input_proj:
-            self.node_encoder = nn.Linear(effective_in_dim, hid_dim)
-        else:
-            if effective_in_dim != hid_dim:
-                raise ValueError(
-                    f"use_input_proj=False requires effective_in_dim ({effective_in_dim}) == hid_dim ({hid_dim})"
-                )
-            self.node_encoder = nn.Identity()
-
-        if self.use_edge_proj:
-            self.edge_encoder = nn.Linear(edge_dim, hid_dim)
-        else:
-            if edge_dim != hid_dim:
-                raise ValueError(
-                    f"use_edge_proj=False requires edge_dim ({edge_dim}) == hid_dim ({hid_dim})"
-                )
-            self.edge_encoder = nn.Identity()
 
         self.convs = nn.ModuleList()
 
         for _ in range(num_layers):
             self.convs.append(VanillaMPNNConv(hid_dim, norm_type=norm_type))
 
-        # Hardcoded Jumping Knowledge = 'cat' output dimension
-        self.out_dim = hid_dim * (num_layers + 1)
+    def forward(self, x, edge_index, batch, edge_attr):
 
-    def _validate_positional_encoding(self, pos_enc):
-        if pos_enc is None or self.pos_enc_dim == 0:
-            return
-        if pos_enc.size(-1) != self.pos_enc_dim:
-            raise ValueError(
-                f"Expected pos_enc with feature size {self.pos_enc_dim}, got {pos_enc.size(-1)}"
-            )
-
-    def _integrate_positional_encoding_input(self, x, pos_enc):
-        # Hardcoded to concat
-        if pos_enc is None or self.pos_enc_dim == 0:
-            return x
-        return torch.cat([x, pos_enc], dim=-1)
-
-    def forward(
-        self, x, edge_index, batch, edge_attr=None, pos_enc=None
-    ):
-        self._validate_positional_encoding(pos_enc)
         if edge_attr is None:
             raise ValueError("MPNNEncoder requires edge_attr tensor.")
-
-        x = self._integrate_positional_encoding_input(x, pos_enc)
-        x = self.node_encoder(x)
-
-        edge_attr = self.edge_encoder(edge_attr)
 
         h_list = [x]
 
@@ -140,6 +91,13 @@ class MPNNEncoder(nn.Module):
             h_list.append(h)
 
         # Hardcoded Jumping Knowledge = 'cat'
-        node_emb = torch.cat(h_list, dim=1)
+        if self.jk_mode == "last":
+            node_emb = h_list[-1]
+        elif self.jk_mode == "max":
+            node_emb = torch.stack(h_list, dim=-1).max(dim=-1)[0]
+        elif self.jk_mode == "sum":
+            node_emb = torch.stack(h_list, dim=-1).sum(dim=-1)
+        elif self.jk_mode == "cat":
+            node_emb = torch.cat(h_list, dim=1)
 
         return node_emb

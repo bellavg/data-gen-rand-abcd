@@ -38,4 +38,9 @@ def get_batch_positional_encoding(batch: object) -> torch.Tensor | None:
         return None
     if pe.dim() == 1:
         pe = pe.unsqueeze(-1)
-    return pe.float()
+    # Preserve integer dtypes for learned/discrete positional encodings
+    # (e.g., depth indices for LearnedDepthEmbedding). Normalize any
+    # floating inputs to `torch.float32` to avoid dtype mismatches.
+    if pe.is_floating_point():
+        return pe.to(torch.float32)
+    return pe

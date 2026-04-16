@@ -2,62 +2,101 @@ import argparse
 
 import optuna
 import pytorch_lightning as pl
-from pytorch_lightning.callbacks import Callback
+from pytorch_lightning.callbacks import Callback, EarlyStopping, ModelCheckpoint
 
 # Project Imports
 try:
     from data.datamodule import AIGDataModule
-except ImportError:  # pragma: no cover - fallback for direct script execution
+except ImportError:
     from src.data.datamodule import AIGDataModule
 
 try:
     from optuna.integration import PyTorchLightningPruningCallback
-except ModuleNotFoundError:  # pragma: no cover - optional dependency
+except ModuleNotFoundError:
 
-    class PyTorchLightningPruningCallback(Callback):  # type: ignore[no-redef]
-        """No-op fallback when optuna-integration is unavailable."""
-
+    class PyTorchLightningPruningCallback(Callback):
         def __init__(self, *args, **kwargs):
             super().__init__()
 
-
-from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 
 from models.lightning_model import AIGRegressionLightningModule
 
 
 def objective(trial: optuna.Trial, args):
-    # 1. Hyperparameters
+    # 1. Global Hyperparameters
     batch_size = trial.suggest_categorical("batch_size", [8, 16, 32, 64, 128])
     lr = trial.suggest_float("lr", 1e-4, 1e-2, log=True)
     huber_delta = trial.suggest_float("huber_delta", 0.5, 2.0)
 
     encoder_name = trial.suggest_categorical(
-        "encoder_name", ["gine", "transformer_conv", "graphgps", "egin"]
+        "encoder_name",
+        ["gine", "transformer_conv", "graphgps", "egin", "gcn", "vanilla_mpnn"],
     )
-    embed_dim = trial.suggest_categorical("embed_dim", [128, 256, 384, 512, 768])
+
+    # 1. Suggest the embedding dimension first
+    embed_dim = trial.suggest_categorical("embed_dim", [32, 64, 128, 256])
+
+    # 2. Define a list of possible hidden dimensions
+    hid_options = [64, 128, 256, 512, 1024]
+
+    # 3. Filter the list so only values >= embed_dim are available
+    valid_hid_options = [h for h in hid_options if h >= embed_dim]
+
+    # 4. Suggest hid_dim from the filtered list
+    hid_dim = trial.suggest_categorical("hid_dim", valid_hid_options)
+
+    # 2. Positional Encoding
     pe_type = trial.suggest_categorical(
         "pe_type",
         ["none", "level", "pi_paths", "local_sp_sum"],
     )
-
     pos_enc_dim = (
         trial.suggest_categorical("pos_enc_dim", [16, 32, 64, 128])
         if pe_type != "none"
         else 0
     )
 
+    # --- ADD THIS: Only tune if PE is actually being used ---
+    project_with_pos_enc = (
+        trial.suggest_bool("project_with_pos_enc") if pe_type != "none" else False
+    )
+
+    # 3. Encoder Specific Hyperparameters
     encoder_kwargs = {
-        "num_layers": trial.suggest_int("num_layers", 3, 10),
+        "num_layers": trial.suggest_int(
+            "num_layers", 3, 10
+        ),  # GNN Message Passing depth
         "dropout": trial.suggest_float("dropout", 0.0, 0.4),
         "norm_type": trial.suggest_categorical(
             "norm_type", ["batch", "layer", "graph", "none"]
         ),
+        "jk_mode": trial.suggest_categorical("jk_mode", ["last", "max", "sum", "cat"])
     }
+
+    # Ensure the chosen hidden dimension is passed through to the encoder
+    encoder_kwargs["hid_dim"] = hid_dim
     if encoder_name in ["transformer_conv", "graphgps"]:
         encoder_kwargs["heads"] = trial.suggest_categorical("heads", [4, 8, 16])
 
-    # 2. Data Module using args.csv_paths
+    # --- EGIN SPECIFIC TUNING ---
+    if encoder_name == "egin":
+        # Internal MLP depth (keep shallow to avoid vanishing gradients) [cite: 1, 12]
+        encoder_kwargs["num_mlp_layers"] = trial.suggest_int("num_mlp_layers", 2, 3)
+
+        # Toggle between Dot (EGIN-C) and Concat (Standard)
+        encoder_kwargs["dot_update"] = trial.suggest_bool("egin_dot_update")
+
+        # Toggle Edge Embedding (EGIN-E) to prevent node feature dominance [cite: 247, 264]
+        encoder_kwargs["edge_mlp"] = trial.suggest_bool("egin_edge_mlp")
+
+        if encoder_kwargs["edge_mlp"]:
+            # Tune the edge projection dim (8-64 range recommended for low-diversity edges) [cite: 290]
+            encoder_kwargs["edge_hidden_dim"] = trial.suggest_categorical(
+                "edge_hidden_dim", [8, 16, 32, 64, 128]
+            )
+    # ----------------------------
+
+    # 4. Data Module
     workers = getattr(args, "num_workers", 4)
     datamodule = AIGDataModule(
         csv_paths=args.csv_paths,
@@ -68,18 +107,19 @@ def objective(trial: optuna.Trial, args):
         num_workers=workers,
     )
 
-    # 3. Model Setup
+    # 5. Model Setup
     model = AIGRegressionLightningModule(
         encoder_name=encoder_name,
         embed_dim=embed_dim,
         pe_type=pe_type,
         pos_enc_dim=pos_enc_dim,
+        project_with_pos_enc=project_with_pos_enc, 
         encoder_kwargs=encoder_kwargs,
+        hid_dim=hid_dim,
         lr=lr,
         huber_delta=huber_delta,
     )
-
-    # 4. Callbacks (Saving checkpoints to args.checkpoint_dir)
+    # 6. Callbacks
     checkpoint_cb = ModelCheckpoint(
         dirpath=args.checkpoint_dir,
         filename=f"trial_{trial.number}_best",
@@ -89,24 +129,24 @@ def objective(trial: optuna.Trial, args):
     )
 
     pruning_cb = PyTorchLightningPruningCallback(trial, monitor="val/mae_node")
-    # Some optuna/lightning version combos provide a callback object that does not
-    # implement Lightning's full callback hook surface (e.g., on_exception).
+
     callbacks: list[Callback] = [
-        EarlyStopping(monitor="val/loss", patience=10, mode="min"),
+        EarlyStopping(monitor="val/mae_node", patience=10, mode="min"),
         checkpoint_cb,
     ]
     if hasattr(pruning_cb, "on_exception"):
         callbacks.insert(0, pruning_cb)
 
-    # 5. Trainer with timeouts
+    # 7. Trainer
     trainer = pl.Trainer(
         max_epochs=100,
         max_time={"minutes": 60},
         accelerator="auto",
         devices=1,
         callbacks=callbacks,
-        logger=False,
+        logger=True,
         enable_checkpointing=True,
+        enable_model_summary=False,  # Prevent PyG edge_attr model summary crash
     )
 
     trainer.fit(model, datamodule=datamodule)
@@ -120,42 +160,24 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Optuna Hyperparameter Tuning for AIG Regression"
     )
+    parser.add_argument("--db_url", type=str, required=True, help="Database URL")
     parser.add_argument(
-        "--db_url",
-        type=str,
-        required=True,
-        help="Database URL (e.g., sqlite:///optuna.db)",
+        "--checkpoint_dir", type=str, required=True, help="Checkpoint directory"
     )
-    parser.add_argument(
-        "--checkpoint_dir",
-        type=str,
-        required=True,
-        help="Directory to save best model checkpoints",
-    )
-    parser.add_argument(
-        "--csv_paths", nargs="+", required=True, help="List of paths to algorithm CSVs"
-    )
-    parser.add_argument(
-        "--num_workers",
-        type=int,
-        default=4,
-        help="Number of DataLoader worker processes for dataset loading",
-    )
+    parser.add_argument("--csv_paths", nargs="+", required=True, help="Paths to CSVs")
+    parser.add_argument("--num_workers", type=int, default=4, help="DataLoader workers")
     args = parser.parse_args()
 
-    # Ensure Optuna handles potential SQLite locking gracefully
-    # by increasing the timeout when trying to write to the DB.
     storage = optuna.storages.RDBStorage(
         url=args.db_url, engine_kwargs={"connect_args": {"timeout": 60}}
     )
 
     study = optuna.create_study(
-        study_name="aig_optimization_5days",
+        study_name="aig_optimization_final",
         storage=storage,
         load_if_exists=True,
         direction="minimize",
         pruner=optuna.pruners.MedianPruner(n_startup_trials=5, n_warmup_steps=5),
     )
 
-    # Pass args to the objective function
     study.optimize(lambda trial: objective(trial, args), n_trials=None)

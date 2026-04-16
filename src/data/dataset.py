@@ -26,7 +26,15 @@ def _get_pe(
     t = getattr(data_obj, positional_encoding, None)
     if t is None:
         return None
-    return (t.unsqueeze(-1) if t.dim() == 1 else t).float()
+
+    t = t.unsqueeze(-1) if t.dim() == 1 else t
+
+    # Keep discrete attributes as long/int for nn.Embedding
+    if positional_encoding == "level":
+        return t.long()
+
+    # Otherwise continuous attributes become floats
+    return t.float()
 
 
 class AIGGraphRegressionDataset(Dataset):
@@ -137,19 +145,27 @@ class AIGGraphRegressionDataset(Dataset):
         data_obj = torch.load(
             samples[0].graph_path, map_location="cpu", weights_only=False
         )
-        assert data_obj.x.dim() == 2, f"x should be 2D, got shape {data_obj.x.shape}"
-        assert data_obj.edge_index.shape[0] == 2, (
-            f"edge_index should be [2, E], got {data_obj.edge_index.shape}"
-        )
-        assert data_obj.edge_attr is not None and data_obj.edge_attr.dim() == 2, (
-            f"edge_attr should be 2D, got {getattr(data_obj, 'edge_attr', None)}"
-        )
+        if data_obj.x.dim() != 2:
+            raise AssertionError(f"x should be 2D, got shape {data_obj.x.shape}")
+        if data_obj.edge_index.shape[0] != 2:
+            raise ValueError(
+                f"edge_index should be [2, E], got {data_obj.edge_index.shape}"
+            )
+
+        # Strict early validation: require edge_attr present and 2D at init time.
+        edge_attr = getattr(data_obj, "edge_attr", None)
+        if edge_attr is None:
+            raise ValueError(f"edge_attr=None in {samples[0].graph_path}")
+        if edge_attr.dim() != 2:
+            raise ValueError("edge_attr must be 2D")
+
         if self.positional_encoding is not None:
             pe = _get_pe(data_obj, self.positional_encoding)
-            assert pe is not None and pe.dim() == 2 and pe.shape[0] == data_obj.x.shape[0], (
-                "pos_enc should be 2D with N rows, got "
-                f"{pe.shape if pe is not None else None}"
-            )
+            if pe is None or pe.dim() != 2 or pe.shape[0] != data_obj.x.shape[0]:
+                raise ValueError(
+                    "pos_enc should be 2D with N rows, got "
+                    f"{pe.shape if pe is not None else None}"
+                )
 
     def _apply_num_samples(self, samples: List[GraphSample]) -> List[GraphSample]:
         if self.num_samples is None:

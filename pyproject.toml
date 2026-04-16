@@ -34,6 +34,15 @@ pyg = [
 [tool.setuptools]
 package-dir = {"" = "src"}
 
+[tool.pytest.ini_options]
+filterwarnings = [
+    "ignore::DeprecationWarning:torch_geometric.*",
+    "ignore::DeprecationWarning:torch.jit.*",
+    "ignore::DeprecationWarning:pytorch_lightning.*",
+    "ignore::DeprecationWarning:lightning.*",
+]
+log_level = "WARNING"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["data*", "models*"]
