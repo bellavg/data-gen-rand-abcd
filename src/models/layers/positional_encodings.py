@@ -152,33 +152,3 @@ def get_pos_enc_layer(
 
     else:
         raise ValueError(f"Unknown pos_enc layer type: {pe_type}")
-
-
-# ==============================================================================
-# Integration Helpers
-# ==============================================================================
-
-
-def validate_positional_encoding(
-    pos_enc: torch.Tensor, pos_enc_dim: int, pos_enc_mode: str
-):
-    """Common helper to validate PE dimensions across all encoders."""
-    if pos_enc is None or pos_enc_dim == 0 or pos_enc_mode.lower() == "none":
-        return
-    if pos_enc.size(-1) != pos_enc_dim:
-        raise ValueError(
-            f"Expected pos_enc with feature size {pos_enc_dim}, got {pos_enc.size(-1)}"
-        )
-
-
-def integrate_positional_encoding(
-    x: torch.Tensor, pos_enc: torch.Tensor, pos_enc_dim: int, pos_enc_mode: str
-):
-    """Common helper to concatenate or add PE to node features."""
-    if pos_enc is None or pos_enc_dim == 0 or pos_enc_mode.lower() == "none":
-        return x
-    if pos_enc_mode.lower() == "concat":
-        return torch.cat([x, pos_enc], dim=-1)
-    elif pos_enc_mode.lower() == "add":
-        return x + pos_enc
-    return x

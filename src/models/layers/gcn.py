@@ -121,7 +121,9 @@ class GCNConvLayer(nn.Module):
         x = self.ff_linear2(x)
         return F.dropout(x, p=self.dropout, training=self.training)
 
-    def forward(self, x: Tensor, edge_index: Adj, edge_attr: Tensor | None = None) -> Tensor:
+    def forward(
+        self, x: Tensor, edge_index: Adj, edge_attr: Tensor | None = None
+    ) -> Tensor:
         x_in = x
 
         # 1. Message Passing
@@ -147,34 +149,20 @@ class GCNEncoder(nn.Module):
 
     def __init__(
         self,
-        in_dim: int,
         hid_dim: int,
         num_layers: int,
-        edge_dim: int | None = None,
-        pos_enc_dim: int = 0,
-        use_input_proj: bool = True,
+        node_input_dim: int,
+        edge_attr_dim: int,
+        output_dim: int,
         dropout: float = 0.0,
         norm_type: str = "batch",
+        **kwargs,
     ):
         super().__init__()
         if num_layers < 1:
             raise ValueError("num_layers must be >= 1")
 
         self.num_layers = num_layers
-        self.pos_enc_dim = pos_enc_dim
-        self.use_input_proj = use_input_proj
-
-        # Hardcoded to 'concat' PE
-        effective_in_dim = in_dim + pos_enc_dim if pos_enc_dim > 0 else in_dim
-
-        if self.use_input_proj:
-            self.input_proj = nn.Linear(effective_in_dim, hid_dim)
-        else:
-            if effective_in_dim != hid_dim:
-                raise ValueError(
-                    f"use_input_proj=False requires effective_in_dim ({effective_in_dim}) == hid_dim ({hid_dim})"
-                )
-            self.input_proj = nn.Identity()
 
         self.layers = nn.ModuleList()
         for _ in range(num_layers):
@@ -182,27 +170,19 @@ class GCNEncoder(nn.Module):
                 GCNConvLayer(
                     dim_in=hid_dim,
                     dim_out=hid_dim,
-                    edge_dim=edge_dim,
+                    edge_dim=edge_attr_dim,
                     dropout=dropout,
                     norm_type=norm_type,
                 )
             )
-
-        # Hardcoded Jumping Knowledge = 'cat' output dimension
-        self.out_dim = hid_dim * (num_layers + 1)
-
-    def _validate_positional_encoding(self, pos_enc: Tensor | None) -> None:
-        if pos_enc is None or self.pos_enc_dim == 0:
-            return
-        if pos_enc.size(-1) != self.pos_enc_dim:
-            raise ValueError(
-                f"Expected pos_enc with feature size {self.pos_enc_dim}, got {pos_enc.size(-1)}"
-            )
-
-    def _integrate_positional_encoding(self, x: Tensor, pos_enc: Tensor | None) -> Tensor:
-        if pos_enc is None or self.pos_enc_dim == 0:
-            return x
-        return torch.cat([x, pos_enc], dim=-1)
+        # Optional input projection when node input dim != hidden dim
+        self.node_input_dim = node_input_dim
+        self.hid_dim = hid_dim
+        self.input_proj = (
+            nn.Linear(node_input_dim, hid_dim)
+            if node_input_dim != hid_dim
+            else nn.Identity()
+        )
 
     def forward(
         self,
@@ -210,16 +190,22 @@ class GCNEncoder(nn.Module):
         edge_index: Adj,
         batch: Tensor,
         edge_attr: Tensor | None = None,
-        pos_enc: Tensor | None = None,
     ) -> Tensor:
-        self._validate_positional_encoding(pos_enc)
-        x = self._integrate_positional_encoding(x, pos_enc)
-        x = self.input_proj(x)
 
-        h_list = [x]
+        # Apply optional input projection then track hidden states for Jumping Knowledge
+        x0 = self.input_proj(x)
+        h_list = [x0]
         for layer in self.layers:
-            h_list.append(layer(x=h_list[-1], edge_index=edge_index, edge_attr=edge_attr))
+            h_list.append(
+                layer(x=h_list[-1], edge_index=edge_index, edge_attr=edge_attr)
+            )
 
-        # Hardcoded Jumping Knowledge = 'cat'
-        return torch.cat(h_list, dim=-1)
-
+        if self.jk_mode == "last":
+            node_emb = h_list[-1]
+        elif self.jk_mode == "max":
+            node_emb = torch.stack(h_list, dim=-1).max(dim=-1)[0]
+        elif self.jk_mode == "sum":
+            node_emb = torch.stack(h_list, dim=-1).sum(dim=-1)
+        elif self.jk_mode == "cat":
+            node_emb = torch.cat(h_list, dim=1)
+        return node_emb

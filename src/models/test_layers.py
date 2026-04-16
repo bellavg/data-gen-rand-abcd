@@ -353,8 +353,13 @@ class TestGINEEncoder(unittest.TestCase):
     def _make_enc(self, **kwargs):
         from src.models.layers.gine import GINEEncoder
 
+        num_layers = kwargs.get("num_layers", NUM_LAYERS)
         defaults = dict(
-            in_dim=IN_DIM, hid_dim=HID_DIM, num_layers=NUM_LAYERS, edge_dim=EDGE_DIM
+            node_input_dim=HID_DIM,
+            hid_dim=HID_DIM,
+            num_layers=num_layers,
+            edge_attr_dim=EDGE_DIM,
+            output_dim=HID_DIM * (num_layers + 1),
         )
         defaults.update(kwargs)
         return GINEEncoder(**defaults)
@@ -362,7 +367,8 @@ class TestGINEEncoder(unittest.TestCase):
     def test_output_shape(self):
         enc = self._make_enc()
         enc.eval()
-        x, edge_index, edge_attr, batch = _make_graph()
+        # Input has already been projected to hid_dim by base_model
+        x, edge_index, edge_attr, batch = _make_graph(in_dim=HID_DIM)
         out = enc(x=x, edge_index=edge_index, batch=batch, edge_attr=edge_attr)
         self.assertEqual(out.shape, (NUM_NODES, HID_DIM * (NUM_LAYERS + 1)))
 
@@ -370,37 +376,10 @@ class TestGINEEncoder(unittest.TestCase):
         enc = self._make_enc()
         self.assertEqual(enc.out_dim, HID_DIM * (NUM_LAYERS + 1))
 
-    def test_with_pos_enc(self):
-        enc = self._make_enc(pos_enc_dim=PE_DIM)
-        enc.eval()
-        x, edge_index, edge_attr, batch = _make_graph()
-        pos_enc = torch.randn(NUM_NODES, PE_DIM)
-        out = enc(
-            x=x,
-            edge_index=edge_index,
-            batch=batch,
-            edge_attr=edge_attr,
-            pos_enc=pos_enc,
-        )
-        self.assertEqual(out.shape, (NUM_NODES, HID_DIM * (NUM_LAYERS + 1)))
-
-    def test_wrong_pos_enc_dim_raises(self):
-        enc = self._make_enc(pos_enc_dim=PE_DIM)
-        x, edge_index, edge_attr, batch = _make_graph()
-        wrong_pe = torch.randn(NUM_NODES, PE_DIM + 1)
-        with self.assertRaises(ValueError):
-            enc(
-                x=x,
-                edge_index=edge_index,
-                batch=batch,
-                edge_attr=edge_attr,
-                pos_enc=wrong_pe,
-            )
-
     def test_single_layer(self):
         enc = self._make_enc(num_layers=1)
         enc.eval()
-        x, edge_index, edge_attr, batch = _make_graph()
+        x, edge_index, edge_attr, batch = _make_graph(in_dim=HID_DIM)
         out = enc(x=x, edge_index=edge_index, batch=batch, edge_attr=edge_attr)
         self.assertEqual(out.shape, (NUM_NODES, HID_DIM * 2))
 
@@ -411,7 +390,7 @@ class TestGINEEncoder(unittest.TestCase):
     def test_edge_type_arg_ignored(self):
         enc = self._make_enc()
         enc.eval()
-        x, edge_index, edge_attr, batch = _make_graph()
+        x, edge_index, edge_attr, batch = _make_graph(in_dim=HID_DIM)
         out = enc(x=x, edge_index=edge_index, batch=batch, edge_attr=edge_attr)
         self.assertEqual(out.shape, (NUM_NODES, HID_DIM * (NUM_LAYERS + 1)))
 
@@ -470,8 +449,13 @@ class TestGCNEncoder(unittest.TestCase):
     def _make_enc(self, **kwargs):
         from src.models.layers.gcn import GCNEncoder
 
+        num_layers = kwargs.get("num_layers", NUM_LAYERS)
         defaults = dict(
-            in_dim=IN_DIM, hid_dim=HID_DIM, num_layers=NUM_LAYERS, edge_dim=EDGE_DIM
+            node_input_dim=HID_DIM,
+            hid_dim=HID_DIM,
+            num_layers=num_layers,
+            edge_attr_dim=EDGE_DIM,
+            output_dim=HID_DIM * (num_layers + 1),
         )
         defaults.update(kwargs)
         return GCNEncoder(**defaults)
@@ -479,10 +463,92 @@ class TestGCNEncoder(unittest.TestCase):
     def test_output_shape(self):
         enc = self._make_enc()
         enc.eval()
-        x, edge_index, edge_attr, batch = _make_graph()
+        x, edge_index, edge_attr, batch = _make_graph(in_dim=HID_DIM)
         out = enc(x=x, edge_index=edge_index, batch=batch, edge_attr=edge_attr)
         self.assertEqual(out.shape, (NUM_NODES, HID_DIM * (NUM_LAYERS + 1)))
 
-    def test_out_dim_attribute(self):
+
+# ===========================================================================
+# Vanilla MPNN layers
+# ===========================================================================
+
+
+class TestVanillaMPNNEncoder(unittest.TestCase):
+    def _make_enc(self, **kwargs):
+        from src.models.layers.vanilla_mpnn import MPNNEncoder
+
+        num_layers = kwargs.get("num_layers", NUM_LAYERS)
+        defaults = dict(
+            node_input_dim=HID_DIM,
+            hid_dim=HID_DIM,
+            num_layers=num_layers,
+            edge_attr_dim=EDGE_DIM,
+            output_dim=HID_DIM * (num_layers + 1),
+        )
+        defaults.update(kwargs)
+        return MPNNEncoder(**defaults)
+
+    def test_output_shape(self):
         enc = self._make_enc()
-        self.assertEqual(enc.out_dim, HID_DIM * (NUM_LAYERS + 1))
+        enc.eval()
+        x, edge_index, edge_attr, batch = _make_graph(in_dim=HID_DIM)
+        out = enc(x=x, edge_index=edge_index, batch=batch, edge_attr=edge_attr)
+        self.assertEqual(out.shape, (NUM_NODES, HID_DIM * (NUM_LAYERS + 1)))
+
+    def test_missing_edge_attr_raises(self):
+        enc = self._make_enc()
+        x, edge_index, _, batch = _make_graph(in_dim=HID_DIM)
+        with self.assertRaises(Exception):
+            enc(x=x, edge_index=edge_index, batch=batch, edge_attr=None)
+
+
+# ===========================================================================
+# Attention Layers (Transformer & GraphGPS)
+# ===========================================================================
+
+
+class TestTransformerConvEncoder(unittest.TestCase):
+    def _make_enc(self, **kwargs):
+        from src.models.layers.transformer_conv import TransformerConvEncoder
+
+        num_layers = kwargs.get("num_layers", NUM_LAYERS)
+        defaults = dict(
+            node_input_dim=HID_DIM,
+            hid_dim=HID_DIM,
+            num_layers=num_layers,
+            edge_attr_dim=EDGE_DIM,
+            output_dim=HID_DIM * (num_layers + 1),
+            heads=4,
+        )
+        defaults.update(kwargs)
+        return TransformerConvEncoder(**defaults)
+
+    def test_output_shape(self):
+        enc = self._make_enc()
+        enc.eval()
+        x, edge_index, edge_attr, batch = _make_graph(in_dim=HID_DIM)
+        out = enc(x=x, edge_index=edge_index, batch=batch, edge_attr=edge_attr)
+        self.assertEqual(out.shape, (NUM_NODES, HID_DIM * (NUM_LAYERS + 1)))
+
+
+class TestGraphGPSEncoder(unittest.TestCase):
+    def _make_enc(self, **kwargs):
+        from src.models.layers.graphgps import GraphGPSEncoder
+
+        num_layers = kwargs.get("num_layers", NUM_LAYERS)
+        defaults = dict(
+            node_input_dim=HID_DIM,
+            hid_dim=HID_DIM,
+            num_layers=num_layers,
+            edge_attr_dim=EDGE_DIM,
+            output_dim=HID_DIM * (num_layers + 1),
+        )
+        defaults.update(kwargs)
+        return GraphGPSEncoder(**defaults)
+
+    def test_output_shape(self):
+        enc = self._make_enc()
+        enc.eval()
+        x, edge_index, edge_attr, batch = _make_graph(in_dim=HID_DIM)
+        out = enc(x=x, edge_index=edge_index, batch=batch, edge_attr=edge_attr)
+        self.assertEqual(out.shape, (NUM_NODES, HID_DIM * (NUM_LAYERS + 1)))

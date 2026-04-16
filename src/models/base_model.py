@@ -11,10 +11,9 @@ try:
     from positional_encodings import get_pos_enc_layer
 except ImportError:  # pragma: no cover - fallback for package-style imports
     from models.layers.positional_encodings import get_pos_enc_layer
-
     from models.model_utils import get_batch_positional_encoding
 
-from src.constants import ENCODER_REGISTRY
+from src.constants import ENCODER_REGISTRY, MAX_DEPTH, get_output_dim_for_encoder
 
 
 class UnifiedGraphBaseModel(nn.Module):
@@ -31,67 +30,101 @@ class UnifiedGraphBaseModel(nn.Module):
         self,
         encoder_name: str,
         embed_dim: int,
-        node_input_dim: int = 4,  # Default to 4 AIG node types [Const, PI, Gate, PO]
-        edge_attr_dim: int | None = None,
-        task_out_dim: int = 1,  # Default to single-target regression [Node Opt]
-        encoder_kwargs: Optional[Dict] = None,
-        pe_type: str | None = "none",
-        pos_enc_dim: int = 0,
-        max_depth: int = 1000,  # Safeguard bounds for Depth PE Embeddings
-        max_hops: int = 10,  # Safeguard bounds for Relative Hop Embeddings
+        encoder_kwargs: Dict,
+        pe_type: str,
+        node_input_dim: int = 4,
+        edge_attr_dim: int = 2,
+        task_out_dim: int = 1,
+        max_depth: int = MAX_DEPTH,
+        embed_node_input: bool = True,
+        embed_edge_input: bool = True,
+        project_with_pos_enc: bool = True,
     ):
-        super().__init__()
-        encoder_key = encoder_name.lower()
-        if encoder_key not in ENCODER_REGISTRY:
-            raise ValueError(f"Unknown encoder_name: {encoder_name}")
+        super().__init__()  # Don't forget this if it's not somewhere else!
 
-        self.encoder_name = encoder_key
+        # 1. Save all instance variables FIRST
+        self.kwargs = encoder_kwargs.copy()  # Good practice to copy dicts
+        self.encoder_name = encoder_name
+        self.pe_type = pe_type
+        self.project_with_pos_enc = project_with_pos_enc
+        self.embed_node_input = embed_node_input
+        self.embed_edge_input = embed_edge_input
 
-        # Projects the one-hot node features into the continuous embed_dim
-        self.node_embed = nn.Linear(node_input_dim, embed_dim)
+        # 2. Calculate Positional Encoding Dimension
+        self.pos_enc_dim = max(16, embed_dim // 4) if self.pe_type != "none" else 0
 
-        # Optionally project incoming continuous edge features into `embed_dim`
-        self.edge_attr_dim = edge_attr_dim
-        self.edge_attr_proj = (
-            nn.Linear(edge_attr_dim, embed_dim) if edge_attr_dim is not None else None
+        # 3. Calculate the dimension after concatenation
+        base_node_dim = embed_dim if embed_node_input else node_input_dim
+        concat_dim = (
+            base_node_dim + self.pos_enc_dim
+            if (self.pe_type != "none" and self.pos_enc_dim > 0)
+            else base_node_dim
         )
 
-        # 1. Instantiate the Learned Positional Encoding Projection Layer
-        self.pe_encoder = get_pos_enc_layer(
-            pe_type=pe_type,
-            pos_enc_dim=pos_enc_dim,
-            max_depth=max_depth,
-            max_hops=max_hops,
-        )
+        # 4. Determine final dimension and initialize projection layer if needed
+        if (
+            self.pe_type != "none"
+            and self.pos_enc_dim > 0
+            and self.project_with_pos_enc
+        ):
+            final_node_input_dim = embed_dim
+            self.post_pe_proj = nn.Linear(concat_dim, embed_dim)
+        else:
+            final_node_input_dim = concat_dim
+            self.post_pe_proj = None
 
-        kwargs = {} if encoder_kwargs is None else dict(encoder_kwargs)
+        # Provide node input dim to the encoder
+        self.kwargs["node_input_dim"] = final_node_input_dim
+        self.kwargs["edge_attr_dim"] = embed_dim if embed_edge_input else edge_attr_dim
 
-        # Provide sensible defaults for encoder input dims and hidden sizes.
-        kwargs.setdefault("in_dim", embed_dim)
-        kwargs.setdefault("num_layers", 2)
-        kwargs.setdefault("hid_dim", embed_dim)
+        # 5. Initialize embeddings
+        if self.embed_node_input:
+            self.node_embed = nn.Linear(node_input_dim, embed_dim)
 
-        if "edge_dim" not in kwargs:
-            if self.edge_attr_proj is not None:
-                kwargs["edge_dim"] = embed_dim
-            elif self.edge_attr_dim is not None:
-                kwargs["edge_dim"] = self.edge_attr_dim
+        if self.embed_edge_input:
+            self.edge_attr_proj = nn.Linear(edge_attr_dim, embed_dim)
+
+        # 6. Instantiate Positional Encoding Projection Layer
+        if self.pe_type != "none":
+            self.pe_encoder = get_pos_enc_layer(
+                pe_type=self.pe_type,
+                pos_enc_dim=self.pos_enc_dim,
+                max_depth=max_depth,
+            )
+        else:
+            self.pe_encoder = nn.Identity()
 
         # EGIN bypasses the shared prediction head and needs output_dim on encoder.
-        if self.encoder_name == "egin":
-            kwargs.setdefault("output_dim", task_out_dim)
-
-        self.encoder = ENCODER_REGISTRY[encoder_key](**kwargs)
-
-        # EGIN already outputs graph-level scores; others output node embeddings.
-        # LazyLinear perfectly handles the unknown input size created by jk='cat' in the encoders
-        self.head = (
-            nn.Identity()
-            if self.encoder_name == "egin"
-            else nn.LazyLinear(task_out_dim)
+        self.kwargs["output_dim"] = get_output_dim_for_encoder(
+            self.encoder_name, self.kwargs
         )
 
-    # Note: edge_type-based derivation removed; edge attributes are supplied
+        # 7. Instantiate the selected encoder
+        self.encoder = ENCODER_REGISTRY[self.encoder_name](**self.kwargs)
+
+        self.head = nn.LazyLinear(int(task_out_dim))
+
+    def _integrate_positional_encoding(self, x, pos_enc):
+        if pos_enc is None or getattr(self, "pos_enc_dim", 0) == 0:
+            return x
+
+        pos_enc = pos_enc.unsqueeze(-1) if pos_enc.dim() == 1 else pos_enc
+        pos_enc = self.pe_encoder(pos_enc)
+
+        pos_enc = (
+            pos_enc.squeeze(1)
+            if pos_enc.dim() == 3 and pos_enc.size(1) == 1
+            else pos_enc
+        )
+
+        # Concatenate base features with positional encoding
+        out = torch.cat([x, pos_enc], dim=-1)
+
+        # Apply post-integration projection if enabled
+        if self.project_with_pos_enc and self.post_pe_proj is not None:
+            out = self.post_pe_proj(out)
+
+        return out
 
     def _encode_with_selected_encoder(
         self,
@@ -99,7 +132,6 @@ class UnifiedGraphBaseModel(nn.Module):
         edge_index: torch.Tensor,
         batch: torch.Tensor,
         edge_attr: torch.Tensor,
-        pos_enc: Optional[torch.Tensor],
     ) -> torch.Tensor:
         """Passes the fully mapped tensors directly into the selected architecture."""
         return self.encoder(
@@ -107,85 +139,66 @@ class UnifiedGraphBaseModel(nn.Module):
             edge_index=edge_index,
             batch=batch,
             edge_attr=edge_attr,
-            pos_enc=pos_enc,
         )
 
-    def encode_nodes(
+    def encode_and_integrate(
         self,
         x: torch.Tensor,
         edge_index: torch.Tensor,
-        batch: torch.Tensor,
-        edge_attr: Optional[torch.Tensor] = None,
+        edge_attr: torch.Tensor,
         pos_enc: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """Projects base graph features and positional encodings into continuous space."""
-        x = self.node_embed(x.float())
-        if edge_attr is None:
-            raise ValueError("edge_attr is required and must never be None")
-
-        if edge_attr.dim() == 1:
-            edge_attr = edge_attr.unsqueeze(-1)
-
-        if edge_attr.dim() != 2:
-            raise ValueError(f"edge_attr must be 2D, got shape {tuple(edge_attr.shape)}")
-
-        if edge_attr.size(0) != edge_index.size(1):
-            raise ValueError(
-                "edge_attr row count must match number of edges: "
-                f"edge_attr rows={edge_attr.size(0)} edge_index cols={edge_index.size(1)}"
-            )
-
-        edge_attr = edge_attr.float()
-        if self.edge_attr_proj is not None:
-            edge_attr_emb = self.edge_attr_proj(edge_attr)
-        else:
-            edge_attr_emb = edge_attr
-
-        # 3. Apply the Positional Encoding Projection
-        if pos_enc is not None and not isinstance(self.pe_encoder, nn.Identity):
-            if pos_enc.dim() == 1:
-                pos_enc = pos_enc.unsqueeze(-1)
-
-            pos_enc = self.pe_encoder(pos_enc)
-
-            # Squeeze extra sequence dimensions from embeddings if they appear
-            if pos_enc.dim() == 3 and pos_enc.size(1) == 1:
-                pos_enc = pos_enc.squeeze(1)
-        else:
-            pos_enc = None
-
-        return self._encode_with_selected_encoder(
-            x=x,
-            edge_index=edge_index,
-            batch=batch,
-            edge_attr=edge_attr_emb,
-            pos_enc=pos_enc,
+        x = self.node_embed(x.float()) if self.embed_node_input else x.float()
+        assert (
+            edge_attr is not None
+            and edge_attr.dim() == 2
+            and edge_attr.size(0) == edge_index.size(1)
+        ), (
+            f"edge_attr must be 2D with rows equal to number of edges (expected {edge_index.size(1)})"
         )
+
+        edge_attr = (
+            self.edge_attr_proj(edge_attr.float())
+            if self.embed_edge_input
+            else edge_attr.float()
+        )
+        # Integrate positional encoding (projection + concat) into node features
+        x = self._integrate_positional_encoding(x, pos_enc)
+
+        return x, edge_attr
 
     def forward(
         self,
         x: torch.Tensor,
         edge_index: torch.Tensor,
         batch: torch.Tensor,
-        edge_attr: Optional[torch.Tensor] = None,
+        edge_attr: torch.Tensor,
         pos_enc: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """Complete forward pass: Node/Edge Feature Encoding -> Message Passing -> Pooling -> Linear Head."""
-        enc_out = self.encode_nodes(
+
+        x, edge_attr = self.encode_and_integrate(
+            x=x,
+            edge_index=edge_index,
+            edge_attr=edge_attr,
+            pos_enc=pos_enc,
+        )
+
+        enc_out = self._encode_with_selected_encoder(
             x=x,
             edge_index=edge_index,
             batch=batch,
             edge_attr=edge_attr,
-            pos_enc=pos_enc,
         )
 
         # EGIN already incorporates the final linear projection and pooling internally
         if self.encoder_name == "egin":
             return enc_out
-
-        # Hardcoded sum pooling (global_add_pool) for optimal theoretical expressivity
-        graph_emb = global_add_pool(enc_out, batch)
-        return self.head(graph_emb)
+        else:
+            # Hardcoded sum pooling (global_add_pool) for optimal theoretical expressivity
+            graph_emb = global_add_pool(enc_out, batch)
+            return self.head(graph_emb)
 
     def forward_batch(self, batch) -> torch.Tensor:
         """Convenience wrapper for PyTorch Geometric Batch objects."""
@@ -194,6 +207,6 @@ class UnifiedGraphBaseModel(nn.Module):
             x=batch.x,
             edge_index=batch.edge_index,
             batch=batch.batch,
-            edge_attr=getattr(batch, "edge_attr", None),
+            edge_attr=batch.edge_attr,
             pos_enc=pos_enc,
         )

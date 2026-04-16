@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional
+from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -63,52 +63,26 @@ class GraphGPSEncoder(nn.Module):
 
     def __init__(
         self,
-        in_dim: int,
-        edge_dim: int,
+        node_input_dim: int,
+        edge_attr_dim: int,
         hid_dim: int,
         num_layers: int,
-        use_input_proj: bool = True,
-        use_edge_proj: bool = True,
-        pos_enc_dim: int = 0,
+        output_dim: int,
         dropout: float = 0.0,
         norm_type: str = "batch",
         heads: int = 4,
-        attn_type: str = "multihead",
-        attn_kwargs: Optional[Dict[str, Any]] = None,
         performer_redraw_interval: Optional[int] = None,
+        **kwargs,
     ):
         super().__init__()
-        if num_layers < 1:
+
+        # Expose num_layers consistently across encoders
+        self.num_layers = num_layers
+        if self.num_layers < 1:
             raise ValueError("num_layers must be >= 1")
 
-        self.use_input_proj = use_input_proj
-        self.use_edge_proj = use_edge_proj
-        self.hid_dim = hid_dim
-        self.pos_enc_dim = pos_enc_dim
-
-        # Hardcoded to 'concat' PE per GPS paper specifications
-        effective_in_dim = in_dim + pos_enc_dim if pos_enc_dim > 0 else in_dim
-
-        if self.use_input_proj:
-            self.node_encoder = nn.Linear(effective_in_dim, hid_dim)
-        else:
-            if effective_in_dim != hid_dim:
-                raise ValueError(
-                    f"use_input_proj=False requires in_dim ({effective_in_dim}) == hid_dim ({hid_dim})"
-                )
-            self.node_encoder = nn.Identity()
-
-        if self.use_edge_proj:
-            self.edge_encoder = nn.Linear(edge_dim, hid_dim)
-        else:
-            if edge_dim != hid_dim:
-                raise ValueError(
-                    f"use_edge_proj=False requires edge_dim ({edge_dim}) == hid_dim ({hid_dim})"
-                )
-            self.edge_encoder = nn.Identity()
-
         self.layers = nn.ModuleList()
-        for _ in range(num_layers):
+        for _ in range(self.num_layers):
             # Inner MPNN (GINE) for the GPS block
             local_nn = nn.Sequential(
                 nn.Linear(hid_dim, hid_dim),
@@ -118,37 +92,20 @@ class GraphGPSEncoder(nn.Module):
             )
             local_conv = GINEConv(local_nn, edge_dim=hid_dim)
 
-            # PyG's GPSConv natively handles the parallel Attn, MLPs, Norms, and Residuals
             self.layers.append(
                 GPSConv(
                     channels=hid_dim,
                     conv=local_conv,
-                    heads=4,
+                    heads=heads,
                     dropout=dropout,
-                    # FORCED HARDCODE: Use Performer for O(N) scalability
                     attn_type="performer",
                     attn_kwargs={"dropout": 0.5},
-                    norm="batch",
+                    norm=norm_type,
                 )
             )
 
         # Ensure redraw_interval is set for Performer stability
         self.redraw_projection = RedrawProjection(self.layers, redraw_interval=1000)
-        # Hardcoded Jumping Knowledge = 'cat' output dimension
-        self.out_dim = hid_dim * (num_layers + 1)
-
-    def _validate_positional_encoding(self, pos_enc: OptTensor) -> None:
-        if pos_enc is None or self.pos_enc_dim == 0:
-            return
-        if pos_enc.size(-1) != self.pos_enc_dim:
-            raise ValueError(
-                f"Expected pos_enc with feature size {self.pos_enc_dim}, got {pos_enc.size(-1)}"
-            )
-
-    def _integrate_positional_encoding(self, x: Tensor, pos_enc: OptTensor) -> Tensor:
-        if pos_enc is None or self.pos_enc_dim == 0:
-            return x
-        return torch.cat([x, pos_enc], dim=-1)
 
     def forward(
         self,
@@ -158,15 +115,6 @@ class GraphGPSEncoder(nn.Module):
         edge_attr: OptTensor = None,
         pos_enc: OptTensor = None,
     ) -> Tensor:
-        # edge_type removed; encoders receive `edge_attr` when needed
-
-        self._validate_positional_encoding(pos_enc)
-        x = self._integrate_positional_encoding(x, pos_enc)
-
-        x = self.node_encoder(x)
-
-        if edge_attr is not None:
-            edge_attr = self.edge_encoder(edge_attr)
 
         # Track hidden states for Jumping Knowledge
         h_list = [x]
@@ -178,5 +126,13 @@ class GraphGPSEncoder(nn.Module):
             )
             h_list.append(x)
 
-        # Hardcoded Jumping Knowledge = 'cat'
-        return torch.cat(h_list, dim=-1)
+        if self.jk_mode == "last":
+            node_emb = h_list[-1]
+        elif self.jk_mode == "max":
+            node_emb = torch.stack(h_list, dim=-1).max(dim=-1)[0]
+        elif self.jk_mode == "sum":
+            node_emb = torch.stack(h_list, dim=-1).sum(dim=-1)
+        elif self.jk_mode == "cat":
+            node_emb = torch.cat(h_list, dim=1)
+
+        return node_emb

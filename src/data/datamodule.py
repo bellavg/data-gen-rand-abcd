@@ -19,7 +19,7 @@ class AIGDataModule(pl.LightningDataModule):
         split_ratios: Tuple[float, float, float] = (0.8, 0.1, 0.1),
         seed: int = 42,
         batch_size: int = 32,
-        num_workers: int = 0,
+        num_workers: int = 6,
         train_num_samples: Optional[int] = None,
     ) -> None:
         super().__init__()
