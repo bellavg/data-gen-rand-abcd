@@ -6,6 +6,7 @@ import optuna
 import pytorch_lightning as pl
 import torch
 from pytorch_lightning.callbacks import Callback, EarlyStopping
+from pytorch_lightning.loggers import CSVLogger
 
 # Project Imports
 try:
@@ -122,6 +123,10 @@ def objective(trial: optuna.Trial, args):
         early_stop_cb,
     ]
 
+    csv_logger = CSVLogger(
+        save_dir=args.log_dir, name="optuna_metrics", version=f"trial_{trial.number}"
+    )
+
     # 7. Trainer
     trainer = pl.Trainer(
         max_epochs=10,
@@ -129,7 +134,7 @@ def objective(trial: optuna.Trial, args):
         accelerator="auto",
         devices=1,
         callbacks=callbacks,
-        logger=True,
+        logger=csv_logger,
         enable_checkpointing=False,
         enable_model_summary=False,
         enable_progress_bar=False,
@@ -174,6 +179,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--cache_dir", type=str, help="Directory to save dataset splits"
     )
+    parser.add_argument("--log_dir", type=str, help="Directory to save lightning logs")
     parser.add_argument(
         "--train_samples",
         type=int,

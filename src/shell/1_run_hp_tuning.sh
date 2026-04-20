@@ -200,6 +200,7 @@ CUDA_VISIBLE_DEVICES=0 python -m hp_tuning \
     --study_name "aig_opt_hp_tuning" \
     --checkpoint_dir "$CHECKPOINT_DIR" \
     --cache_dir "$WORKSPACE/hp_tuning/shared_cache" \
+    --log_dir "$LOG_DIR/worker_0" \
     --csv_paths "$CSV_1" "$CSV_2" "$CSV_3" "$CSV_4" \
     --num_workers "$NUM_WORKERS" \
     > "$LOG_DIR/worker_0.log" 2>&1 &
@@ -215,6 +216,7 @@ if (( WORKER_COUNT >= 2 )); then
         --db_url "$DB_URL" \
         --study_name "aig_opt_hp_tuning" \
         --checkpoint_dir "$CHECKPOINT_DIR" \
+        --log_dir "$LOG_DIR/worker_1" \
         --cache_dir "$WORKSPACE/hp_tuning/shared_cache" \
         --csv_paths "$CSV_1" "$CSV_2" "$CSV_3" "$CSV_4" \
         --num_workers "$NUM_WORKERS" \
