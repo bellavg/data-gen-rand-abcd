@@ -2,6 +2,7 @@ import argparse
 
 import optuna
 import pytorch_lightning as pl
+import torch
 from pytorch_lightning.callbacks import Callback, EarlyStopping
 
 # Project Imports
@@ -125,9 +126,23 @@ def objective(trial: optuna.Trial, args):
         enable_progress_bar=False,
     )
 
-    trainer.fit(model, datamodule=datamodule)
+    try:
+        trainer.fit(model, datamodule=datamodule)
+    except torch.OutOfMemoryError:
+        print(f"\n[Trial {trial.number}] Pruned due to CUDA Out of Memory.")
+        torch.cuda.empty_cache()  # Crucial: Free up the GPU memory!
+        raise optuna.TrialPruned("OOM")
+    except RuntimeError as e:
+        # Catch older PyTorch OOM formats just in case
+        if "out of memory" in str(e).lower():
+            print(
+                f"\n[Trial {trial.number}] Pruned due to CUDA Out of Memory (RuntimeError)."
+            )
+            torch.cuda.empty_cache()
+            raise optuna.TrialPruned("OOM")
+        else:
+            raise e  # If it's a different RuntimeError, let it crash so you can fix it
 
-    # Return the best score tracked by EarlyStopping instead of ModelCheckpoint
     return (
         early_stop_cb.best_score.item()
         if early_stop_cb.best_score is not None
