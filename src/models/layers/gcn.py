@@ -4,6 +4,7 @@ import torch.nn.functional as F
 from torch import Tensor
 from torch_geometric.nn import MessagePassing
 from torch_geometric.typing import Adj
+from torch_geometric.utils import degree
 
 try:
     from model_utils import get_norm_layer
@@ -20,6 +21,7 @@ except ImportError:  # pragma: no cover - fallback for package-style imports
 class GCNConvWithEdges(MessagePassing):
     """
     Edge-aware GCN message-passing layer per the GNN+ paper.
+    Now includes proper GCN symmetric degree normalization.
     """
 
     def __init__(
@@ -29,37 +31,32 @@ class GCNConvWithEdges(MessagePassing):
         edge_dim: int | None = None,
         bias: bool = True,
     ):
-        # 1. Inherit from MessagePassing and set aggregation to "add"
+        # Use add aggregation, we will manually normalize the weights
         super().__init__(aggr="add")
         self.lin = nn.Linear(in_channels, out_channels, bias=False)
 
-        # 2. Re-enable the edge encoder projection
         self.edge_encoder = (
             nn.Linear(edge_dim, out_channels, bias=False)
             if edge_dim is not None
             else None
         )
         self.bias_param = nn.Parameter(torch.zeros(out_channels)) if bias else None
-
-        # 3. Use an instance variable to bypass strict PyG inspector dropping kwargs
         self._edge_attr = None
 
-    def message(self, x_j: Tensor) -> Tensor:
-        # Read the edge attributes stored during forward()
+    def message(self, x_j: Tensor, edge_weight: Tensor) -> Tensor:
+        # 1. Apply edge attributes
         ea = self._edge_attr
         if ea is not None:
-            if self.edge_encoder is None:
-                if ea.size(-1) != x_j.size(-1):
-                    raise ValueError(
-                        "edge_attr feature size does not match node hidden size. "
-                        "Provide edge_dim to enable projection."
-                    )
-                edge_msg = ea
-            else:
+            if self.edge_encoder is not None:
                 edge_msg = self.edge_encoder(ea)
-            # Add edge features to node features and apply ReLU
-            return (x_j + edge_msg).relu()
-        return x_j.relu()
+            else:
+                edge_msg = ea
+            msg = (x_j + edge_msg).relu()
+        else:
+            msg = x_j.relu()
+
+        # 2. Scale the message by the GCN normalization weight
+        return msg * edge_weight.view(-1, 1)
 
     def forward(
         self,
@@ -67,14 +64,21 @@ class GCNConvWithEdges(MessagePassing):
         edge_index: Adj,
         edge_attr: Tensor | None = None,
     ) -> Tensor:
+        # Calculate GCN normalization weights (1 / sqrt(deg(i) * deg(j)))
+        row, col = edge_index
+        deg = degree(col, x.size(0), dtype=x.dtype)
+        deg_inv_sqrt = deg.pow(-0.5)
+        deg_inv_sqrt[deg_inv_sqrt == float("inf")] = 0
+        edge_weight = deg_inv_sqrt[row] * deg_inv_sqrt[col]
+
         # Temporarily attach edge_attr to self
         self._edge_attr = edge_attr
 
         # Apply linear transformation to node features
         x = self.lin(x)
 
-        # Propagate messages (cleanly, without edge_attr in kwargs)
-        out = self.propagate(edge_index, x=x, size=None)
+        # Propagate messages passing the calculated edge_weight
+        out = self.propagate(edge_index, x=x, edge_weight=edge_weight, size=None)
 
         # Clean up
         self._edge_attr = None
@@ -163,26 +167,27 @@ class GCNEncoder(nn.Module):
             raise ValueError("num_layers must be >= 1")
 
         self.num_layers = num_layers
+        self.jk_mode = kwargs.get("jk_mode", "cat")  # Default to 'cat' if not provided
+
+        # Project initial embedding purely for Jumping Knowledge uniformity
+        if node_input_dim != hid_dim:
+            self.jk_proj = nn.Linear(node_input_dim, hid_dim)
+        else:
+            self.jk_proj = nn.Identity()
 
         self.layers = nn.ModuleList()
-        for _ in range(num_layers):
+        for i in range(num_layers):
+            dim_in = node_input_dim if i == 0 else hid_dim
             self.layers.append(
                 GCNConvLayer(
-                    dim_in=hid_dim,
+                    dim_in=dim_in,
                     dim_out=hid_dim,
                     edge_dim=edge_attr_dim,
                     dropout=dropout,
                     norm_type=norm_type,
                 )
             )
-        # Optional input projection when node input dim != hidden dim
-        self.node_input_dim = node_input_dim
-        self.hid_dim = hid_dim
-        self.input_proj = (
-            nn.Linear(node_input_dim, hid_dim)
-            if node_input_dim != hid_dim
-            else nn.Identity()
-        )
+        # First layer expects `node_input_dim`; subsequent layers expect `hid_dim`.
 
     def forward(
         self,
@@ -192,13 +197,12 @@ class GCNEncoder(nn.Module):
         edge_attr: Tensor | None = None,
     ) -> Tensor:
 
-        # Apply optional input projection then track hidden states for Jumping Knowledge
-        x0 = self.input_proj(x)
-        h_list = [x0]
+        # Keep track of uniform dimension sizes for h_list
+        h_list = [self.jk_proj(x)]
+        current_x = x
         for layer in self.layers:
-            h_list.append(
-                layer(x=h_list[-1], edge_index=edge_index, edge_attr=edge_attr)
-            )
+            current_x = layer(x=current_x, edge_index=edge_index, edge_attr=edge_attr)
+            h_list.append(current_x)
 
         if self.jk_mode == "last":
             node_emb = h_list[-1]

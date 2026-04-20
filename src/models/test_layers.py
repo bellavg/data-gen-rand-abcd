@@ -317,7 +317,7 @@ class TestGINEConvLayer(unittest.TestCase):
         from src.models.layers.gine import GINEConvLayer
 
         self.layer = GINEConvLayer(
-            hid_dim=HID_DIM, edge_dim=EDGE_DIM, dropout=0.0, norm_type="batch"
+            dim_in=HID_DIM, hid_dim=HID_DIM, edge_dim=EDGE_DIM, dropout=0.0, norm_type="batch"
         )
         self.layer.eval()
 
@@ -337,7 +337,7 @@ class TestGINEConvLayer(unittest.TestCase):
         from src.models.layers.gine import GINEConvLayer
 
         layer = GINEConvLayer(
-            hid_dim=HID_DIM, edge_dim=EDGE_DIM, dropout=0.0, norm_type="layer"
+            dim_in=HID_DIM, hid_dim=HID_DIM, edge_dim=EDGE_DIM, dropout=0.0, norm_type="layer"
         )
         layer.eval()
         _, edge_index, edge_attr, _ = _make_graph()
@@ -358,7 +358,7 @@ class TestGINEEncoder(unittest.TestCase):
             node_input_dim=HID_DIM,
             hid_dim=HID_DIM,
             num_layers=num_layers,
-            edge_attr_dim=EDGE_DIM,
+            edge_attr_dim=HID_DIM,
             output_dim=HID_DIM * (num_layers + 1),
         )
         defaults.update(kwargs)
@@ -367,8 +367,7 @@ class TestGINEEncoder(unittest.TestCase):
     def test_output_shape(self):
         enc = self._make_enc()
         enc.eval()
-        # Input has already been projected to hid_dim by base_model
-        x, edge_index, edge_attr, batch = _make_graph(in_dim=HID_DIM)
+        x, edge_index, edge_attr, batch = _make_graph(in_dim=HID_DIM, edge_dim=HID_DIM)
         out = enc(x=x, edge_index=edge_index, batch=batch, edge_attr=edge_attr)
         self.assertEqual(out.shape, (NUM_NODES, HID_DIM * (NUM_LAYERS + 1)))
 
@@ -379,7 +378,7 @@ class TestGINEEncoder(unittest.TestCase):
     def test_single_layer(self):
         enc = self._make_enc(num_layers=1)
         enc.eval()
-        x, edge_index, edge_attr, batch = _make_graph(in_dim=HID_DIM)
+        x, edge_index, edge_attr, batch = _make_graph(in_dim=HID_DIM, edge_dim=HID_DIM)
         out = enc(x=x, edge_index=edge_index, batch=batch, edge_attr=edge_attr)
         self.assertEqual(out.shape, (NUM_NODES, HID_DIM * 2))
 
@@ -390,7 +389,7 @@ class TestGINEEncoder(unittest.TestCase):
     def test_edge_type_arg_ignored(self):
         enc = self._make_enc()
         enc.eval()
-        x, edge_index, edge_attr, batch = _make_graph(in_dim=HID_DIM)
+        x, edge_index, edge_attr, batch = _make_graph(in_dim=HID_DIM, edge_dim=HID_DIM)
         out = enc(x=x, edge_index=edge_index, batch=batch, edge_attr=edge_attr)
         self.assertEqual(out.shape, (NUM_NODES, HID_DIM * (NUM_LAYERS + 1)))
 
@@ -454,7 +453,7 @@ class TestGCNEncoder(unittest.TestCase):
             node_input_dim=HID_DIM,
             hid_dim=HID_DIM,
             num_layers=num_layers,
-            edge_attr_dim=EDGE_DIM,
+            edge_attr_dim=HID_DIM,
             output_dim=HID_DIM * (num_layers + 1),
         )
         defaults.update(kwargs)
@@ -463,7 +462,7 @@ class TestGCNEncoder(unittest.TestCase):
     def test_output_shape(self):
         enc = self._make_enc()
         enc.eval()
-        x, edge_index, edge_attr, batch = _make_graph(in_dim=HID_DIM)
+        x, edge_index, edge_attr, batch = _make_graph(in_dim=HID_DIM, edge_dim=HID_DIM)
         out = enc(x=x, edge_index=edge_index, batch=batch, edge_attr=edge_attr)
         self.assertEqual(out.shape, (NUM_NODES, HID_DIM * (NUM_LAYERS + 1)))
 
@@ -482,7 +481,7 @@ class TestVanillaMPNNEncoder(unittest.TestCase):
             node_input_dim=HID_DIM,
             hid_dim=HID_DIM,
             num_layers=num_layers,
-            edge_attr_dim=EDGE_DIM,
+            edge_attr_dim=HID_DIM,
             output_dim=HID_DIM * (num_layers + 1),
         )
         defaults.update(kwargs)
@@ -491,13 +490,13 @@ class TestVanillaMPNNEncoder(unittest.TestCase):
     def test_output_shape(self):
         enc = self._make_enc()
         enc.eval()
-        x, edge_index, edge_attr, batch = _make_graph(in_dim=HID_DIM)
+        x, edge_index, edge_attr, batch = _make_graph(in_dim=HID_DIM, edge_dim=HID_DIM)
         out = enc(x=x, edge_index=edge_index, batch=batch, edge_attr=edge_attr)
         self.assertEqual(out.shape, (NUM_NODES, HID_DIM * (NUM_LAYERS + 1)))
 
     def test_missing_edge_attr_raises(self):
         enc = self._make_enc()
-        x, edge_index, _, batch = _make_graph(in_dim=HID_DIM)
+        x, edge_index, _, batch = _make_graph(in_dim=IN_DIM, edge_dim=EDGE_DIM)
         with self.assertRaises(Exception):
             enc(x=x, edge_index=edge_index, batch=batch, edge_attr=None)
 
@@ -516,7 +515,7 @@ class TestTransformerConvEncoder(unittest.TestCase):
             node_input_dim=HID_DIM,
             hid_dim=HID_DIM,
             num_layers=num_layers,
-            edge_attr_dim=EDGE_DIM,
+            edge_attr_dim=HID_DIM,
             output_dim=HID_DIM * (num_layers + 1),
             heads=4,
         )
@@ -526,7 +525,7 @@ class TestTransformerConvEncoder(unittest.TestCase):
     def test_output_shape(self):
         enc = self._make_enc()
         enc.eval()
-        x, edge_index, edge_attr, batch = _make_graph(in_dim=HID_DIM)
+        x, edge_index, edge_attr, batch = _make_graph(in_dim=HID_DIM, edge_dim=HID_DIM)
         out = enc(x=x, edge_index=edge_index, batch=batch, edge_attr=edge_attr)
         self.assertEqual(out.shape, (NUM_NODES, HID_DIM * (NUM_LAYERS + 1)))
 
@@ -540,7 +539,7 @@ class TestGraphGPSEncoder(unittest.TestCase):
             node_input_dim=HID_DIM,
             hid_dim=HID_DIM,
             num_layers=num_layers,
-            edge_attr_dim=EDGE_DIM,
+            edge_attr_dim=HID_DIM,
             output_dim=HID_DIM * (num_layers + 1),
         )
         defaults.update(kwargs)
@@ -549,6 +548,6 @@ class TestGraphGPSEncoder(unittest.TestCase):
     def test_output_shape(self):
         enc = self._make_enc()
         enc.eval()
-        x, edge_index, edge_attr, batch = _make_graph(in_dim=HID_DIM)
+        x, edge_index, edge_attr, batch = _make_graph(in_dim=HID_DIM, edge_dim=HID_DIM)
         out = enc(x=x, edge_index=edge_index, batch=batch, edge_attr=edge_attr)
         self.assertEqual(out.shape, (NUM_NODES, HID_DIM * (NUM_LAYERS + 1)))

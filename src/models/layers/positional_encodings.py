@@ -88,13 +88,17 @@ class LearnedDepthEmbedding(nn.Module):
 # ==============================================================================
 
 
+def identity_transform(data: Data) -> Data:
+    return data
+
+
 def get_pe_transform(pe_type: str, attr_name: str = "pos_enc", **kwargs):
     """
     Routes your requested pe_type to extract the correct pre-computed attribute
     from your data_utils.py Data object.
     """
     if pe_type is None or pe_type.lower() == "none":
-        return lambda data: data
+        return identity_transform
 
     pe_type = pe_type.lower()
 

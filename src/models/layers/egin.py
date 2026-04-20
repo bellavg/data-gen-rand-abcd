@@ -91,6 +91,7 @@ class GraphEGIN(nn.Module):
         edge_hidden_dim: int | None = None,
         dropout: float = 0.0,
         norm_type: str = "batch",
+        **kwargs,
     ):
         super().__init__()
         if num_layers < 2:
@@ -101,6 +102,8 @@ class GraphEGIN(nn.Module):
             raise ValueError("edge_attr_dim must be >= 1 for EGIN")
 
         self.num_layers = num_layers
+        # Accept jk_mode from unified encoder kwargs (ignored by EGIN but kept for API compatibility)
+        self.jk_mode = kwargs.get("jk_mode", "cat")  # Default to 'cat' if not provided
         self.edge_attr_dim = edge_attr_dim
         self.dot_update = dot_update
         self.edge_mlp = edge_mlp
@@ -135,7 +138,7 @@ class GraphEGIN(nn.Module):
 
             self.mlps.append(
                 MLP(
-                    num_layers=2,  # HARDCODED: Standard expressive depth from paper
+                    num_layers=num_mlp_layers,
                     input_dim=mlp_in_dim,
                     hidden_dim=hid_dim,
                     output_dim=hid_dim,
@@ -219,9 +222,9 @@ class GraphEGIN(nn.Module):
 
         edge_attr = self._to_2d_edge_attr(edge_attr)
 
-        if edge_attr.size(-1) != self.edge_dim:
+        if edge_attr.size(-1) != self.edge_attr_dim:
             raise ValueError(
-                f"Expected edge_attr feature size {self.edge_dim}, got {edge_attr.size(-1)}"
+                f"Expected edge_attr feature size {self.edge_attr_dim}, got {edge_attr.size(-1)}"
             )
 
         hidden_rep = [x]
@@ -234,12 +237,9 @@ class GraphEGIN(nn.Module):
         score_over_layer = 0.0
         for layer, h_layer in enumerate(hidden_rep):
             pooled_h = global_add_pool(h_layer, batch)
+            pooled_h = F.dropout(pooled_h, p=self.dropout, training=self.training)
             logits = self.linears_prediction[layer](pooled_h)
-            score_over_layer = score_over_layer + F.dropout(
-                logits,
-                p=self.dropout,
-                training=self.training,
-            )
+            score_over_layer = score_over_layer + logits
 
         return score_over_layer
 

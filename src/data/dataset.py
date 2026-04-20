@@ -10,31 +10,18 @@ import pandas as pd
 import torch
 from torch.utils.data import Dataset
 
+# Factory transform for handling various PE types (level, pi_paths, sinusoidal, etc.)
+try:
+    from models.layers.positional_encodings import get_pe_transform
+except ImportError:
+    # Fallback for different execution environments
+    from src.models.layers.positional_encodings import get_pe_transform
+
 
 @dataclass(frozen=True)
 class GraphSample:
     graph_path: str
     y_node_opt: float
-
-
-def _get_pe(
-    data_obj: object, positional_encoding: Optional[str]
-) -> Optional[torch.Tensor]:
-    if positional_encoding is None:
-        return None
-
-    t = getattr(data_obj, positional_encoding, None)
-    if t is None:
-        return None
-
-    t = t.unsqueeze(-1) if t.dim() == 1 else t
-
-    # Keep discrete attributes as long/int for nn.Embedding
-    if positional_encoding == "level":
-        return t.long()
-
-    # Otherwise continuous attributes become floats
-    return t.float()
 
 
 class AIGGraphRegressionDataset(Dataset):
@@ -64,6 +51,7 @@ class AIGGraphRegressionDataset(Dataset):
             self.csv_paths = [Path(csv_paths)]
         else:
             self.csv_paths = [Path(p) for p in csv_paths]
+
         self.positional_encoding = positional_encoding
         self.split = split
         self.cache_dir = Path(cache_dir) if cache_dir is not None else None
@@ -71,6 +59,11 @@ class AIGGraphRegressionDataset(Dataset):
         self.seed = seed
         self.num_samples = num_samples
         self.num_workers = num_workers
+
+        # Initialize the PE transform factory
+        self.pe_transform = get_pe_transform(
+            pe_type=self.positional_encoding, attr_name="pos_enc"
+        )
 
         self.samples = self._build_samples()
 
@@ -159,9 +152,22 @@ class AIGGraphRegressionDataset(Dataset):
         if edge_attr.dim() != 2:
             raise ValueError("edge_attr must be 2D")
 
-        if self.positional_encoding is not None:
-            pe = _get_pe(data_obj, self.positional_encoding)
-            if pe is None or pe.dim() != 2 or pe.shape[0] != data_obj.x.shape[0]:
+        # Validate Positional Encoding attachment
+        if (
+            self.positional_encoding is not None
+            and self.positional_encoding.lower() != "none"
+        ):
+            # Apply the transform to test if it correctly attaches 'pos_enc'
+            data_obj = self.pe_transform(data_obj)
+            pe = getattr(data_obj, "pos_enc", None)
+
+            if pe is None:
+                raise ValueError(
+                    f"Transform failed to find/attach PE type '{self.positional_encoding}' "
+                    f"for graph {samples[0].graph_path}"
+                )
+
+            if pe.dim() != 2 or pe.shape[0] != data_obj.x.shape[0]:
                 raise ValueError(
                     "pos_enc should be 2D with N rows, got "
                     f"{pe.shape if pe is not None else None}"
@@ -182,15 +188,14 @@ class AIGGraphRegressionDataset(Dataset):
 
         edge_attr = getattr(data_obj, "edge_attr", None)
         if edge_attr is None:
-            raise ValueError(
-                f"Loaded graph has edge_attr=None, which is not allowed: {sample.graph_path}"
-            )
+            raise ValueError(f"Loaded graph has edge_attr=None: {sample.graph_path}")
         if edge_attr.dim() != 2:
             raise ValueError(
                 f"Loaded graph edge_attr must be 2D, got {tuple(edge_attr.shape)}: {sample.graph_path}"
             )
 
-        data_obj.pos_enc = _get_pe(data_obj, self.positional_encoding)
+        # Apply positional encoding transform (attaches to data_obj.pos_enc)
+        data_obj = self.pe_transform(data_obj)
 
         # Keep targets on the Data object for graph-level regression.
         data_obj.y = torch.tensor([[sample.y_node_opt]], dtype=torch.float32)

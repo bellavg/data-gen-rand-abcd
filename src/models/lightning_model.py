@@ -22,14 +22,13 @@ class AIGRegressionLightningModule(pl.LightningModule):
     def __init__(
         self,
         encoder_name: str,
-        embed_dim: int,
+        hidden_dim: int,
         encoder_kwargs: Dict[str, Any],
         node_input_dim: int = NODE_INPUT_DIM,
         edge_attr_dim: int = EDGE_ATTR_DIM,
         task_out_dim: int = TASK_OUT_DIM,
         pe_type: str = "none",
         pos_enc_dim: int = 0,
-        project_with_pos_enc: bool = True,  # <--- ADD THIS
         huber_delta: float = 1.0,
         lr: float = 1e-3,
         weight_decay: float = 1e-5,
@@ -39,14 +38,13 @@ class AIGRegressionLightningModule(pl.LightningModule):
 
         self.model = UnifiedGraphBaseModel(
             encoder_name=self.hparams.encoder_name,
-            embed_dim=self.hparams.embed_dim,
+            hidden_dim=self.hparams.hidden_dim,
             node_input_dim=self.hparams.node_input_dim,
             edge_attr_dim=self.hparams.edge_attr_dim,
             task_out_dim=self.hparams.task_out_dim,
             pe_type=self.hparams.pe_type,
-            pos_enc_dim=self.hparams.pos_enc_dim,
+            pos_enc_dim=self.hparams.pos_enc_dim,  # Now this will work
             encoder_kwargs=self.hparams.encoder_kwargs,
-            project_with_pos_enc=self.hparams.project_with_pos_enc,  # <--- ADD THIS
         )
 
     def forward(self, batch):
@@ -117,22 +115,24 @@ class AIGRegressionLightningModule(pl.LightningModule):
         min_lr_value = initial_lr * 1e-3
 
         # 3. Define your optimizer
-        optimizer = torch.optim.Adam(self.parameters(), lr=initial_lr)
+        optimizer = torch.optim.Adam(
+            self.parameters(), lr=initial_lr, weight_decay=self.hparams.weight_decay
+        )
 
         # 4. Define the scheduler
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             optimizer,
             mode="min",
             factor=0.5,
-            patience=20,
-            min_lr=min_lr_value,  # <--- Safely bounded!
+            patience=7,
+            min_lr=min_lr_value,
         )
 
         return {
             "optimizer": optimizer,
             "lr_scheduler": {
                 "scheduler": scheduler,
-                "monitor": "val_loss",
+                "monitor": "val/loss",
                 "frequency": 1,
                 "interval": "epoch",
             },

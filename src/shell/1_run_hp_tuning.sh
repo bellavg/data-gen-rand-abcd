@@ -112,8 +112,35 @@ export DB_URL
 mkdir -p "$CHECKPOINT_DIR"
 mkdir -p "$LOG_DIR"
 
-echo "Using Database: $DB_URL"
 
+# --- SQLITE LOCAL STORAGE LOGIC ---
+if [[ -n "${TMPDIR:-}" ]]; then
+    LOCAL_SCRATCH="$TMPDIR/aig_optuna_run"
+else
+    LOCAL_SCRATCH="/tmp/$USER/aig_optuna_run"
+fi
+mkdir -p "$LOCAL_SCRATCH"
+
+LOCAL_DB_PATH="$LOCAL_SCRATCH/optuna_study.db"
+export DB_URL="sqlite:///${LOCAL_DB_PATH}"
+
+echo "Using Local Database: $DB_URL"
+
+# 1. Start a background process to safely backup the DB every hour
+(
+    while true; do
+        sleep 3600
+        echo ">> [Periodic Backup] Backing up SQLite DB to shared workspace..."
+        # Backup to a temp file first, then move it, to prevent incomplete overwrites
+        sqlite3 "$LOCAL_DB_PATH" ".backup '$WORKSPACE/optuna_study.db.tmp'" && \
+        mv -f "$WORKSPACE/optuna_study.db.tmp" "$WORKSPACE/optuna_study.db"
+    done
+) &
+BACKUP_PID=$!
+
+# 2. Update Trap to use sqlite3 safe backup and kill the periodic backup loop
+trap 'echo ">> Job ending. Performing final DB backup..."; kill $BACKUP_PID 2>/dev/null; sqlite3 "$LOCAL_DB_PATH" ".backup '$WORKSPACE/optuna_study.db'"' EXIT
+# ----------------------------------
 # Initialize the Optuna study schema once before launching parallel workers.
 # This avoids occasional concurrent CREATE TABLE races on first startup.
 python - <<'PY'
@@ -126,7 +153,7 @@ storage = optuna.storages.RDBStorage(
     engine_kwargs={"connect_args": {"timeout": 60}},
 )
 optuna.create_study(
-    study_name="aig_optimization_5days",
+    study_name="aig_opt_hp_tuning",
     storage=storage,
     load_if_exists=True,
     direction="minimize",
@@ -170,7 +197,9 @@ echo "Using num_workers per process: $NUM_WORKERS"
 echo "Starting Worker 1 on GPU 0..."
 CUDA_VISIBLE_DEVICES=0 python -m hp_tuning \
     --db_url "$DB_URL" \
+    --study_name "aig_opt_hp_tuning" \
     --checkpoint_dir "$CHECKPOINT_DIR" \
+    --cache_dir "$WORKSPACE/hp_tuning/shared_cache" \
     --csv_paths "$CSV_1" "$CSV_2" "$CSV_3" "$CSV_4" \
     --num_workers "$NUM_WORKERS" \
     > "$LOG_DIR/worker_0.log" 2>&1 &
@@ -184,7 +213,9 @@ if (( WORKER_COUNT >= 2 )); then
     echo "Starting Worker 2 on GPU 1..."
     CUDA_VISIBLE_DEVICES=1 python -m hp_tuning \
         --db_url "$DB_URL" \
+        --study_name "aig_opt_hp_tuning" \
         --checkpoint_dir "$CHECKPOINT_DIR" \
+        --cache_dir "$WORKSPACE/hp_tuning/shared_cache" \
         --csv_paths "$CSV_1" "$CSV_2" "$CSV_3" "$CSV_4" \
         --num_workers "$NUM_WORKERS" \
         > "$LOG_DIR/worker_1.log" 2>&1 &
