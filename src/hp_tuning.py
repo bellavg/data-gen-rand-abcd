@@ -1,4 +1,6 @@
 import argparse
+import logging
+import warnings
 
 import optuna
 import pytorch_lightning as pl
@@ -21,6 +23,12 @@ except ModuleNotFoundError:
 
 
 from models.lightning_model import AIGRegressionLightningModule
+
+# 1. Suppress standard Python DeprecationWarnings and UserWarnings
+warnings.filterwarnings("ignore")
+
+# 2. Set PyTorch Lightning's logger to only show errors (hides the SLURM/TPU prints)
+logging.getLogger("pytorch_lightning").setLevel(logging.ERROR)
 
 
 def objective(trial: optuna.Trial, args):
@@ -70,17 +78,18 @@ def objective(trial: optuna.Trial, args):
         # Internal MLP depth (keep shallow to avoid vanishing gradients) [cite: 1, 12]
         encoder_kwargs["num_mlp_layers"] = trial.suggest_int("num_mlp_layers", 2, 3)
 
-        # Toggle between Dot (EGIN-C) and Concat (Standard)
-        encoder_kwargs["dot_update"] = trial.suggest_bool("egin_dot_update")
+        # FIX: Change suggest_bool to suggest_categorical
+        encoder_kwargs["dot_update"] = trial.suggest_categorical(
+            "egin_dot_update", [True, False]
+        )
+        encoder_kwargs["edge_mlp"] = trial.suggest_categorical(
+            "egin_edge_mlp", [True, False]
+        )
 
-        # Toggle Edge Embedding (EGIN-E) to prevent node feature dominance [cite: 247, 264]
-        encoder_kwargs["edge_mlp"] = trial.suggest_bool("egin_edge_mlp")
-
-        if encoder_kwargs["edge_mlp"]:
-            # Tune the edge projection dim (8-64 range recommended for low-diversity edges) [cite: 290]
-            encoder_kwargs["edge_hidden_dim"] = trial.suggest_categorical(
-                "edge_hidden_dim", [8, 16, 32, 64, 128]
-            )
+        # Tune the edge projection dim (8-64 range recommended for low-diversity edges) [cite: 290]
+        encoder_kwargs["edge_hidden_dim"] = trial.suggest_categorical(
+            "edge_hidden_dim", [8, 16, 32, 64, 128]
+        )
     # ----------------------------
 
     # 4. Data Module
@@ -129,19 +138,18 @@ def objective(trial: optuna.Trial, args):
     try:
         trainer.fit(model, datamodule=datamodule)
     except torch.OutOfMemoryError:
-        print(f"\n[Trial {trial.number}] Pruned due to CUDA Out of Memory.")
-        torch.cuda.empty_cache()  # Crucial: Free up the GPU memory!
-        raise optuna.TrialPruned("OOM")
+        torch.cuda.empty_cache()
+        raise optuna.TrialPruned(
+            f"CUDA Out of Memory. [Trial {trial.number}] with Failed Params: {trial.params}"
+        )
     except RuntimeError as e:
-        # Catch older PyTorch OOM formats just in case
         if "out of memory" in str(e).lower():
-            print(
-                f"\n[Trial {trial.number}] Pruned due to CUDA Out of Memory (RuntimeError)."
-            )
             torch.cuda.empty_cache()
-            raise optuna.TrialPruned("OOM")
+            raise optuna.TrialPruned(
+                f"\n[Trial {trial.number} with Failed Params: {trial.params}] Pruned due to CUDA Out of Memory (RuntimeError)."
+            )
         else:
-            raise e  # If it's a different RuntimeError, let it crash so you can fix it
+            raise e
 
     return (
         early_stop_cb.best_score.item()
