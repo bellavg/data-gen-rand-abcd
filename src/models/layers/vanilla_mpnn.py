@@ -19,23 +19,21 @@ class VanillaMPNNConv(MessagePassing):
     Update: MLP(concat(node, aggregated_messages))
     """
 
-    def __init__(self, hid_dim, norm_type="batch"):
-        super(VanillaMPNNConv, self).__init__(
-            aggr="add"
-        )  # Sum aggregation is standard for MPNN
+    def __init__(self, dim_in: int, hid_dim: int, edge_dim: int, norm_type="batch"):
+        super(VanillaMPNNConv, self).__init__(aggr="add")
 
-        # Message MLP (Customizable norm passed in)
+        # Message MLP (concatenates x_i, x_j, edge_attr)
         self.msg_mlp = nn.Sequential(
-            nn.Linear(3 * hid_dim, hid_dim),
+            nn.Linear(2 * dim_in + edge_dim, hid_dim),
             get_norm_layer(norm_type, hid_dim),
             nn.ReLU(),
             nn.Linear(hid_dim, hid_dim),
             nn.ReLU(),
         )
 
-        # Node Update MLP (Customizable norm passed in)
+        # Node Update MLP (concatenates original node features and aggregated messages)
         self.update_mlp = nn.Sequential(
-            nn.Linear(2 * hid_dim, hid_dim),
+            nn.Linear(dim_in + hid_dim, hid_dim),
             get_norm_layer(norm_type, hid_dim),
             nn.ReLU(),
             nn.Linear(hid_dim, hid_dim),
@@ -67,28 +65,43 @@ class MPNNEncoder(nn.Module):
     ):
         super(MPNNEncoder, self).__init__()
         self.num_layers = num_layers
+        self.jk_mode = kwargs.get("jk_mode", "cat")  # Default to 'cat' if not provided
         self.dropout = dropout
 
-        self.convs = nn.ModuleList()
+        # Project initial embedding purely for Jumping Knowledge uniformity
+        if node_input_dim != hid_dim:
+            self.jk_proj = nn.Linear(node_input_dim, hid_dim)
+        else:
+            self.jk_proj = nn.Identity()
 
-        for _ in range(num_layers):
-            self.convs.append(VanillaMPNNConv(hid_dim, norm_type=norm_type))
+        # First layer expects `node_input_dim`; subsequent layers expect `hid_dim`.
+
+        self.convs = nn.ModuleList()
+        for i in range(num_layers):
+            dim_in = node_input_dim if i == 0 else hid_dim
+            self.convs.append(
+                VanillaMPNNConv(
+                    dim_in=dim_in,
+                    hid_dim=hid_dim,
+                    edge_dim=edge_attr_dim,
+                    norm_type=norm_type,
+                )
+            )
 
     def forward(self, x, edge_index, batch, edge_attr):
 
-        if edge_attr is None:
-            raise ValueError("MPNNEncoder requires edge_attr tensor.")
-
-        h_list = [x]
+        # Keep track of uniform dimension sizes for h_list
+        h_list = [self.jk_proj(x)]
+        current_x = x
 
         for i in range(self.num_layers):
-            h = self.convs[i](h_list[i], edge_index, edge_attr)
+            current_x = self.convs[i](current_x, edge_index, edge_attr)
 
             # Inter-layer dropout
             if i != self.num_layers - 1:
-                h = F.dropout(h, p=self.dropout, training=self.training)
+                current_x = F.dropout(current_x, p=self.dropout, training=self.training)
 
-            h_list.append(h)
+            h_list.append(current_x)
 
         # Hardcoded Jumping Knowledge = 'cat'
         if self.jk_mode == "last":

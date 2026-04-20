@@ -56,11 +56,6 @@ class RedrawProjection:
 
 
 class GraphGPSEncoder(nn.Module):
-    """
-    GraphGPS encoder aligned with the GNN+ and GPS papers.
-    Hardcoded PE concatenation and Jumping Knowledge (cat) for AIG tasks.
-    """
-
     def __init__(
         self,
         node_input_dim: int,
@@ -75,22 +70,28 @@ class GraphGPSEncoder(nn.Module):
         **kwargs,
     ):
         super().__init__()
-
-        # Expose num_layers consistently across encoders
         self.num_layers = num_layers
+        self.jk_mode = kwargs.get("jk_mode", "cat")
         if self.num_layers < 1:
             raise ValueError("num_layers must be >= 1")
 
+        # Added projection to fix GPSConv's strict dimensionality requirement
+        if node_input_dim != hid_dim:
+            self.in_proj = nn.Linear(node_input_dim, hid_dim)
+        else:
+            self.in_proj = nn.Identity()
+
         self.layers = nn.ModuleList()
-        for _ in range(self.num_layers):
-            # Inner MPNN (GINE) for the GPS block
+        for i in range(self.num_layers):
+            dim_in = hid_dim  # All layers now strictly take hid_dim
+
             local_nn = nn.Sequential(
-                nn.Linear(hid_dim, hid_dim),
+                nn.Linear(dim_in, hid_dim),
                 get_norm_layer(norm_type, hid_dim),
                 nn.ReLU(),
                 nn.Linear(hid_dim, hid_dim),
             )
-            local_conv = GINEConv(local_nn, edge_dim=hid_dim)
+            local_conv = GINEConv(nn=local_nn, edge_dim=edge_attr_dim)
 
             self.layers.append(
                 GPSConv(
@@ -104,7 +105,6 @@ class GraphGPSEncoder(nn.Module):
                 )
             )
 
-        # Ensure redraw_interval is set for Performer stability
         self.redraw_projection = RedrawProjection(self.layers, redraw_interval=1000)
 
     def forward(
@@ -115,12 +115,10 @@ class GraphGPSEncoder(nn.Module):
         edge_attr: OptTensor = None,
         pos_enc: OptTensor = None,
     ) -> Tensor:
-
-        # Track hidden states for Jumping Knowledge
+        x = self.in_proj(x)
         h_list = [x]
 
         for layer in self.layers:
-            # GraphGPS propagates edge_attr automatically into the local GINEConv only
             x = layer(
                 h_list[-1], edge_index=edge_index, batch=batch, edge_attr=edge_attr
             )

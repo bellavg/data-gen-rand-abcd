@@ -2,7 +2,7 @@ import argparse
 
 import optuna
 import pytorch_lightning as pl
-from pytorch_lightning.callbacks import Callback, EarlyStopping, ModelCheckpoint
+from pytorch_lightning.callbacks import Callback, EarlyStopping
 
 # Project Imports
 try:
@@ -33,17 +33,8 @@ def objective(trial: optuna.Trial, args):
         ["gine", "transformer_conv", "graphgps", "egin", "gcn", "vanilla_mpnn"],
     )
 
-    # 1. Suggest the embedding dimension first
-    embed_dim = trial.suggest_categorical("embed_dim", [32, 64, 128, 256])
-
-    # 2. Define a list of possible hidden dimensions
-    hid_options = [64, 128, 256, 512, 1024]
-
-    # 3. Filter the list so only values >= embed_dim are available
-    valid_hid_options = [h for h in hid_options if h >= embed_dim]
-
-    # 4. Suggest hid_dim from the filtered list
-    hid_dim = trial.suggest_categorical("hid_dim", valid_hid_options)
+    # Suggest a single unified hidden dimension
+    hidden_dim = trial.suggest_categorical("hidden_dim", [32, 64, 128, 256])
 
     # 2. Positional Encoding
     pe_type = trial.suggest_categorical(
@@ -56,11 +47,6 @@ def objective(trial: optuna.Trial, args):
         else 0
     )
 
-    # --- ADD THIS: Only tune if PE is actually being used ---
-    project_with_pos_enc = (
-        trial.suggest_bool("project_with_pos_enc") if pe_type != "none" else False
-    )
-
     # 3. Encoder Specific Hyperparameters
     encoder_kwargs = {
         "num_layers": trial.suggest_int(
@@ -70,11 +56,11 @@ def objective(trial: optuna.Trial, args):
         "norm_type": trial.suggest_categorical(
             "norm_type", ["batch", "layer", "graph", "none"]
         ),
-        "jk_mode": trial.suggest_categorical("jk_mode", ["last", "max", "sum", "cat"])
+        "jk_mode": trial.suggest_categorical("jk_mode", ["last", "max", "sum", "cat"]),
     }
 
     # Ensure the chosen hidden dimension is passed through to the encoder
-    encoder_kwargs["hid_dim"] = hid_dim
+    encoder_kwargs["hid_dim"] = hidden_dim
     if encoder_name in ["transformer_conv", "graphgps"]:
         encoder_kwargs["heads"] = trial.suggest_categorical("heads", [4, 8, 16])
 
@@ -102,57 +88,50 @@ def objective(trial: optuna.Trial, args):
         csv_paths=args.csv_paths,
         positional_encoding=pe_type if pe_type != "none" else None,
         batch_size=batch_size,
-        split_ratios=(0.7, 0.2, 0.1),
-        train_num_samples=10000,
+        split_ratios=(0.8, 0.2, 0.0),
+        train_num_samples=args.train_samples,
         num_workers=workers,
     )
 
     # 5. Model Setup
     model = AIGRegressionLightningModule(
         encoder_name=encoder_name,
-        embed_dim=embed_dim,
+        hidden_dim=hidden_dim,
         pe_type=pe_type,
         pos_enc_dim=pos_enc_dim,
-        project_with_pos_enc=project_with_pos_enc, 
         encoder_kwargs=encoder_kwargs,
-        hid_dim=hid_dim,
         lr=lr,
         huber_delta=huber_delta,
     )
-    # 6. Callbacks
-    checkpoint_cb = ModelCheckpoint(
-        dirpath=args.checkpoint_dir,
-        filename=f"trial_{trial.number}_best",
-        monitor="val/mae_node",
-        mode="min",
-        save_top_k=1,
-    )
 
     pruning_cb = PyTorchLightningPruningCallback(trial, monitor="val/mae_node")
+    early_stop_cb = EarlyStopping(monitor="val/mae_node", patience=5, mode="min")
 
-    callbacks: list[Callback] = [
-        EarlyStopping(monitor="val/mae_node", patience=10, mode="min"),
-        checkpoint_cb,
+    callbacks = [
+        pruning_cb,
+        early_stop_cb,
     ]
-    if hasattr(pruning_cb, "on_exception"):
-        callbacks.insert(0, pruning_cb)
 
     # 7. Trainer
     trainer = pl.Trainer(
-        max_epochs=100,
-        max_time={"minutes": 60},
+        max_epochs=10,
+        max_time={"hours": 3},
         accelerator="auto",
         devices=1,
         callbacks=callbacks,
         logger=True,
-        enable_checkpointing=True,
-        enable_model_summary=False,  # Prevent PyG edge_attr model summary crash
+        enable_checkpointing=False,
+        enable_model_summary=False,
+        enable_progress_bar=False,
     )
 
     trainer.fit(model, datamodule=datamodule)
 
+    # Return the best score tracked by EarlyStopping instead of ModelCheckpoint
     return (
-        checkpoint_cb.best_model_score.item() if checkpoint_cb.best_model_score else 1.0
+        early_stop_cb.best_score.item()
+        if early_stop_cb.best_score is not None
+        else float("inf")
     )
 
 
@@ -162,10 +141,22 @@ if __name__ == "__main__":
     )
     parser.add_argument("--db_url", type=str, required=True, help="Database URL")
     parser.add_argument(
+        "--study_name", type=str, required=True, help="Optuna study name"
+    )
+    parser.add_argument(
         "--checkpoint_dir", type=str, required=True, help="Checkpoint directory"
     )
     parser.add_argument("--csv_paths", nargs="+", required=True, help="Paths to CSVs")
     parser.add_argument("--num_workers", type=int, default=4, help="DataLoader workers")
+    parser.add_argument(
+        "--cache_dir", type=str, help="Directory to save dataset splits"
+    )
+    parser.add_argument(
+        "--train_samples",
+        type=int,
+        default=25000,
+        help="Number of graphs for HP training",
+    )
     args = parser.parse_args()
 
     storage = optuna.storages.RDBStorage(
@@ -173,11 +164,11 @@ if __name__ == "__main__":
     )
 
     study = optuna.create_study(
-        study_name="aig_optimization_final",
+        study_name=args.study_name,
         storage=storage,
         load_if_exists=True,
         direction="minimize",
-        pruner=optuna.pruners.MedianPruner(n_startup_trials=5, n_warmup_steps=5),
+        pruner=optuna.pruners.MedianPruner(n_startup_trials=5, n_warmup_steps=3),
     )
 
     study.optimize(lambda trial: objective(trial, args), n_trials=None)

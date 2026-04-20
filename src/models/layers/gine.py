@@ -21,14 +21,19 @@ class GINEConvLayer(nn.Module):
     """
 
     def __init__(
-        self, hid_dim: int, edge_dim: int | None, dropout: float, norm_type: str
+        self,
+        dim_in: int,
+        hid_dim: int,
+        edge_dim: int | None,
+        dropout: float,
+        norm_type: str,
     ):
         super().__init__()
         self.dropout = dropout
 
         # GINE Core MLP (Inner MLP for the GIN update)
         gin_nn = nn.Sequential(
-            nn.Linear(hid_dim, hid_dim),
+            nn.Linear(dim_in, hid_dim),
             get_norm_layer(norm_type, hid_dim),
             nn.ReLU(),
             nn.Linear(hid_dim, hid_dim),
@@ -95,22 +100,22 @@ class GINEEncoder(nn.Module):
             raise ValueError("num_layers must be >= 1")
 
         self.num_layers = num_layers
-        # Optional input projection when node input dim != hidden dim
-        self.node_input_dim = node_input_dim
-        self.hid_dim = hid_dim
-        self.input_proj = (
-            nn.Linear(node_input_dim, hid_dim)
-            if node_input_dim != hid_dim
-            else nn.Identity()
-        )
+        self.jk_mode = kwargs.get("jk_mode", "cat")  # Default to 'cat' if not provided
+        # Project initial embedding purely for Jumping Knowledge uniformity
+        if node_input_dim != hid_dim:
+            self.jk_proj = nn.Linear(node_input_dim, hid_dim)
+        else:
+            self.jk_proj = nn.Identity()
 
-        # Hardcoded to 'concat' PE
+        # First layer expects `node_input_dim`; subsequent layers expect `hid_dim`.
 
         self.layers = nn.ModuleList()
 
-        for _ in range(num_layers):
+        for i in range(num_layers):
+            dim_in = node_input_dim if i == 0 else hid_dim
             self.layers.append(
                 GINEConvLayer(
+                    dim_in=dim_in,
                     hid_dim=hid_dim,
                     edge_dim=edge_attr_dim,
                     dropout=dropout,
@@ -130,13 +135,13 @@ class GINEEncoder(nn.Module):
         pos_enc: OptTensor = None,
     ) -> Tensor:
 
-        # Apply optional input projection then track hidden states for Jumping Knowledge
-        x0 = self.input_proj(x)
-        h_list = [x0]
+        # Keep track of uniform dimension sizes for h_list
+        h_list = [self.jk_proj(x)]
+        current_x = x
 
         for layer in self.layers:
-            x_out = layer(x=h_list[-1], edge_index=edge_index, edge_attr=edge_attr)
-            h_list.append(x_out)
+            current_x = layer(x=current_x, edge_index=edge_index, edge_attr=edge_attr)
+            h_list.append(current_x)
 
         if self.jk_mode == "last":
             node_emb = h_list[-1]
