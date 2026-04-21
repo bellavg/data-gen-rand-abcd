@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=aig_optuna
-#SBATCH --time=120:00:00          # 5 days
+#SBATCH --time=00:24:00          # 5 days
 #SBATCH --nodes=1                 # Single node
 #SBATCH --ntasks=1
 #SBATCH --partition=gpu_h100      # Use the H100 partition
