@@ -48,7 +48,7 @@ def objective(trial: optuna.Trial, args):
     )
 
     # Suggest a single unified hidden dimension
-    hidden_dim = trial.suggest_categorical("hidden_dim", [32, 64, 128, 256])
+    hidden_dim = trial.suggest_categorical("hidden_dim", [32, 64, 128, 256, 512])
 
     # 2. Positional Encoding
     pe_type = trial.suggest_categorical(
@@ -56,7 +56,7 @@ def objective(trial: optuna.Trial, args):
         ["none", "level", "pi_paths", "local_sp_sum"],
     )
     pos_enc_dim = (
-        trial.suggest_categorical("pos_enc_dim", [16, 32, 64, 128])
+        trial.suggest_categorical("pos_enc_dim", [16, 32, 64, 128, 256])
         if pe_type != "none"
         else 0
     )
@@ -68,7 +68,12 @@ def objective(trial: optuna.Trial, args):
         ),  # GNN Message Passing depth
         "dropout": trial.suggest_float("dropout", 0.0, 0.4),
         "norm_type": trial.suggest_categorical(
-            "norm_type", ["batch", "layer", "graph", "none"]
+            "norm_type",
+            [
+                "batch",
+                "layer",
+                "graph",
+            ],
         ),
         "jk_mode": trial.suggest_categorical("jk_mode", ["last", "max", "sum", "cat"]),
     }
@@ -76,12 +81,12 @@ def objective(trial: optuna.Trial, args):
     # Ensure the chosen hidden dimension is passed through to the encoder
     encoder_kwargs["hid_dim"] = hidden_dim
     if encoder_name in ["transformer_conv", "graphgps"]:
-        encoder_kwargs["heads"] = trial.suggest_categorical("heads", [4, 8, 16])
+        encoder_kwargs["heads"] = trial.suggest_categorical("heads", [4, 8])
 
     # --- EGIN SPECIFIC TUNING ---
     if encoder_name == "egin":
         # Internal MLP depth (keep shallow to avoid vanishing gradients) [cite: 1, 12]
-        encoder_kwargs["num_mlp_layers"] = trial.suggest_int("num_mlp_layers", 2, 3)
+        encoder_kwargs["num_mlp_layers"] = trial.suggest_int("num_mlp_layers", 2, 4)
 
         # FIX: Change suggest_bool to suggest_categorical
         encoder_kwargs["dot_update"] = trial.suggest_categorical(
