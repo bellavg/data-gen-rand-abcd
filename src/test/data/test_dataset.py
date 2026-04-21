@@ -277,6 +277,7 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
         )
 
         from src.data.dataset import AIGGraphRegressionDataset
+
         with self.assertRaisesRegex(ValueError, "edge_attr=None"):
             AIGGraphRegressionDataset(bad_csv)
 
@@ -293,6 +294,7 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
         )
 
         from src.data.dataset import AIGGraphRegressionDataset
+
         with self.assertRaisesRegex(ValueError, "edge_attr must be 2D"):
             AIGGraphRegressionDataset(bad_csv)
 
@@ -398,7 +400,3 @@ class TestAIGDataModule(unittest.TestCase):
     def test_datamodule_split_sizes_sum_to_total(self):
         dm = self._make_dm()
         self.assertEqual(len(dm.train_ds) + len(dm.val_ds) + len(dm.test_ds), 30)
-
-
-if __name__ == "__main__":
-    unittest.main()

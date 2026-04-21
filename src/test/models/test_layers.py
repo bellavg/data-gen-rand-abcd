@@ -48,9 +48,9 @@ def _make_data(**kwargs) -> Data:
     return Data(x=x, edge_index=edge_index, edge_attr=edge_attr)
 
 
-# ===========================================================================
+# ==========================================================================
 # Positional Encoding — transforms
-# ===========================================================================
+# ==========================================================================
 
 
 class TestExtractPrecomputedPE(unittest.TestCase):
@@ -122,9 +122,9 @@ class TestAddSinusoidalPE(unittest.TestCase):
             self.assertEqual(out.pos_enc.shape, (NUM_NODES, dim))
 
 
-# ===========================================================================
+# ==========================================================================
 # Positional Encoding — learned modules
-# ===========================================================================
+# ==========================================================================
 
 
 class TestLearnedDepthEmbedding(unittest.TestCase):
@@ -158,9 +158,9 @@ class TestLearnedDepthEmbedding(unittest.TestCase):
             self.assertEqual(out.shape[1], dim)
 
 
-# ===========================================================================
+# ==========================================================================
 # Positional Encoding — factory functions
-# ===========================================================================
+# ==========================================================================
 
 
 class TestGetPeTransform(unittest.TestCase):
@@ -307,9 +307,9 @@ class TestGetPosEncLayer(unittest.TestCase):
             get_pos_enc_layer("unknown_pe")
 
 
-# ===========================================================================
+# ==========================================================================
 # GINE layers
-# ===========================================================================
+# ==========================================================================
 
 
 class TestGINEConvLayer(unittest.TestCase):
@@ -317,7 +317,11 @@ class TestGINEConvLayer(unittest.TestCase):
         from src.models.layers.gine import GINEConvLayer
 
         self.layer = GINEConvLayer(
-            dim_in=HID_DIM, hid_dim=HID_DIM, edge_dim=EDGE_DIM, dropout=0.0, norm_type="batch"
+            dim_in=HID_DIM,
+            hid_dim=HID_DIM,
+            edge_dim=EDGE_DIM,
+            dropout=0.0,
+            norm_type="batch",
         )
         self.layer.eval()
 
@@ -337,7 +341,11 @@ class TestGINEConvLayer(unittest.TestCase):
         from src.models.layers.gine import GINEConvLayer
 
         layer = GINEConvLayer(
-            dim_in=HID_DIM, hid_dim=HID_DIM, edge_dim=EDGE_DIM, dropout=0.0, norm_type="layer"
+            dim_in=HID_DIM,
+            hid_dim=HID_DIM,
+            edge_dim=EDGE_DIM,
+            dropout=0.0,
+            norm_type="layer",
         )
         layer.eval()
         _, edge_index, edge_attr, _ = _make_graph()
@@ -394,9 +402,9 @@ class TestGINEEncoder(unittest.TestCase):
         self.assertEqual(out.shape, (NUM_NODES, HID_DIM * (NUM_LAYERS + 1)))
 
 
-# ===========================================================================
+# ==========================================================================
 # GCN layers
-# ===========================================================================
+# ==========================================================================
 
 
 class TestGCNConvLayer(unittest.TestCase):
@@ -467,9 +475,9 @@ class TestGCNEncoder(unittest.TestCase):
         self.assertEqual(out.shape, (NUM_NODES, HID_DIM * (NUM_LAYERS + 1)))
 
 
-# ===========================================================================
+# ==========================================================================
 # Vanilla MPNN layers
-# ===========================================================================
+# ==========================================================================
 
 
 class TestVanillaMPNNEncoder(unittest.TestCase):
@@ -501,9 +509,9 @@ class TestVanillaMPNNEncoder(unittest.TestCase):
             enc(x=x, edge_index=edge_index, batch=batch, edge_attr=None)
 
 
-# ===========================================================================
+# ==========================================================================
 # Attention Layers (Transformer & GraphGPS)
-# ===========================================================================
+# ==========================================================================
 
 
 class TestTransformerConvEncoder(unittest.TestCase):

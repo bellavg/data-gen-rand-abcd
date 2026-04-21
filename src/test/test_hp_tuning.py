@@ -25,8 +25,9 @@ except ModuleNotFoundError:
     sys.modules["optuna"] = optuna_stub
     sys.modules["optuna.integration"] = optuna_integration_stub
 
-import hp_tuning
-from models.lightning_model import AIGRegressionLightningModule
+# Import the module under the package namespace
+from src import hp_tuning
+from src.models.lightning_model import AIGRegressionLightningModule
 
 
 class _FakeScore:
@@ -87,6 +88,8 @@ def _run_objective_for_test(trial_values: dict, best_model_score: float | None =
         csv_paths=["algo_a.csv", "algo_b.csv"],
         checkpoint_dir="/tmp/ckpt",
         num_workers=0,
+        train_samples=25000,
+        log_dir="/tmp",
     )
     trial = _FakeTrial(trial_values)
 
@@ -96,10 +99,12 @@ def _run_objective_for_test(trial_values: dict, best_model_score: float | None =
     )
 
     with (
-        patch("hp_tuning.AIGDataModule") as datamodule_cls,
-        patch("hp_tuning.AIGRegressionLightningModule") as model_cls,
-        patch("hp_tuning.ModelCheckpoint", return_value=checkpoint_cb),
-        patch("hp_tuning.pl.Trainer") as trainer_cls,
+        patch("src.hp_tuning.AIGDataModule") as datamodule_cls,
+        patch("src.hp_tuning.AIGRegressionLightningModule") as model_cls,
+        patch(
+            "pytorch_lightning.callbacks.ModelCheckpoint", return_value=checkpoint_cb
+        ),
+        patch("src.hp_tuning.pl.Trainer") as trainer_cls,
     ):
         trainer = MagicMock()
         trainer_cls.return_value = trainer

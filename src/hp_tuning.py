@@ -1,10 +1,13 @@
 import argparse
+import gc
 import logging
 import warnings
 
 import optuna
 import pytorch_lightning as pl
 import torch
+import torch.multiprocessing
+from optuna.storages import JournalFileStorage, JournalStorage
 from pytorch_lightning.callbacks import Callback, EarlyStopping
 from pytorch_lightning.loggers import CSVLogger
 
@@ -25,6 +28,7 @@ except ModuleNotFoundError:
 
 from models.lightning_model import AIGRegressionLightningModule
 
+torch.multiprocessing.set_sharing_strategy("file_system")
 # 1. Suppress standard Python DeprecationWarnings and UserWarnings
 warnings.filterwarnings("ignore")
 
@@ -34,7 +38,7 @@ logging.getLogger("pytorch_lightning").setLevel(logging.ERROR)
 
 def objective(trial: optuna.Trial, args):
     # 1. Global Hyperparameters
-    batch_size = trial.suggest_categorical("batch_size", [8, 16, 32, 64, 128])
+    batch_size = trial.suggest_categorical("batch_size", [8, 16, 32, 64])
     lr = trial.suggest_float("lr", 1e-4, 1e-2, log=True)
     huber_delta = trial.suggest_float("huber_delta", 0.5, 2.0)
 
@@ -143,15 +147,23 @@ def objective(trial: optuna.Trial, args):
     try:
         trainer.fit(model, datamodule=datamodule)
     except torch.OutOfMemoryError:
+        # Force teardown of dataloaders
+        del trainer
+        del datamodule
+        gc.collect()
         torch.cuda.empty_cache()
         raise optuna.TrialPruned(
             f"CUDA Out of Memory. [Trial {trial.number}] with Failed Params: {trial.params}"
         )
     except RuntimeError as e:
         if "out of memory" in str(e).lower():
+            # Force teardown of dataloaders
+            del trainer
+            del datamodule
+            gc.collect()
             torch.cuda.empty_cache()
             raise optuna.TrialPruned(
-                f"\n[Trial {trial.number} with Failed Params: {trial.params}] Pruned due to CUDA Out of Memory (RuntimeError)."
+                f"\n[Trial {trial.number}] Pruned due to CUDA Out of Memory (RuntimeError)."
             )
         else:
             raise e
@@ -188,9 +200,7 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    storage = optuna.storages.RDBStorage(
-        url=args.db_url, engine_kwargs={"connect_args": {"timeout": 60}}
-    )
+    storage = JournalStorage(JournalFileStorage(args.db_url))
 
     study = optuna.create_study(
         study_name=args.study_name,

@@ -16,21 +16,12 @@ from src.data.data_utils import (
 )
 
 # Imports for testing preprocess_data.py
-try:
-    from src.data.preprocess_data import (
-        GraphTask,
-        artifact_output_base_path,
-        discover_graph_tasks,
-        graph_output_path,
-    )
-except ImportError:
-    # Fallback to data.preprocess_data if the module isn't in 'src.'
-    from data.preprocess_data import (
-        GraphTask,
-        artifact_output_base_path,
-        discover_graph_tasks,
-        graph_output_path,
-    )
+from src.data.preprocess_data import (
+    GraphTask,
+    artifact_output_base_path,
+    discover_graph_tasks,
+    graph_output_path,
+)
 
 
 class TestAigToPytorchGeometric(unittest.TestCase):
