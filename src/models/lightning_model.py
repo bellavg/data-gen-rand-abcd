@@ -29,6 +29,7 @@ class AIGRegressionLightningModule(pl.LightningModule):
         task_out_dim: int = TASK_OUT_DIM,
         pe_type: str = "none",
         pos_enc_dim: int = 0,
+        pooling_type: str = "mean",
         huber_delta: float = 1.0,
         lr: float = 1e-3,
         weight_decay: float = 1e-5,
@@ -43,7 +44,8 @@ class AIGRegressionLightningModule(pl.LightningModule):
             edge_attr_dim=self.hparams.edge_attr_dim,
             task_out_dim=self.hparams.task_out_dim,
             pe_type=self.hparams.pe_type,
-            pos_enc_dim=self.hparams.pos_enc_dim,  # Now this will work
+            pos_enc_dim=self.hparams.pos_enc_dim,  
+            pooling_type=self.hparams.pooling_type,
             encoder_kwargs=self.hparams.encoder_kwargs,
         )
 

@@ -4,7 +4,7 @@ from typing import Dict, Optional, Tuple
 
 import torch
 import torch.nn as nn
-from torch_geometric.nn import global_add_pool
+from torch_geometric.nn import global_add_pool, global_max_pool, global_mean_pool
 
 try:
     from model_utils import get_batch_positional_encoding
@@ -32,6 +32,7 @@ class UnifiedGraphBaseModel(nn.Module):
         node_input_dim: int = 4,
         edge_attr_dim: int = 2,
         task_out_dim: int = 1,
+        pooling_type: str = "mean",
         max_depth: int = MAX_DEPTH,
         embed_node_input: bool = True,
         embed_edge_input: bool = True,
@@ -45,6 +46,8 @@ class UnifiedGraphBaseModel(nn.Module):
         self.pe_type = pe_type
         self.embed_node_input = embed_node_input
         self.embed_edge_input = embed_edge_input
+
+        self.pooling_type = pooling_type
 
         # 2. Positional Encoding Setup
         self.pos_enc_dim = pos_enc_dim if self.pe_type != "none" else 0
@@ -154,7 +157,16 @@ class UnifiedGraphBaseModel(nn.Module):
         if self.encoder_name == "egin":
             return enc_out
         else:
-            graph_emb = global_add_pool(enc_out, batch)
+            # NEW: Route to the correct pooling function dynamically
+            if self.pooling_type == "mean":
+                graph_emb = global_mean_pool(enc_out, batch)
+            elif self.pooling_type == "max":
+                graph_emb = global_max_pool(enc_out, batch)
+            elif self.pooling_type == "sum":
+                graph_emb = global_add_pool(enc_out, batch)
+            else:
+                raise ValueError(f"Unknown pooling type: {self.pooling_type}")
+
             return self.head(graph_emb)
 
     def forward_batch(self, batch) -> torch.Tensor:

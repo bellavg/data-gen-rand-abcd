@@ -60,6 +60,7 @@ def objective(trial: optuna.Trial, args):
         if pe_type != "none"
         else 0
     )
+    pooling_type = trial.suggest_categorical("pooling_type", ["mean", "max", "sum"])
 
     # 3. Encoder Specific Hyperparameters
     encoder_kwargs = {
@@ -119,6 +120,7 @@ def objective(trial: optuna.Trial, args):
         hidden_dim=hidden_dim,
         pe_type=pe_type,
         pos_enc_dim=pos_enc_dim,
+        pooling_type=pooling_type,
         encoder_kwargs=encoder_kwargs,
         lr=lr,
         huber_delta=huber_delta,
