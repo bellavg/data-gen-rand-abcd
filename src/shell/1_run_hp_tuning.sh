@@ -131,7 +131,7 @@ WORKER_COUNT=1
 echo "Launching $WORKER_COUNT Optuna worker process."
 
 # If OOM hangs continue to happen, set this to 0. Otherwise, 8 is faster.
-NUM_WORKERS=8 
+NUM_WORKERS=4 
 echo "Using num_workers per process: $NUM_WORKERS"
 
 # 6. Launch Worker 0 (Pinned to GPU 0)
