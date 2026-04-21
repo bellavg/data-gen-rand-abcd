@@ -11,6 +11,7 @@ def get_norm_layer(norm_type, dim):
     - 'batch' -> `nn.BatchNorm1d(dim)`
     - 'layer' -> `nn.LayerNorm(dim)`
     - 'graph'/'graphnorm'/'gn' -> `torch_geometric.nn.GraphNorm(dim)`
+    - 'instance'/'instancenorm'/'in' -> `nn.InstanceNorm1d(dim)`
     """
     if norm_type is None or str(norm_type).lower() == "none":
         return nn.Identity()
@@ -22,6 +23,9 @@ def get_norm_layer(norm_type, dim):
         return nn.LayerNorm(dim)
     if nt in ("graph", "graphnorm", "gn"):
         return GraphNorm(dim)
+
+    if nt in ("instance", "instancenorm", "in"):
+        return nn.InstanceNorm1d(dim)
 
     raise ValueError(f"Unknown norm_type: {norm_type}")
 
@@ -38,9 +42,6 @@ def get_batch_positional_encoding(batch: object) -> torch.Tensor | None:
         return None
     if pe.dim() == 1:
         pe = pe.unsqueeze(-1)
-    # Preserve integer dtypes for learned/discrete positional encodings
-    # (e.g., depth indices for LearnedDepthEmbedding). Normalize any
-    # floating inputs to `torch.float32` to avoid dtype mismatches.
     if pe.is_floating_point():
         return pe.to(torch.float32)
     return pe
