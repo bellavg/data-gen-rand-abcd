@@ -64,7 +64,7 @@ def objective(trial: optuna.Trial, args):
     # 3. Encoder Specific Hyperparameters
     encoder_kwargs = {
         "num_layers": trial.suggest_int(
-            "num_layers", 3, 10
+            "num_layers", 2, 8
         ),  # GNN Message Passing depth
         "dropout": trial.suggest_float("dropout", 0.0, 0.4),
         "norm_type": trial.suggest_categorical(
@@ -81,7 +81,7 @@ def objective(trial: optuna.Trial, args):
     # Ensure the chosen hidden dimension is passed through to the encoder
     encoder_kwargs["hid_dim"] = hidden_dim
     if encoder_name in ["transformer_conv", "graphgps"]:
-        encoder_kwargs["heads"] = trial.suggest_categorical("heads", [4, 8])
+        encoder_kwargs["heads"] = trial.suggest_categorical("heads", [2, 4, 8])
 
     # --- EGIN SPECIFIC TUNING ---
     if encoder_name == "egin":
