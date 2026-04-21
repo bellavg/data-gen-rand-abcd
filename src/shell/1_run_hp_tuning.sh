@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=aig_optuna
-#SBATCH --time=00:24:00          # 5 days
+#SBATCH --time=24:00:00          # 5 days
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=16
 #SBATCH --partition=gpu_h100
