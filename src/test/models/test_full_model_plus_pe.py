@@ -372,13 +372,13 @@ class TestEncoderKwargsPropagation(unittest.TestCase):
 
     def test_lightning_passes_encoder_kwargs_to_base_model(self):
         lm = AIGRegressionLightningModule(
-                encoder_name="gcn",
-                hidden_dim=HIDDEN_DIM,
-                encoder_kwargs={"num_layers": 4, "hid_dim": 14},
-                node_input_dim=IN_DIM,
-                edge_attr_dim=EDGE_DIM,
-                task_out_dim=OUT_DIM,
-            )
+            encoder_name="gcn",
+            hidden_dim=HIDDEN_DIM,
+            encoder_kwargs={"num_layers": 4, "hid_dim": 14},
+            node_input_dim=IN_DIM,
+            edge_attr_dim=EDGE_DIM,
+            task_out_dim=OUT_DIM,
+        )
         self.assertEqual(lm.model.encoder.num_layers, 4)
 
 
