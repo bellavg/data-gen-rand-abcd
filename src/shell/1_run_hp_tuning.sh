@@ -23,6 +23,8 @@ module purge
 module load 2025
 module load Python/3.13.1-GCCcore-14.2.0
 
+python -m venv /scratch-shared/$USER/.venv
+
 # 2. Activate Virtual Environment
 VENV_PATH="${VENV_PATH:-/scratch-shared/$USER/.venv}"
 echo "Activating virtual environment at: $VENV_PATH"
@@ -51,7 +53,7 @@ run_clean pip install --upgrade pip "setuptools<82" wheel
 
 if ! run_clean python -c "import torch" >/dev/null 2>&1; then
     echo "Torch not found in venv — installing torch..."
-    run_clean pip install torch==2.11.0
+    run_clean pip install torch
 fi
 
 TORCH_VERSION="$(run_clean python -c 'import torch; print(torch.__version__.split("+")[0])')"
@@ -66,7 +68,6 @@ fi
 if ! run_clean python -c "import optuna, pytorch_lightning, lightning, torch_geometric" >/dev/null 2>&1; then
     echo "Installing missing runtime dependencies..."
     run_clean pip install \
-        "aigverse[adapters]" \
         "numpy>=1.23" \
         "networkx>=3.0" \
         "pandas>=1.5" \
