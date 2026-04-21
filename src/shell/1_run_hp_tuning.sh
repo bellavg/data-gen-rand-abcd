@@ -3,7 +3,6 @@
 #SBATCH --time=00:24:00          # 5 days
 #SBATCH --nodes=1                 # Single node
 #SBATCH --ntasks=1
-#SBATCH --mem=180G
 #SBATCH --cpus-per-task=16
 #SBATCH --gpus=1                  # 1 GPU
 #SBATCH --output=logs/optuna_%j.out
