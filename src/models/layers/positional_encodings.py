@@ -29,7 +29,8 @@ class ExtractPrecomputedPE:
             if self.discrete:
                 val = val.long()
             else:
-                val = val.float()
+                # Handles 'pi_paths' and 'local_sp_sum' perfectly!
+                val = torch.log1p(val.float())
 
             # Map it to the target attribute name expected by _get_pe
             setattr(data, self.attr_name, val)
