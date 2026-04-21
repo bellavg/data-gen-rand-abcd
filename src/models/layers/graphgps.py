@@ -4,12 +4,8 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 from torch_geometric.nn import GINEConv, GPSConv
+from torch_geometric.nn.attention import PerformerAttention
 from torch_geometric.typing import Adj, OptTensor
-
-try:
-    from torch_geometric.nn.attention import PerformerAttention
-except Exception:  # pragma: no cover
-    PerformerAttention = None
 
 try:
     from model_utils import get_norm_layer
