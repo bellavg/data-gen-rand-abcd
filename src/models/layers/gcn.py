@@ -6,14 +6,7 @@ from torch_geometric.nn import MessagePassing
 from torch_geometric.typing import Adj
 from torch_geometric.utils import degree
 
-try:
-    from model_utils import get_norm_layer
-except ImportError:  # pragma: no cover - fallback for package-style imports
-    try:
-        from models.model_utils import get_norm_layer
-    except ImportError:
-        from src.models.model_utils import get_norm_layer
-
+from models.model_utils import get_norm_layer
 
 # Adapted from: https://github.com/LUOyk1999/GNNPlus/blob/main/GNNPlus/layer/gcn_conv_layer_e.py
 
@@ -62,7 +55,7 @@ class GCNConvWithEdges(MessagePassing):
         self,
         x: Tensor,
         edge_index: Adj,
-        edge_attr: Tensor | None = None,
+        edge_attr: Tensor,
     ) -> Tensor:
         # Calculate GCN normalization weights (1 / sqrt(deg(i) * deg(j)))
         row, col = edge_index
@@ -126,13 +119,15 @@ class GCNConvLayer(nn.Module):
         return F.dropout(x, p=self.dropout, training=self.training)
 
     def forward(
-        self, x: Tensor, edge_index: Adj, edge_attr: Tensor | None = None
+        self, x: Tensor, edge_index: Adj, edge_attr: Tensor, batch: Tensor | None = None
     ) -> Tensor:
         x_in = x
 
         # 1. Message Passing
-        x = self.model(x, edge_index, edge_attr)
-        x = self.norm_node(x)
+        x = self.model(x, edge_index=edge_index, edge_attr=edge_attr)
+        from models.model_utils import apply_norm
+
+        x = apply_norm(self.norm_node, x, batch)
         x = self.act(x)
         x = self.drop(x)
 
@@ -141,15 +136,15 @@ class GCNConvLayer(nn.Module):
             x = x_in + x
 
         # 3. FFN Block - Hardcoded to True per GNN+ paper
-        x = self.norm1_local(x)
+        x = apply_norm(self.norm1_local, x, batch)
         x = x + self._ff_block(x)
-        x = self.norm2(x)
+        x = apply_norm(self.norm2, x, batch)
 
         return x
 
 
 class GCNEncoder(nn.Module):
-    """Edge-aware GCN+ encoder with hardcoded PE concatenation and Jumping Knowledge (cat)."""
+    """Edge-aware GCN+ encoder with iterative Jumping Knowledge accumulation."""
 
     def __init__(
         self,
@@ -187,29 +182,40 @@ class GCNEncoder(nn.Module):
                     norm_type=norm_type,
                 )
             )
-        # First layer expects `node_input_dim`; subsequent layers expect `hid_dim`.
 
     def forward(
         self,
         x: Tensor,
         edge_index: Adj,
-        batch: Tensor,
-        edge_attr: Tensor | None = None,
+        edge_attr: Tensor,
+        batch: Tensor | None = None,
     ) -> Tensor:
 
-        # Keep track of uniform dimension sizes for h_list
-        h_list = [self.jk_proj(x)]
-        current_x = x
-        for layer in self.layers:
-            current_x = layer(x=current_x, edge_index=edge_index, edge_attr=edge_attr)
-            h_list.append(current_x)
+        # Project to a uniform hidden dimension for Jumping Knowledge
+        x_jk = self.jk_proj(x)
 
-        if self.jk_mode == "last":
-            node_emb = h_list[-1]
+        if self.jk_mode == "cat":
+            h_list = [x_jk]
+            for layer in self.layers:
+                x = layer(x, edge_index=edge_index, edge_attr=edge_attr, batch=batch)
+                h_list.append(x)
+            return torch.cat(h_list, dim=1)
+
         elif self.jk_mode == "max":
-            node_emb = torch.stack(h_list, dim=-1).max(dim=-1)[0]
+            res = x_jk
+            for layer in self.layers:
+                x = layer(x, edge_index=edge_index, edge_attr=edge_attr, batch=batch)
+                res = torch.max(res, x)
+            return res
+
         elif self.jk_mode == "sum":
-            node_emb = torch.stack(h_list, dim=-1).sum(dim=-1)
-        elif self.jk_mode == "cat":
-            node_emb = torch.cat(h_list, dim=1)
-        return node_emb
+            res = x_jk
+            for layer in self.layers:
+                x = layer(x, edge_index=edge_index, edge_attr=edge_attr, batch=batch)
+                res = res + x
+            return res
+
+        elif self.jk_mode == "last":
+            for layer in self.layers:
+                x = layer(x, edge_index=edge_index, edge_attr=edge_attr, batch=batch)
+            return x

@@ -8,10 +8,10 @@ from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
 
 # Import your models and layers
-from src.models.base_model import UnifiedGraphBaseModel
-from src.models.layers.positional_encodings import get_pe_transform
-from src.models.lightning_model import AIGRegressionLightningModule
-from src.models.model_utils import get_batch_positional_encoding
+from models.base_model import UnifiedGraphBaseModel
+from models.layers.positional_encodings import get_pe_transform
+from models.lightning_model import AIGRegressionLightningModule
+from models.model_utils import get_batch_positional_encoding
 
 # ---------------------------------------------------------------------------
 # Shared constants & dummy data generators for AIGs

@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 # Existing imports
-from src.data.data_utils import (
+from data.data_utils import (
     _extract_topology,
     _safe_log1p_int,
     aig_to_pytorch_geometric,
@@ -16,7 +16,7 @@ from src.data.data_utils import (
 )
 
 # Imports for testing preprocess_data.py
-from src.data.preprocess_data import (
+from data.preprocess_data import (
     GraphTask,
     artifact_output_base_path,
     discover_graph_tasks,

@@ -1,15 +1,11 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch import Tensor
 from torch_geometric.nn import MessagePassing
+from torch_geometric.typing import Adj
 
-try:
-    from model_utils import get_norm_layer
-except ImportError:  # pragma: no cover - fallback for package-style imports
-    try:
-        from models.model_utils import get_norm_layer
-    except ImportError:
-        from src.models.model_utils import get_norm_layer
+from models.model_utils import get_norm_layer
 
 
 class VanillaMPNNConv(MessagePassing):
@@ -21,34 +17,51 @@ class VanillaMPNNConv(MessagePassing):
 
     def __init__(self, dim_in: int, hid_dim: int, edge_dim: int, norm_type="batch"):
         super(VanillaMPNNConv, self).__init__(aggr="add")
-
         # Message MLP (concatenates x_i, x_j, edge_attr)
-        self.msg_mlp = nn.Sequential(
-            nn.Linear(2 * dim_in + edge_dim, hid_dim),
-            get_norm_layer(norm_type, hid_dim),
-            nn.ReLU(),
-            nn.Linear(hid_dim, hid_dim),
-            nn.ReLU(),
-        )
+        self.msg_lin1 = nn.Linear(2 * dim_in + edge_dim, hid_dim)
+        self.msg_norm = get_norm_layer(norm_type, hid_dim)
+        self.msg_act = nn.ReLU()
+        self.msg_lin2 = nn.Linear(hid_dim, hid_dim)
+        self.msg_act2 = nn.ReLU()
 
         # Node Update MLP (concatenates original node features and aggregated messages)
-        self.update_mlp = nn.Sequential(
-            nn.Linear(dim_in + hid_dim, hid_dim),
-            get_norm_layer(norm_type, hid_dim),
-            nn.ReLU(),
-            nn.Linear(hid_dim, hid_dim),
-        )
+        self.update_lin1 = nn.Linear(dim_in + hid_dim, hid_dim)
+        self.update_norm = get_norm_layer(norm_type, hid_dim)
+        self.update_act = nn.ReLU()
+        self.update_lin2 = nn.Linear(hid_dim, hid_dim)
 
-    def forward(self, x, edge_index, edge_attr):
-        return self.propagate(edge_index, x=x, edge_attr=edge_attr)
+    def forward(self, x, edge_index, edge_attr, batch=None):
+        # Unsqueeze batch to 2D to prevent PyG MessagePassing from throwing IndexError on node_dim=-2
+        if batch is not None and batch.dim() == 1:
+            batch_in = batch.unsqueeze(-1)
+        else:
+            batch_in = batch
+        return self.propagate(edge_index, x=x, edge_attr=edge_attr, batch=batch_in)
 
-    def message(self, x_i, x_j, edge_attr):
+    def message(self, x_i, x_j, edge_attr, batch_i=None, batch_j=None):
+        if batch_i is not None and batch_i.dim() == 2:
+            batch_i = batch_i.squeeze(-1)
+
         msg_input = torch.cat([x_i, x_j, edge_attr], dim=-1)
-        return self.msg_mlp(msg_input)
+        h = self.msg_lin1(msg_input)
+        from models.model_utils import apply_norm
 
-    def update(self, aggr_out, x):
+        h = apply_norm(self.msg_norm, h, batch_i)
+        h = self.msg_act(h)
+        h = self.msg_lin2(h)
+        return self.msg_act2(h)
+
+    def update(self, aggr_out, x, batch=None):
+        if batch is not None and batch.dim() == 2:
+            batch = batch.squeeze(-1)
+
         update_input = torch.cat([x, aggr_out], dim=-1)
-        return self.update_mlp(update_input)
+        h = self.update_lin1(update_input)
+        from models.model_utils import apply_norm
+
+        h = apply_norm(self.update_norm, h, batch)
+        h = self.update_act(h)
+        return self.update_lin2(h)
 
 
 class MPNNEncoder(nn.Module):
@@ -88,29 +101,86 @@ class MPNNEncoder(nn.Module):
                 )
             )
 
-    def forward(self, x, edge_index, batch, edge_attr):
+    def layer_forward(
+        self,
+        x: Tensor,
+        edge_index: Adj,
+        edge_attr: Tensor,
+        batch: Tensor | None,
+        layer_idx: int,
+    ) -> Tensor:
+        current_x = self.convs[layer_idx](
+            x, edge_index=edge_index, edge_attr=edge_attr, batch=batch
+        )
+
+        if layer_idx != self.num_layers - 1:
+            current_x = F.dropout(current_x, p=self.dropout, training=self.training)
+        return current_x
+
+    def forward(
+        self, x: Tensor, edge_index: Adj, edge_attr: Tensor, batch: Tensor | None = None
+    ):
 
         # Keep track of uniform dimension sizes for h_list
-        h_list = [self.jk_proj(x)]
-        current_x = x
+        # Project to a uniform hidden dimension for Jumping Knowledge
+        x_jk = self.jk_proj(x)
 
-        for i in range(self.num_layers):
-            current_x = self.convs[i](current_x, edge_index, edge_attr)
+        if self.jk_mode == "cat":
+            h_list = [x_jk]
+            current_x = x
+            for i in range(self.num_layers):
+                current_x = self.layer_forward(
+                    current_x,
+                    edge_index=edge_index,
+                    edge_attr=edge_attr,
+                    batch=batch,
+                    layer_idx=i,
+                )
 
-            # Inter-layer dropout
-            if i != self.num_layers - 1:
-                current_x = F.dropout(current_x, p=self.dropout, training=self.training)
+                h_list.append(current_x)
 
-            h_list.append(current_x)
+            return torch.cat(h_list, dim=1)
 
-        # Hardcoded Jumping Knowledge = 'cat'
-        if self.jk_mode == "last":
-            node_emb = h_list[-1]
         elif self.jk_mode == "max":
-            node_emb = torch.stack(h_list, dim=-1).max(dim=-1)[0]
-        elif self.jk_mode == "sum":
-            node_emb = torch.stack(h_list, dim=-1).sum(dim=-1)
-        elif self.jk_mode == "cat":
-            node_emb = torch.cat(h_list, dim=1)
+            current_x = x
+            res = x_jk
+            for i in range(self.num_layers):
+                current_x = self.layer_forward(
+                    current_x,
+                    edge_index=edge_index,
+                    edge_attr=edge_attr,
+                    batch=batch,
+                    layer_idx=i,
+                )
 
-        return node_emb
+                res = torch.max(res, current_x)
+
+            return res
+
+        elif self.jk_mode == "sum":
+            current_x = x
+            res = x_jk
+            for i in range(self.num_layers):
+                current_x = self.layer_forward(
+                    current_x,
+                    edge_index=edge_index,
+                    edge_attr=edge_attr,
+                    batch=batch,
+                    layer_idx=i,
+                )
+
+                res = res + current_x
+
+            return res
+
+        elif self.jk_mode == "last":
+            current_x = x
+            for i in range(self.num_layers):
+                current_x = self.layer_forward(
+                    current_x,
+                    edge_index=edge_index,
+                    edge_attr=edge_attr,
+                    batch=batch,
+                    layer_idx=i,
+                )
+            return current_x

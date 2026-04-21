@@ -26,8 +26,8 @@ except ModuleNotFoundError:
     sys.modules["optuna.integration"] = optuna_integration_stub
 
 # Import the module under the package namespace
-from src import hp_tuning
-from src.models.lightning_model import AIGRegressionLightningModule
+import hp_tuning
+from models.lightning_model import AIGRegressionLightningModule
 
 
 class _FakeScore:
@@ -99,12 +99,12 @@ def _run_objective_for_test(trial_values: dict, best_model_score: float | None =
     )
 
     with (
-        patch("src.hp_tuning.AIGDataModule") as datamodule_cls,
-        patch("src.hp_tuning.AIGRegressionLightningModule") as model_cls,
+        patch("hp_tuning.AIGDataModule") as datamodule_cls,
+        patch("hp_tuning.AIGRegressionLightningModule") as model_cls,
         patch(
             "pytorch_lightning.callbacks.ModelCheckpoint", return_value=checkpoint_cb
         ),
-        patch("src.hp_tuning.pl.Trainer") as trainer_cls,
+        patch("hp_tuning.pl.Trainer") as trainer_cls,
     ):
         trainer = MagicMock()
         trainer_cls.return_value = trainer
@@ -128,6 +128,7 @@ class TestHpTuningObjectiveWiring(unittest.TestCase):
                 "encoder_name": "gine",
                 "hidden_dim": 64,
                 "pe_type": "none",
+                "pooling_type": "mean",
                 "num_layers": 3,
                 "dropout": 0.1,
                 "norm_type": "batch",
@@ -152,6 +153,7 @@ class TestHpTuningObjectiveWiring(unittest.TestCase):
                 "encoder_name": "gine",
                 "hidden_dim": 256,
                 "pe_type": "none",
+                "pooling_type": "mean",
                 "num_layers": 3,
                 "dropout": 0.1,
                 "norm_type": "batch",
@@ -173,6 +175,7 @@ class TestHpTuningObjectiveWiring(unittest.TestCase):
                 "encoder_name": "egin",
                 "hidden_dim": 64,
                 "pe_type": "none",
+                "pooling_type": "mean",
                 "num_layers": 3,
                 "dropout": 0.1,
                 "norm_type": "batch",

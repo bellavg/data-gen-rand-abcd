@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 from torch_geometric.nn import TransformerConv
-from torch_geometric.typing import Adj, OptTensor
+from torch_geometric.typing import Adj
 
 try:
     from model_utils import get_norm_layer
@@ -74,13 +74,19 @@ class TransformerConvLayer(nn.Module):
         return F.dropout(x, p=self.dropout, training=self.training)
 
     def forward(
-        self, x: Tensor, edge_index: Adj, edge_attr: OptTensor = None
+        self,
+        x: Tensor,
+        edge_index: Adj,
+        edge_attr: Tensor,
+        batch: Tensor | None = None,
     ) -> Tensor:
         x_in = x
 
         # 1. Message Passing
         x = self.conv(x=x, edge_index=edge_index, edge_attr=edge_attr)
-        x = self.norm_node(x)
+        from models.model_utils import apply_norm
+
+        x = apply_norm(self.norm_node, x, batch)
         x = self.act(x)
         x = self.drop(x)
 
@@ -89,9 +95,9 @@ class TransformerConvLayer(nn.Module):
             x = x + x_in
 
         # 3. FFN Block - Hardcoded to True
-        x = self.norm1_local(x)
+        x = apply_norm(self.norm1_local, x, batch)
         x = x + self._ff_block(x)
-        x = self.norm2(x)
+        x = apply_norm(self.norm2, x, batch)
 
         return x
 
@@ -156,26 +162,35 @@ class TransformerConvEncoder(nn.Module):
         self,
         x: Tensor,
         edge_index: Adj,
-        batch: Tensor,
-        edge_attr: OptTensor = None,
-        pos_enc: OptTensor = None,
+        edge_attr: Tensor,
+        batch: Tensor | None = None,
     ) -> Tensor:
 
-        # Keep track of uniform dimension sizes for h_list
-        h_list = [self.jk_proj(x)]
-        current_x = x
+        # Project to a uniform hidden dimension for Jumping Knowledge
+        x_jk = self.jk_proj(x)
 
-        for layer in self.layers:
-            current_x = layer(x=current_x, edge_index=edge_index, edge_attr=edge_attr)
-            h_list.append(current_x)
+        if self.jk_mode == "cat":
+            h_list = [x_jk]
+            for layer in self.layers:
+                x = layer(x, edge_index=edge_index, edge_attr=edge_attr, batch=batch)
+                h_list.append(x)
+            return torch.cat(h_list, dim=1)
 
-        if self.jk_mode == "last":
-            node_emb = h_list[-1]
         elif self.jk_mode == "max":
-            node_emb = torch.stack(h_list, dim=-1).max(dim=-1)[0]
-        elif self.jk_mode == "sum":
-            node_emb = torch.stack(h_list, dim=-1).sum(dim=-1)
-        elif self.jk_mode == "cat":
-            node_emb = torch.cat(h_list, dim=1)
+            res = x_jk
+            for layer in self.layers:
+                x = layer(x, edge_index=edge_index, edge_attr=edge_attr, batch=batch)
+                res = torch.max(res, x)
+            return res
 
-        return node_emb
+        elif self.jk_mode == "sum":
+            res = x_jk
+            for layer in self.layers:
+                x = layer(x, edge_index=edge_index, edge_attr=edge_attr, batch=batch)
+                res = res + x
+            return res
+
+        elif self.jk_mode == "last":
+            for layer in self.layers:
+                x = layer(x, edge_index=edge_index, edge_attr=edge_attr, batch=batch)
+            return x
