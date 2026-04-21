@@ -6,14 +6,9 @@ import torch
 import torch.nn as nn
 from torch_geometric.nn import global_add_pool, global_max_pool, global_mean_pool
 
-try:
-    from model_utils import get_batch_positional_encoding
-    from positional_encodings import get_pos_enc_layer
-except ImportError:  # pragma: no cover - fallback for package-style imports
-    from src.models.layers.positional_encodings import get_pos_enc_layer
-    from src.models.model_utils import get_batch_positional_encoding
-
-from src.constants import ENCODER_REGISTRY, MAX_DEPTH, get_output_dim_for_encoder
+from constants import ENCODER_REGISTRY, MAX_DEPTH, get_output_dim_for_encoder
+from models.layers.positional_encodings import get_pos_enc_layer
+from models.model_utils import get_batch_positional_encoding
 
 
 class UnifiedGraphBaseModel(nn.Module):
@@ -141,8 +136,8 @@ class UnifiedGraphBaseModel(nn.Module):
         self,
         x: torch.Tensor,
         edge_index: torch.Tensor,
-        batch: torch.Tensor,
         edge_attr: Optional[torch.Tensor],
+        batch: torch.Tensor | None = None,
         pos_enc: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         x, edge_attr = self.encode_and_integrate(x, edge_index, edge_attr, pos_enc)
@@ -150,8 +145,8 @@ class UnifiedGraphBaseModel(nn.Module):
         enc_out = self.encoder(
             x=x,
             edge_index=edge_index,
-            batch=batch,
             edge_attr=edge_attr,
+            batch=batch,
         )
 
         if self.encoder_name == "egin":
@@ -174,7 +169,7 @@ class UnifiedGraphBaseModel(nn.Module):
         return self.forward(
             x=batch.x,
             edge_index=batch.edge_index,
+            edge_attr=batch.edge_attr,
             batch=batch.batch,
-            edge_attr=getattr(batch, "edge_attr", None),
             pos_enc=pos_enc,
         )

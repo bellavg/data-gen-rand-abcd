@@ -17,17 +17,17 @@ def test_continuous_pe_log_scaling():
 
     # 2. Get the transform for local_sp_sum
     transform = get_pe_transform("local_sp_sum", attr_name="pos_enc")
-    
+
     # 3. Apply the transform
     data = transform(data)
 
     # 4. Verify the results
     assert hasattr(data, "pos_enc"), "pos_enc attribute was not attached"
     assert data.pos_enc.dtype == torch.float32, "Continuous PE should be float"
-    
+
     # Check the math (log1p(x) = ln(1 + x))
     expected_values = torch.log1p(fake_local_sp_sum.float())
-    
+
     # 50,000 should be squished down to ~10.8
     assert torch.allclose(data.pos_enc, expected_values), "Log scaling math failed!"
     assert data.pos_enc[2].item() < 12.0, "Massive value was not scaled down!"
@@ -44,16 +44,18 @@ def test_discrete_pe_no_scaling():
 
     # 2. Get the transform for level
     transform = get_pe_transform("level", attr_name="pos_enc")
-    
+
     # 3. Apply the transform
     data = transform(data)
 
     # 4. Verify the results
     assert hasattr(data, "pos_enc"), "pos_enc attribute was not attached"
     assert data.pos_enc.dtype == torch.int64, "Discrete PE should be a Long tensor"
-    
+
     # The values should remain exactly the same (no log scaling)
-    assert torch.equal(data.pos_enc, fake_levels.long()), "Discrete values were improperly modified!"
+    assert torch.equal(data.pos_enc, fake_levels.long()), (
+        "Discrete values were improperly modified!"
+    )
 
 
 def test_sinusoidal_pe():
@@ -62,9 +64,9 @@ def test_sinusoidal_pe():
     """
     data = Data(x=torch.randn(100, 10), num_nodes=100)
     transform = get_pe_transform("sinusoidal", attr_name="pos_enc", dim=16)
-    
+
     data = transform(data)
-    
+
     assert hasattr(data, "pos_enc")
     assert data.pos_enc.shape == (100, 16), "Sinusoidal PE attached the wrong shape"
     assert data.pos_enc.dtype == torch.float32

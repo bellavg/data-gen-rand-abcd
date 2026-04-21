@@ -8,7 +8,7 @@ from pathlib import Path
 
 import torch
 
-from src.data.data_utils import aig_to_pytorch_geometric
+from data.data_utils import aig_to_pytorch_geometric
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -83,7 +83,7 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
         self.tmp.cleanup()
 
     def _make_ds(self, **kwargs):
-        from src.data.dataset import AIGGraphRegressionDataset
+        from data.dataset import AIGGraphRegressionDataset
 
         return AIGGraphRegressionDataset(self.csv_path, **kwargs)
 
@@ -129,7 +129,7 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
         extra_paths = _make_graph_pts(self.root / "graphs_extra", 20)
         csv2 = self.root / "big.csv"
         _write_csv(csv2, _make_rows(extra_paths))
-        from src.data.dataset import AIGGraphRegressionDataset
+        from data.dataset import AIGGraphRegressionDataset
 
         ds = AIGGraphRegressionDataset(csv2, num_samples=5)
         self.assertEqual(len(ds), 5)
@@ -142,7 +142,7 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
     # --- splits ---
 
     def test_split_total_equals_dataset_size(self):
-        from src.data.dataset import AIGGraphRegressionDataset
+        from data.dataset import AIGGraphRegressionDataset
 
         # 20 unique paths
         pts = _make_graph_pts(self.root / "split_graphs", 20)
@@ -155,7 +155,7 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
         self.assertEqual(len(train_ds) + len(val_ds) + len(test_ds), 20)
 
     def test_split_train_val_test_are_disjoint(self):
-        from src.data.dataset import AIGGraphRegressionDataset
+        from data.dataset import AIGGraphRegressionDataset
 
         pts = _make_graph_pts(self.root / "disjoint_graphs", 20)
         csv = self.root / "disjoint.csv"
@@ -179,7 +179,7 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
         self.assertFalse(val_paths & test_paths, "val and test overlap")
 
     def test_split_approx_ratios(self):
-        from src.data.dataset import AIGGraphRegressionDataset
+        from data.dataset import AIGGraphRegressionDataset
 
         pts = _make_graph_pts(self.root / "ratio_graphs", 100)
         csv = self.root / "ratio.csv"
@@ -196,7 +196,7 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
     # --- cache ---
 
     def test_cache_file_created(self):
-        from src.data.dataset import AIGGraphRegressionDataset
+        from data.dataset import AIGGraphRegressionDataset
 
         pts = _make_graph_pts(self.root / "cache_graphs", 10)
         csv = self.root / "cache.csv"
@@ -208,7 +208,7 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
         self.assertEqual(len(cache_files), 1)
 
     def test_cache_file_contains_all_splits(self):
-        from src.data.dataset import AIGGraphRegressionDataset
+        from data.dataset import AIGGraphRegressionDataset
 
         pts = _make_graph_pts(self.root / "cache2_graphs", 10)
         csv = self.root / "cache2.csv"
@@ -223,7 +223,7 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
         self.assertIn("test", splits)
 
     def test_cache_loaded_on_second_call(self):
-        from src.data.dataset import AIGGraphRegressionDataset
+        from data.dataset import AIGGraphRegressionDataset
 
         pts = _make_graph_pts(self.root / "cache3_graphs", 10)
         csv = self.root / "cache3.csv"
@@ -241,7 +241,7 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
         self.assertEqual(paths1, paths2)
 
     def test_cache_not_created_without_cache_dir(self):
-        from src.data.dataset import AIGGraphRegressionDataset
+        from data.dataset import AIGGraphRegressionDataset
 
         pts = _make_graph_pts(self.root / "nocache_graphs", 10)
         csv = self.root / "nocache.csv"
@@ -276,7 +276,7 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
             bad_csv, [{"unoptimized_graph_path": str(bad_pt), "optimizability": "0.5"}]
         )
 
-        from src.data.dataset import AIGGraphRegressionDataset
+        from data.dataset import AIGGraphRegressionDataset
 
         with self.assertRaisesRegex(ValueError, "edge_attr=None"):
             AIGGraphRegressionDataset(bad_csv)
@@ -293,7 +293,7 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
             bad_csv, [{"unoptimized_graph_path": str(bad_pt), "optimizability": "0.5"}]
         )
 
-        from src.data.dataset import AIGGraphRegressionDataset
+        from data.dataset import AIGGraphRegressionDataset
 
         with self.assertRaisesRegex(ValueError, "edge_attr must be 2D"):
             AIGGraphRegressionDataset(bad_csv)
@@ -312,7 +312,7 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
             bad_csv, [{"unoptimized_graph_path": str(bad_pt), "optimizability": "0.5"}]
         )
 
-        from src.data.dataset import AIGGraphRegressionDataset
+        from data.dataset import AIGGraphRegressionDataset
 
         with self.assertRaisesRegex(AssertionError, "x should be 2D"):
             AIGGraphRegressionDataset(bad_csv)
@@ -321,7 +321,7 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
 
     def test_different_seeds_produce_different_splits(self):
         """Ensure the RNG splits the data differently when the seed changes."""
-        from src.data.dataset import AIGGraphRegressionDataset
+        from data.dataset import AIGGraphRegressionDataset
 
         pts = _make_graph_pts(self.root / "seed_graphs", 30)
         csv = self.root / "seed.csv"
@@ -339,7 +339,7 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
     # --- multi-CSV ---
 
     def test_multi_csv_concat(self):
-        from src.data.dataset import AIGGraphRegressionDataset
+        from data.dataset import AIGGraphRegressionDataset
 
         pts2 = _make_graph_pts(self.root / "graphs2", 10)
         csv2 = self.root / "deepsyn.csv"
@@ -366,7 +366,7 @@ class TestAIGDataModule(unittest.TestCase):
         self.tmp.cleanup()
 
     def _make_dm(self, **kwargs):
-        from src.data.datamodule import AIGDataModule
+        from data.datamodule import AIGDataModule
 
         dm = AIGDataModule(self.csv_path, batch_size=4, **kwargs)
         dm.setup()
@@ -390,7 +390,7 @@ class TestAIGDataModule(unittest.TestCase):
         self.assertEqual(len(dm.train_ds), 8)
 
     def test_test_loader(self):
-        from src.data.datamodule import AIGDataModule
+        from data.datamodule import AIGDataModule
 
         dm = AIGDataModule(self.csv_path, batch_size=4)
         dm.setup(stage="test")

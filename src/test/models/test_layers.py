@@ -55,7 +55,7 @@ def _make_data(**kwargs) -> Data:
 
 class TestExtractPrecomputedPE(unittest.TestCase):
     def test_discrete_casts_to_long(self):
-        from src.models.layers.positional_encodings import ExtractPrecomputedPE
+        from models.layers.positional_encodings import ExtractPrecomputedPE
 
         data = _make_data()
         data.level = torch.randint(0, 20, (NUM_NODES, 1)).float()
@@ -64,7 +64,7 @@ class TestExtractPrecomputedPE(unittest.TestCase):
         self.assertEqual(out.pos_enc.dtype, torch.long)
 
     def test_continuous_casts_to_float(self):
-        from src.models.layers.positional_encodings import ExtractPrecomputedPE
+        from models.layers.positional_encodings import ExtractPrecomputedPE
 
         data = _make_data()
         data.pi_paths = torch.rand(NUM_NODES, 1)
@@ -75,7 +75,7 @@ class TestExtractPrecomputedPE(unittest.TestCase):
         self.assertEqual(out.pos_enc.dtype, torch.float32)
 
     def test_missing_key_is_noop(self):
-        from src.models.layers.positional_encodings import ExtractPrecomputedPE
+        from models.layers.positional_encodings import ExtractPrecomputedPE
 
         data = _make_data()
         t = ExtractPrecomputedPE(source_key="nonexistent_key", attr_name="pos_enc")
@@ -83,7 +83,7 @@ class TestExtractPrecomputedPE(unittest.TestCase):
         self.assertIsNone(getattr(out, "pos_enc", None))
 
     def test_custom_attr_name(self):
-        from src.models.layers.positional_encodings import ExtractPrecomputedPE
+        from models.layers.positional_encodings import ExtractPrecomputedPE
 
         data = _make_data()
         data.local_sp_sum = torch.rand(NUM_NODES, 1)
@@ -97,7 +97,7 @@ class TestExtractPrecomputedPE(unittest.TestCase):
 
 class TestAddSinusoidalPE(unittest.TestCase):
     def test_output_shape(self):
-        from src.models.layers.positional_encodings import AddSinusoidalPE
+        from models.layers.positional_encodings import AddSinusoidalPE
 
         data = _make_data()
         t = AddSinusoidalPE(dim=PE_DIM, attr_name="pos_enc")
@@ -105,7 +105,7 @@ class TestAddSinusoidalPE(unittest.TestCase):
         self.assertEqual(out.pos_enc.shape, (NUM_NODES, PE_DIM))
 
     def test_custom_attr_name(self):
-        from src.models.layers.positional_encodings import AddSinusoidalPE
+        from models.layers.positional_encodings import AddSinusoidalPE
 
         data = _make_data()
         t = AddSinusoidalPE(dim=PE_DIM, attr_name="sinusoidal_pe")
@@ -113,7 +113,7 @@ class TestAddSinusoidalPE(unittest.TestCase):
         self.assertEqual(out.sinusoidal_pe.shape, (NUM_NODES, PE_DIM))
 
     def test_different_dims(self):
-        from src.models.layers.positional_encodings import AddSinusoidalPE
+        from models.layers.positional_encodings import AddSinusoidalPE
 
         data = _make_data()
         for dim in [4, 16, 32]:
@@ -129,7 +129,7 @@ class TestAddSinusoidalPE(unittest.TestCase):
 
 class TestLearnedDepthEmbedding(unittest.TestCase):
     def setUp(self):
-        from src.models.layers.positional_encodings import LearnedDepthEmbedding
+        from models.layers.positional_encodings import LearnedDepthEmbedding
 
         self.model = LearnedDepthEmbedding(max_depth=100, embed_dim=PE_DIM)
 
@@ -150,7 +150,7 @@ class TestLearnedDepthEmbedding(unittest.TestCase):
         self.assertEqual(out.shape, (3, PE_DIM))
 
     def test_embed_dim_respected(self):
-        from src.models.layers.positional_encodings import LearnedDepthEmbedding
+        from models.layers.positional_encodings import LearnedDepthEmbedding
 
         for dim in [4, 32]:
             m = LearnedDepthEmbedding(max_depth=50, embed_dim=dim)
@@ -165,21 +165,21 @@ class TestLearnedDepthEmbedding(unittest.TestCase):
 
 class TestGetPeTransform(unittest.TestCase):
     def test_none_is_identity(self):
-        from src.models.layers.positional_encodings import get_pe_transform
+        from models.layers.positional_encodings import get_pe_transform
 
         data = _make_data()
         t = get_pe_transform(None)
         self.assertIs(t(data), data)
 
     def test_none_string_is_identity(self):
-        from src.models.layers.positional_encodings import get_pe_transform
+        from models.layers.positional_encodings import get_pe_transform
 
         data = _make_data()
         t = get_pe_transform("none")
         self.assertIs(t(data), data)
 
     def test_level_discrete(self):
-        from src.models.layers.positional_encodings import get_pe_transform
+        from models.layers.positional_encodings import get_pe_transform
 
         data = _make_data()
         data.level = torch.randint(0, 10, (NUM_NODES, 1)).float()
@@ -188,7 +188,7 @@ class TestGetPeTransform(unittest.TestCase):
         self.assertEqual(out.pos_enc.dtype, torch.long)
 
     def test_learned_level_strips_prefix(self):
-        from src.models.layers.positional_encodings import get_pe_transform
+        from models.layers.positional_encodings import get_pe_transform
 
         data = _make_data()
         data.level = torch.randint(0, 10, (NUM_NODES, 1)).float()
@@ -197,7 +197,7 @@ class TestGetPeTransform(unittest.TestCase):
         self.assertEqual(out.pos_enc.dtype, torch.long)
 
     def test_pi_paths_continuous(self):
-        from src.models.layers.positional_encodings import get_pe_transform
+        from models.layers.positional_encodings import get_pe_transform
 
         data = _make_data()
         data.pi_paths = torch.rand(NUM_NODES, 1)
@@ -206,7 +206,7 @@ class TestGetPeTransform(unittest.TestCase):
         self.assertEqual(out.pos_enc.dtype, torch.float32)
 
     def test_local_sp_sum_continuous(self):
-        from src.models.layers.positional_encodings import get_pe_transform
+        from models.layers.positional_encodings import get_pe_transform
 
         data = _make_data()
         data.local_sp_sum = torch.rand(NUM_NODES, 1)
@@ -215,7 +215,7 @@ class TestGetPeTransform(unittest.TestCase):
         self.assertEqual(out.pos_enc.dtype, torch.float32)
 
     def test_sinusoidal(self):
-        from src.models.layers.positional_encodings import get_pe_transform
+        from models.layers.positional_encodings import get_pe_transform
 
         data = _make_data()
         t = get_pe_transform("sinusoidal", dim=PE_DIM)
@@ -223,7 +223,7 @@ class TestGetPeTransform(unittest.TestCase):
         self.assertEqual(out.pos_enc.shape, (NUM_NODES, PE_DIM))
 
     def test_sine_alias(self):
-        from src.models.layers.positional_encodings import get_pe_transform
+        from models.layers.positional_encodings import get_pe_transform
 
         data = _make_data()
         t = get_pe_transform("sine", dim=PE_DIM)
@@ -231,7 +231,7 @@ class TestGetPeTransform(unittest.TestCase):
         self.assertEqual(out.pos_enc.shape, (NUM_NODES, PE_DIM))
 
     def test_unknown_raises(self):
-        from src.models.layers.positional_encodings import get_pe_transform
+        from models.layers.positional_encodings import get_pe_transform
 
         with self.assertRaises(ValueError):
             get_pe_transform("unknown_pe")
@@ -241,7 +241,7 @@ class TestGetPosEncLayer(unittest.TestCase):
     def test_none_returns_identity(self):
         import torch.nn as nn
 
-        from src.models.layers.positional_encodings import get_pos_enc_layer
+        from models.layers.positional_encodings import get_pos_enc_layer
 
         layer = get_pos_enc_layer(None)
         self.assertIsInstance(layer, nn.Identity)
@@ -249,13 +249,13 @@ class TestGetPosEncLayer(unittest.TestCase):
     def test_none_string_returns_identity(self):
         import torch.nn as nn
 
-        from src.models.layers.positional_encodings import get_pos_enc_layer
+        from models.layers.positional_encodings import get_pos_enc_layer
 
         layer = get_pos_enc_layer("none")
         self.assertIsInstance(layer, nn.Identity)
 
     def test_learned_level(self):
-        from src.models.layers.positional_encodings import (
+        from models.layers.positional_encodings import (
             LearnedDepthEmbedding,
             get_pos_enc_layer,
         )
@@ -266,7 +266,7 @@ class TestGetPosEncLayer(unittest.TestCase):
         self.assertEqual(out.shape, (NUM_NODES, PE_DIM))
 
     def test_level_alias(self):
-        from src.models.layers.positional_encodings import (
+        from models.layers.positional_encodings import (
             LearnedDepthEmbedding,
             get_pos_enc_layer,
         )
@@ -277,7 +277,7 @@ class TestGetPosEncLayer(unittest.TestCase):
     def test_pi_paths_linear(self):
         import torch.nn as nn
 
-        from src.models.layers.positional_encodings import get_pos_enc_layer
+        from models.layers.positional_encodings import get_pos_enc_layer
 
         layer = get_pos_enc_layer("pi_paths", pos_enc_dim=PE_DIM)
         self.assertIsInstance(layer, nn.Linear)
@@ -287,7 +287,7 @@ class TestGetPosEncLayer(unittest.TestCase):
     def test_local_sp_sum_linear(self):
         import torch.nn as nn
 
-        from src.models.layers.positional_encodings import get_pos_enc_layer
+        from models.layers.positional_encodings import get_pos_enc_layer
 
         layer = get_pos_enc_layer("local_sp_sum", pos_enc_dim=PE_DIM)
         self.assertIsInstance(layer, nn.Linear)
@@ -295,13 +295,13 @@ class TestGetPosEncLayer(unittest.TestCase):
     def test_sinusoidal_linear(self):
         import torch.nn as nn
 
-        from src.models.layers.positional_encodings import get_pos_enc_layer
+        from models.layers.positional_encodings import get_pos_enc_layer
 
         layer = get_pos_enc_layer("sinusoidal", pos_enc_dim=PE_DIM)
         self.assertIsInstance(layer, nn.Linear)
 
     def test_unknown_raises(self):
-        from src.models.layers.positional_encodings import get_pos_enc_layer
+        from models.layers.positional_encodings import get_pos_enc_layer
 
         with self.assertRaises(ValueError):
             get_pos_enc_layer("unknown_pe")
@@ -314,7 +314,7 @@ class TestGetPosEncLayer(unittest.TestCase):
 
 class TestGINEConvLayer(unittest.TestCase):
     def setUp(self):
-        from src.models.layers.gine import GINEConvLayer
+        from models.layers.gine import GINEConvLayer
 
         self.layer = GINEConvLayer(
             dim_in=HID_DIM,
@@ -338,7 +338,7 @@ class TestGINEConvLayer(unittest.TestCase):
         self.assertEqual(out.dtype, torch.float32)
 
     def test_layer_norm_type(self):
-        from src.models.layers.gine import GINEConvLayer
+        from models.layers.gine import GINEConvLayer
 
         layer = GINEConvLayer(
             dim_in=HID_DIM,
@@ -359,7 +359,7 @@ class TestGINEConvLayer(unittest.TestCase):
 
 class TestGINEEncoder(unittest.TestCase):
     def _make_enc(self, **kwargs):
-        from src.models.layers.gine import GINEEncoder
+        from models.layers.gine import GINEEncoder
 
         num_layers = kwargs.get("num_layers", NUM_LAYERS)
         defaults = dict(
@@ -409,7 +409,7 @@ class TestGINEEncoder(unittest.TestCase):
 
 class TestGCNConvLayer(unittest.TestCase):
     def setUp(self):
-        from src.models.layers.gcn import GCNConvLayer
+        from models.layers.gcn import GCNConvLayer
 
         self.layer = GCNConvLayer(
             dim_in=HID_DIM,
@@ -433,7 +433,7 @@ class TestGCNConvLayer(unittest.TestCase):
         self.assertEqual(out.shape, (NUM_NODES, HID_DIM))
 
     def test_layer_norm_type(self):
-        from src.models.layers.gcn import GCNConvLayer
+        from models.layers.gcn import GCNConvLayer
 
         layer = GCNConvLayer(
             dim_in=HID_DIM,
@@ -454,7 +454,7 @@ class TestGCNConvLayer(unittest.TestCase):
 
 class TestGCNEncoder(unittest.TestCase):
     def _make_enc(self, **kwargs):
-        from src.models.layers.gcn import GCNEncoder
+        from models.layers.gcn import GCNEncoder
 
         num_layers = kwargs.get("num_layers", NUM_LAYERS)
         defaults = dict(
@@ -482,7 +482,7 @@ class TestGCNEncoder(unittest.TestCase):
 
 class TestVanillaMPNNEncoder(unittest.TestCase):
     def _make_enc(self, **kwargs):
-        from src.models.layers.vanilla_mpnn import MPNNEncoder
+        from models.layers.vanilla_mpnn import MPNNEncoder
 
         num_layers = kwargs.get("num_layers", NUM_LAYERS)
         defaults = dict(
@@ -516,7 +516,7 @@ class TestVanillaMPNNEncoder(unittest.TestCase):
 
 class TestTransformerConvEncoder(unittest.TestCase):
     def _make_enc(self, **kwargs):
-        from src.models.layers.transformer_conv import TransformerConvEncoder
+        from models.layers.transformer_conv import TransformerConvEncoder
 
         num_layers = kwargs.get("num_layers", NUM_LAYERS)
         defaults = dict(
@@ -540,7 +540,7 @@ class TestTransformerConvEncoder(unittest.TestCase):
 
 class TestGraphGPSEncoder(unittest.TestCase):
     def _make_enc(self, **kwargs):
-        from src.models.layers.graphgps import GraphGPSEncoder
+        from models.layers.graphgps import GraphGPSEncoder
 
         num_layers = kwargs.get("num_layers", NUM_LAYERS)
         defaults = dict(

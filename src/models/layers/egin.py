@@ -5,13 +5,7 @@ from torch import Tensor
 from torch_geometric.nn import global_add_pool
 from torch_scatter import scatter
 
-try:
-    from model_utils import get_norm_layer
-except ImportError:  # pragma: no cover - fallback for package-style imports
-    try:
-        from models.model_utils import get_norm_layer
-    except ImportError:
-        from src.models.model_utils import get_norm_layer
+from models.model_utils import get_norm_layer
 
 # Adapted from: https://github.com/YxRicardo/EGIN/blob/main/models/graphegin.py
 
@@ -54,14 +48,15 @@ class MLP(nn.Module):
 
             self.linears.append(nn.Linear(hidden_dim, output_dim))
 
-    def forward(self, x: Tensor) -> Tensor:
+    def forward(self, x: Tensor, batch: Tensor = None) -> Tensor:
         if self.num_layers == 1:
             return self.dropout(self.linears[0](x))
 
         h = x
+        from models.model_utils import apply_norm
         for i in range(self.num_layers - 1):
             h = self.linears[i](h)
-            h = self.norms[i](h)
+            h = apply_norm(self.norms[i], h, batch)
             h = F.relu(h)
             h = self.dropout(h)
 
@@ -198,15 +193,21 @@ class GraphEGIN(nn.Module):
         return pooled
 
     def _egin_next_layer(
-        self, h: Tensor, edge_index: Tensor, edge_attr: Tensor, layer: int
+        self,
+        h: Tensor,
+        edge_index: Tensor,
+        edge_attr: Tensor,
+        layer: int,
+        batch: Tensor,
     ) -> Tensor:
         if self.dot_update:
             pooled = self._dot_update_aggregate(h, edge_index, edge_attr, layer)
         else:
             pooled = self._concat_update_aggregate(h, edge_index, edge_attr, layer)
 
-        h = self.mlps[layer](pooled)
-        h = self.norms[layer](h)
+        h = self.mlps[layer](pooled, batch)
+        from models.model_utils import apply_norm
+        h = apply_norm(self.norms[layer], h, batch)
         h = F.relu(h)
         return h
 
@@ -214,8 +215,8 @@ class GraphEGIN(nn.Module):
         self,
         x: Tensor,
         edge_index: Tensor,
-        batch: Tensor,
         edge_attr: Tensor,
+        batch: Tensor | None = None,
     ) -> Tensor:
         if edge_attr is None:
             raise ValueError("EGIN requires edge_attr tensor.")
@@ -231,7 +232,7 @@ class GraphEGIN(nn.Module):
         h = x
 
         for layer in range(self.num_layers - 1):
-            h = self._egin_next_layer(h, edge_index, edge_attr, layer)
+            h = self._egin_next_layer(h, edge_index, edge_attr, layer, batch)
             hidden_rep.append(h)
 
         score_over_layer = 0.0
@@ -247,12 +248,12 @@ class GraphEGIN(nn.Module):
         self,
         x: Tensor,
         edge_index: Tensor,
-        batch: Tensor,
         edge_attr: Tensor = None,
+        batch: Tensor | None = None,
     ) -> Tensor:
         return self.egin_forward(
             x=x,
             edge_index=edge_index,
-            batch=batch,
             edge_attr=edge_attr,
+            batch=batch,
         )

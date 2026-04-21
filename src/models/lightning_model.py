@@ -7,10 +7,7 @@ import torch.nn.functional as F
 from constants import EDGE_ATTR_DIM, NODE_INPUT_DIM, TASK_OUT_DIM
 
 # Import your unified base model (adjust the path as needed)
-try:
-    from models.base_model import UnifiedGraphBaseModel
-except ImportError:
-    from base_model import UnifiedGraphBaseModel
+from models.base_model import UnifiedGraphBaseModel
 
 
 class AIGRegressionLightningModule(pl.LightningModule):
@@ -44,7 +41,7 @@ class AIGRegressionLightningModule(pl.LightningModule):
             edge_attr_dim=self.hparams.edge_attr_dim,
             task_out_dim=self.hparams.task_out_dim,
             pe_type=self.hparams.pe_type,
-            pos_enc_dim=self.hparams.pos_enc_dim,  
+            pos_enc_dim=self.hparams.pos_enc_dim,
             pooling_type=self.hparams.pooling_type,
             encoder_kwargs=self.hparams.encoder_kwargs,
         )

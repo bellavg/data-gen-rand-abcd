@@ -5,15 +5,7 @@ import torch.nn as nn
 from torch import Tensor
 from torch_geometric.nn import GINEConv, GPSConv
 from torch_geometric.nn.attention import PerformerAttention
-from torch_geometric.typing import Adj, OptTensor
-
-try:
-    from model_utils import get_norm_layer
-except ImportError:  # pragma: no cover - fallback for package-style imports
-    try:
-        from models.model_utils import get_norm_layer
-    except ImportError:
-        from src.models.model_utils import get_norm_layer
+from torch_geometric.typing import Adj
 
 # Adapted from: https://github.com/pyg-team/pytorch_geometric/blob/master/examples/graph_gps.py
 
@@ -81,9 +73,11 @@ class GraphGPSEncoder(nn.Module):
         for i in range(self.num_layers):
             dim_in = hid_dim  # All layers now strictly take hid_dim
 
+            # Use a simple per-node normalization for the local MLP; GPSConv
+            # will handle graph-level normalization with the chosen `norm`.
             local_nn = nn.Sequential(
                 nn.Linear(dim_in, hid_dim),
-                get_norm_layer(norm_type, hid_dim),
+                nn.LayerNorm(hid_dim),
                 nn.ReLU(),
                 nn.Linear(hid_dim, hid_dim),
             )
@@ -101,32 +95,43 @@ class GraphGPSEncoder(nn.Module):
                 )
             )
 
-        self.redraw_projection = RedrawProjection(self.layers, redraw_interval=1000)
+        self.redraw_projection = RedrawProjection(
+            self.layers, redraw_interval=performer_redraw_interval
+        )
 
     def forward(
         self,
         x: Tensor,
         edge_index: Adj,
-        batch: Tensor,
-        edge_attr: OptTensor = None,
-        pos_enc: OptTensor = None,
+        edge_attr: Tensor,
+        batch: Tensor | None = None,
     ) -> Tensor:
-        x = self.in_proj(x)
-        h_list = [x]
+        # Project once for Jumping Knowledge bookkeeping
+        x_jk = self.in_proj(x)
+        x_proj = x_jk
 
-        for layer in self.layers:
-            x = layer(
-                h_list[-1], edge_index=edge_index, batch=batch, edge_attr=edge_attr
-            )
-            h_list.append(x)
+        if self.jk_mode == "cat":
+            h_list = [x_jk]
+            for layer in self.layers:
+                x_proj = layer(x_proj, edge_index=edge_index, edge_attr=edge_attr, batch=batch)
+                h_list.append(x_proj)
+            return torch.cat(h_list, dim=1)
 
-        if self.jk_mode == "last":
-            node_emb = h_list[-1]
         elif self.jk_mode == "max":
-            node_emb = torch.stack(h_list, dim=-1).max(dim=-1)[0]
-        elif self.jk_mode == "sum":
-            node_emb = torch.stack(h_list, dim=-1).sum(dim=-1)
-        elif self.jk_mode == "cat":
-            node_emb = torch.cat(h_list, dim=1)
+            res = x_jk
+            for layer in self.layers:
+                x_proj = layer(x_proj, edge_index=edge_index, edge_attr=edge_attr, batch=batch)
+                res = torch.max(res, x_proj)
+            return res
 
-        return node_emb
+        elif self.jk_mode == "sum":
+            res = x_jk
+            for layer in self.layers:
+                x_proj = layer(x_proj, edge_index=edge_index, edge_attr=edge_attr, batch=batch)
+                res = res + x_proj
+            return res
+
+        elif self.jk_mode == "last":
+            for layer in self.layers:
+                x_proj = layer(x_proj, edge_index=edge_index, edge_attr=edge_attr, batch=batch)
+            return x_proj
