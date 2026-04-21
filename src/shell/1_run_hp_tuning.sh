@@ -24,7 +24,12 @@ module load 2025
 module load Python/3.13.1-GCCcore-14.2.0
 module load SciPy-bundle/2025.06-gfbf-2025a
 
-python -m venv /scratch-shared/$USER/.venv
+if [ ! -d "/scratch-shared/$USER/.venv" ]; then
+    echo "Creating new virtual environment..."
+    python -m venv /scratch-shared/$USER/.venv
+else
+    echo "Virtual environment already exists. Skipping creation."
+fi
 
 # 2. Activate Virtual Environment
 VENV_PATH="${VENV_PATH:-/scratch-shared/$USER/.venv}"
