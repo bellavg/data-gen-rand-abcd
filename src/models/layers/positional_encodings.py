@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 import torch.nn as nn
+import torch_geometric.nn as gnn  # Standard alias for PyG layers
 from torch_geometric.data import Data
 
 # ==============================================================================
@@ -30,6 +31,7 @@ class ExtractPrecomputedPE:
                 val = val.long()
             else:
                 # Handles 'pi_paths' and 'local_sp_sum' perfectly!
+                # log1p stabilizes wide-range feature distributions
                 val = torch.log1p(val.float())
 
             # Map it to the target attribute name expected by _get_pe
@@ -40,20 +42,30 @@ class ExtractPrecomputedPE:
 class AddSinusoidalPE:
     """
     Normal sinusoidal positional encoding based on an ordered node index.
-    Useful mostly if nodes have a strict sequential or temporal ordering.
+    Updated with device-awareness to prevent runtime errors.
     """
 
     def __init__(self, dim: int = 16, attr_name: str = "pos_enc"):
+        if dim % 2 != 0:
+            raise ValueError("Sinusoidal PE dimension should be even.")
         self.dim = dim
         self.attr_name = attr_name
 
     def __call__(self, data: Data) -> Data:
-        position = torch.arange(data.num_nodes).unsqueeze(1).float()
-        div_term = torch.exp(
-            torch.arange(0, self.dim, 2).float() * -(np.log(10000.0) / self.dim)
+        # Safety: Ensure tensors are created on the correct device
+        device = (
+            data.x.device
+            if hasattr(data, "x") and data.x is not None
+            else torch.device("cpu")
         )
 
-        pe = torch.zeros(data.num_nodes, self.dim)
+        position = torch.arange(data.num_nodes, device=device).unsqueeze(1).float()
+        div_term = torch.exp(
+            torch.arange(0, self.dim, 2, device=device).float()
+            * -(np.log(10000.0) / self.dim)
+        )
+
+        pe = torch.zeros(data.num_nodes, self.dim, device=device)
         pe[:, 0::2] = torch.sin(position * div_term)
         pe[:, 1::2] = torch.cos(position * div_term)
 
@@ -96,7 +108,7 @@ def identity_transform(data: Data) -> Data:
 def get_pe_transform(pe_type: str, attr_name: str = "pos_enc", **kwargs):
     """
     Routes your requested pe_type to extract the correct pre-computed attribute
-    from your data_utils.py Data object.
+    from your Data object.
     """
     if pe_type is None or pe_type.lower() == "none":
         return identity_transform
@@ -129,10 +141,10 @@ def get_pos_enc_layer(
     pe_type: str | None,
     pos_enc_dim: int = 16,
     max_depth: int = 1000,
-    max_hops: int = 10,
 ) -> nn.Module:
     """
-    Routes your requested pe_type to the correct learnable PyTorch Layer.
+    Returns the learnable PE layer. Now using Sequential for better
+    signal flow in [-1, 1] regression.
     """
     if pe_type is None or pe_type.lower() == "none":
         return nn.Identity()
@@ -148,12 +160,12 @@ def get_pos_enc_layer(
         "learned_local_sp_sum",
         "local_sp_sum",
     ]:
-        # Continuous values use a simple linear projection instead of an Embedding
-        return nn.Linear(1, pos_enc_dim)
+        # Refactored to Sequential to support LeakyReLU
+        return nn.Sequential(gnn.Linear(1, pos_enc_dim), nn.LeakyReLU())
 
     elif pe_type in ["sinusoidal", "sine"]:
-        # Sinusoidal is usually passed through a linear projection as well
-        return nn.Linear(pos_enc_dim, pos_enc_dim)
+        # Project sinusoidal fixed vectors into the latent space
+        return nn.Sequential(gnn.Linear(pos_enc_dim, pos_enc_dim), nn.LeakyReLU())
 
     else:
         raise ValueError(f"Unknown pos_enc layer type: {pe_type}")

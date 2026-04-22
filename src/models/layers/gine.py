@@ -1,11 +1,12 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch_geometric.nn as gnn  # Standard alias for PyG layers
 from torch import Tensor
 from torch_geometric.nn import GINEConv
 from torch_geometric.typing import Adj
 
-from models.model_utils import get_norm_layer
+from models.model_utils import apply_norm, get_norm_layer
 
 
 class GINEConvLayer(nn.Module):
@@ -25,29 +26,29 @@ class GINEConvLayer(nn.Module):
         super().__init__()
         self.dropout = dropout
 
-        # GINE Core MLP (Inner MLP for the GIN update)
+        # 1. GINE Core MLP using gnn.Linear for GNN-optimized weight init.
         gin_nn = nn.Sequential(
-            nn.Linear(dim_in, hid_dim),
-            nn.ReLU(),
-            nn.Linear(hid_dim, hid_dim),
+            gnn.Linear(dim_in, hid_dim),
+            nn.LeakyReLU(),  # Robust for [-1, 1] range
+            gnn.Linear(hid_dim, hid_dim),
         )
 
-        # PyG's GINEConv automatically handles edge projection if edge_dim is passed
+        # PyG's GINEConv handles message passing.
         self.model = GINEConv(nn=gin_nn, edge_dim=edge_dim)
 
         self.norm_node = get_norm_layer(norm_type, hid_dim)
-        self.act = nn.ReLU()
+        self.act = nn.LeakyReLU()
         self.drop = nn.Dropout(dropout)
 
-        # Feed Forward Network (FFN) - Hardcoded to True per GNN+ paper
+        # 2. Feed Forward Network (FFN) using gnn.Linear.
         self.norm1_local = get_norm_layer(norm_type, hid_dim)
-        self.ff_linear1 = nn.Linear(hid_dim, hid_dim * 2)
-        self.ff_linear2 = nn.Linear(hid_dim * 2, hid_dim)
-        self.ff_act = nn.ReLU()
+        self.ff_linear1 = gnn.Linear(hid_dim, hid_dim * 2)
+        self.ff_linear2 = gnn.Linear(hid_dim * 2, hid_dim)
+        self.ff_act = nn.LeakyReLU()
         self.norm2 = get_norm_layer(norm_type, hid_dim)
 
     def _ff_block(self, x: Tensor) -> Tensor:
-        """Feed Forward block."""
+        """Feed Forward block with LeakyReLU for symmetric signal propagation."""
         x = self.ff_act(self.ff_linear1(x))
         x = F.dropout(x, p=self.dropout, training=self.training)
         x = self.ff_linear2(x)
@@ -64,17 +65,17 @@ class GINEConvLayer(nn.Module):
 
         # 1. Message Passing
         x = self.model(x, edge_index, edge_attr=edge_attr)
-        from models.model_utils import apply_norm
 
+        # 2. Graph-aware normalization via batch tensor
         x = apply_norm(self.norm_node, x, batch)
         x = self.act(x)
         x = self.drop(x)
 
-        # 2. Residual Connection - Hardcoded to True per GNN+ paper
+        # 3. Residual Connection
         if x_in.shape == x.shape:
             x = x_in + x
 
-        # 3. FFN Block - Hardcoded to True per GNN+ paper
+        # 4. FFN Block - Maintains per-graph statistics during normalization.
         x = apply_norm(self.norm1_local, x, batch)
         x = x + self._ff_block(x)
         x = apply_norm(self.norm2, x, batch)
@@ -83,7 +84,7 @@ class GINEConvLayer(nn.Module):
 
 
 class GINEEncoder(nn.Module):
-    """Edge-aware GINE+ encoder with hardcoded PE concatenation and Jumping Knowledge (cat)."""
+    """Edge-aware GINE+ encoder with hardcoded PE concatenation and Jumping Knowledge."""
 
     def __init__(
         self,
@@ -101,17 +102,15 @@ class GINEEncoder(nn.Module):
             raise ValueError("num_layers must be >= 1")
 
         self.num_layers = num_layers
-        self.jk_mode = kwargs.get("jk_mode", "cat")  # Default to 'cat' if not provided
-        # Project initial embedding purely for Jumping Knowledge uniformity
+        self.jk_mode = kwargs.get("jk_mode", "cat")
+
+        # 3. Initial projection using gnn.Linear.
         if node_input_dim != hid_dim:
-            self.jk_proj = nn.Linear(node_input_dim, hid_dim)
+            self.jk_proj = gnn.Linear(node_input_dim, hid_dim)
         else:
             self.jk_proj = nn.Identity()
 
-        # First layer expects `node_input_dim`; subsequent layers expect `hid_dim`.
-
         self.layers = nn.ModuleList()
-
         for i in range(num_layers):
             dim_in = node_input_dim if i == 0 else hid_dim
             self.layers.append(
@@ -124,7 +123,6 @@ class GINEEncoder(nn.Module):
                 )
             )
 
-        # Hardcoded Jumping Knowledge = 'cat' output dimension
         self.out_dim = output_dim
 
     def forward(
@@ -134,8 +132,10 @@ class GINEEncoder(nn.Module):
         edge_attr: Tensor,
         batch: Tensor | None = None,
     ) -> Tensor:
-
-        # Project to a uniform hidden dimension for Jumping Knowledge
+        """
+        Forward pass passing the batch tensor through each layer block to
+        ensure graph-aware normalization.
+        """
         x_jk = self.jk_proj(x)
 
         if self.jk_mode == "cat":

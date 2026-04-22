@@ -38,20 +38,13 @@ def get_norm_layer(norm_type, dim):
 
 
 def get_batch_positional_encoding(batch: object) -> torch.Tensor | None:
-    """Return the collated `pos_enc` tensor from a PyG Batch (or Data) object.
-
-    - If `batch` has no `pos_enc` attribute, returns `None`.
-    - If `pos_enc` is 1D, it will be unsqueezed to shape `(N, 1)` and cast to float.
-    - Otherwise returns `pos_enc.float()`.
-    """
     pe = getattr(batch, "pos_enc", None)
-    if pe is None:
+    # Check if pe is specifically a Tensor before calling .dim()
+    if pe is None or not isinstance(pe, torch.Tensor):
         return None
     if pe.dim() == 1:
         pe = pe.unsqueeze(-1)
-    if pe.is_floating_point():
-        return pe.to(torch.float32)
-    return pe
+    return pe.to(torch.float32)
 
 
 def apply_norm(

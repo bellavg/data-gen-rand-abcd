@@ -20,7 +20,10 @@ class AIGDataModule(pl.LightningDataModule):
         seed: int = 42,
         batch_size: int = 32,
         num_workers: int = 6,
+        persistent_workers: bool = False,
+        pin_memory: bool = False,
         train_num_samples: Optional[int] = None,
+        hp_tuning_splits_path: Optional[str | Path] = None,
     ) -> None:
         super().__init__()
         self.csv_paths = csv_paths
@@ -30,7 +33,10 @@ class AIGDataModule(pl.LightningDataModule):
         self.seed = seed
         self.batch_size = batch_size
         self.num_workers = num_workers
+        self.persistent_workers = persistent_workers
+        self.pin_memory = pin_memory
         self.train_num_samples = train_num_samples
+        self.hp_tuning_splits_path = hp_tuning_splits_path
 
     def _make_dataset(self, split: str, num_samples: Optional[int] = None):
         return AIGGraphRegressionDataset(
@@ -42,6 +48,7 @@ class AIGDataModule(pl.LightningDataModule):
             seed=self.seed,
             num_samples=num_samples,
             num_workers=self.num_workers,
+            hp_tuning_splits_path=self.hp_tuning_splits_path,
         )
 
     def setup(self, stage: Optional[str] = None) -> None:
@@ -60,6 +67,8 @@ class AIGDataModule(pl.LightningDataModule):
             batch_size=self.batch_size,
             shuffle=True,
             num_workers=self.num_workers,
+            persistent_workers=self.persistent_workers,
+            pin_memory=self.pin_memory,
         )
 
     def val_dataloader(self) -> DataLoader:
@@ -68,6 +77,8 @@ class AIGDataModule(pl.LightningDataModule):
             batch_size=self.batch_size,
             shuffle=False,
             num_workers=self.num_workers,
+            persistent_workers=self.persistent_workers,
+            pin_memory=self.pin_memory,
         )
 
     def test_dataloader(self) -> DataLoader:
@@ -76,6 +87,8 @@ class AIGDataModule(pl.LightningDataModule):
             batch_size=self.batch_size,
             shuffle=False,
             num_workers=self.num_workers,
+            persistent_workers=self.persistent_workers,
+            pin_memory=self.pin_memory,
         )
 
 

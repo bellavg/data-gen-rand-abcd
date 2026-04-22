@@ -166,6 +166,7 @@ class UnifiedGraphBaseModel(nn.Module):
 
     def forward_batch(self, batch) -> torch.Tensor:
         pos_enc = get_batch_positional_encoding(batch)
+
         return self.forward(
             x=batch.x,
             edge_index=batch.edge_index,

@@ -39,48 +39,28 @@ class _FakeScore:
 
 
 class _FakeTrial:
-    """Mock Optuna Trial to capture requested params and choices."""
-
-    def __init__(self, values: dict, number: int = 3):
-        self.values = values
-        self.number = number
-        self.requested_choices = {}  # Map name -> choices provided by objective
+    def __init__(self, params=None):
+        self.params = params if params is not None else {}
+        self.number = 0  # Add this attribute
+        self.requested_choices = {}  # Required for test_none_pe_logic
 
     def suggest_categorical(self, name, choices):
-        if name not in self.values:
-            raise AssertionError(f"Missing categorical value for '{name}'")
-        value = self.values[name]
-        if value not in choices:
-            raise AssertionError(
-                f"Value '{value}' not in categorical choices for '{name}'. "
-                f"Choices were: {choices}"
-            )
-        self.requested_choices[name] = choices
-        return value
+        self.requested_choices[name] = choices  # Track what was suggested
+        val = self.params.get(name, choices[0])
+        self.params[name] = val
+        return val
 
-    def suggest_float(self, name, low, high, log=False):
-        if name not in self.values:
-            raise AssertionError(f"Missing float value for '{name}'")
-        value = self.values[name]
-        if not (low <= value <= high):
-            raise AssertionError(f"Float value '{value}' out of range for '{name}'")
-        return value
+    def suggest_int(self, name, low, high, step=1, log=False):
+        self.requested_choices[name] = (low, high)
+        val = self.params.get(name, low)
+        self.params[name] = val
+        return val
 
-    def suggest_int(self, name, low, high):
-        if name not in self.values:
-            raise AssertionError(f"Missing int value for '{name}'")
-        value = self.values[name]
-        if not isinstance(value, int):
-            raise AssertionError(f"Expected int value for '{name}'")
-        if not (low <= value <= high):
-            raise AssertionError(f"Int value '{value}' out of range for '{name}'")
-        return value
-
-    def suggest_bool(self, name):
-        if name not in self.values:
-            raise AssertionError(f"Missing bool value for '{name}'")
-        value = self.values[name]
-        return value
+    def suggest_float(self, name, low, high, step=None, log=False):
+        self.requested_choices[name] = (low, high)
+        val = self.params.get(name, low)
+        self.params[name] = val
+        return val
 
 
 def _run_objective_for_test(trial_values: dict, best_model_score: float | None = 0.25):

@@ -78,7 +78,7 @@ class GraphGPSEncoder(nn.Module):
             local_nn = nn.Sequential(
                 nn.Linear(dim_in, hid_dim),
                 nn.LayerNorm(hid_dim),
-                nn.ReLU(),
+                nn.LeakyReLU(),
                 nn.Linear(hid_dim, hid_dim),
             )
             local_conv = GINEConv(nn=local_nn, edge_dim=edge_attr_dim)
@@ -113,25 +113,33 @@ class GraphGPSEncoder(nn.Module):
         if self.jk_mode == "cat":
             h_list = [x_jk]
             for layer in self.layers:
-                x_proj = layer(x_proj, edge_index=edge_index, edge_attr=edge_attr, batch=batch)
+                x_proj = layer(
+                    x_proj, edge_index=edge_index, edge_attr=edge_attr, batch=batch
+                )
                 h_list.append(x_proj)
             return torch.cat(h_list, dim=1)
 
         elif self.jk_mode == "max":
             res = x_jk
             for layer in self.layers:
-                x_proj = layer(x_proj, edge_index=edge_index, edge_attr=edge_attr, batch=batch)
+                x_proj = layer(
+                    x_proj, edge_index=edge_index, edge_attr=edge_attr, batch=batch
+                )
                 res = torch.max(res, x_proj)
             return res
 
         elif self.jk_mode == "sum":
             res = x_jk
             for layer in self.layers:
-                x_proj = layer(x_proj, edge_index=edge_index, edge_attr=edge_attr, batch=batch)
+                x_proj = layer(
+                    x_proj, edge_index=edge_index, edge_attr=edge_attr, batch=batch
+                )
                 res = res + x_proj
             return res
 
         elif self.jk_mode == "last":
             for layer in self.layers:
-                x_proj = layer(x_proj, edge_index=edge_index, edge_attr=edge_attr, batch=batch)
+                x_proj = layer(
+                    x_proj, edge_index=edge_index, edge_attr=edge_attr, batch=batch
+                )
             return x_proj

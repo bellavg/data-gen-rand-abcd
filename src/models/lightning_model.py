@@ -11,11 +11,6 @@ from models.base_model import UnifiedGraphBaseModel
 
 
 class AIGRegressionLightningModule(pl.LightningModule):
-    """
-    PyTorch Lightning wrapper for the UnifiedGraphBaseModel.
-    Specifically designed for node optimizability AIG regression.
-    """
-
     def __init__(
         self,
         encoder_name: str,
@@ -30,6 +25,7 @@ class AIGRegressionLightningModule(pl.LightningModule):
         huber_delta: float = 1.0,
         lr: float = 1e-3,
         weight_decay: float = 1e-5,
+        scheduler_patience: int = 5,  # <-- NEW: Added scheduler patience
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -47,35 +43,19 @@ class AIGRegressionLightningModule(pl.LightningModule):
         )
 
     def forward(self, batch):
-        """Passes the PyG batch through the base model."""
         return self.model.forward_batch(batch)
 
     def _compute_loss_and_metrics(self, batch, batch_idx, prefix: str):
-        """
-        Helper function to compute loss and log metrics.
-        batch.y is expected to be shape [BatchSize, 1] (Node Opt)
-        """
         preds = self.forward(batch)
         targets = batch.y
 
-        # Make sure target shape matches predictions (safeguard against PyG squeezing)
         if targets.dim() == 1:
             targets = targets.view(-1, self.hparams.task_out_dim)
 
-        # Huber Loss prevents zero-collapse but handles outliers gracefully.
-        # delta=1.0 is standard, but you can tune it (e.g., delta=2.0) if needed.
         loss = F.huber_loss(preds, targets, delta=self.hparams.huber_delta)
-
-        # Calculate MAE for human-readable logging (keep as L1)
-        # Use squeeze(-1) to convert [N, 1] -> [N] (more robust than explicit column indexing)
         mae_node_opt = F.l1_loss(preds.squeeze(-1), targets.squeeze(-1))
 
-        # Log metrics only when attached to a Trainer to avoid warnings in
-        # unit tests that call `training_step`/`validation_step` directly.
-        # Access the internal `_trainer` attribute to avoid invoking the
-        # `trainer` property (which raises when not attached).
         if getattr(self, "_trainer", None) is not None:
-            # Use batch.num_graphs when available for correct averaging.
             batch_size = getattr(batch, "num_graphs", None)
             self.log(
                 f"{prefix}/loss",
@@ -94,10 +74,8 @@ class AIGRegressionLightningModule(pl.LightningModule):
         return loss
 
     def training_step(self, batch, batch_idx):
-        # Trigger Performer projection redrawing (if using GraphGPS with Performer)
         if hasattr(self.model.encoder, "redraw_projection"):
             self.model.encoder.redraw_projection.redraw_projections()
-
         return self._compute_loss_and_metrics(batch, batch_idx, prefix="train")
 
     def validation_step(self, batch, batch_idx):
@@ -107,23 +85,19 @@ class AIGRegressionLightningModule(pl.LightningModule):
         return self._compute_loss_and_metrics(batch, batch_idx, prefix="test")
 
     def configure_optimizers(self):
-        # 1. Get your initial LR
         initial_lr = self.hparams.lr
-
-        # 2. Dynamically set min_lr to be 1/1000th of the initial LR
         min_lr_value = initial_lr * 1e-3
 
-        # 3. Define your optimizer
         optimizer = torch.optim.Adam(
             self.parameters(), lr=initial_lr, weight_decay=self.hparams.weight_decay
         )
 
-        # 4. Define the scheduler
+        # Use the scheduler_patience arg passed from train.py
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             optimizer,
             mode="min",
             factor=0.5,
-            patience=2,
+            patience=self.hparams.scheduler_patience,  # Linked to CLI arg
             min_lr=min_lr_value,
         )
 
