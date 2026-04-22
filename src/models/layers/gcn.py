@@ -1,14 +1,14 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch_geometric.nn as gnn  # 1. Standard alias for PyG layers
 from torch import Tensor
 from torch_geometric.nn import MessagePassing
 from torch_geometric.typing import Adj
 from torch_geometric.utils import degree
 
-from models.model_utils import get_norm_layer
-
-# Adapted from: https://github.com/LUOyk1999/GNNPlus/blob/main/GNNPlus/layer/gcn_conv_layer_e.py
+# Corrected Import
+from models.model_utils import apply_norm, get_norm_layer
 
 
 class GCNConvWithEdges(MessagePassing):
@@ -24,12 +24,12 @@ class GCNConvWithEdges(MessagePassing):
         edge_dim: int | None = None,
         bias: bool = True,
     ):
-        # Use add aggregation, we will manually normalize the weights
         super().__init__(aggr="add")
-        self.lin = nn.Linear(in_channels, out_channels, bias=False)
+        # 2. Use gnn.Linear for GNN-optimized weight initialization
+        self.lin = gnn.Linear(in_channels, out_channels, bias=False)
 
         self.edge_encoder = (
-            nn.Linear(edge_dim, out_channels, bias=False)
+            gnn.Linear(edge_dim, out_channels, bias=False)
             if edge_dim is not None
             else None
         )
@@ -40,13 +40,10 @@ class GCNConvWithEdges(MessagePassing):
         # 1. Apply edge attributes
         ea = self._edge_attr
         if ea is not None:
-            if self.edge_encoder is not None:
-                edge_msg = self.edge_encoder(ea)
-            else:
-                edge_msg = ea
-            msg = (x_j + edge_msg).relu()
+            edge_msg = self.edge_encoder(ea) if self.edge_encoder is not None else ea
+            msg = F.leaky_relu(x_j + edge_msg)
         else:
-            msg = x_j.relu()
+            msg = F.leaky_relu(x_j)
 
         # 2. Scale the message by the GCN normalization weight
         return msg * edge_weight.view(-1, 1)
@@ -64,19 +61,11 @@ class GCNConvWithEdges(MessagePassing):
         deg_inv_sqrt[deg_inv_sqrt == float("inf")] = 0
         edge_weight = deg_inv_sqrt[row] * deg_inv_sqrt[col]
 
-        # Temporarily attach edge_attr to self
         self._edge_attr = edge_attr
-
-        # Apply linear transformation to node features
         x = self.lin(x)
-
-        # Propagate messages passing the calculated edge_weight
         out = self.propagate(edge_index, x=x, edge_weight=edge_weight, size=None)
-
-        # Clean up
         self._edge_attr = None
 
-        # Add bias if it exists
         if self.bias_param is not None:
             out = out + self.bias_param
 
@@ -85,8 +74,7 @@ class GCNConvWithEdges(MessagePassing):
 
 class GCNConvLayer(nn.Module):
     """
-    Single GCN layer block combining Convolution, Normalization,
-    Residuals, and Feed-Forward Network (FFN) per the GNN+ paper.
+    Single GCN layer block with Residuals and Feed-Forward Network (FFN).
     """
 
     def __init__(
@@ -102,14 +90,14 @@ class GCNConvLayer(nn.Module):
 
         self.model = GCNConvWithEdges(dim_in, dim_out, edge_dim, bias=True)
         self.norm_node = get_norm_layer(norm_type, dim_out)
-        self.act = nn.ReLU()
+        self.act = nn.LeakyReLU()  # Maintain LeakyReLU for symmetric target range
         self.drop = nn.Dropout(dropout)
 
-        # Feed Forward Network (FFN) - Hardcoded to True per GNN+ paper
+        # 3. Swap FFN to gnn.Linear
         self.norm1_local = get_norm_layer(norm_type, dim_out)
-        self.ff_linear1 = nn.Linear(dim_out, dim_out * 2)
-        self.ff_linear2 = nn.Linear(dim_out * 2, dim_out)
-        self.ff_act = nn.ReLU()
+        self.ff_linear1 = gnn.Linear(dim_out, dim_out * 2)
+        self.ff_linear2 = gnn.Linear(dim_out * 2, dim_out)
+        self.ff_act = nn.LeakyReLU()
         self.norm2 = get_norm_layer(norm_type, dim_out)
 
     def _ff_block(self, x: Tensor) -> Tensor:
@@ -125,17 +113,17 @@ class GCNConvLayer(nn.Module):
 
         # 1. Message Passing
         x = self.model(x, edge_index=edge_index, edge_attr=edge_attr)
-        from models.model_utils import apply_norm
 
+        # 2. Graph-Aware Normalization
         x = apply_norm(self.norm_node, x, batch)
         x = self.act(x)
         x = self.drop(x)
 
-        # 2. Residual Connection - Hardcoded to True per GNN+ paper
+        # 3. Residual Connection
         if x_in.shape == x.shape:
             x = x_in + x
 
-        # 3. FFN Block - Hardcoded to True per GNN+ paper
+        # 4. FFN Block
         x = apply_norm(self.norm1_local, x, batch)
         x = x + self._ff_block(x)
         x = apply_norm(self.norm2, x, batch)
@@ -144,7 +132,7 @@ class GCNConvLayer(nn.Module):
 
 
 class GCNEncoder(nn.Module):
-    """Edge-aware GCN+ encoder with iterative Jumping Knowledge accumulation."""
+    """Edge-aware GCN+ encoder with Jumping Knowledge support."""
 
     def __init__(
         self,
@@ -158,15 +146,12 @@ class GCNEncoder(nn.Module):
         **kwargs,
     ):
         super().__init__()
-        if num_layers < 1:
-            raise ValueError("num_layers must be >= 1")
-
         self.num_layers = num_layers
-        self.jk_mode = kwargs.get("jk_mode", "cat")  # Default to 'cat' if not provided
+        self.jk_mode = kwargs.get("jk_mode", "cat")
 
-        # Project initial embedding purely for Jumping Knowledge uniformity
+        # 4. Use gnn.Linear for initial projection
         if node_input_dim != hid_dim:
-            self.jk_proj = nn.Linear(node_input_dim, hid_dim)
+            self.jk_proj = gnn.Linear(node_input_dim, hid_dim)
         else:
             self.jk_proj = nn.Identity()
 
@@ -183,15 +168,7 @@ class GCNEncoder(nn.Module):
                 )
             )
 
-    def forward(
-        self,
-        x: Tensor,
-        edge_index: Adj,
-        edge_attr: Tensor,
-        batch: Tensor | None = None,
-    ) -> Tensor:
-
-        # Project to a uniform hidden dimension for Jumping Knowledge
+    def forward(self, x, edge_index, edge_attr, batch=None):
         x_jk = self.jk_proj(x)
 
         if self.jk_mode == "cat":

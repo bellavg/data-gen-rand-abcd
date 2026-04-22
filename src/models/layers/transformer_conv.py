@@ -1,23 +1,25 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch_geometric.nn as gnn  # Standard alias for PyG layers
 from torch import Tensor
 from torch_geometric.nn import TransformerConv
 from torch_geometric.typing import Adj
 
+# Project Imports
 try:
-    from model_utils import get_norm_layer
-except ImportError:  # pragma: no cover - fallback for package-style imports
+    from model_utils import apply_norm, get_norm_layer
+except ImportError:
     try:
-        from models.model_utils import get_norm_layer
+        from models.model_utils import apply_norm, get_norm_layer
     except ImportError:
-        from src.models.model_utils import get_norm_layer
+        from src.models.model_utils import apply_norm, get_norm_layer
 
 
 class TransformerConvLayer(nn.Module):
     """
     TransformerConv block unified with GNN+ enhancements.
-    Hardcodes Residuals and FFNs to True.
+    Hardcodes Residuals and FFNs to True for robust feature learning.
     """
 
     def __init__(
@@ -56,18 +58,18 @@ class TransformerConvLayer(nn.Module):
         )
 
         self.norm_node = get_norm_layer(norm_type, hid_dim)
-        self.act = nn.ReLU()
+        self.act = nn.LeakyReLU()  # Robust for [-1, 1] range
         self.drop = nn.Dropout(dropout)
 
-        # Feed Forward Network (FFN) - Hardcoded to True
+        # 1. Swap to gnn.Linear for GNN-specific weight initialization.
         self.norm1_local = get_norm_layer(norm_type, hid_dim)
-        self.ff_linear1 = nn.Linear(hid_dim, hid_dim * 2)
-        self.ff_linear2 = nn.Linear(hid_dim * 2, hid_dim)
-        self.ff_act = nn.ReLU()
+        self.ff_linear1 = gnn.Linear(hid_dim, hid_dim * 2)
+        self.ff_linear2 = gnn.Linear(hid_dim * 2, hid_dim)
+        self.ff_act = nn.LeakyReLU()
         self.norm2 = get_norm_layer(norm_type, hid_dim)
 
-    def _ff_block(self, x: Tensor) -> Tensor:
-        """Feed Forward block."""
+    def _ff_block(self, x: Tensor, batch: Tensor | None = None) -> Tensor:
+        """Feed Forward block with graph-aware dropout."""
         x = self.ff_act(self.ff_linear1(x))
         x = F.dropout(x, p=self.dropout, training=self.training)
         x = self.ff_linear2(x)
@@ -82,19 +84,19 @@ class TransformerConvLayer(nn.Module):
     ) -> Tensor:
         x_in = x
 
-        # 1. Message Passing
+        # 1. Message Passing (Attention Mechanism)
         x = self.conv(x=x, edge_index=edge_index, edge_attr=edge_attr)
-        from models.model_utils import apply_norm
 
+        # 2. Graph-aware normalization
         x = apply_norm(self.norm_node, x, batch)
         x = self.act(x)
         x = self.drop(x)
 
-        # 2. Residual Connection - Hardcoded to True
+        # 3. Residual Connection
         if x.shape == x_in.shape:
             x = x + x_in
 
-        # 3. FFN Block - Hardcoded to True
+        # 4. FFN Block - Ensures each graph is normalized individually.
         x = apply_norm(self.norm1_local, x, batch)
         x = x + self._ff_block(x)
         x = apply_norm(self.norm2, x, batch)
@@ -129,18 +131,15 @@ class TransformerConvEncoder(nn.Module):
             raise ValueError("num_layers must be >= 1")
 
         self.num_layers = num_layers
-        self.jk_mode = kwargs.get("jk_mode", "cat")  # Default to 'cat' if not provided
+        self.jk_mode = kwargs.get("jk_mode", "cat")
 
-        # Project initial embedding purely for Jumping Knowledge uniformity
+        # 5. Use gnn.Linear for initial projection to hidden dimension.
         if node_input_dim != hid_dim:
-            self.jk_proj = nn.Linear(node_input_dim, hid_dim)
+            self.jk_proj = gnn.Linear(node_input_dim, hid_dim)
         else:
             self.jk_proj = nn.Identity()
 
         self.layers = nn.ModuleList()
-
-        # First layer expects `node_input_dim`; subsequent layers expect `hid_dim`.
-
         for i in range(num_layers):
             dim_in = node_input_dim if i == 0 else hid_dim
             self.layers.append(
@@ -165,8 +164,10 @@ class TransformerConvEncoder(nn.Module):
         edge_attr: Tensor,
         batch: Tensor | None = None,
     ) -> Tensor:
-
-        # Project to a uniform hidden dimension for Jumping Knowledge
+        """
+        Supports Jumping Knowledge (JK) by passing the batch tensor
+        through each layer for proper normalization.
+        """
         x_jk = self.jk_proj(x)
 
         if self.jk_mode == "cat":

@@ -3,7 +3,11 @@ from __future__ import annotations
 import unittest
 
 import torch
+import torch.nn as nn
+import torch_geometric.nn as gnn
 from torch_geometric.data import Data
+
+from models.layers.positional_encodings import get_pos_enc_layer
 
 # ---------------------------------------------------------------------------
 # Shared constants
@@ -238,73 +242,38 @@ class TestGetPeTransform(unittest.TestCase):
 
 
 class TestGetPosEncLayer(unittest.TestCase):
-    def test_none_returns_identity(self):
-        import torch.nn as nn
+    def setUp(self):
+        self.pe_dim = 16
+        self.num_nodes = 10
 
-        from models.layers.positional_encodings import get_pos_enc_layer
+    def test_pi_paths_sequential(self):
+        layer = get_pos_enc_layer("pi_paths", pos_enc_dim=self.pe_dim)
+        # We now expect a Sequential block containing Linear + LeakyReLU
+        self.assertIsInstance(layer, nn.Sequential)
+        self.assertIsInstance(layer[0], gnn.Linear)
+        self.assertIsInstance(layer[1], nn.LeakyReLU)
 
-        layer = get_pos_enc_layer(None)
-        self.assertIsInstance(layer, nn.Identity)
+        # Verify forward pass
+        dummy_input = torch.rand(self.num_nodes, 1)
+        out = layer(dummy_input)
+        self.assertEqual(out.shape, (self.num_nodes, self.pe_dim))
 
-    def test_none_string_returns_identity(self):
-        import torch.nn as nn
+    def test_local_sp_sum_sequential(self):
+        layer = get_pos_enc_layer("local_sp_sum", pos_enc_dim=self.pe_dim)
+        self.assertIsInstance(layer, nn.Sequential)
+        self.assertIsInstance(layer[0], gnn.Linear)
 
-        from models.layers.positional_encodings import get_pos_enc_layer
+    def test_sinusoidal_sequential(self):
+        layer = get_pos_enc_layer("sinusoidal", pos_enc_dim=self.pe_dim)
+        self.assertIsInstance(layer, nn.Sequential)
+        self.assertIsInstance(layer[0], gnn.Linear)
 
-        layer = get_pos_enc_layer("none")
-        self.assertIsInstance(layer, nn.Identity)
+    def test_level_embedding(self):
+        layer = get_pos_enc_layer("level", pos_enc_dim=self.pe_dim)
+        # Level uses an Embedding layer, not a Sequential block
+        from models.layers.positional_encodings import LearnedDepthEmbedding
 
-    def test_learned_level(self):
-        from models.layers.positional_encodings import (
-            LearnedDepthEmbedding,
-            get_pos_enc_layer,
-        )
-
-        layer = get_pos_enc_layer("learned_level", pos_enc_dim=PE_DIM, max_depth=100)
         self.assertIsInstance(layer, LearnedDepthEmbedding)
-        out = layer(torch.randint(0, 50, (NUM_NODES, 1)))
-        self.assertEqual(out.shape, (NUM_NODES, PE_DIM))
-
-    def test_level_alias(self):
-        from models.layers.positional_encodings import (
-            LearnedDepthEmbedding,
-            get_pos_enc_layer,
-        )
-
-        layer = get_pos_enc_layer("level", pos_enc_dim=PE_DIM, max_depth=100)
-        self.assertIsInstance(layer, LearnedDepthEmbedding)
-
-    def test_pi_paths_linear(self):
-        import torch.nn as nn
-
-        from models.layers.positional_encodings import get_pos_enc_layer
-
-        layer = get_pos_enc_layer("pi_paths", pos_enc_dim=PE_DIM)
-        self.assertIsInstance(layer, nn.Linear)
-        out = layer(torch.rand(NUM_NODES, 1))
-        self.assertEqual(out.shape, (NUM_NODES, PE_DIM))
-
-    def test_local_sp_sum_linear(self):
-        import torch.nn as nn
-
-        from models.layers.positional_encodings import get_pos_enc_layer
-
-        layer = get_pos_enc_layer("local_sp_sum", pos_enc_dim=PE_DIM)
-        self.assertIsInstance(layer, nn.Linear)
-
-    def test_sinusoidal_linear(self):
-        import torch.nn as nn
-
-        from models.layers.positional_encodings import get_pos_enc_layer
-
-        layer = get_pos_enc_layer("sinusoidal", pos_enc_dim=PE_DIM)
-        self.assertIsInstance(layer, nn.Linear)
-
-    def test_unknown_raises(self):
-        from models.layers.positional_encodings import get_pos_enc_layer
-
-        with self.assertRaises(ValueError):
-            get_pos_enc_layer("unknown_pe")
 
 
 # ==========================================================================

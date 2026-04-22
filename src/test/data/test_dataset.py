@@ -193,6 +193,37 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
         self.assertGreaterEqual(len(val_ds), 5)
         self.assertGreaterEqual(len(test_ds), 5)
 
+    # --- HP tuning split exclusion testing ---
+
+    def test_hp_tuning_splits_path_excludes_samples(self):
+        from data.dataset import AIGGraphRegressionDataset
+
+        pts = _make_graph_pts(self.root / "hp_exclude_graphs", 20)
+        csv = self.root / "hp_exclude.csv"
+        _write_csv(csv, _make_rows(pts))
+
+        # Pick 5 specific graphs to mock as "used in HP tuning"
+        hp_keys = [str(p) for p in pts[:5]]
+        hp_splits = {"train": hp_keys[:3], "val": hp_keys[3:4], "test": hp_keys[4:]}
+
+        # Write mock HP tuning JSON to disk
+        hp_json_path = self.root / "hp_splits.json"
+        hp_json_path.write_text(json.dumps(hp_splits))
+
+        # Initialize dataset, asking for train split and passing the JSON file
+        ds = AIGGraphRegressionDataset(
+            csv, split="train", seed=0, hp_tuning_splits_path=hp_json_path
+        )
+
+        # Original size = 20. Excluded = 5. Remaining pool = 15.
+        # Train split ratio is 0.8. 80% of 15 = 12 samples.
+        self.assertEqual(len(ds), 12)
+
+        # Verify that none of the HP tuned keys are present in the dataset samples
+        ds_paths = {s.graph_path for s in ds.samples}
+        for k in hp_keys:
+            self.assertNotIn(k, ds_paths)
+
     # --- cache ---
 
     def test_cache_file_created(self):
@@ -358,9 +389,9 @@ class TestAIGDataModule(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
         # 30 unique .pt files so splits are non-empty
-        pt_paths = _make_graph_pts(self.root / "graphs", 30)
+        self.pt_paths = _make_graph_pts(self.root / "graphs", 30)
         self.csv_path = self.root / "orchestrate.csv"
-        _write_csv(self.csv_path, _make_rows(pt_paths))
+        _write_csv(self.csv_path, _make_rows(self.pt_paths))
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -386,8 +417,19 @@ class TestAIGDataModule(unittest.TestCase):
         self.assertEqual(batch.edge_attr.dim(), 2)
 
     def test_train_num_samples(self):
-        dm = self._make_dm(train_num_samples=8)
+        dm = self._make_dm(train_num_samples=10)  # Changed to 10 for cleaner math
+
+        # 10 total samples * 80% train ratio = 8 samples in train_ds
         self.assertEqual(len(dm.train_ds), 8)
+
+        # 10 total samples * 10% val ratio = 1 sample in val_ds
+        self.assertEqual(len(dm.val_ds), 1)
+
+        # 10 total samples * 10% test ratio = 1 sample in test_ds
+        self.assertEqual(len(dm.test_ds), 1)
+
+        # Ensure the total pool across all splits strictly equals the requested num_samples limit
+        self.assertEqual(len(dm.train_ds) + len(dm.val_ds) + len(dm.test_ds), 10)
 
     def test_test_loader(self):
         from data.datamodule import AIGDataModule
@@ -400,3 +442,78 @@ class TestAIGDataModule(unittest.TestCase):
     def test_datamodule_split_sizes_sum_to_total(self):
         dm = self._make_dm()
         self.assertEqual(len(dm.train_ds) + len(dm.val_ds) + len(dm.test_ds), 30)
+
+    def test_hp_tuning_splits_path_datamodule(self):
+        # Pick 5 samples from the 30 existing ones
+        hp_keys = [str(p) for p in self.pt_paths[:5]]
+        hp_splits = {"train": hp_keys}
+        hp_json_path = self.root / "dm_hp_splits.json"
+        hp_json_path.write_text(json.dumps(hp_splits))
+
+        # Create DataModule passing the HP split path
+        dm = self._make_dm(hp_tuning_splits_path=hp_json_path)
+
+        # Total original is 30. Excluded 5. Total remaining should be 25.
+        total_remaining = len(dm.train_ds) + len(dm.val_ds) + len(dm.test_ds)
+        self.assertEqual(total_remaining, 25)
+
+        # Ensure excluded keys aren't anywhere in the train_ds
+        train_paths = {s.graph_path for s in dm.train_ds.samples}
+        for k in hp_keys:
+            self.assertNotIn(k, train_paths)
+
+    def test_batch_is_correct_and_disjoint(self):
+        from torch_geometric.loader import DataLoader
+
+        # Fix: Use the DataModule to get the dataset
+        dm = self._make_dm()
+        ds = dm.train_ds
+
+        loader = DataLoader(ds, batch_size=4, shuffle=False)
+        batch = next(iter(loader))
+
+        # 1. Verify batch size
+        self.assertEqual(batch.num_graphs, 4)
+
+        # 2. Verify 'batch' vector exists and maps all nodes
+        self.assertTrue(hasattr(batch, "batch"))
+        self.assertEqual(batch.batch.numel(), batch.x.shape[0])
+
+        # 3. CRITICAL: Check for data leakage in edge_index
+        for i in range(batch.num_graphs):
+            # Get edges belonging to graph i
+            # Check that edge_index values stay within the node range for that specific graph
+            current_edge_index = batch.edge_index[
+                :,
+                (batch.edge_index[0] >= batch.ptr[i])
+                & (batch.edge_index[0] < batch.ptr[i + 1]),
+            ]
+
+            self.assertTrue((current_edge_index >= batch.ptr[i]).all())
+            self.assertTrue((current_edge_index < batch.ptr[i + 1]).all())
+
+    def test_batch_reconstruction_is_lossless(self):
+        from torch_geometric.loader import DataLoader
+
+        # Fix: Use the DataModule to get the dataset
+        dm = self._make_dm()
+        ds = dm.train_ds
+
+        loader = DataLoader(ds, batch_size=2, shuffle=False)
+        batch = next(iter(loader))
+
+        # Use PyG's built-in to_data_list to reconstruct individual graphs
+        reconstructed_graphs = batch.to_data_list()
+
+        for i in range(len(reconstructed_graphs)):
+            original = ds[i]
+            reconstructed = reconstructed_graphs[i]
+
+            # Check node features, edge indices, and targets match exactly
+            self.assertTrue(torch.equal(original.x, reconstructed.x))
+            self.assertTrue(torch.equal(original.edge_index, reconstructed.edge_index))
+            self.assertTrue(torch.equal(original.y, reconstructed.y))
+
+            # Check positional encodings if present
+            if hasattr(original, "pos_enc"):
+                self.assertTrue(torch.equal(original.pos_enc, reconstructed.pos_enc))

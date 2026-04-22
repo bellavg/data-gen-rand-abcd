@@ -1,70 +1,94 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch_geometric.nn as gnn  # Standard alias for PyG layers
 from torch import Tensor
 from torch_geometric.nn import MessagePassing
 from torch_geometric.typing import Adj
 
-from models.model_utils import get_norm_layer
+# Project Imports
+from models.model_utils import apply_norm, get_norm_layer
 
 
 class VanillaMPNNConv(MessagePassing):
     """
-    A vanilla Message Passing Neural Network layer.
+    A vanilla Message Passing Neural Network layer optimized with PyG components.
     Message: MLP(concat(source_node, target_node, edge_feature))
     Update: MLP(concat(node, aggregated_messages))
     """
 
     def __init__(self, dim_in: int, hid_dim: int, edge_dim: int, norm_type="batch"):
+        # We use 'add' aggregation as it is standard for MPNNs, though
+        # Mean is often more stable for regression tasks.
         super(VanillaMPNNConv, self).__init__(aggr="add")
-        # Message MLP (concatenates x_i, x_j, edge_attr)
-        self.msg_lin1 = nn.Linear(2 * dim_in + edge_dim, hid_dim)
-        self.msg_norm = get_norm_layer(norm_type, hid_dim)
-        self.msg_act = nn.ReLU()
-        self.msg_lin2 = nn.Linear(hid_dim, hid_dim)
-        self.msg_act2 = nn.ReLU()
 
-        # Node Update MLP (concatenates original node features and aggregated messages)
-        self.update_lin1 = nn.Linear(dim_in + hid_dim, hid_dim)
+        # 1. Using gnn.Linear for GNN-specific weight initialization.
+        # This is better for handling the feature distributions in graph-level tasks.
+        self.msg_lin1 = gnn.Linear(2 * dim_in + edge_dim, hid_dim)
+        self.msg_norm = get_norm_layer(norm_type, hid_dim)
+        self.msg_act = nn.LeakyReLU()
+        self.msg_lin2 = gnn.Linear(hid_dim, hid_dim)
+        self.msg_act2 = nn.LeakyReLU()
+
+        # Node Update MLP
+        self.update_lin1 = gnn.Linear(dim_in + hid_dim, hid_dim)
         self.update_norm = get_norm_layer(norm_type, hid_dim)
-        self.update_act = nn.ReLU()
-        self.update_lin2 = nn.Linear(hid_dim, hid_dim)
+        self.update_act = nn.LeakyReLU()
+        self.update_lin2 = gnn.Linear(hid_dim, hid_dim)
 
     def forward(self, x, edge_index, edge_attr, batch=None):
-        # Unsqueeze batch to 2D to prevent PyG MessagePassing from throwing IndexError on node_dim=-2
+        """
+        The batch tensor is explicitly unsqueezed if 1D to prevent indexing errors
+        during the message/update steps in some PyG versions.
+        """
         if batch is not None and batch.dim() == 1:
             batch_in = batch.unsqueeze(-1)
         else:
             batch_in = batch
+
+        # Passing 'batch' into propagate automatically makes it available as
+        # 'batch_i' (destination nodes) and 'batch_j' (source nodes) in message().
         return self.propagate(edge_index, x=x, edge_attr=edge_attr, batch=batch_in)
 
-    def message(self, x_i, x_j, edge_attr, batch_i=None, batch_j=None):
+    def message(self, x_i, x_j, edge_attr, batch_i=None):
+        """
+        Constructs messages. By using batch_i, normalization is performed
+        per-individual graph in the mini-batch.
+        """
         if batch_i is not None and batch_i.dim() == 2:
             batch_i = batch_i.squeeze(-1)
 
+        # Message: Linear -> Graph-Aware Norm -> Activation -> Linear -> Activation
         msg_input = torch.cat([x_i, x_j, edge_attr], dim=-1)
         h = self.msg_lin1(msg_input)
-        from models.model_utils import apply_norm
 
+        # Using the project utility to apply normalization safely with the batch tensor
         h = apply_norm(self.msg_norm, h, batch_i)
         h = self.msg_act(h)
         h = self.msg_lin2(h)
         return self.msg_act2(h)
 
     def update(self, aggr_out, x, batch=None):
+        """
+        Updates node features using aggregated messages.
+        """
         if batch is not None and batch.dim() == 2:
             batch = batch.squeeze(-1)
 
         update_input = torch.cat([x, aggr_out], dim=-1)
         h = self.update_lin1(update_input)
-        from models.model_utils import apply_norm
 
+        # Final update normalization per graph boundary
         h = apply_norm(self.update_norm, h, batch)
         h = self.update_act(h)
         return self.update_lin2(h)
 
 
 class MPNNEncoder(nn.Module):
+    """
+    Encoder for stacking VanillaMPNNConv layers with Jumping Knowledge integration.
+    """
+
     def __init__(
         self,
         hid_dim: int,
@@ -78,16 +102,14 @@ class MPNNEncoder(nn.Module):
     ):
         super(MPNNEncoder, self).__init__()
         self.num_layers = num_layers
-        self.jk_mode = kwargs.get("jk_mode", "cat")  # Default to 'cat' if not provided
+        self.jk_mode = kwargs.get("jk_mode", "cat")
         self.dropout = dropout
 
-        # Project initial embedding purely for Jumping Knowledge uniformity
+        # Use gnn.Linear for the initial projection to hid_dim
         if node_input_dim != hid_dim:
-            self.jk_proj = nn.Linear(node_input_dim, hid_dim)
+            self.jk_proj = gnn.Linear(node_input_dim, hid_dim)
         else:
             self.jk_proj = nn.Identity()
-
-        # First layer expects `node_input_dim`; subsequent layers expect `hid_dim`.
 
         self.convs = nn.ModuleList()
         for i in range(num_layers):
@@ -120,9 +142,10 @@ class MPNNEncoder(nn.Module):
     def forward(
         self, x: Tensor, edge_index: Adj, edge_attr: Tensor, batch: Tensor | None = None
     ):
-
-        # Keep track of uniform dimension sizes for h_list
-        # Project to a uniform hidden dimension for Jumping Knowledge
+        """
+        Forward pass with support for various Jumping Knowledge (JK) modes.
+        The batch tensor is passed to every layer to ensure correct per-graph normalization.
+        """
         x_jk = self.jk_proj(x)
 
         if self.jk_mode == "cat":
@@ -130,15 +153,9 @@ class MPNNEncoder(nn.Module):
             current_x = x
             for i in range(self.num_layers):
                 current_x = self.layer_forward(
-                    current_x,
-                    edge_index=edge_index,
-                    edge_attr=edge_attr,
-                    batch=batch,
-                    layer_idx=i,
+                    current_x, edge_index, edge_attr, batch, i
                 )
-
                 h_list.append(current_x)
-
             return torch.cat(h_list, dim=1)
 
         elif self.jk_mode == "max":
@@ -146,15 +163,9 @@ class MPNNEncoder(nn.Module):
             res = x_jk
             for i in range(self.num_layers):
                 current_x = self.layer_forward(
-                    current_x,
-                    edge_index=edge_index,
-                    edge_attr=edge_attr,
-                    batch=batch,
-                    layer_idx=i,
+                    current_x, edge_index, edge_attr, batch, i
                 )
-
                 res = torch.max(res, current_x)
-
             return res
 
         elif self.jk_mode == "sum":
@@ -162,25 +173,15 @@ class MPNNEncoder(nn.Module):
             res = x_jk
             for i in range(self.num_layers):
                 current_x = self.layer_forward(
-                    current_x,
-                    edge_index=edge_index,
-                    edge_attr=edge_attr,
-                    batch=batch,
-                    layer_idx=i,
+                    current_x, edge_index, edge_attr, batch, i
                 )
-
                 res = res + current_x
-
             return res
 
         elif self.jk_mode == "last":
             current_x = x
             for i in range(self.num_layers):
                 current_x = self.layer_forward(
-                    current_x,
-                    edge_index=edge_index,
-                    edge_attr=edge_attr,
-                    batch=batch,
-                    layer_idx=i,
+                    current_x, edge_index, edge_attr, batch, i
                 )
             return current_x

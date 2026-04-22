@@ -53,39 +53,13 @@ run_clean python --version
 
 cd "$BASE_DIR"
 
-# 3. Install Local Library
-echo "Preparing environment and installing prebuilt PyG extensions (torch-scatter)..."
-run_clean pip install --upgrade pip "setuptools<82" wheel
-
-if ! run_clean python -c "import torch" >/dev/null 2>&1; then
-    echo "Torch not found in venv — installing torch..."
-    run_clean pip install torch
-fi
-
-TORCH_VERSION="$(run_clean python -c 'import torch; print(torch.__version__.split("+")[0])')"
-CUDA_TAG="$(run_clean python -c 'import torch; v=torch.version.cuda; print("cpu" if v is None else f"cu{v.replace(".", "")}")')"
-PYG_WHL_URL="${PYG_WHL_URL:-https://data.pyg.org/whl/torch-${TORCH_VERSION}+${CUDA_TAG}.html}"
-echo "Installing torch-scatter from: $PYG_WHL_URL"
-if ! run_clean pip install --no-deps --only-binary=:all: -f "$PYG_WHL_URL" torch-scatter; then
-    echo "Failed to install binary torch-scatter wheel from $PYG_WHL_URL"
+# 3. Environment sanity check (no pip installs)
+echo "Assuming required Python packages and prebuilt PyG extensions are already installed in the virtualenv."
+if ! run_clean python -c "import torch, optuna, pytorch_lightning, torch_geometric" >/dev/null 2>&1; then
+    echo "Required Python packages not found in venv. Please install them before running this script."
+    echo "Recommended command (run once): pip install -e '.[dev]' --no-deps"
     exit 1
 fi
-
-if ! run_clean python -c "import optuna, pytorch_lightning, lightning, torch_geometric" >/dev/null 2>&1; then
-    echo "Installing missing runtime dependencies..."
-    run_clean pip install \
-        "numpy>=1.23" \
-        "networkx>=3.0" \
-        "pandas>=1.5" \
-        "scipy>=1.10" \
-        "torch-geometric>=2.5" \
-        "optuna>=3.0" \
-        "pytorch-lightning>=2.0" \
-        "lightning>=2.0" \
-        "tqdm>=4.66"
-fi
-
-run_clean pip install -e '.[dev]' --no-deps
 
 # 4. Define Output Paths in Scratch
 WORKSPACE="/scratch-shared/$USER/aig_optuna_run"
@@ -113,8 +87,20 @@ WORKER_COUNT=1
 echo "Launching $WORKER_COUNT Optuna worker process."
 
 # If OOM hangs continue to happen, set this to 0. Otherwise, 8 is faster.
-NUM_WORKERS=0
+NUM_WORKERS=4
 echo "Using num_workers per process: $NUM_WORKERS"
+
+# DataLoader tuning flags (can be overridden via env)
+PIN_MEMORY="${PIN_MEMORY:-true}"
+PERSISTENT_WORKERS="${PERSISTENT_WORKERS:-true}"
+
+EXTRA_FLAGS=()
+if [ "$PIN_MEMORY" = "true" ]; then
+    EXTRA_FLAGS+=(--pin_memory)
+fi
+if [ "$PERSISTENT_WORKERS" = "true" ]; then
+    EXTRA_FLAGS+=(--persistent_workers)
+fi
 
 # 6. Launch Worker 0 (Pinned to GPU 0)
 echo "Starting Worker 0 on GPU 0..."
@@ -126,6 +112,7 @@ CUDA_VISIBLE_DEVICES=0 python -m hp_tuning \
     --log_dir "$LOG_DIR/worker_0" \
     --csv_paths "$CSV_1" "$CSV_2" "$CSV_3" "$CSV_4" \
     --num_workers "$NUM_WORKERS" \
+    "${EXTRA_FLAGS[@]}" \
     > "$LOG_DIR/worker_0.log" 2>&1 &
 PID0=$!
 

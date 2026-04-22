@@ -6,14 +6,14 @@
 #SBATCH --partition=gpu_h100
 #SBATCH --gpus=1                         
 #SBATCH --mem=180G                       
-#SBATCH --array=2-5                      # ONLY LAUNCH 2 TO 5
+#SBATCH --array=1-4                      # ONLY LAUNCH 1 TO 4
 #SBATCH --output=logs/optuna_worker_%a.out 
 
 set -euo pipefail
 
-TASK_ID=${SLURM_ARRAY_TASK_ID:-2}
+TASK_ID=${SLURM_ARRAY_TASK_ID:-1}
 
-SCRIPT_VERSION="2026-04-21 (Optuna Array Workers 2-5 - No Pip Install)"
+SCRIPT_VERSION="2026-04-21 (Optuna Array Workers 1-5 - No Pip Install)"
 
 echo "=========================================="
 echo "JOB: Optuna Hyperparameter Tuning (Worker $TASK_ID)"
@@ -62,7 +62,19 @@ CSV_4="$BASE_DIR/data/designs/design_metadata/algo_C2RS_ml.csv"
 # ---------------------------------------------------------
 # EXECUTE OPTUNA WORKER
 # ---------------------------------------------------------
-NUM_WORKERS=2 
+NUM_WORKERS=6
+
+# DataLoader tuning flags (can be overridden via env)
+PIN_MEMORY="${PIN_MEMORY:-true}"
+PERSISTENT_WORKERS="${PERSISTENT_WORKERS:-true}"
+
+EXTRA_FLAGS=()
+if [ "$PIN_MEMORY" = "true" ]; then
+    EXTRA_FLAGS+=(--pin_memory)
+fi
+if [ "$PERSISTENT_WORKERS" = "true" ]; then
+    EXTRA_FLAGS+=(--persistent_workers)
+fi
 
 echo "Starting Worker $TASK_ID on GPU 0..."
 
@@ -74,6 +86,7 @@ CUDA_VISIBLE_DEVICES=0 python -m hp_tuning \
     --log_dir "$LOG_DIR/worker_${TASK_ID}" \
     --csv_paths "$CSV_1" "$CSV_2" "$CSV_3" "$CSV_4" \
     --num_workers "$NUM_WORKERS" \
+    "${EXTRA_FLAGS[@]}" \
     > "$LOG_DIR/worker_${TASK_ID}.log" 2>&1 &
 PID=$!
 

@@ -46,6 +46,7 @@ class AIGGraphRegressionDataset(Dataset):
         seed: int = 42,
         num_samples: Optional[int] = None,
         num_workers: int = 0,
+        hp_tuning_splits_path: Optional[str | Path] = None,
     ) -> None:
         if isinstance(csv_paths, (str, Path)):
             self.csv_paths = [Path(csv_paths)]
@@ -59,6 +60,7 @@ class AIGGraphRegressionDataset(Dataset):
         self.seed = seed
         self.num_samples = num_samples
         self.num_workers = num_workers
+        self.hp_tuning_splits_path = hp_tuning_splits_path
 
         # Initialize the PE transform factory
         self.pe_transform = get_pe_transform(
@@ -126,8 +128,33 @@ class AIGGraphRegressionDataset(Dataset):
         }
 
     def _apply_split(self, samples: List[GraphSample]) -> List[GraphSample]:
+        # 1. Filter out HP tuning samples if specified
+        if getattr(self, "hp_tuning_splits_path", None) is not None:
+            hp_path = Path(self.hp_tuning_splits_path)
+            if hp_path.is_file():
+                try:
+                    hp_splits = json.loads(hp_path.read_text())
+                    hp_keys = set(
+                        hp_splits.get("train", [])
+                        + hp_splits.get("val", [])
+                        + hp_splits.get("test", [])
+                    )
+                    samples = [s for s in samples if s.graph_path not in hp_keys]
+                except json.JSONDecodeError:
+                    pass
+
+        # 2. Handle when no specific split is requested
         if self.split is None:
+            if self.num_samples is not None:
+                # Shuffle and truncate consistently to match what _create_split_keys does
+                all_keys = [s.graph_path for s in samples]
+                rng = random.Random(self.seed)
+                rng.shuffle(all_keys)
+                selected = set(all_keys[: self.num_samples])
+                return [s for s in samples if s.graph_path in selected]
             return samples
+
+        # 3. Create or load split keys
         all_keys = [s.graph_path for s in samples]
         split_keys = self._load_or_create_split_keys(all_keys)
         selected = set(split_keys[self.split])
