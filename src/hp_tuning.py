@@ -127,7 +127,7 @@ def objective(trial: optuna.Trial, args):
     )
 
     pruning_cb = PyTorchLightningPruningCallback(trial, monitor="val/mae_node")
-    early_stop_cb = EarlyStopping(monitor="val/mae_node", patience=5, mode="min")
+    early_stop_cb = EarlyStopping(monitor="val/mae_node", patience=3, mode="min")
 
     callbacks = [
         pruning_cb,
@@ -140,7 +140,7 @@ def objective(trial: optuna.Trial, args):
 
     # 7. Trainer
     trainer = pl.Trainer(
-        max_epochs=10,
+        max_epochs=5,
         max_time={"hours": 3},
         accelerator="auto",
         devices=1,
@@ -202,7 +202,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--train_samples",
         type=int,
-        default=10000,
+        default=20000,
         help="Number of graphs for HP training",
     )
     args = parser.parse_args()

@@ -47,9 +47,12 @@ class AIGDataModule(pl.LightningDataModule):
     def setup(self, stage: Optional[str] = None) -> None:
         if stage in ("fit", None):
             self.train_ds = self._make_dataset("train", self.train_num_samples)
-            self.val_ds = self._make_dataset("val")
+            # Pass the same limit to val so it knows to use the 10k cache!
+            self.val_ds = self._make_dataset("val", self.train_num_samples)
+
         if stage in ("test", None):
-            self.test_ds = self._make_dataset("test")
+            # Pass the same limit to test
+            self.test_ds = self._make_dataset("test", self.train_num_samples)
 
     def train_dataloader(self) -> DataLoader:
         return DataLoader(

@@ -88,7 +88,11 @@ class AIGGraphRegressionDataset(Dataset):
 
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         algo_tag = "_".join(p.stem for p in self.csv_paths)
-        cache_file = self.cache_dir / f"{algo_tag}_splits.json"
+
+        # Include num_samples in the cache filename so it doesn't collide with full datasets
+        sample_tag = f"_{self.num_samples}" if self.num_samples is not None else "_all"
+        cache_file = self.cache_dir / f"{algo_tag}{sample_tag}_splits.json"
+
         if cache_file.is_file():
             splits = json.loads(cache_file.read_text())
             if all(name in splits for name in ("train", "val", "test")):
@@ -102,6 +106,10 @@ class AIGGraphRegressionDataset(Dataset):
         keys = list(all_keys)
         rng = random.Random(self.seed)
         rng.shuffle(keys)
+
+        # APPLY THE TOTAL LIMIT HERE, BEFORE SPLITTING
+        if self.num_samples is not None:
+            keys = keys[: self.num_samples]
 
         total = sum(self.split_ratios)
         train_f = self.split_ratios[0] / total
@@ -128,7 +136,6 @@ class AIGGraphRegressionDataset(Dataset):
     def _build_samples(self) -> List[GraphSample]:
         samples = self._read_candidate_samples()
         samples = self._apply_split(samples)
-        samples = self._apply_num_samples(samples)
         self._verify_first_sample(samples)
         return samples
 
@@ -172,12 +179,6 @@ class AIGGraphRegressionDataset(Dataset):
                     "pos_enc should be 2D with N rows, got "
                     f"{pe.shape if pe is not None else None}"
                 )
-
-    def _apply_num_samples(self, samples: List[GraphSample]) -> List[GraphSample]:
-        if self.num_samples is None:
-            return samples
-        rng = random.Random(self.seed)
-        return rng.sample(samples, min(self.num_samples, len(samples)))
 
     def __len__(self) -> int:
         return len(self.samples)

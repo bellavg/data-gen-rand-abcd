@@ -123,7 +123,7 @@ class AIGRegressionLightningModule(pl.LightningModule):
             optimizer,
             mode="min",
             factor=0.5,
-            patience=3,
+            patience=2,
             min_lr=min_lr_value,
         )
 
