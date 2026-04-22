@@ -5,11 +5,12 @@
 #SBATCH --cpus-per-task=16
 #SBATCH --partition=gpu_h100
 #SBATCH --gpus=1                         # 1 GPU
+#SBATCH --mem=180G                       # EXPLICITLY REQUEST 180 GB RAM
 #SBATCH --output=logs/optuna_worker2_%j.out # Separate slurm output file
 
 set -euo pipefail
 
-SCRIPT_VERSION="2026-04-21 (Distributed Worker 2)"
+SCRIPT_VERSION="2026-04-21 (Distributed Worker 2 - OOM Safe)"
 
 echo "=========================================="
 echo "JOB: Optuna Hyperparameter Tuning (Worker 2)"
@@ -113,7 +114,8 @@ CSV_4="$BASE_DIR/data/designs/design_metadata/algo_C2RS_ml.csv"
 WORKER_COUNT=1
 echo "Launching $WORKER_COUNT Optuna worker process."
 
-NUM_WORKERS=4 
+# LOWERED TO 2 TO PREVENT OOM KILLER
+NUM_WORKERS=2 
 echo "Using num_workers per process: $NUM_WORKERS"
 
 # 6. Launch Worker 1 (Pinned to GPU 0)
