@@ -109,7 +109,7 @@ class UnifiedGraphBaseModel(nn.Module):
         self,
         x: torch.Tensor,
         edge_index: torch.Tensor,
-        edge_attr: Optional[torch.Tensor],
+        edge_attr: torch.Tensor,
         pos_enc: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         # Project nodes to latent hidden_dim
@@ -136,7 +136,7 @@ class UnifiedGraphBaseModel(nn.Module):
         self,
         x: torch.Tensor,
         edge_index: torch.Tensor,
-        edge_attr: Optional[torch.Tensor],
+        edge_attr: torch.Tensor,
         batch: torch.Tensor | None = None,
         pos_enc: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
