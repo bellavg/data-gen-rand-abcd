@@ -62,7 +62,7 @@ CSV_4="$BASE_DIR/data/designs/design_metadata/algo_C2RS_ml.csv"
 # ---------------------------------------------------------
 # EXECUTE OPTUNA WORKER
 # ---------------------------------------------------------
-NUM_WORKERS=0 
+NUM_WORKERS=2 
 
 echo "Starting Worker $TASK_ID on GPU 0..."
 
