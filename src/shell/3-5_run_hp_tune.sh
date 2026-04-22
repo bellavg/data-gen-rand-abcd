@@ -1,19 +1,19 @@
 #!/bin/bash
-#SBATCH --job-name=aig_opt_4_5
+#SBATCH --job-name=aig_opt
 #SBATCH --time=24:00:00                  
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=16
 #SBATCH --partition=gpu_h100
 #SBATCH --gpus=1                         
 #SBATCH --mem=180G                       
-#SBATCH --array=4-5                      # ONLY LAUNCH 4 AND 5
+#SBATCH --array=2-5                      # ONLY LAUNCH 2 TO 5
 #SBATCH --output=logs/optuna_worker_%a.out 
 
 set -euo pipefail
 
-TASK_ID=${SLURM_ARRAY_TASK_ID:-4}
+TASK_ID=${SLURM_ARRAY_TASK_ID:-2}
 
-SCRIPT_VERSION="2026-04-21 (Optuna Array Workers 4-5 - No Pip Install)"
+SCRIPT_VERSION="2026-04-21 (Optuna Array Workers 2-5 - No Pip Install)"
 
 echo "=========================================="
 echo "JOB: Optuna Hyperparameter Tuning (Worker $TASK_ID)"
@@ -62,7 +62,7 @@ CSV_4="$BASE_DIR/data/designs/design_metadata/algo_C2RS_ml.csv"
 # ---------------------------------------------------------
 # EXECUTE OPTUNA WORKER
 # ---------------------------------------------------------
-NUM_WORKERS=2 
+NUM_WORKERS=0 
 
 echo "Starting Worker $TASK_ID on GPU 0..."
 
