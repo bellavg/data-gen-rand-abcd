@@ -202,7 +202,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--train_samples",
         type=int,
-        default=25000,
+        default=10000,
         help="Number of graphs for HP training",
     )
     args = parser.parse_args()
