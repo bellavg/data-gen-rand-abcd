@@ -100,24 +100,6 @@ mkdir -p "$LOG_DIR"
 
 echo "Using JournalStorage at: $STORAGE_PATH"
 
-python - <<'PY'
-import optuna
-from optuna.storages import JournalStorage, JournalFileStorage
-import os
-
-storage_path = os.environ["STORAGE_PATH"]
-storage = JournalStorage(JournalFileStorage(storage_path))
-
-optuna.create_study(
-    study_name="aig_opt_hp_tuning",
-    storage=storage,
-    load_if_exists=True,
-    direction="minimize",
-    pruner=optuna.pruners.MedianPruner(n_startup_trials=5, n_warmup_steps=5),
-)
-print(f"Optuna JournalStorage ready: {storage_path}")
-PY
-
 # 5. Define Input CSVs
 CSV_1="$BASE_DIR/data/designs/design_metadata/algo_Orchestrate_ml.csv"
 CSV_2="$BASE_DIR/data/designs/design_metadata/algo_Deepsyn_ml.csv"
