@@ -69,10 +69,10 @@ PIN_MEMORY="${PIN_MEMORY:-true}"
 PERSISTENT_WORKERS="${PERSISTENT_WORKERS:-true}"
 
 EXTRA_FLAGS=()
-if [ "$PIN_MEMORY" = "true" ]; then
+if [ "$PIN_MEMORY" = "false" ]; then
     EXTRA_FLAGS+=(--pin_memory)
 fi
-if [ "$PERSISTENT_WORKERS" = "true" ]; then
+if [ "$PERSISTENT_WORKERS" = "false" ]; then
     EXTRA_FLAGS+=(--persistent_workers)
 fi
 
