@@ -87,7 +87,7 @@ WORKER_COUNT=1
 echo "Launching $WORKER_COUNT Optuna worker process."
 
 # If OOM hangs continue to happen, set this to 0. Otherwise, 8 is faster.
-NUM_WORKERS=4
+NUM_WORKERS=1
 echo "Using num_workers per process: $NUM_WORKERS"
 
 # DataLoader tuning flags (can be overridden via env)
