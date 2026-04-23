@@ -38,7 +38,7 @@ logging.getLogger("pytorch_lightning").setLevel(logging.ERROR)
 
 def objective(trial: optuna.Trial, args):
     # 1. Global Hyperparameters
-    batch_size = trial.suggest_categorical("batch_size", [4, 8, 16, 32])
+    batch_size = trial.suggest_categorical("batch_size", [4, 8, 16, 32, 64])
     lr = trial.suggest_float("lr", 1e-4, 1e-2, log=True)
     huber_delta = trial.suggest_float("huber_delta", 0.5, 2.0)
 
