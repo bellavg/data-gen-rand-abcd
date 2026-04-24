@@ -38,7 +38,7 @@ logging.getLogger("pytorch_lightning").setLevel(logging.ERROR)
 
 def objective(trial: optuna.Trial, args):
     # 1. Global Hyperparameters
-    batch_size = trial.suggest_categorical("batch_size", [4, 8, 16, 32, 64])
+    batch_size = trial.suggest_categorical("batch_size", [4, 8, 16, 32])
     lr = trial.suggest_float("lr", 1e-4, 1e-2, log=True)
     huber_delta = trial.suggest_float("huber_delta", 0.5, 2.0)
 
@@ -139,8 +139,8 @@ def objective(trial: optuna.Trial, args):
 
         # 7. Trainer
         trainer = pl.Trainer(
-            max_epochs=5,
-            max_time={"hours": 3},
+            max_epochs=10,
+            max_time={"hours": 6},
             accelerator="auto",
             devices=1,
             callbacks=[pruning_cb, early_stop_cb],
@@ -216,7 +216,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--train_samples",
         type=int,
-        default=20000,
+        default=50000,
         help="Number of graphs for HP training",
     )
     args = parser.parse_args()
