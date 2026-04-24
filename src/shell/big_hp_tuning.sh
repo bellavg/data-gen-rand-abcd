@@ -6,14 +6,14 @@
 #SBATCH --partition=gpu_h100
 #SBATCH --gpus=1
 #SBATCH --mem=180G
-#SBATCH --array=1-5                      # ONLY LAUNCH 1 TO 5
+#SBATCH --array=1-3                      # ONLY LAUNCH 1 TO 3
 #SBATCH --output=logs/big_optuna_worker_%a.out
 
 set -euo pipefail
 
 TASK_ID=${SLURM_ARRAY_TASK_ID:-1}
 
-SCRIPT_VERSION="2026-04-24 (Big Optuna Array Workers 1-5 - No Pip Install)"
+SCRIPT_VERSION="2026-04-24 (Big Optuna Array Workers 1-3 - No Pip Install)"
 
 echo "=========================================="
 echo "JOB: Big Optuna Hyperparameter Tuning (Worker $TASK_ID)"
