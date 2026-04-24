@@ -2,9 +2,9 @@ import optuna
 from optuna.storages import JournalFileStorage, JournalStorage
 
 # 1. Connect to your existing study
-db_path = "/scratch-shared/igardner1/aig_optuna_run/optuna_study.log"
+db_path = "/scratch-shared/igardner1/big_optuna_run/optuna_study.log"
 storage = JournalStorage(JournalFileStorage(db_path))
-study = optuna.load_study(study_name="aig_opt_hp_tuning", storage=storage)
+study = optuna.load_study(study_name="big_optuna_hp_tuning", storage=storage)
 
 trials_to_retry = []
 
