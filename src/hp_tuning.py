@@ -177,8 +177,15 @@ def objective(trial: optuna.Trial, args):
         # MANDATORY CLEANUP: Prevents RAM/VRAM accumulation across trials
         if trainer:
             del trainer
+
+        # Add this aggressive DataLoader cleanup:
         if datamodule:
+            if hasattr(datamodule, "train_dataloader"):
+                datamodule.train_dataloader()._iterator = None
+            if hasattr(datamodule, "val_dataloader"):
+                datamodule.val_dataloader()._iterator = None
             del datamodule
+
         if model:
             del model
 
