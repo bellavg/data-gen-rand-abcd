@@ -38,7 +38,7 @@ logging.getLogger("pytorch_lightning").setLevel(logging.ERROR)
 
 def objective(trial: optuna.Trial, args):
     # 1. Global Hyperparameters
-    batch_size = trial.suggest_categorical("batch_size", [4, 8, 16, 32])
+    batch_size = trial.suggest_categorical("batch_size", [4, 8, 16])
     lr = trial.suggest_float("lr", 1e-4, 1e-2, log=True)
     huber_delta = trial.suggest_float("huber_delta", 0.5, 2.0)
 
@@ -55,7 +55,7 @@ def objective(trial: optuna.Trial, args):
         ["none", "level", "pi_paths", "local_sp_sum"],
     )
     pos_enc_dim = (
-        trial.suggest_categorical("pos_enc_dim", [16, 32, 64, 128, 256])
+        trial.suggest_categorical("pos_enc_dim", [32, 64, 128, 256])
         if pe_type != "none"
         else 0
     )
@@ -73,7 +73,7 @@ def objective(trial: optuna.Trial, args):
 
     encoder_kwargs["hid_dim"] = hidden_dim
     if encoder_name in ["transformer_conv", "graphgps"]:
-        encoder_kwargs["heads"] = trial.suggest_categorical("heads", [2, 4, 8])
+        encoder_kwargs["heads"] = trial.suggest_categorical("heads", [2, 4])
 
     if encoder_name == "egin":
         encoder_kwargs["num_mlp_layers"] = trial.suggest_int("num_mlp_layers", 2, 4)
@@ -84,7 +84,7 @@ def objective(trial: optuna.Trial, args):
             "egin_edge_mlp", [True, False]
         )
         encoder_kwargs["edge_hidden_dim"] = trial.suggest_categorical(
-            "edge_hidden_dim", [8, 16, 32, 64, 128]
+            "edge_hidden_dim", [32, 64, 128]
         )
 
     # --- NEW: PRINT TRIAL PARAMETERS ---
@@ -101,7 +101,7 @@ def objective(trial: optuna.Trial, args):
 
     try:
         # 4. Data Module
-        workers = getattr(args, "num_workers", 4)
+        workers = getattr(args, "num_workers", 2)
         persistent = getattr(args, "persistent_workers", False)
         pin_memory = getattr(args, "pin_memory", False)
 
@@ -198,7 +198,7 @@ if __name__ == "__main__":
         "--checkpoint_dir", type=str, required=True, help="Checkpoint directory"
     )
     parser.add_argument("--csv_paths", nargs="+", required=True, help="Paths to CSVs")
-    parser.add_argument("--num_workers", type=int, default=4, help="DataLoader workers")
+    parser.add_argument("--num_workers", type=int, default=2, help="DataLoader workers")
     parser.add_argument(
         "--pin_memory",
         action="store_true",
