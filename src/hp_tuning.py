@@ -163,30 +163,26 @@ def objective(trial: optuna.Trial, args):
     except torch.OutOfMemoryError:
         msg = f"CUDA Out of Memory. [Trial {trial.number}] with Params: {trial.params}"
         print(f"\n{msg}")
-        raise optuna.TrialPruned(msg)
+        e = None
+        raise optuna.TrialPruned(msg) from None
 
     except RuntimeError as e:
         if "out of memory" in str(e).lower():
             msg = f"System/CUDA OOM (RuntimeError). [Trial {trial.number}] with Params: {trial.params}"
             print(f"\n{msg}")
-            raise optuna.TrialPruned(msg)
+            e = None
+            raise optuna.TrialPruned(msg) from None
         else:
             raise e
 
     finally:
-        # MANDATORY CLEANUP: Prevents RAM/VRAM accumulation across trials
-        if trainer:
+        if "trainer" in locals() and trainer:
             del trainer
 
-        # Add this aggressive DataLoader cleanup:
-        if datamodule:
-            if hasattr(datamodule, "train_dataloader"):
-                datamodule.train_dataloader()._iterator = None
-            if hasattr(datamodule, "val_dataloader"):
-                datamodule.val_dataloader()._iterator = None
+        if "datamodule" in locals() and datamodule:
             del datamodule
 
-        if model:
+        if "model" in locals() and model:
             del model
 
         gc.collect()
