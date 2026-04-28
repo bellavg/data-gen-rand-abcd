@@ -57,18 +57,20 @@ class AIGRegressionLightningModule(pl.LightningModule):
 
         if getattr(self, "_trainer", None) is not None:
             batch_size = getattr(batch, "num_graphs", None)
+
+            # FIX: Explicitly call .detach() and disable sync_dist
             self.log(
                 f"{prefix}/loss",
-                loss,
+                loss.detach(),  # Detach the graph!
                 batch_size=batch_size,
-                sync_dist=True,
+                sync_dist=False,  # Disable sync buffer for 1 GPU
                 prog_bar=True,
             )
             self.log(
                 f"{prefix}/mae_node",
-                mae_node_opt,
+                mae_node_opt.detach(),  # Detach the graph!
                 batch_size=batch_size,
-                sync_dist=True,
+                sync_dist=False,  # Disable sync buffer for 1 GPU
             )
 
         return loss

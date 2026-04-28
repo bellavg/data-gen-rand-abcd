@@ -85,6 +85,8 @@ class AIGGraphRegressionDataset(Dataset):
         ]
 
     def _load_or_create_split_keys(self, all_keys: List[str]) -> Dict[str, List[str]]:
+        import uuid  # You can also move this to the top of src/data/dataset.py
+
         if self.cache_dir is None or self.split is None:
             return self._create_split_keys(all_keys)
 
@@ -96,12 +98,22 @@ class AIGGraphRegressionDataset(Dataset):
         cache_file = self.cache_dir / f"{algo_tag}{sample_tag}_splits.json"
 
         if cache_file.is_file():
-            splits = json.loads(cache_file.read_text())
-            if all(name in splits for name in ("train", "val", "test")):
-                return splits
+            try:
+                splits = json.loads(cache_file.read_text())
+                if all(name in splits for name in ("train", "val", "test")):
+                    return splits
+            except json.JSONDecodeError:
+                # If another worker is currently writing directly to the file without atomic renames,
+                # it might be corrupted/empty. We catch that here and safely overwrite it below.
+                pass
 
         split_keys = self._create_split_keys(all_keys)
-        cache_file.write_text(json.dumps(split_keys, indent=2, sort_keys=True))
+
+        # --- FIX: Atomic write using a unique temporary file ---
+        temp_file = cache_file.with_suffix(f".tmp_{uuid.uuid4().hex[:8]}")
+        temp_file.write_text(json.dumps(split_keys, indent=2, sort_keys=True))
+        temp_file.rename(cache_file)  # This operation is atomic on Linux/Snellius
+
         return split_keys
 
     def _create_split_keys(self, all_keys: List[str]) -> Dict[str, List[str]]:
