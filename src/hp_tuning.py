@@ -28,7 +28,6 @@ except ModuleNotFoundError:
 
 from models.lightning_model import AIGRegressionLightningModule
 
-torch.multiprocessing.set_sharing_strategy("file_system")
 # 1. Suppress standard Python DeprecationWarnings and UserWarnings
 warnings.filterwarnings("ignore")
 
@@ -176,12 +175,21 @@ def objective(trial: optuna.Trial, args):
             raise e
 
     finally:
+        # 1. Break the Optuna Callback -> Trainer circular reference
+        if "pruning_cb" in locals() and pruning_cb:
+            pruning_cb.trainer = None
+        if "early_stop_cb" in locals() and early_stop_cb:
+            early_stop_cb.trainer = None
+
+        # 2. Obliterate the Trainer internals
         if "trainer" in locals() and trainer:
+            trainer.callbacks = []
+            trainer.loggers = []
             del trainer
 
+        # 3. Obliterate DataModule & Model
         if "datamodule" in locals() and datamodule:
             del datamodule
-
         if "model" in locals() and model:
             del model
 

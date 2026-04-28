@@ -64,7 +64,7 @@ CSV_4="$BASE_DIR/data/designs/design_metadata/algo_C2RS_ml.csv"
 # ---------------------------------------------------------
 # EXECUTE OPTUNA WORKER (big run)
 # ---------------------------------------------------------
-NUM_WORKERS=0
+NUM_WORKERS=4
 
 # DataLoader tuning flags (can be overridden via env)
 PIN_MEMORY="${PIN_MEMORY:-false}"
@@ -80,7 +80,7 @@ fi
 
 echo "Starting Big Worker $TASK_ID on GPU 0..."
 
-CUDA_VISIBLE_DEVICES=0 python -m hp_tuning \
+CUDA_VISIBLE_DEVICES=0 python -u -m hp_tuning \
     --db_url "$STORAGE_PATH" \
     --study_name "$STUDY_NAME" \
     --checkpoint_dir "$CHECKPOINT_DIR" \
