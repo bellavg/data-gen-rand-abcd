@@ -56,7 +56,7 @@ class AIGRegressionLightningModule(pl.LightningModule):
         mae_node_opt = F.l1_loss(preds.squeeze(-1), targets.squeeze(-1))
 
         if getattr(self, "_trainer", None) is not None:
-            batch_size = getattr(batch, "num_graphs", None)
+            batch_size = getattr(batch, "num_graphs", 1)
 
             # FIX: Explicitly call .detach() and disable sync_dist
             self.log(
@@ -78,10 +78,12 @@ class AIGRegressionLightningModule(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         if hasattr(self.model.encoder, "redraw_projection"):
             self.model.encoder.redraw_projection.redraw_projections()
-        return self._compute_loss_and_metrics(batch, batch_idx, prefix="train")
+        self._compute_loss_and_metrics(batch, batch_idx, prefix="train")
+        
 
     def validation_step(self, batch, batch_idx):
-        return self._compute_loss_and_metrics(batch, batch_idx, prefix="val")
+        self._compute_loss_and_metrics(batch, batch_idx, prefix="val")
+    
 
     def test_step(self, batch, batch_idx):
         return self._compute_loss_and_metrics(batch, batch_idx, prefix="test")

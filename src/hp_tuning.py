@@ -162,7 +162,6 @@ def objective(trial: optuna.Trial, args):
     except torch.OutOfMemoryError:
         msg = f"CUDA Out of Memory. [Trial {trial.number}] with Params: {trial.params}"
         print(f"\n{msg}")
-        e = None
         raise optuna.TrialPruned(msg) from None
 
     except RuntimeError as e:
