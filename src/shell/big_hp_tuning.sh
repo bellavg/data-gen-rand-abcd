@@ -1,12 +1,12 @@
 #!/bin/bash
 #SBATCH --job-name=big_optuna
-#SBATCH --time=24:00:00
+#SBATCH --time=48:00:00
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=16
 #SBATCH --partition=gpu_h100
 #SBATCH --gpus=1
 #SBATCH --mem=180G
-#SBATCH --array=1-3                      # ONLY LAUNCH 1 TO 3
+#SBATCH --array=1-2                      # ONLY LAUNCH 1 TO 2
 #SBATCH --output=logs/big_optuna_worker_%a.out
 
 set -euo pipefail
@@ -65,6 +65,8 @@ CSV_4="$BASE_DIR/data/designs/design_metadata/algo_C2RS_ml.csv"
 # EXECUTE OPTUNA WORKER (big run)
 # ---------------------------------------------------------
 NUM_WORKERS=4
+
+export MALLOC_ARENA_MAX=2
 
 # DataLoader tuning flags (can be overridden via env)
 PIN_MEMORY="${PIN_MEMORY:-false}"

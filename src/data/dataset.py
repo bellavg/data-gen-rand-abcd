@@ -35,6 +35,8 @@ class AIGGraphRegressionDataset(Dataset):
     - x, edge_index, edge_attr, level, pi_paths, local_sp_sum
     """
 
+    _cached_candidate_samples: Optional[List[GraphSample]] = None
+
     def __init__(
         self,
         csv_paths: str | Path | List[str | Path],
@@ -70,19 +72,26 @@ class AIGGraphRegressionDataset(Dataset):
         self.samples = self._build_samples()
 
     def _read_candidate_samples(self) -> List[GraphSample]:
+        if AIGGraphRegressionDataset._cached_candidate_samples is not None:
+            return AIGGraphRegressionDataset._cached_candidate_samples
+
         df = pd.concat(
             [pd.read_csv(p, dtype=str).fillna("") for p in self.csv_paths],
             ignore_index=True,
         )
         df["optimizability"] = df["optimizability"].astype(float)
 
-        return [
+        # --- FIX 3: Store to the cache before returning ---
+        samples = [
             GraphSample(
                 graph_path=row["unoptimized_graph_path"],
                 y_node_opt=row["optimizability"],
             )
             for row in df.to_dict("records")
         ]
+
+        AIGGraphRegressionDataset._cached_candidate_samples = samples
+        return samples
 
     def _load_or_create_split_keys(self, all_keys: List[str]) -> Dict[str, List[str]]:
         import uuid  # You can also move this to the top of src/data/dataset.py
