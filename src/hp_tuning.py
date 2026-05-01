@@ -35,6 +35,19 @@ warnings.filterwarnings("ignore")
 logging.getLogger("pytorch_lightning").setLevel(logging.ERROR)
 
 
+def _is_oom_like_runtime_error(exc: RuntimeError) -> bool:
+    text = str(exc).lower()
+    return (
+        "out of memory" in text
+        or "oom" in text
+        or (
+            "dataloader worker" in text
+            and "killed by signal" in text
+            and "killed" in text
+        )
+    )
+
+
 def objective(trial: optuna.Trial, args):
     # 1. Global Hyperparameters
     batch_size = trial.suggest_categorical("batch_size", [4, 8, 16])
@@ -103,6 +116,8 @@ def objective(trial: optuna.Trial, args):
         workers = getattr(args, "num_workers", 2)
         persistent = getattr(args, "persistent_workers", False)
         pin_memory = getattr(args, "pin_memory", False)
+        prefetch_factor = getattr(args, "prefetch_factor", 1)
+        dynamic_batching = getattr(args, "dynamic_batching", False)
 
         datamodule = AIGDataModule(
             csv_paths=args.csv_paths,
@@ -113,6 +128,8 @@ def objective(trial: optuna.Trial, args):
             num_workers=workers,
             persistent_workers=persistent,
             pin_memory=pin_memory,
+            prefetch_factor=prefetch_factor,
+            dynamic_batching=dynamic_batching,
         )
 
         # 5. Model Setup
@@ -165,8 +182,8 @@ def objective(trial: optuna.Trial, args):
         raise optuna.TrialPruned(msg) from None
 
     except RuntimeError as e:
-        if "out of memory" in str(e).lower():
-            msg = f"System/CUDA OOM (RuntimeError). [Trial {trial.number}] with Params: {trial.params}"
+        if _is_oom_like_runtime_error(e):
+            msg = f"OOM-like RuntimeError. [Trial {trial.number}] with Params: {trial.params}. Error: {e}"
             print(f"\n{msg}")
             e = None
             raise optuna.TrialPruned(msg) from None
@@ -218,6 +235,17 @@ if __name__ == "__main__":
         "--persistent_workers",
         action="store_true",
         help="Keep DataLoader workers alive between batches.",
+    )
+    parser.add_argument(
+        "--prefetch_factor",
+        type=int,
+        default=1,
+        help="Batches prefetched per worker. Lower values reduce host-memory pressure.",
+    )
+    parser.add_argument(
+        "--dynamic_batching",
+        action="store_true",
+        help="Enable dynamic batch construction based on graph size.",
     )
     parser.add_argument(
         "--cache_dir", type=str, help="Directory to save dataset splits"

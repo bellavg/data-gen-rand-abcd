@@ -78,12 +78,10 @@ class AIGRegressionLightningModule(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         if hasattr(self.model.encoder, "redraw_projection"):
             self.model.encoder.redraw_projection.redraw_projections()
-        self._compute_loss_and_metrics(batch, batch_idx, prefix="train")
-        
+        return self._compute_loss_and_metrics(batch, batch_idx, prefix="train")
 
     def validation_step(self, batch, batch_idx):
-        self._compute_loss_and_metrics(batch, batch_idx, prefix="val")
-    
+        return self._compute_loss_and_metrics(batch, batch_idx, prefix="val")
 
     def test_step(self, batch, batch_idx):
         return self._compute_loss_and_metrics(batch, batch_idx, prefix="test")
