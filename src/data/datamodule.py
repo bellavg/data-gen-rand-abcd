@@ -127,6 +127,10 @@ class AIGDataModule(pl.LightningDataModule):
             self.train_ds = self._make_dataset("train", self.train_num_samples)
             # Pass the same limit to val so it knows to use the 10k cache!
             self.val_ds = self._make_dataset("val", self.train_num_samples)
+            # Pre-compute node sizes once per trial (result is disk-cached so
+            # subsequent trials/workers pay < 1 s instead of scanning 50 K files).
+            if self.dynamic_batching:
+                self._train_sizes: List[int] = self.train_ds.get_num_nodes_list()
 
         if stage in ("test", None):
             # Pass the same limit to test
@@ -134,7 +138,7 @@ class AIGDataModule(pl.LightningDataModule):
 
     def train_dataloader(self) -> DataLoader:
         if self.dynamic_batching:
-            sizes = self.train_ds.get_num_nodes_list()
+            sizes = getattr(self, "_train_sizes", None) or self.train_ds.get_num_nodes_list()
             sampler = BalancedDynamicBatchSampler(
                 sizes,
                 batch_size=self.batch_size,

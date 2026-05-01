@@ -253,6 +253,14 @@ class AIGGraphRegressionDataset(Dataset):
         data_obj.y = torch.tensor([[sample.y_node_opt]], dtype=torch.float32)
         return data_obj
 
+    def _sizes_cache_path(self) -> Optional[Path]:
+        """Disk cache path for node-size list, keyed by CSV set + sample count."""
+        if self.cache_dir is None:
+            return None
+        algo_tag = "_".join(p.stem for p in self.csv_paths)
+        sample_tag = f"_{self.num_samples}" if self.num_samples is not None else "_all"
+        return self.cache_dir / f"{algo_tag}{sample_tag}_node_sizes.json"
+
     def _num_nodes_for_sample(self, sample: GraphSample) -> int:
         cached = AIGGraphRegressionDataset._cached_graph_num_nodes.get(sample.graph_path)
         if cached is not None:
@@ -264,7 +272,33 @@ class AIGGraphRegressionDataset(Dataset):
         return num_nodes
 
     def get_num_nodes_list(self) -> List[int]:
-        return [self._num_nodes_for_sample(sample) for sample in self.samples]
+        """Return per-sample node counts.  First call computes and caches to disk;
+        subsequent calls (even in different processes / workers / trials) load in
+        < 1 s from a ~300 KB JSON file rather than scanning 50 K .pt files."""
+        import uuid
+
+        sizes_cache_path = self._sizes_cache_path()
+
+        # --- fast path: disk cache hit ---
+        if sizes_cache_path is not None and sizes_cache_path.is_file():
+            try:
+                data = json.loads(sizes_cache_path.read_text())
+                if isinstance(data, list) and len(data) == len(self.samples):
+                    return data
+            except (json.JSONDecodeError, OSError):
+                pass  # fall through to recompute
+
+        # --- slow path: load every .pt file (uses in-process dict cache) ---
+        sizes = [self._num_nodes_for_sample(sample) for sample in self.samples]
+
+        # --- persist to disk for all future processes/workers/trials ---
+        if sizes_cache_path is not None:
+            sizes_cache_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = sizes_cache_path.with_suffix(f".tmp_{uuid.uuid4().hex[:8]}")
+            tmp.write_text(json.dumps(sizes))
+            tmp.rename(sizes_cache_path)  # atomic on Linux
+
+        return sizes
 
 
 __all__ = ["AIGGraphRegressionDataset", "GraphSample"]
