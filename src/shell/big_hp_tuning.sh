@@ -1,17 +1,17 @@
 #!/bin/bash
 #SBATCH --job-name=big_optuna
-#SBATCH --time=48:00:00
+#SBATCH --time=72:00:00
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=16
 #SBATCH --partition=gpu_h100
 #SBATCH --gpus=1
 #SBATCH --mem=180G
-#SBATCH --array=1-3                      # ONLY LAUNCH 1 TO 3
-#SBATCH --output=logs/big_optuna_worker_%a.out
+#SBATCH --output=logs/big_optuna_worker_1.out
 
 set -euo pipefail
 
-TASK_ID=${SLURM_ARRAY_TASK_ID:-1}
+# No array: always worker 1
+TASK_ID=1
 
 SCRIPT_VERSION="2026-04-24 (Big Optuna Array Workers 1-3 - No Pip Install)"
 
@@ -102,7 +102,7 @@ CUDA_VISIBLE_DEVICES=0 python -u -m hp_tuning \
     --csv_paths "$CSV_1" "$CSV_2" "$CSV_3" "$CSV_4" \
     --num_workers "$NUM_WORKERS" \
     "${EXTRA_FLAGS[@]}" \
-    --train_samples 50000 \
+    --train_samples 20000 \
     > "$LOG_DIR/worker_${TASK_ID}.log" 2>&1 &
 PID=$!
 
