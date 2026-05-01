@@ -35,7 +35,8 @@ class AIGGraphRegressionDataset(Dataset):
     - x, edge_index, edge_attr, level, pi_paths, local_sp_sum
     """
 
-    _cached_candidate_samples: Optional[List[GraphSample]] = None
+    _cached_candidate_samples: Dict[Tuple[str, ...], List[GraphSample]] = {}
+    _cached_graph_num_nodes: Dict[str, int] = {}
 
     def __init__(
         self,
@@ -72,8 +73,10 @@ class AIGGraphRegressionDataset(Dataset):
         self.samples = self._build_samples()
 
     def _read_candidate_samples(self) -> List[GraphSample]:
-        if AIGGraphRegressionDataset._cached_candidate_samples is not None:
-            return AIGGraphRegressionDataset._cached_candidate_samples
+        cache_key = tuple(sorted(str(p.resolve()) for p in self.csv_paths))
+        cached = AIGGraphRegressionDataset._cached_candidate_samples.get(cache_key)
+        if cached is not None:
+            return cached
 
         df = pd.concat(
             [pd.read_csv(p, dtype=str).fillna("") for p in self.csv_paths],
@@ -90,7 +93,7 @@ class AIGGraphRegressionDataset(Dataset):
             for row in df.to_dict("records")
         ]
 
-        AIGGraphRegressionDataset._cached_candidate_samples = samples
+        AIGGraphRegressionDataset._cached_candidate_samples[cache_key] = samples
         return samples
 
     def _load_or_create_split_keys(self, all_keys: List[str]) -> Dict[str, List[str]]:
@@ -249,6 +252,19 @@ class AIGGraphRegressionDataset(Dataset):
         # Keep targets on the Data object for graph-level regression.
         data_obj.y = torch.tensor([[sample.y_node_opt]], dtype=torch.float32)
         return data_obj
+
+    def _num_nodes_for_sample(self, sample: GraphSample) -> int:
+        cached = AIGGraphRegressionDataset._cached_graph_num_nodes.get(sample.graph_path)
+        if cached is not None:
+            return cached
+
+        data_obj = torch.load(sample.graph_path, map_location="cpu", weights_only=False)
+        num_nodes = int(data_obj.x.shape[0])
+        AIGGraphRegressionDataset._cached_graph_num_nodes[sample.graph_path] = num_nodes
+        return num_nodes
+
+    def get_num_nodes_list(self) -> List[int]:
+        return [self._num_nodes_for_sample(sample) for sample in self.samples]
 
 
 __all__ = ["AIGGraphRegressionDataset", "GraphSample"]

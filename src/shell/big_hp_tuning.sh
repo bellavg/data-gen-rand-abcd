@@ -6,7 +6,7 @@
 #SBATCH --partition=gpu_h100
 #SBATCH --gpus=1
 #SBATCH --mem=180G
-#SBATCH --array=1-2                      # ONLY LAUNCH 1 TO 2
+#SBATCH --array=1-3                      # ONLY LAUNCH 1 TO 3
 #SBATCH --output=logs/big_optuna_worker_%a.out
 
 set -euo pipefail
@@ -64,13 +64,15 @@ CSV_4="$BASE_DIR/data/designs/design_metadata/algo_C2RS_ml.csv"
 # ---------------------------------------------------------
 # EXECUTE OPTUNA WORKER (big run)
 # ---------------------------------------------------------
-NUM_WORKERS=4
+NUM_WORKERS="${NUM_WORKERS:-2}"
 
 export MALLOC_ARENA_MAX=2
 
 # DataLoader tuning flags (can be overridden via env)
 PIN_MEMORY="${PIN_MEMORY:-false}"
 PERSISTENT_WORKERS="${PERSISTENT_WORKERS:-false}"
+PREFETCH_FACTOR="${PREFETCH_FACTOR:-1}"
+DYNAMIC_BATCHING="${DYNAMIC_BATCHING:-true}"
 
 EXTRA_FLAGS=()
 if [ "$PIN_MEMORY" = "true" ]; then
@@ -79,6 +81,15 @@ fi
 if [ "$PERSISTENT_WORKERS" = "true" ]; then
     EXTRA_FLAGS+=(--persistent_workers)
 fi
+
+if [ "$NUM_WORKERS" -gt 0 ]; then
+    EXTRA_FLAGS+=(--prefetch_factor "$PREFETCH_FACTOR")
+fi
+if [ "$DYNAMIC_BATCHING" = "true" ]; then
+    EXTRA_FLAGS+=(--dynamic_batching)
+fi
+
+echo "DataLoader config: num_workers=$NUM_WORKERS pin_memory=$PIN_MEMORY persistent_workers=$PERSISTENT_WORKERS prefetch_factor=$PREFETCH_FACTOR dynamic_batching=$DYNAMIC_BATCHING"
 
 echo "Starting Big Worker $TASK_ID on GPU 0..."
 
@@ -90,6 +101,7 @@ CUDA_VISIBLE_DEVICES=0 python -u -m hp_tuning \
     --log_dir "$LOG_DIR/worker_${TASK_ID}" \
     --csv_paths "$CSV_1" "$CSV_2" "$CSV_3" "$CSV_4" \
     --num_workers "$NUM_WORKERS" \
+    "${EXTRA_FLAGS[@]}" \
     --train_samples 50000 \
     > "$LOG_DIR/worker_${TASK_ID}.log" 2>&1 &
 PID=$!

@@ -517,3 +517,47 @@ class TestAIGDataModule(unittest.TestCase):
             # Check positional encodings if present
             if hasattr(original, "pos_enc"):
                 self.assertTrue(torch.equal(original.pos_enc, reconstructed.pos_enc))
+
+
+class TestBalancedDynamicBatchSampler(unittest.TestCase):
+    def test_pairs_large_and_small_in_same_batch(self):
+        from data.datamodule import BalancedDynamicBatchSampler
+
+        sizes = [1, 2, 3, 4, 100, 101, 102, 103]
+        sampler = BalancedDynamicBatchSampler(
+            sizes, batch_size=4, shuffle=False, seed=123
+        )
+
+        batches = list(sampler)
+        self.assertEqual(len(batches), 2)
+
+        for batch in batches:
+            batch_sizes = [sizes[i] for i in batch]
+            self.assertEqual(len(batch), 4)
+            self.assertGreaterEqual(max(batch_sizes), 100)
+            self.assertLessEqual(min(batch_sizes), 4)
+
+        flattened = [idx for batch in batches for idx in batch]
+        self.assertEqual(len(flattened), len(sizes))
+        self.assertEqual(set(flattened), set(range(len(sizes))))
+
+    def test_pairing_reduces_peak_batch_node_total(self):
+        from data.datamodule import BalancedDynamicBatchSampler
+
+        sizes = [1, 2, 3, 4, 100, 101, 102, 103]
+        batch_size = 4
+
+        sampler = BalancedDynamicBatchSampler(
+            sizes, batch_size=batch_size, shuffle=False, seed=7
+        )
+        dynamic_batches = list(sampler)
+        dynamic_totals = [sum(sizes[i] for i in batch) for batch in dynamic_batches]
+
+        # Baseline: descending contiguous chunks, which tend to pack large graphs.
+        descending_indices = sorted(range(len(sizes)), key=lambda i: sizes[i], reverse=True)
+        baseline_totals = []
+        for start in range(0, len(sizes), batch_size):
+            chunk = descending_indices[start : start + batch_size]
+            baseline_totals.append(sum(sizes[i] for i in chunk))
+
+        self.assertLess(max(dynamic_totals), max(baseline_totals))

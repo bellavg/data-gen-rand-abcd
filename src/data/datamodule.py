@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import random
 from pathlib import Path
 from typing import List, Optional, Tuple
 
@@ -7,6 +8,60 @@ import pytorch_lightning as pl
 from torch_geometric.loader import DataLoader
 
 from data.dataset import AIGGraphRegressionDataset
+
+
+class BalancedDynamicBatchSampler:
+    """Build fixed-cardinality batches that pair large and small graphs.
+
+    Batch size stays equal to the tuned `batch_size`, while ordering is chosen
+    to reduce collisions of multiple very large graphs in the same batch.
+    """
+
+    def __init__(
+        self,
+        sizes: List[int],
+        *,
+        batch_size: int,
+        shuffle: bool,
+        seed: int,
+    ) -> None:
+        self.sizes = sizes
+        self.batch_size = max(1, batch_size)
+        self.shuffle = shuffle
+        self.seed = seed
+        self._epoch = 0
+
+    def __len__(self) -> int:
+        n = len(self.sizes)
+        return (n + self.batch_size - 1) // self.batch_size
+
+    def __iter__(self):
+        rng = random.Random(self.seed + self._epoch)
+        self._epoch += 1
+
+        indices = sorted(range(len(self.sizes)), key=lambda i: self.sizes[i])
+        left = 0
+        right = len(indices) - 1
+        batches: List[List[int]] = []
+
+        while left <= right:
+            batch: List[int] = []
+            take_large = True
+            while left <= right and len(batch) < self.batch_size:
+                if take_large:
+                    batch.append(indices[right])
+                    right -= 1
+                else:
+                    batch.append(indices[left])
+                    left += 1
+                take_large = not take_large
+            batches.append(batch)
+
+        if self.shuffle:
+            rng.shuffle(batches)
+
+        for batch in batches:
+            yield batch
 
 
 class AIGDataModule(pl.LightningDataModule):
@@ -22,6 +77,8 @@ class AIGDataModule(pl.LightningDataModule):
         num_workers: int = 6,
         persistent_workers: bool = False,
         pin_memory: bool = False,
+        prefetch_factor: int = 1,
+        dynamic_batching: bool = False,
         train_num_samples: Optional[int] = None,
         hp_tuning_splits_path: Optional[str | Path] = None,
     ) -> None:
@@ -35,8 +92,22 @@ class AIGDataModule(pl.LightningDataModule):
         self.num_workers = num_workers
         self.persistent_workers = persistent_workers
         self.pin_memory = pin_memory
+        self.prefetch_factor = prefetch_factor
+        self.dynamic_batching = dynamic_batching
         self.train_num_samples = train_num_samples
         self.hp_tuning_splits_path = hp_tuning_splits_path
+
+    def _loader_kwargs(self, *, include_batch_size: bool = True) -> dict:
+        kwargs = {
+            "num_workers": self.num_workers,
+            "pin_memory": self.pin_memory,
+        }
+        if include_batch_size:
+            kwargs["batch_size"] = self.batch_size
+        if self.num_workers > 0:
+            kwargs["persistent_workers"] = self.persistent_workers
+            kwargs["prefetch_factor"] = self.prefetch_factor
+        return kwargs
 
     def _make_dataset(self, split: str, num_samples: Optional[int] = None):
         return AIGGraphRegressionDataset(
@@ -62,34 +133,27 @@ class AIGDataModule(pl.LightningDataModule):
             self.test_ds = self._make_dataset("test", self.train_num_samples)
 
     def train_dataloader(self) -> DataLoader:
-        return DataLoader(
-            self.train_ds,
-            batch_size=self.batch_size,
-            shuffle=True,
-            num_workers=self.num_workers,
-            persistent_workers=self.persistent_workers,
-            pin_memory=self.pin_memory,
-        )
+        if self.dynamic_batching:
+            sizes = self.train_ds.get_num_nodes_list()
+            sampler = BalancedDynamicBatchSampler(
+                sizes,
+                batch_size=self.batch_size,
+                shuffle=True,
+                seed=self.seed,
+            )
+            return DataLoader(
+                self.train_ds,
+                batch_sampler=sampler,
+                **self._loader_kwargs(include_batch_size=False),
+            )
+
+        return DataLoader(self.train_ds, shuffle=True, **self._loader_kwargs())
 
     def val_dataloader(self) -> DataLoader:
-        return DataLoader(
-            self.val_ds,
-            batch_size=self.batch_size,
-            shuffle=False,
-            num_workers=self.num_workers,
-            persistent_workers=self.persistent_workers,
-            pin_memory=self.pin_memory,
-        )
+        return DataLoader(self.val_ds, shuffle=False, **self._loader_kwargs())
 
     def test_dataloader(self) -> DataLoader:
-        return DataLoader(
-            self.test_ds,
-            batch_size=self.batch_size,
-            shuffle=False,
-            num_workers=self.num_workers,
-            persistent_workers=self.persistent_workers,
-            pin_memory=self.pin_memory,
-        )
+        return DataLoader(self.test_ds, shuffle=False, **self._loader_kwargs())
 
 
 __all__ = ["AIGDataModule"]
