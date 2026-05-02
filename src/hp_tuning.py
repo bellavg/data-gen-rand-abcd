@@ -125,6 +125,7 @@ def objective(trial: optuna.Trial, args):
             positional_encoding=pe_type if pe_type != "none" else None,
             batch_size=batch_size,
             split_ratios=(0.8, 0.2, 0.0),
+            cache_dir=args.cache_dir,
             train_num_samples=args.train_samples,
             num_workers=workers,
             persistent_workers=persistent,

@@ -138,7 +138,9 @@ class AIGDataModule(pl.LightningDataModule):
 
     def train_dataloader(self) -> DataLoader:
         if self.dynamic_batching:
-            sizes = getattr(self, "_train_sizes", None) or self.train_ds.get_num_nodes_list()
+            sizes = getattr(self, "_train_sizes", None)
+            if sizes is None:
+                sizes = self.train_ds.get_num_nodes_list()
             sampler = BalancedDynamicBatchSampler(
                 sizes,
                 batch_size=self.batch_size,

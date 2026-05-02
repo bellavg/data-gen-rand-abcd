@@ -105,7 +105,7 @@ CUDA_VISIBLE_DEVICES=0 python -u -m hp_tuning \
     --log_dir "$LOG_DIR/worker_${TASK_ID}" \
     --csv_paths "$CSV_1" "$CSV_2" "$CSV_3" "$CSV_4" \
     --num_workers "$NUM_WORKERS" \
-    "${EXTRA_FLAGS[@]}" \
+    ${EXTRA_FLAGS[@]+"${EXTRA_FLAGS[@]}"} \
     --train_samples 20000 \
     > "$LOG_DIR/worker_${TASK_ID}.log" 2>&1 &
 PID=$!
