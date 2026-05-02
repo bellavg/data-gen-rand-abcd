@@ -37,15 +37,16 @@ logging.getLogger("pytorch_lightning").setLevel(logging.ERROR)
 
 def _is_oom_like_runtime_error(exc: RuntimeError) -> bool:
     text = str(exc).lower()
-    return (
-        "out of memory" in text
-        or "oom" in text
-        or (
-            "dataloader worker" in text
-            and "killed by signal" in text
-            and "killed" in text
-        )
-    )
+    # CUDA OOM
+    if "out of memory" in text or "oom" in text:
+        return True
+    # DataLoader worker killed by signal (SIGKILL from SLURM OOM killer)
+    if "dataloader worker" in text and "killed by signal" in text and "killed" in text:
+        return True
+    # DataLoader worker exited unexpectedly (also fired when SLURM OOM-kills the worker)
+    if "dataloader worker" in text and "exited unexpectedly" in text:
+        return True
+    return False
 
 
 def objective(trial: optuna.Trial, args):

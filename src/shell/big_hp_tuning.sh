@@ -64,7 +64,11 @@ CSV_4="$BASE_DIR/data/designs/design_metadata/algo_C2RS_ml.csv"
 # ---------------------------------------------------------
 # EXECUTE OPTUNA WORKER (big run)
 # ---------------------------------------------------------
-NUM_WORKERS="${NUM_WORKERS:-2}"
+# num_workers=0: DataLoader runs in the main process — no worker subprocesses that
+# SLURM can silently OOM-kill. If a batch is too large, PyTorch raises
+# torch.OutOfMemoryError in the main process, which hp_tuning.py catches and prunes.
+# Increase to 2-4 only if you are confident memory is not the limiting factor.
+NUM_WORKERS="${NUM_WORKERS:-0}"
 
 export MALLOC_ARENA_MAX=2
 
