@@ -153,13 +153,25 @@ class AIGDataModule(pl.LightningDataModule):
                 **self._loader_kwargs(include_batch_size=False),
             )
 
-        return DataLoader(self.train_ds, shuffle=True, **self._loader_kwargs())
+        return DataLoader(
+            self.train_ds,
+            shuffle=True,
+            **self._loader_kwargs(),
+        )
 
     def val_dataloader(self) -> DataLoader:
-        return DataLoader(self.val_ds, shuffle=False, **self._loader_kwargs())
+        return DataLoader(
+            self.val_ds,
+            shuffle=False,
+            **self._loader_kwargs(),
+        )
 
     def test_dataloader(self) -> DataLoader:
-        return DataLoader(self.test_ds, shuffle=False, **self._loader_kwargs())
+        return DataLoader(
+            self.test_ds,
+            shuffle=False,
+            **self._loader_kwargs(),
+        )
 
 
-__all__ = ["AIGDataModule"]
+__all__ = ["AIGDataModule", "BalancedDynamicBatchSampler"]

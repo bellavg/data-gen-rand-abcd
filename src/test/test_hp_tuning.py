@@ -67,6 +67,7 @@ def _run_objective_for_test(trial_values: dict, best_model_score: float | None =
     args = argparse.Namespace(
         csv_paths=["algo_a.csv", "algo_b.csv"],
         checkpoint_dir="/tmp/ckpt",
+        cache_dir="/tmp/hp_cache",
         num_workers=0,
         train_samples=25000,
         log_dir="/tmp",
@@ -246,3 +247,79 @@ class TestComprehensiveCombinations(unittest.TestCase):
                 batch = Batch.from_data_list([data])
                 out = lm(batch)
                 self.assertEqual(out.shape, (1, 1))
+
+
+class TestOOMTrialCleanup(unittest.TestCase):
+    def _make_trial(self, number: int) -> _FakeTrial:
+        trial = _FakeTrial(
+            {
+                "batch_size": 4,
+                "lr": 1e-3,
+                "huber_delta": 1.0,
+                "encoder_name": "gine",
+                "hidden_dim": 32,
+                "pe_type": "none",
+                "pooling_type": "mean",
+                "num_layers": 2,
+                "dropout": 0.1,
+                "norm_type": "batch",
+                "jk_mode": "last",
+            }
+        )
+        trial.number = number
+        return trial
+
+    def test_cleanup_runs_before_third_trial_after_oom(self):
+        args = argparse.Namespace(
+            csv_paths=["algo_a.csv", "algo_b.csv"],
+            checkpoint_dir="/tmp/ckpt",
+            cache_dir="/tmp/hp_cache",
+            num_workers=0,
+            train_samples=20000,
+            log_dir="/tmp",
+            hard_prune_risk=999999.0,
+        )
+
+        events: list[str] = []
+        fit_counter = {"value": 0}
+
+        class _FakeTrainer:
+            def __init__(self):
+                self.callbacks = []
+                self.loggers = []
+                self.optimizers = [object()]
+
+            def fit(self, *args, **kwargs):
+                fit_counter["value"] += 1
+                trial_idx = fit_counter["value"]
+                events.append(f"fit_{trial_idx}_start")
+                if trial_idx == 2:
+                    raise RuntimeError("CUDA out of memory")
+                events.append(f"fit_{trial_idx}_end")
+
+        fake_datamodule = MagicMock()
+        fake_datamodule.train_dataloader.return_value = object()
+        fake_datamodule.val_dataloader.return_value = object()
+
+        with (
+            patch("hp_tuning.AIGDataModule", return_value=fake_datamodule),
+            patch("hp_tuning.AIGRegressionLightningModule", return_value=MagicMock()),
+            patch("hp_tuning.pl.Trainer", side_effect=lambda *a, **k: _FakeTrainer()),
+            patch("hp_tuning.gc.collect", side_effect=lambda: events.append("gc")),
+            patch("hp_tuning.torch.cuda.is_available", return_value=True),
+            patch(
+                "hp_tuning.torch.cuda.empty_cache",
+                side_effect=lambda: events.append("empty_cache"),
+            ),
+        ):
+            _ = hp_tuning.objective(self._make_trial(0), args)
+            with self.assertRaises(hp_tuning.optuna.TrialPruned):
+                hp_tuning.objective(self._make_trial(1), args)
+            _ = hp_tuning.objective(self._make_trial(2), args)
+
+        fit2_start = events.index("fit_2_start")
+        fit3_start = events.index("fit_3_start")
+        between = events[fit2_start + 1 : fit3_start]
+
+        self.assertIn("gc", between)
+        self.assertIn("empty_cache", between)

@@ -2,6 +2,7 @@ import argparse
 import os
 
 import pytorch_lightning as pl
+import torch
 from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger  #
 
@@ -13,6 +14,10 @@ from models.lightning_model import AIGRegressionLightningModule
 
 
 def main(args):
+    torch.backends.cuda.matmul.allow_tf32 = True
+    if hasattr(torch.backends, "cudnn"):
+        torch.backends.cudnn.allow_tf32 = True
+
     # 1. Validate Algorithm
     if args.algorithm not in VALID_ALGORITHMS:
         raise ValueError(

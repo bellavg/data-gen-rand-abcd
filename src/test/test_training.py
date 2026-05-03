@@ -259,5 +259,64 @@ def test_fast_dev_run(basic_model):
     trainer.test(basic_model, dataloaders=loader)
 
 
+@pytest.mark.parametrize(
+    "encoder_name,extra_kwargs",
+    [
+        ("vanilla_mpnn", {}),
+        ("transformer_conv", {"heads": 1}),
+    ],
+)
+def test_large_graph_forward_backward_no_crash(encoder_name, extra_kwargs):
+    torch.manual_seed(7)
+
+    num_nodes = 250_000
+    num_edges = 550_000
+
+    x = torch.randn((num_nodes, 4), dtype=torch.float32)
+    src = torch.arange(num_edges, dtype=torch.long) % num_nodes
+    dst = (src * 37 + 11) % num_nodes
+    edge_index = torch.stack([src, dst], dim=0)
+    edge_attr = torch.randn((num_edges, 2), dtype=torch.float32)
+
+    data = Data(
+        x=x,
+        edge_index=edge_index,
+        edge_attr=edge_attr,
+        y=torch.randn((1, 1), dtype=torch.float32),
+    )
+    batch = Batch.from_data_list([data])
+
+    encoder_kwargs = {
+        "num_layers": 2,
+        "hid_dim": 8,
+        "dropout": 0.0,
+        "norm_type": "batch",
+        "jk_mode": "last",
+        **extra_kwargs,
+    }
+
+    model = AIGRegressionLightningModule(
+        encoder_name=encoder_name,
+        hidden_dim=8,
+        node_input_dim=4,
+        edge_attr_dim=2,
+        task_out_dim=1,
+        pooling_type="mean",
+        encoder_kwargs=encoder_kwargs,
+    )
+
+    model.train()
+    loss = model.training_step(batch, batch_idx=0)
+    assert torch.isfinite(loss)
+
+    loss.backward()
+    grads = [
+        p.grad
+        for p in model.parameters()
+        if p.requires_grad and p.grad is not None
+    ]
+    assert grads, "Expected at least one non-null gradient tensor"
+
+
 if __name__ == "__main__":
     pytest.main([__file__])

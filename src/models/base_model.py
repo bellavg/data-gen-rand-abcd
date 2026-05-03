@@ -132,6 +132,23 @@ class UnifiedGraphBaseModel(nn.Module):
         x = self._integrate_positional_encoding(x, pos_enc)
         return x, edge_attr
 
+    def _encode(self, x, edge_index, edge_attr, batch):
+        return self.encoder(
+            x=x,
+            edge_index=edge_index,
+            edge_attr=edge_attr,
+            batch=batch,
+        )
+
+    def _pool_graph_embeddings(self, emb: torch.Tensor, batch: torch.Tensor):
+        if self.pooling_type == "mean":
+            return global_mean_pool(emb, batch)
+        if self.pooling_type == "max":
+            return global_max_pool(emb, batch)
+        if self.pooling_type == "sum":
+            return global_add_pool(emb, batch)
+        raise ValueError(f"Unknown pooling type: {self.pooling_type}")
+
     def forward(
         self,
         x: torch.Tensor,
@@ -142,25 +159,17 @@ class UnifiedGraphBaseModel(nn.Module):
     ) -> torch.Tensor:
         x, edge_attr = self.encode_and_integrate(x, edge_index, edge_attr, pos_enc)
 
-        enc_out = self.encoder(
-            x=x,
-            edge_index=edge_index,
-            edge_attr=edge_attr,
-            batch=batch,
-        )
+        enc_out = self._encode(x, edge_index, edge_attr, batch)
 
         if self.encoder_name == "egin":
             return enc_out
         else:
-            # NEW: Route to the correct pooling function dynamically
-            if self.pooling_type == "mean":
-                graph_emb = global_mean_pool(enc_out, batch)
-            elif self.pooling_type == "max":
-                graph_emb = global_max_pool(enc_out, batch)
-            elif self.pooling_type == "sum":
-                graph_emb = global_add_pool(enc_out, batch)
-            else:
-                raise ValueError(f"Unknown pooling type: {self.pooling_type}")
+            if batch is None:
+                batch = torch.zeros(
+                    enc_out.size(0), dtype=torch.long, device=enc_out.device
+                )
+
+            graph_emb = self._pool_graph_embeddings(enc_out, batch)
 
             return self.head(graph_emb)
 
