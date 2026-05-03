@@ -39,6 +39,7 @@ unset PYTHONPATH
 unset PYTHONHOME
 export PYTHONNOUSERSITE=1
 export PYTHONPATH="$BASE_DIR/src"
+export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
 
 cd "$BASE_DIR"
 
@@ -77,6 +78,7 @@ PIN_MEMORY="${PIN_MEMORY:-false}"
 PERSISTENT_WORKERS="${PERSISTENT_WORKERS:-false}"
 PREFETCH_FACTOR="${PREFETCH_FACTOR:-1}"
 DYNAMIC_BATCHING="${DYNAMIC_BATCHING:-true}"
+MEMORY_TELEMETRY_TRIALS="${MEMORY_TELEMETRY_TRIALS:-0}"
 
 EXTRA_FLAGS=()
 if [ "$PIN_MEMORY" = "true" ]; then
@@ -94,6 +96,7 @@ if [ "$DYNAMIC_BATCHING" = "true" ]; then
 fi
 
 echo "DataLoader config: num_workers=$NUM_WORKERS pin_memory=$PIN_MEMORY persistent_workers=$PERSISTENT_WORKERS prefetch_factor=$PREFETCH_FACTOR dynamic_batching=$DYNAMIC_BATCHING"
+echo "Memory telemetry: first $MEMORY_TELEMETRY_TRIALS trial(s)"
 
 echo "Starting Big Worker $TASK_ID on GPU 0..."
 
@@ -106,6 +109,10 @@ CUDA_VISIBLE_DEVICES=0 python -u -m hp_tuning \
     --csv_paths "$CSV_1" "$CSV_2" "$CSV_3" "$CSV_4" \
     --num_workers "$NUM_WORKERS" \
     ${EXTRA_FLAGS[@]+"${EXTRA_FLAGS[@]}"} \
+    --memory_guard_max_tokens 3.5e8 \
+    --hard_prune_risk 120000 \
+    --dataset_seed 42 \
+    --memory_telemetry_trials "$MEMORY_TELEMETRY_TRIALS" \
     --train_samples 20000 \
     > "$LOG_DIR/worker_${TASK_ID}.log" 2>&1 &
 PID=$!

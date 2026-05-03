@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import random
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 import torch
-from torch.utils.data import Dataset
+from torch_geometric.data import Dataset as PyGDataset
 
 # Factory transform for handling various PE types (level, pi_paths, sinusoidal, etc.)
 try:
@@ -24,7 +26,7 @@ class GraphSample:
     y_node_opt: float
 
 
-class AIGGraphRegressionDataset(Dataset):
+class AIGGraphRegressionDataset(PyGDataset):
     """
     Minimal graph-level regression dataset.
 
@@ -35,8 +37,20 @@ class AIGGraphRegressionDataset(Dataset):
     - x, edge_index, edge_attr, level, pi_paths, local_sp_sum
     """
 
-    _cached_candidate_samples: Dict[Tuple[str, ...], List[GraphSample]] = {}
-    _cached_graph_num_nodes: Dict[str, int] = {}
+    _MANIFEST_VERSION = 1
+
+    @property
+    def raw_file_names(self) -> List[str]:
+        # This dataset reads existing .pt paths from CSV and has no raw download step.
+        return []
+
+    @property
+    def processed_file_names(self) -> List[str]:
+        # Processing is handled by custom cache manifests, not PyG's processed_dir files.
+        return []
+
+    def download(self) -> None:
+        return
 
     def __init__(
         self,
@@ -58,12 +72,26 @@ class AIGGraphRegressionDataset(Dataset):
 
         self.positional_encoding = positional_encoding
         self.split = split
-        self.cache_dir = Path(cache_dir) if cache_dir is not None else None
+        self.cache_dir = Path(cache_dir).resolve() if cache_dir is not None else None
         self.split_ratios = split_ratios
         self.seed = seed
         self.num_samples = num_samples
         self.num_workers = num_workers
         self.hp_tuning_splits_path = hp_tuning_splits_path
+        self._cache_graph_dir = (
+            self.cache_dir / "processed_graphs" if self.cache_dir is not None else None
+        )
+        self._cache_meta_dir = (
+            self.cache_dir / "metadata" if self.cache_dir is not None else None
+        )
+        self._cache_signature = self._build_cache_signature()
+        self._manifest_path = (
+            self._cache_meta_dir / f"dataset_{self._cache_signature}_manifest.json"
+            if self._cache_meta_dir is not None
+            else None
+        )
+        self._graph_cache_map: Dict[str, str] = {}
+        self._graph_num_nodes_map: Dict[str, int] = {}
 
         # Initialize the PE transform factory
         self.pe_transform = get_pe_transform(
@@ -71,21 +99,50 @@ class AIGGraphRegressionDataset(Dataset):
         )
 
         self.samples = self._build_samples()
+        super().__init__(root=None)
+
+        if self.cache_dir is not None:
+            self.process()
+
+        self._verify_first_sample(self.samples)
+
+    def _build_cache_signature(self) -> str:
+        hasher = hashlib.sha1()
+        hasher.update(str(self.seed).encode())
+        hasher.update(str(self.split).encode())
+        hasher.update(str(self.num_samples).encode())
+        hasher.update("|".join(map(str, self.split_ratios)).encode())
+
+        for csv_path in sorted(self.csv_paths):
+            resolved = csv_path.resolve()
+            hasher.update(str(resolved).encode())
+            try:
+                st = resolved.stat()
+                hasher.update(str(st.st_size).encode())
+                hasher.update(str(st.st_mtime_ns).encode())
+            except OSError:
+                pass
+
+        if self.hp_tuning_splits_path is not None:
+            hp = Path(self.hp_tuning_splits_path).resolve()
+            hasher.update(str(hp).encode())
+            try:
+                st = hp.stat()
+                hasher.update(str(st.st_size).encode())
+                hasher.update(str(st.st_mtime_ns).encode())
+            except OSError:
+                pass
+
+        return hasher.hexdigest()[:16]
 
     def _read_candidate_samples(self) -> List[GraphSample]:
-        cache_key = tuple(sorted(str(p.resolve()) for p in self.csv_paths))
-        cached = AIGGraphRegressionDataset._cached_candidate_samples.get(cache_key)
-        if cached is not None:
-            return cached
-
         df = pd.concat(
             [pd.read_csv(p, dtype=str).fillna("") for p in self.csv_paths],
             ignore_index=True,
         )
         df["optimizability"] = df["optimizability"].astype(float)
 
-        # --- FIX 3: Store to the cache before returning ---
-        samples = [
+        return [
             GraphSample(
                 graph_path=row["unoptimized_graph_path"],
                 y_node_opt=row["optimizability"],
@@ -93,12 +150,7 @@ class AIGGraphRegressionDataset(Dataset):
             for row in df.to_dict("records")
         ]
 
-        AIGGraphRegressionDataset._cached_candidate_samples[cache_key] = samples
-        return samples
-
     def _load_or_create_split_keys(self, all_keys: List[str]) -> Dict[str, List[str]]:
-        import uuid  # You can also move this to the top of src/data/dataset.py
-
         if self.cache_dir is None or self.split is None:
             return self._create_split_keys(all_keys)
 
@@ -187,15 +239,27 @@ class AIGGraphRegressionDataset(Dataset):
     def _build_samples(self) -> List[GraphSample]:
         samples = self._read_candidate_samples()
         samples = self._apply_split(samples)
-        self._verify_first_sample(samples)
         return samples
 
-    def _verify_first_sample(self, samples: List[GraphSample]) -> None:
-        if not samples:
-            return
-        data_obj = torch.load(
-            samples[0].graph_path, map_location="cpu", weights_only=False
-        )
+    def _stable_graph_cache_name(self, graph_path: str) -> str:
+        source = Path(graph_path)
+        resolved = source.resolve()
+        token = str(resolved)
+        try:
+            st = resolved.stat()
+            token = f"{token}|{st.st_size}|{st.st_mtime_ns}"
+        except OSError:
+            token = f"{token}|missing"
+
+        digest = hashlib.sha1(token.encode()).hexdigest()
+        return f"{digest}.pt"
+
+    def _cached_graph_path(self, graph_path: str) -> Path:
+        if self._cache_graph_dir is None:
+            return Path(graph_path)
+        return self._cache_graph_dir / self._stable_graph_cache_name(graph_path)
+
+    def _validate_graph(self, data_obj, graph_path: str) -> int:
         if data_obj.x.dim() != 2:
             raise AssertionError(f"x should be 2D, got shape {data_obj.x.shape}")
         if data_obj.edge_index.shape[0] != 2:
@@ -203,12 +267,150 @@ class AIGGraphRegressionDataset(Dataset):
                 f"edge_index should be [2, E], got {data_obj.edge_index.shape}"
             )
 
-        # Strict early validation: require edge_attr present and 2D at init time.
         edge_attr = getattr(data_obj, "edge_attr", None)
         if edge_attr is None:
-            raise ValueError(f"edge_attr=None in {samples[0].graph_path}")
+            raise ValueError(f"edge_attr=None in {graph_path}")
         if edge_attr.dim() != 2:
             raise ValueError("edge_attr must be 2D")
+
+        return int(data_obj.x.shape[0])
+
+    def _cache_single_graph(self, graph_path: str) -> Tuple[str, int]:
+        cache_path = self._cached_graph_path(graph_path)
+        source_path = Path(graph_path)
+
+        if cache_path.is_file():
+            try:
+                cached_obj = torch.load(
+                    cache_path, map_location="cpu", weights_only=False
+                )
+                num_nodes = self._validate_graph(cached_obj, str(cache_path))
+                return str(cache_path), num_nodes
+            except Exception:
+                cache_path.unlink(missing_ok=True)
+
+        source_obj = torch.load(source_path, map_location="cpu", weights_only=False)
+        num_nodes = self._validate_graph(source_obj, str(source_path))
+
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = cache_path.with_suffix(f".tmp_{uuid.uuid4().hex[:8]}")
+        torch.save(source_obj, tmp_path)
+        tmp_path.replace(cache_path)
+        return str(cache_path), num_nodes
+
+    def _manifest_is_valid(self, manifest: dict) -> bool:
+        if not isinstance(manifest, dict):
+            return False
+        if manifest.get("version") != self._MANIFEST_VERSION:
+            return False
+        if manifest.get("num_samples") != len(self.samples):
+            return False
+        entries = manifest.get("entries")
+        if not isinstance(entries, list) or len(entries) != len(self.samples):
+            return False
+
+        for entry in entries:
+            if not isinstance(entry, dict):
+                return False
+            graph_path = entry.get("graph_path")
+            cache_path = entry.get("cache_path")
+            num_nodes = entry.get("num_nodes")
+            if not isinstance(graph_path, str) or not isinstance(cache_path, str):
+                return False
+            if not isinstance(num_nodes, int) or num_nodes <= 0:
+                return False
+            if not Path(cache_path).is_file():
+                return False
+
+        return True
+
+    def _rebuild_graph_cache(self) -> dict:
+        unique_paths = sorted({sample.graph_path for sample in self.samples})
+        by_graph: Dict[str, Dict[str, int | str]] = {}
+
+        for graph_path in unique_paths:
+            cached_path, num_nodes = self._cache_single_graph(graph_path)
+            by_graph[graph_path] = {
+                "cache_path": cached_path,
+                "num_nodes": num_nodes,
+            }
+
+        entries: List[dict] = []
+        for sample in self.samples:
+            cached = by_graph[sample.graph_path]
+            entries.append(
+                {
+                    "graph_path": sample.graph_path,
+                    "cache_path": cached["cache_path"],
+                    "num_nodes": cached["num_nodes"],
+                }
+            )
+
+        return {
+            "version": self._MANIFEST_VERSION,
+            "num_samples": len(self.samples),
+            "entries": entries,
+        }
+
+    def _load_manifest(self) -> Optional[dict]:
+        if self._manifest_path is None or not self._manifest_path.is_file():
+            return None
+
+        try:
+            manifest = json.loads(self._manifest_path.read_text())
+        except (json.JSONDecodeError, OSError):
+            return None
+
+        if not self._manifest_is_valid(manifest):
+            return None
+        return manifest
+
+    def _apply_manifest(self, manifest: dict) -> None:
+        self._graph_cache_map.clear()
+        self._graph_num_nodes_map.clear()
+        for entry in manifest["entries"]:
+            graph_path = str(entry["graph_path"])
+            cache_path = str(entry["cache_path"])
+            num_nodes = int(entry["num_nodes"])
+            self._graph_cache_map[graph_path] = cache_path
+            self._graph_num_nodes_map[graph_path] = num_nodes
+
+    def process(self) -> None:
+        if self.cache_dir is None:
+            return
+
+        if self._cache_meta_dir is None or self._manifest_path is None:
+            return
+
+        self._cache_meta_dir.mkdir(parents=True, exist_ok=True)
+
+        manifest = self._load_manifest()
+        if manifest is None:
+            manifest = self._rebuild_graph_cache()
+            tmp = self._manifest_path.with_suffix(f".tmp_{uuid.uuid4().hex[:8]}")
+            tmp.write_text(json.dumps(manifest, indent=2, sort_keys=True))
+            tmp.replace(self._manifest_path)
+
+        self._apply_manifest(manifest)
+
+    def _load_graph_for_sample(self, sample: GraphSample):
+        graph_path = sample.graph_path
+        if self.cache_dir is not None:
+            cached_path = self._graph_cache_map.get(graph_path)
+            if cached_path is None or not Path(cached_path).is_file():
+                rebuilt_cache_path, num_nodes = self._cache_single_graph(graph_path)
+                self._graph_cache_map[graph_path] = rebuilt_cache_path
+                self._graph_num_nodes_map[graph_path] = num_nodes
+                cached_path = rebuilt_cache_path
+            graph_path = cached_path
+
+        return torch.load(graph_path, map_location="cpu", weights_only=False)
+
+    def _verify_first_sample(self, samples: List[GraphSample]) -> None:
+        if not samples:
+            return
+        data_obj = self._load_graph_for_sample(samples[0])
+        self._validate_graph(data_obj, samples[0].graph_path)
 
         # Validate Positional Encoding attachment
         if (
@@ -231,20 +433,13 @@ class AIGGraphRegressionDataset(Dataset):
                     f"{pe.shape if pe is not None else None}"
                 )
 
-    def __len__(self) -> int:
+    def len(self) -> int:
         return len(self.samples)
 
-    def __getitem__(self, idx: int):
+    def get(self, idx: int):
         sample = self.samples[idx]
-        data_obj = torch.load(sample.graph_path, map_location="cpu", weights_only=False)
-
-        edge_attr = getattr(data_obj, "edge_attr", None)
-        if edge_attr is None:
-            raise ValueError(f"Loaded graph has edge_attr=None: {sample.graph_path}")
-        if edge_attr.dim() != 2:
-            raise ValueError(
-                f"Loaded graph edge_attr must be 2D, got {tuple(edge_attr.shape)}: {sample.graph_path}"
-            )
+        data_obj = self._load_graph_for_sample(sample)
+        self._validate_graph(data_obj, sample.graph_path)
 
         # Apply positional encoding transform (attaches to data_obj.pos_enc)
         data_obj = self.pe_transform(data_obj)
@@ -262,21 +457,19 @@ class AIGGraphRegressionDataset(Dataset):
         return self.cache_dir / f"{algo_tag}{sample_tag}_node_sizes.json"
 
     def _num_nodes_for_sample(self, sample: GraphSample) -> int:
-        cached = AIGGraphRegressionDataset._cached_graph_num_nodes.get(sample.graph_path)
+        cached = self._graph_num_nodes_map.get(sample.graph_path)
         if cached is not None:
             return cached
 
-        data_obj = torch.load(sample.graph_path, map_location="cpu", weights_only=False)
+        data_obj = self._load_graph_for_sample(sample)
         num_nodes = int(data_obj.x.shape[0])
-        AIGGraphRegressionDataset._cached_graph_num_nodes[sample.graph_path] = num_nodes
+        self._graph_num_nodes_map[sample.graph_path] = num_nodes
         return num_nodes
 
     def get_num_nodes_list(self) -> List[int]:
         """Return per-sample node counts.  First call computes and caches to disk;
         subsequent calls (even in different processes / workers / trials) load in
         < 1 s from a ~300 KB JSON file rather than scanning 50 K .pt files."""
-        import uuid
-
         sizes_cache_path = self._sizes_cache_path()
 
         # --- fast path: disk cache hit ---

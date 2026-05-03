@@ -1,21 +1,22 @@
 import argparse
 import gc
 import logging
+import os
+import resource
 import warnings
+from typing import Callable, List
 
 import optuna
 import pytorch_lightning as pl
 import torch
-import torch.multiprocessing
 from optuna.storages import JournalFileStorage, JournalStorage
 from pytorch_lightning.callbacks import Callback, EarlyStopping
 from pytorch_lightning.loggers import CSVLogger
+from torch_geometric.data import Batch
+from torch_geometric.loader import DataLoader
 
-# Project Imports
-try:
-    from data.datamodule import AIGDataModule
-except ImportError:
-    from src.data.datamodule import AIGDataModule
+from data.datamodule import AIGDataModule, BalancedDynamicBatchSampler
+
 
 try:
     from optuna.integration import PyTorchLightningPruningCallback
@@ -28,29 +29,324 @@ except ModuleNotFoundError:
 
 from models.lightning_model import AIGRegressionLightningModule
 
-# 1. Suppress standard Python DeprecationWarnings and UserWarnings
 warnings.filterwarnings("ignore")
-
-# 2. Set PyTorch Lightning's logger to only show errors
 logging.getLogger("pytorch_lightning").setLevel(logging.ERROR)
+
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+torch.backends.cuda.matmul.allow_tf32 = True
+if hasattr(torch.backends, "cudnn"):
+    torch.backends.cudnn.allow_tf32 = True
+
+
+ATTENTION_ENCODERS = {"transformer_conv", "graphgps"}
+
+
+def _set_trial_user_attr(trial: optuna.Trial, key: str, value) -> None:
+    setter = getattr(trial, "set_user_attr", None)
+    if callable(setter):
+        setter(key, value)
+
+
+def _mark_trial_outcome(
+    trial: optuna.Trial,
+    *,
+    outcome: str,
+    oom_like: bool,
+    prune_reason: str | None = None,
+    score: float | None = None,
+    risk_score: float | None = None,
+) -> None:
+    _set_trial_user_attr(trial, "trial_outcome", outcome)
+    _set_trial_user_attr(trial, "oom_like", bool(oom_like))
+    _set_trial_user_attr(trial, "selection_eligible", outcome == "completed")
+    if prune_reason is not None:
+        _set_trial_user_attr(trial, "prune_reason", prune_reason)
+    if score is not None:
+        _set_trial_user_attr(trial, "score", float(score))
+    if risk_score is not None:
+        _set_trial_user_attr(trial, "risk_score", float(risk_score))
+
+
+def _peak_rss_bytes() -> int:
+    # On Linux ru_maxrss is KB; on macOS it is bytes.
+    rss = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+    if rss < 10_000_000:
+        return rss * 1024
+    return rss
+
+
+def _current_rss_bytes() -> int | None:
+    # Prefer /proc on Linux clusters; fallback to None if unavailable.
+    statm = "/proc/self/statm"
+    if not os.path.exists(statm):
+        return None
+    try:
+        with open(statm, "r", encoding="utf-8") as f:
+            fields = f.read().strip().split()
+        if len(fields) < 2:
+            return None
+        resident_pages = int(fields[1])
+        page_size = int(os.sysconf("SC_PAGE_SIZE"))
+        return resident_pages * page_size
+    except (OSError, ValueError):
+        return None
+
+
+def _format_gib(value_bytes: int | None) -> str:
+    if value_bytes is None:
+        return "n/a"
+    return f"{value_bytes / (1024**3):.3f} GiB"
+
+
+def _should_log_memory_telemetry(trial: optuna.Trial, args) -> bool:
+    max_trials = int(getattr(args, "memory_telemetry_trials", 0) or 0)
+    return max_trials > 0 and trial.number < max_trials
+
+
+def _log_trial_memory(stage: str, trial: optuna.Trial, args) -> None:
+    if not _should_log_memory_telemetry(trial, args):
+        return
+
+    rss_current = _current_rss_bytes()
+    rss_peak = _peak_rss_bytes()
+
+    cuda_alloc = None
+    cuda_reserved = None
+    if torch.cuda.is_available():
+        cuda_alloc = int(torch.cuda.memory_allocated())
+        cuda_reserved = int(torch.cuda.memory_reserved())
+
+    print(
+        "[memory] "
+        f"trial={trial.number} stage={stage} "
+        f"rss_current={_format_gib(rss_current)} "
+        f"rss_peak={_format_gib(rss_peak)} "
+        f"cuda_allocated={_format_gib(cuda_alloc)} "
+        f"cuda_reserved={_format_gib(cuda_reserved)}"
+    )
+
+
+class HPMemoryGuardError(RuntimeError):
+    """Raised when an HP trial batch is estimated to exceed the memory budget."""
+
+
+def _estimate_memory_tokens(
+    *,
+    num_nodes: int,
+    num_edges: int,
+    hidden_dim: int,
+    num_layers: int,
+    jk_mode: str,
+    encoder_name: str,
+    heads: int,
+    expansion_factor: float,
+) -> float:
+    jk_multiplier = (num_layers + 1) if jk_mode == "cat" else 1
+    attn_multiplier = heads if encoder_name in ATTENTION_ENCODERS else 1
+    layer_multiplier = max(1, num_layers)
+
+    node_term = num_nodes * hidden_dim * layer_multiplier * jk_multiplier
+    edge_term = num_edges * hidden_dim * attn_multiplier
+    return (node_term + edge_term) * expansion_factor
+
+
+def _build_guarded_collate(memory_guard: dict) -> Callable[[List], Batch]:
+    max_tokens = float(memory_guard.get("max_tokens", float("inf")))
+    hidden_dim = int(memory_guard.get("hidden_dim", 32))
+    num_layers = int(memory_guard.get("num_layers", 2))
+    jk_mode = str(memory_guard.get("jk_mode", "last"))
+    encoder_name = str(memory_guard.get("encoder_name", "gine"))
+    heads = int(memory_guard.get("heads", 1))
+    expansion_factor = float(memory_guard.get("expansion_factor", 1.0))
+
+    def guarded_collate(data_list: List) -> Batch:
+        for data in data_list:
+            num_nodes = int(data.num_nodes)
+            num_edges = int(data.edge_index.size(1))
+            est_tokens = _estimate_memory_tokens(
+                num_nodes=num_nodes,
+                num_edges=num_edges,
+                hidden_dim=hidden_dim,
+                num_layers=num_layers,
+                jk_mode=jk_mode,
+                encoder_name=encoder_name,
+                heads=heads,
+                expansion_factor=expansion_factor,
+            )
+            if est_tokens > max_tokens:
+                raise HPMemoryGuardError(
+                    "Memory guard pruned graph before forward allocation: "
+                    f"nodes={num_nodes}, edges={num_edges}, "
+                    f"est_tokens={est_tokens:.2e}, max_tokens={max_tokens:.2e}"
+                )
+        return Batch.from_data_list(data_list)
+
+    return guarded_collate
+
+
+def _install_hp_guarded_dataloaders(
+    datamodule: AIGDataModule,
+    memory_guard: dict,
+    *,
+    dynamic_batching: bool,
+) -> None:
+    guarded_collate = _build_guarded_collate(memory_guard)
+    seed = int(getattr(datamodule, "seed", 42))
+
+    def train_dataloader() -> DataLoader:
+        if dynamic_batching:
+            sizes = getattr(datamodule, "_train_sizes", None)
+            if sizes is None:
+                sizes = datamodule.train_ds.get_num_nodes_list()
+            sampler = BalancedDynamicBatchSampler(
+                sizes,
+                batch_size=datamodule.batch_size,
+                shuffle=True,
+                seed=seed,
+            )
+            return DataLoader(
+                datamodule.train_ds,
+                batch_sampler=sampler,
+                collate_fn=guarded_collate,
+                **datamodule._loader_kwargs(include_batch_size=False),
+            )
+
+        return DataLoader(
+            datamodule.train_ds,
+            shuffle=True,
+            collate_fn=guarded_collate,
+            **datamodule._loader_kwargs(),
+        )
+
+    def val_dataloader() -> DataLoader:
+        return DataLoader(
+            datamodule.val_ds,
+            shuffle=False,
+            collate_fn=guarded_collate,
+            **datamodule._loader_kwargs(),
+        )
+
+    def test_dataloader() -> DataLoader:
+        return DataLoader(
+            datamodule.test_ds,
+            shuffle=False,
+            collate_fn=guarded_collate,
+            **datamodule._loader_kwargs(),
+        )
+
+    datamodule.train_dataloader = train_dataloader
+    datamodule.val_dataloader = val_dataloader
+    datamodule.test_dataloader = test_dataloader
 
 
 def _is_oom_like_runtime_error(exc: RuntimeError) -> bool:
     text = str(exc).lower()
-    # CUDA OOM
     if "out of memory" in text or "oom" in text:
         return True
-    # DataLoader worker killed by signal (SIGKILL from SLURM OOM killer)
     if "dataloader worker" in text and "killed by signal" in text and "killed" in text:
         return True
-    # DataLoader worker exited unexpectedly (also fired when SLURM OOM-kills the worker)
     if "dataloader worker" in text and "exited unexpectedly" in text:
+        return True
+    if "memory guard" in text:
         return True
     return False
 
 
+def _estimate_trial_risk(
+    *,
+    batch_size: int,
+    hidden_dim: int,
+    num_layers: int,
+    jk_mode: str,
+    encoder_name: str,
+    heads: int,
+    pe_type: str,
+    pos_enc_dim: int,
+) -> float:
+    jk_multiplier = (num_layers + 1) if jk_mode == "cat" else 1
+    attn_multiplier = heads if encoder_name in ATTENTION_ENCODERS else 1
+    pe_multiplier = 1.0 + (float(pos_enc_dim) / 128.0 if pe_type != "none" else 0.0)
+    return float(batch_size * hidden_dim * num_layers * jk_multiplier * attn_multiplier * pe_multiplier)
+
+
+def _purge_trial_memory(
+    *,
+    trainer,
+    datamodule,
+    model,
+    optimizer,
+    batch,
+    dataloader,
+    val_dataloader,
+    pruning_cb,
+    early_stop_cb,
+):
+    if pruning_cb is not None:
+        pruning_cb.trainer = None
+    if early_stop_cb is not None:
+        early_stop_cb.trainer = None
+
+    if trainer is not None:
+        trainer.callbacks = []
+        trainer.loggers = []
+
+    if datamodule is not None:
+        try:
+            datamodule.teardown("fit")
+        except Exception:
+            pass
+
+    if batch is not None:
+        del batch
+    if optimizer is not None:
+        del optimizer
+    if dataloader is not None:
+        del dataloader
+    if val_dataloader is not None:
+        del val_dataloader
+    if trainer is not None:
+        del trainer
+    if datamodule is not None:
+        del datamodule
+    if model is not None:
+        del model
+
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    return (None, None, None, None, None, None, None, None, None)
+
+
+def _trial_outcome_callback(study: optuna.Study, frozen_trial) -> None:
+    outcome = str(
+        frozen_trial.user_attrs.get("trial_outcome", frozen_trial.state.name.lower())
+    )
+    oom_like = bool(frozen_trial.user_attrs.get("oom_like", False))
+    selection_eligible = bool(frozen_trial.user_attrs.get("selection_eligible", False))
+    reason = str(frozen_trial.user_attrs.get("prune_reason", ""))
+
+    if frozen_trial.value is None:
+        value_text = "n/a"
+    else:
+        value_text = f"{float(frozen_trial.value):.6f}"
+
+    reason_text = f" reason={reason}" if reason else ""
+    print(
+        "[selection] "
+        f"trial={frozen_trial.number} "
+        f"state={frozen_trial.state.name} "
+        f"outcome={outcome} "
+        f"oom_like={oom_like} "
+        f"eligible={selection_eligible} "
+        f"value={value_text}"
+        f"{reason_text}"
+    )
+
+
 def objective(trial: optuna.Trial, args):
-    # 1. Global Hyperparameters
+    _mark_trial_outcome(trial, outcome="running", oom_like=False)
+
     batch_size = trial.suggest_categorical("batch_size", [4, 8, 16])
     lr = trial.suggest_float("lr", 1e-4, 1e-2, log=True)
     huber_delta = trial.suggest_float("huber_delta", 0.5, 2.0)
@@ -60,33 +356,38 @@ def objective(trial: optuna.Trial, args):
         ["gine", "transformer_conv", "graphgps", "egin", "gcn", "vanilla_mpnn"],
     )
 
-    hidden_dim = trial.suggest_categorical("hidden_dim", [32, 64, 128, 256, 512])
+    if encoder_name in ATTENTION_ENCODERS:
+        hidden_choices = [32, 64, 128, 256]
+        jk_choices = ["last", "max", "sum"]
+    else:
+        hidden_choices = [32, 64, 128, 256, 512]
+        jk_choices = ["last", "max", "sum", "cat"]
 
-    # 2. Positional Encoding
+    hidden_dim = trial.suggest_categorical("hidden_dim", hidden_choices)
+
     pe_type = trial.suggest_categorical(
         "pe_type",
         ["none", "level", "pi_paths", "local_sp_sum"],
     )
     pos_enc_dim = (
-        trial.suggest_categorical("pos_enc_dim", [32, 64, 128, 256])
+        trial.suggest_categorical("pos_enc_dim", [16, 32, 64, 128])
         if pe_type != "none"
         else 0
     )
     pooling_type = trial.suggest_categorical("pooling_type", ["mean", "max", "sum"])
 
-    # 3. Encoder Specific Hyperparameters
     encoder_kwargs = {
         "num_layers": trial.suggest_int("num_layers", 2, 8),
         "dropout": trial.suggest_float("dropout", 0.0, 0.4),
         "norm_type": trial.suggest_categorical(
             "norm_type", ["batch", "layer", "graph"]
         ),
-        "jk_mode": trial.suggest_categorical("jk_mode", ["last", "max", "sum", "cat"]),
+        "jk_mode": trial.suggest_categorical("jk_mode", jk_choices),
+        "hid_dim": hidden_dim,
     }
 
-    encoder_kwargs["hid_dim"] = hidden_dim
-    if encoder_name in ["transformer_conv", "graphgps"]:
-        encoder_kwargs["heads"] = trial.suggest_categorical("heads", [2, 4])
+    if encoder_name in ATTENTION_ENCODERS:
+        encoder_kwargs["heads"] = trial.suggest_categorical("heads", [1, 2, 4])
 
     if encoder_name == "egin":
         encoder_kwargs["num_mlp_layers"] = trial.suggest_int("num_mlp_layers", 2, 4)
@@ -100,31 +401,77 @@ def objective(trial: optuna.Trial, args):
             "edge_hidden_dim", [32, 64, 128]
         )
 
-    # --- NEW: PRINT TRIAL PARAMETERS ---
     print(f"\n{'=' * 60}")
     print(f"TRIAL {trial.number} STARTED")
     for key, value in trial.params.items():
         print(f"  {key}: {value}")
     print(f"{'=' * 60}\n")
+    _log_trial_memory("trial_start", trial, args)
 
-    # Initialize objects as None for safe cleanup in finally block
     model = None
     trainer = None
     datamodule = None
+    optimizer = None
+    batch = None
+    dataloader = None
+    val_dataloader = None
+    pruning_cb = None
+    early_stop_cb = None
+    risk_score = _estimate_trial_risk(
+        batch_size=batch_size,
+        hidden_dim=hidden_dim,
+        num_layers=encoder_kwargs["num_layers"],
+        jk_mode=encoder_kwargs["jk_mode"],
+        encoder_name=encoder_name,
+        heads=int(encoder_kwargs.get("heads", 1)),
+        pe_type=pe_type,
+        pos_enc_dim=pos_enc_dim,
+    )
+
+    hard_prune_risk = float(getattr(args, "hard_prune_risk", 120000.0))
+    _set_trial_user_attr(trial, "hard_prune_risk", hard_prune_risk)
+    _set_trial_user_attr(trial, "risk_score", float(risk_score))
+    if risk_score > hard_prune_risk:
+        msg = (
+            f"Pre-allocation prune for high-risk trial. "
+            f"estimated_risk={risk_score:.2f} threshold={hard_prune_risk:.2f} "
+            f"params={trial.params}"
+        )
+        print(f"\n{msg}")
+        _mark_trial_outcome(
+            trial,
+            outcome="pruned",
+            oom_like=True,
+            prune_reason="hard_prune_risk",
+            risk_score=risk_score,
+        )
+        raise optuna.TrialPruned(msg)
 
     try:
-        # 4. Data Module
         workers = getattr(args, "num_workers", 2)
         persistent = getattr(args, "persistent_workers", False)
         pin_memory = getattr(args, "pin_memory", False)
         prefetch_factor = getattr(args, "prefetch_factor", 1)
         dynamic_batching = getattr(args, "dynamic_batching", False)
+        dataset_seed = int(getattr(args, "dataset_seed", 42))
+
+        guard_expansion = 3.0 if encoder_name in ATTENTION_ENCODERS else 2.0
+        memory_guard = {
+            "hidden_dim": hidden_dim,
+            "num_layers": encoder_kwargs["num_layers"],
+            "jk_mode": encoder_kwargs["jk_mode"],
+            "encoder_name": encoder_name,
+            "heads": int(encoder_kwargs.get("heads", 1)),
+            "expansion_factor": guard_expansion,
+            "max_tokens": float(getattr(args, "memory_guard_max_tokens", 3.5e8)),
+        }
 
         datamodule = AIGDataModule(
             csv_paths=args.csv_paths,
             positional_encoding=pe_type if pe_type != "none" else None,
             batch_size=batch_size,
             split_ratios=(0.8, 0.2, 0.0),
+            seed=dataset_seed,
             cache_dir=args.cache_dir,
             train_num_samples=args.train_samples,
             num_workers=workers,
@@ -133,8 +480,14 @@ def objective(trial: optuna.Trial, args):
             prefetch_factor=prefetch_factor,
             dynamic_batching=dynamic_batching,
         )
+        _install_hp_guarded_dataloaders(
+            datamodule,
+            memory_guard,
+            dynamic_batching=dynamic_batching,
+        )
+        dataloader = getattr(datamodule, "train_dataloader", None)
+        val_dataloader = getattr(datamodule, "val_dataloader", None)
 
-        # 5. Model Setup
         model = AIGRegressionLightningModule(
             encoder_name=encoder_name,
             hidden_dim=hidden_dim,
@@ -155,7 +508,6 @@ def objective(trial: optuna.Trial, args):
             version=f"trial_{trial.number}",
         )
 
-        # 7. Trainer
         trainer = pl.Trainer(
             max_epochs=10,
             max_time={"hours": 6},
@@ -169,50 +521,128 @@ def objective(trial: optuna.Trial, args):
         )
 
         trainer.fit(model, datamodule=datamodule)
+        _log_trial_memory("post_fit", trial, args)
+
+        optimizers = getattr(trainer, "optimizers", None)
+        if optimizers:
+            optimizer = optimizers[0]
 
         score = (
             early_stop_cb.best_score.item()
             if early_stop_cb.best_score is not None
             else float("inf")
         )
+        _mark_trial_outcome(
+            trial,
+            outcome="completed",
+            oom_like=False,
+            score=score,
+            risk_score=risk_score,
+        )
         print(f"\n[Trial {trial.number}] COMPLETED. Score: {score:.6f}")
         return score
 
-    except torch.OutOfMemoryError:
-        msg = f"CUDA Out of Memory. [Trial {trial.number}] with Params: {trial.params}"
+    except HPMemoryGuardError as e:
+        msg = f"Memory guard pruned trial before allocation. [Trial {trial.number}] {e}"
         print(f"\n{msg}")
+        _mark_trial_outcome(
+            trial,
+            outcome="pruned",
+            oom_like=True,
+            prune_reason="memory_guard",
+            risk_score=risk_score,
+        )
+        _log_trial_memory("guard_pruned", trial, args)
+        (
+            model,
+            trainer,
+            datamodule,
+            pruning_cb,
+            early_stop_cb,
+            optimizer,
+            batch,
+            dataloader,
+            val_dataloader,
+        ) = _purge_trial_memory(
+            trainer=trainer,
+            datamodule=datamodule,
+            model=model,
+            optimizer=optimizer,
+            batch=batch,
+            dataloader=dataloader,
+            val_dataloader=val_dataloader,
+            pruning_cb=pruning_cb,
+            early_stop_cb=early_stop_cb,
+        )
         raise optuna.TrialPruned(msg) from None
 
     except RuntimeError as e:
         if _is_oom_like_runtime_error(e):
-            msg = f"OOM-like RuntimeError. [Trial {trial.number}] with Params: {trial.params}. Error: {e}"
+            msg = (
+                f"OOM-like RuntimeError. [Trial {trial.number}] "
+                f"estimated_risk={risk_score:.2f} Params: {trial.params}. Error: {e}"
+            )
             print(f"\n{msg}")
-            e = None
+            _mark_trial_outcome(
+                trial,
+                outcome="pruned",
+                oom_like=True,
+                prune_reason="runtime_oom",
+                risk_score=risk_score,
+            )
+            _log_trial_memory("oom_caught", trial, args)
+            if optimizer is None and trainer is not None:
+                optimizers = getattr(trainer, "optimizers", None)
+                if optimizers:
+                    optimizer = optimizers[0]
+
+            (
+                model,
+                trainer,
+                datamodule,
+                pruning_cb,
+                early_stop_cb,
+                optimizer,
+                batch,
+                dataloader,
+                val_dataloader,
+            ) = _purge_trial_memory(
+                trainer=trainer,
+                datamodule=datamodule,
+                model=model,
+                optimizer=optimizer,
+                batch=batch,
+                dataloader=dataloader,
+                val_dataloader=val_dataloader,
+                pruning_cb=pruning_cb,
+                early_stop_cb=early_stop_cb,
+            )
             raise optuna.TrialPruned(msg) from None
-        else:
-            raise e
+        raise
 
     finally:
-        # 1. Break the Optuna Callback -> Trainer circular reference
-        if "pruning_cb" in locals() and pruning_cb:
-            pruning_cb.trainer = None
-        if "early_stop_cb" in locals() and early_stop_cb:
-            early_stop_cb.trainer = None
-
-        # 2. Obliterate the Trainer internals
-        if "trainer" in locals() and trainer:
-            trainer.callbacks = []
-            trainer.loggers = []
-            del trainer
-
-        # 3. Obliterate DataModule & Model
-        if "datamodule" in locals() and datamodule:
-            del datamodule
-        if "model" in locals() and model:
-            del model
-
-        gc.collect()
-        torch.cuda.empty_cache()
+        (
+            model,
+            trainer,
+            datamodule,
+            pruning_cb,
+            early_stop_cb,
+            optimizer,
+            batch,
+            dataloader,
+            val_dataloader,
+        ) = _purge_trial_memory(
+            trainer=trainer,
+            datamodule=datamodule,
+            model=model,
+            optimizer=optimizer,
+            batch=batch,
+            dataloader=dataloader,
+            val_dataloader=val_dataloader,
+            pruning_cb=pruning_cb,
+            early_stop_cb=early_stop_cb,
+        )
+        _log_trial_memory("post_cleanup", trial, args)
 
 
 if __name__ == "__main__":
@@ -250,6 +680,33 @@ if __name__ == "__main__":
         help="Enable dynamic batch construction based on graph size.",
     )
     parser.add_argument(
+        "--memory_guard_max_tokens",
+        type=float,
+        default=3.5e8,
+        help="Memory guard threshold in heuristic activation tokens.",
+    )
+    parser.add_argument(
+        "--hard_prune_risk",
+        type=float,
+        default=120000.0,
+        help="Prune trial before trainer start if risk score exceeds this.",
+    )
+    parser.add_argument(
+        "--dataset_seed",
+        type=int,
+        default=42,
+        help="Deterministic dataset split seed shared by all trials.",
+    )
+    parser.add_argument(
+        "--memory_telemetry_trials",
+        type=int,
+        default=0,
+        help=(
+            "Log RSS/CUDA memory telemetry only for the first N trials "
+            "(0 disables telemetry)."
+        ),
+    )
+    parser.add_argument(
         "--cache_dir", type=str, help="Directory to save dataset splits"
     )
     parser.add_argument("--log_dir", type=str, help="Directory to save lightning logs")
@@ -271,4 +728,8 @@ if __name__ == "__main__":
         pruner=optuna.pruners.MedianPruner(n_startup_trials=5, n_warmup_steps=3),
     )
 
-    study.optimize(lambda trial: objective(trial, args), n_trials=None)
+    study.optimize(
+        lambda trial: objective(trial, args),
+        n_trials=None,
+        callbacks=[_trial_outcome_callback],
+    )
