@@ -57,10 +57,13 @@ WORKSPACE="/scratch-shared/$USER/big_optuna_run"
 CHECKPOINT_DIR="$WORKSPACE/checkpoints"
 LOG_DIR="$WORKSPACE/logs"
 
-STORAGE_PATH="$WORKSPACE/optuna_study.log"
-export STORAGE_PATH
-
 STUDY_NAME="${STUDY_NAME:-big_optuna_hp_tuning}"
+
+# Use node-local scratch for SQLite to avoid GPFS file-lock hangs.
+# The DB is copied to WORKSPACE at the end so results are preserved.
+LOCAL_SCRATCH="${TMPDIR:-/tmp}/optuna_${SLURM_JOB_ID:-$$}"
+mkdir -p "$LOCAL_SCRATCH"
+STORAGE_PATH="sqlite:///$LOCAL_SCRATCH/optuna_study.db"
 
 mkdir -p "$CHECKPOINT_DIR"
 mkdir -p "$LOG_DIR"
@@ -123,6 +126,22 @@ echo "Memory telemetry: first $MEMORY_TELEMETRY_TRIALS trial(s)"
 
 echo "Starting Big Worker $TASK_ID on GPU 0..."
 
+# Background sync loop: copy the node-local SQLite DB to scratch-shared every
+# 5 minutes so that completed trials are preserved even if the job crashes.
+DB_SYNC_INTERVAL="${DB_SYNC_INTERVAL:-300}"
+(
+    while true; do
+        sleep "$DB_SYNC_INTERVAL"
+        if [ -f "$LOCAL_SCRATCH/optuna_study.db" ]; then
+            cp "$LOCAL_SCRATCH/optuna_study.db" "$WORKSPACE/optuna_study.db.tmp" \
+                && mv "$WORKSPACE/optuna_study.db.tmp" "$WORKSPACE/optuna_study.db" \
+                && echo "[db_sync] $(date) synced DB to $WORKSPACE/optuna_study.db" \
+                || echo "[db_sync] $(date) WARNING: sync failed" >&2
+        fi
+    done
+) &
+SYNC_PID=$!
+
 CUDA_VISIBLE_DEVICES=0 python -u -m hp_tuning \
     --db_url "$STORAGE_PATH" \
     --study_name "$STUDY_NAME" \
@@ -137,18 +156,22 @@ CUDA_VISIBLE_DEVICES=0 python -u -m hp_tuning \
     --dataset_seed 42 \
     --memory_telemetry_trials "$MEMORY_TELEMETRY_TRIALS" \
     --train_samples 20000 \
-    > "$LOG_DIR/worker_${TASK_ID}.log" 2>&1 &
-PID=$!
+    > "$LOG_DIR/worker_${TASK_ID}.log" 2>&1
+EXIT_CODE=$?
 
-FAIL=0
-if ! wait "$PID"; then
-    echo "Worker $TASK_ID failed. Last 80 lines:"
+# Stop the background sync loop
+kill "$SYNC_PID" 2>/dev/null || true
+wait "$SYNC_PID" 2>/dev/null || true
+
+# Final copy regardless of exit code
+echo "Final sync of SQLite DB to $WORKSPACE/optuna_study.db ..."
+cp "$LOCAL_SCRATCH/optuna_study.db" "$WORKSPACE/optuna_study.db.tmp" \
+    && mv "$WORKSPACE/optuna_study.db.tmp" "$WORKSPACE/optuna_study.db" \
+    || echo "WARNING: final DB sync failed" >&2
+
+if (( EXIT_CODE != 0 )); then
+    echo "Worker $TASK_ID failed (exit $EXIT_CODE). Last 80 lines:"
     tail -n 80 "$LOG_DIR/worker_${TASK_ID}.log" || true
-    FAIL=1
-fi
-
-if (( FAIL != 0 )); then
-    echo "Worker $TASK_ID failed; exiting non-zero."
     exit 1
 fi
 
