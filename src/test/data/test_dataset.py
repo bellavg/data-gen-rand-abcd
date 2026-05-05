@@ -604,3 +604,65 @@ class TestBalancedDynamicBatchSampler(unittest.TestCase):
             baseline_totals.append(sum(sizes[i] for i in chunk))
 
         self.assertLess(max(dynamic_totals), max(baseline_totals))
+
+
+# ---------------------------------------------------------------------------
+# get_num_nodes_list tests
+# ---------------------------------------------------------------------------
+
+
+class TestGetNumNodesList(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.pt_paths = _make_graph_pts(self.root / "graphs", 5)
+        self.csv_path = self.root / "data.csv"
+        _write_csv(self.csv_path, _make_rows(self.pt_paths))
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _make_ds(self, **kwargs):
+        from data.dataset import AIGGraphRegressionDataset
+
+        return AIGGraphRegressionDataset(self.csv_path, **kwargs)
+
+    def test_returns_one_entry_per_sample(self):
+        ds = self._make_ds()
+        sizes = ds.get_num_nodes_list()
+        self.assertEqual(len(sizes), len(ds))
+
+    def test_all_entries_are_positive_integers(self):
+        ds = self._make_ds()
+        sizes = ds.get_num_nodes_list()
+        for s in sizes:
+            self.assertIsInstance(s, int)
+            self.assertGreater(s, 0)
+
+    def test_sizes_match_loaded_graphs(self):
+        """Node counts returned by get_num_nodes_list must equal actual graph sizes."""
+        ds = self._make_ds()
+        sizes = ds.get_num_nodes_list()
+        for i, s in enumerate(sizes):
+            self.assertEqual(s, ds[i].x.shape[0])
+
+    def test_sizes_cached_to_disk_when_cache_dir_set(self):
+        cache_dir = self.root / "cache_sizes"
+        ds = self._make_ds(cache_dir=cache_dir)
+        ds.get_num_nodes_list()
+        json_files = list(cache_dir.glob("*_node_sizes.json"))
+        self.assertEqual(len(json_files), 1)
+
+    def test_second_call_loads_from_cache(self):
+        cache_dir = self.root / "cache_sizes2"
+        ds = self._make_ds(cache_dir=cache_dir)
+        sizes1 = ds.get_num_nodes_list()
+        # Second call should return identical results (loaded from JSON cache)
+        sizes2 = ds.get_num_nodes_list()
+        self.assertEqual(sizes1, sizes2)
+
+    def test_no_cache_file_without_cache_dir(self):
+        ds = self._make_ds()
+        ds.get_num_nodes_list()
+        json_files = list(self.root.rglob("*_node_sizes.json"))
+        self.assertEqual(len(json_files), 0)
