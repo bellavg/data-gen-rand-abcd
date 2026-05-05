@@ -7,9 +7,9 @@ import warnings
 from typing import Callable, List
 
 import optuna
+from optuna.storages import RDBStorage
 import pytorch_lightning as pl
 import torch
-from optuna.storages import JournalFileStorage, JournalStorage
 from pytorch_lightning.callbacks import Callback, EarlyStopping
 from pytorch_lightning.loggers import CSVLogger
 from torch_geometric.data import Batch
@@ -729,7 +729,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Optuna Hyperparameter Tuning for AIG Regression"
     )
-    parser.add_argument("--db_url", type=str, required=True, help="Database URL")
+    parser.add_argument("--db_url", type=str, required=True, help="SQLite DB URL, e.g. sqlite:///path/to/study.db")
     parser.add_argument(
         "--study_name", type=str, required=True, help="Optuna study name"
     )
@@ -803,7 +803,7 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    storage = JournalStorage(JournalFileStorage(args.db_url))
+    storage = RDBStorage(url=args.db_url)
 
     study = optuna.create_study(
         study_name=args.study_name,
