@@ -87,6 +87,49 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
 
         return AIGGraphRegressionDataset(self.csv_path, **kwargs)
 
+    # --- PyG root sentinel regression ---
+
+    def test_no_question_mark_folder_created_without_cache_dir(self):
+        """Regression: creating a dataset without cache_dir must never create a
+        '???' directory (PyG's MISSING sentinel for root=None) in the CWD or
+        anywhere under the tmp directory."""
+        import os
+
+        orig_cwd = os.getcwd()
+        try:
+            # Change to a controlled temp dir so any stray '???' appears here
+            os.chdir(self.tmp.name)
+            self._make_ds()
+        finally:
+            os.chdir(orig_cwd)
+
+        sentinel = Path(self.tmp.name) / "???"
+        self.assertFalse(
+            sentinel.exists(),
+            f"PyG '???' sentinel directory was created at {sentinel}",
+        )
+        # Also check the original CWD
+        sentinel_cwd = Path(orig_cwd) / "???"
+        self.assertFalse(
+            sentinel_cwd.exists(),
+            f"PyG '???' sentinel directory was created in CWD at {sentinel_cwd}",
+        )
+
+    def test_no_question_mark_folder_created_with_cache_dir(self):
+        """Even with cache_dir set, '???' must never appear."""
+        import os
+
+        cache_dir = self.root / "cache_for_sentinel_test"
+        orig_cwd = os.getcwd()
+        try:
+            os.chdir(self.tmp.name)
+            self._make_ds(cache_dir=cache_dir)
+        finally:
+            os.chdir(orig_cwd)
+
+        sentinel = Path(self.tmp.name) / "???"
+        self.assertFalse(sentinel.exists(), f"Stray '???' created at {sentinel}")
+
     # --- basic ---
 
     def test_len(self):

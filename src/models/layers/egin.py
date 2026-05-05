@@ -221,7 +221,7 @@ class GraphEGIN(nn.Module):
         self,
         x: Tensor,
         edge_index: Tensor,
-        edge_attr: Tensor = None,
+        edge_attr: Tensor,  # Always required: AIG graphs always carry edge attributes.
         batch: Tensor | None = None,
     ) -> Tensor:
         return self.egin_forward(

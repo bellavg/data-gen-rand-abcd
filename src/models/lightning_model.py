@@ -45,7 +45,9 @@ class AIGRegressionLightningModule(pl.LightningModule):
     def forward(self, batch):
         return self.model.forward_batch(batch)
 
-    def _compute_loss_and_metrics(self, batch, batch_idx, prefix: str):
+    def _compute_loss_and_metrics(
+        self, batch, batch_idx, prefix: str
+    ) -> torch.Tensor | None:
         preds = self.forward(batch)
         targets = batch.y
 
@@ -58,22 +60,24 @@ class AIGRegressionLightningModule(pl.LightningModule):
         if getattr(self, "_trainer", None) is not None:
             batch_size = getattr(batch, "num_graphs", 1)
 
-            # FIX: Explicitly call .detach() and disable sync_dist
             self.log(
                 f"{prefix}/loss",
-                loss.detach(),  # Detach the graph!
+                loss.detach(),
                 batch_size=batch_size,
-                sync_dist=False,  # Disable sync buffer for 1 GPU
+                sync_dist=False,
                 prog_bar=True,
             )
             self.log(
                 f"{prefix}/mae_node",
-                mae_node_opt.detach(),  # Detach the graph!
+                mae_node_opt.detach(),
                 batch_size=batch_size,
-                sync_dist=False,  # Disable sync buffer for 1 GPU
+                sync_dist=False,
             )
 
-        return loss
+        # Return the live loss only for training so the backward pass works.
+        # Returning a tensor from val/test causes PL to hold the entire
+        # computation graph in memory across the epoch for metric aggregation.
+        return loss if prefix == "train" else None
 
     def training_step(self, batch, batch_idx):
         if hasattr(self.model.encoder, "redraw_projection"):

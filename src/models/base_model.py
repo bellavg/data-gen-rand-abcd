@@ -115,19 +115,18 @@ class UnifiedGraphBaseModel(nn.Module):
         # Project nodes to latent hidden_dim
         x = self.node_embed(x.float()) if self.embed_node_input else x.float()
 
-        # Project edges to latent hidden_dim
+        # Project edges to latent hidden_dim.
+        # edge_attr is always required: AIG graphs are validated at load time.
         if edge_attr is None:
-            edge_attr = torch.zeros(
-                (edge_index.size(1), self.kwargs["edge_attr_dim"]),
-                device=x.device,
-                dtype=x.dtype,
+            raise ValueError(
+                "edge_attr is None inside encode_and_integrate — "
+                "all AIG graphs must carry edge attributes."
             )
-        else:
-            edge_attr = (
-                self.edge_attr_proj(edge_attr.float())
-                if self.embed_edge_input
-                else edge_attr.float()
-            )
+        edge_attr = (
+            self.edge_attr_proj(edge_attr.float())
+            if self.embed_edge_input
+            else edge_attr.float()
+        )
 
         x = self._integrate_positional_encoding(x, pos_enc)
         return x, edge_attr

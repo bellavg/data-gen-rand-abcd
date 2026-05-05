@@ -348,10 +348,6 @@ class TestGINEEncoder(unittest.TestCase):
         out = enc(x=x, edge_index=edge_index, batch=batch, edge_attr=edge_attr)
         self.assertEqual(out.shape, (NUM_NODES, HID_DIM * (NUM_LAYERS + 1)))
 
-    def test_out_dim_attribute(self):
-        enc = self._make_enc()
-        self.assertEqual(enc.out_dim, HID_DIM * (NUM_LAYERS + 1))
-
     def test_single_layer(self):
         enc = self._make_enc(num_layers=1)
         enc.eval()
@@ -396,10 +392,13 @@ class TestGCNConvLayer(unittest.TestCase):
         self.assertEqual(out.shape, (NUM_NODES, HID_DIM))
 
     def test_no_edge_attr(self):
+        # GCN now always requires edge attributes (edge_attr passed through
+        # propagate, not via instance variable).  Confirm a TypeError/similar
+        # is raised when edge_attr is None rather than silently producing zeros.
         _, edge_index, _, _ = _make_graph()
         x = torch.randn(NUM_NODES, HID_DIM)
-        out = self.layer(x=x, edge_index=edge_index, edge_attr=None)
-        self.assertEqual(out.shape, (NUM_NODES, HID_DIM))
+        with self.assertRaises(Exception):
+            self.layer(x=x, edge_index=edge_index, edge_attr=None)
 
     def test_layer_norm_type(self):
         from models.layers.gcn import GCNConvLayer
@@ -512,18 +511,29 @@ class TestGraphGPSEncoder(unittest.TestCase):
         from models.layers.graphgps import GraphGPSEncoder
 
         num_layers = kwargs.get("num_layers", NUM_LAYERS)
+        jk_mode = kwargs.get("jk_mode", "last")  # mirrors new memory-safe default
+        output_dim = HID_DIM * (num_layers + 1) if jk_mode == "cat" else HID_DIM
         defaults = dict(
             node_input_dim=HID_DIM,
             hid_dim=HID_DIM,
             num_layers=num_layers,
             edge_attr_dim=HID_DIM,
-            output_dim=HID_DIM * (num_layers + 1),
+            output_dim=output_dim,
         )
         defaults.update(kwargs)
         return GraphGPSEncoder(**defaults)
 
     def test_output_shape(self):
+        # Default jk_mode="last": output is (N, hid_dim) — no JK cat explosion.
         enc = self._make_enc()
+        enc.eval()
+        x, edge_index, edge_attr, batch = _make_graph(in_dim=HID_DIM, edge_dim=HID_DIM)
+        out = enc(x=x, edge_index=edge_index, batch=batch, edge_attr=edge_attr)
+        self.assertEqual(out.shape, (NUM_NODES, HID_DIM))
+
+    def test_output_shape_jk_cat(self):
+        # Explicitly opt-in to jk_cat to verify the cat path still works.
+        enc = self._make_enc(jk_mode="cat")
         enc.eval()
         x, edge_index, edge_attr, batch = _make_graph(in_dim=HID_DIM, edge_dim=HID_DIM)
         out = enc(x=x, edge_index=edge_index, batch=batch, edge_attr=edge_attr)

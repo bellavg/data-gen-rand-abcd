@@ -43,6 +43,16 @@ class RedrawProjection:
         self.num_last_redraw += 1
 
 
+# Map short norm names used project-wide to the full names expected by PyG's
+# normalization_resolver inside GPSConv.
+_GPS_NORM_MAP: dict[str, str] = {
+    "batch": "batch_norm",
+    "layer": "layer_norm",
+    "graph": "graph_norm",
+    "instance": "instance_norm",
+}
+
+
 class GraphGPSEncoder(nn.Module):
     def __init__(
         self,
@@ -59,7 +69,9 @@ class GraphGPSEncoder(nn.Module):
     ):
         super().__init__()
         self.num_layers = num_layers
-        self.jk_mode = kwargs.get("jk_mode", "cat")
+        # GPS already performs global attention every layer; JK cat multiplies
+        # output size by (num_layers+1) for little gain.  Default to "last".
+        self.jk_mode = kwargs.get("jk_mode", "last")
         if self.num_layers < 1:
             raise ValueError("num_layers must be >= 1")
 
@@ -83,6 +95,9 @@ class GraphGPSEncoder(nn.Module):
             )
             local_conv = GINEConv(nn=local_nn, edge_dim=edge_attr_dim)
 
+            # Map project-wide short norm name to PyG resolver-compatible name.
+            gps_norm = _GPS_NORM_MAP.get(str(norm_type).lower(), norm_type)
+
             self.layers.append(
                 GPSConv(
                     channels=hid_dim,
@@ -90,8 +105,10 @@ class GraphGPSEncoder(nn.Module):
                     heads=heads,
                     dropout=dropout,
                     attn_type="performer",
-                    attn_kwargs={"dropout": 0.5},
-                    norm=norm_type,
+                    # Tie performer feature dropout to the model dropout instead
+                    # of a hardcoded 0.5 which was excessively high.
+                    attn_kwargs={"dropout": dropout},
+                    norm=gps_norm,
                 )
             )
 
