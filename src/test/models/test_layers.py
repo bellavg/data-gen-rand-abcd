@@ -538,3 +538,155 @@ class TestGraphGPSEncoder(unittest.TestCase):
         x, edge_index, edge_attr, batch = _make_graph(in_dim=HID_DIM, edge_dim=HID_DIM)
         out = enc(x=x, edge_index=edge_index, batch=batch, edge_attr=edge_attr)
         self.assertEqual(out.shape, (NUM_NODES, HID_DIM * (NUM_LAYERS + 1)))
+
+
+# ==========================================================================
+# model_utils — get_norm_layer & apply_norm
+# ==========================================================================
+
+
+class TestGetNormLayer(unittest.TestCase):
+    def test_none_returns_identity(self):
+        from models.model_utils import get_norm_layer
+
+        layer = get_norm_layer(None, HID_DIM)
+        self.assertIsInstance(layer, nn.Identity)
+
+    def test_none_string_returns_identity(self):
+        from models.model_utils import get_norm_layer
+
+        layer = get_norm_layer("none", HID_DIM)
+        self.assertIsInstance(layer, nn.Identity)
+
+    def test_batch_norm(self):
+        from torch_geometric.nn import BatchNorm
+
+        from models.model_utils import get_norm_layer
+
+        layer = get_norm_layer("batch", HID_DIM)
+        self.assertIsInstance(layer, BatchNorm)
+
+    def test_layer_norm(self):
+        from torch_geometric.nn import LayerNorm
+
+        from models.model_utils import get_norm_layer
+
+        layer = get_norm_layer("layer", HID_DIM)
+        self.assertIsInstance(layer, LayerNorm)
+
+    def test_graph_norm(self):
+        from torch_geometric.nn import GraphNorm
+
+        from models.model_utils import get_norm_layer
+
+        layer = get_norm_layer("graph", HID_DIM)
+        self.assertIsInstance(layer, GraphNorm)
+        # Aliases
+        self.assertIsInstance(get_norm_layer("graphnorm", HID_DIM), GraphNorm)
+        self.assertIsInstance(get_norm_layer("gn", HID_DIM), GraphNorm)
+
+    def test_instance_norm(self):
+        from torch_geometric.nn import InstanceNorm
+
+        from models.model_utils import get_norm_layer
+
+        layer = get_norm_layer("instance", HID_DIM)
+        self.assertIsInstance(layer, InstanceNorm)
+        # Aliases
+        self.assertIsInstance(get_norm_layer("instancenorm", HID_DIM), InstanceNorm)
+        self.assertIsInstance(get_norm_layer("in", HID_DIM), InstanceNorm)
+
+    def test_unknown_raises_value_error(self):
+        from models.model_utils import get_norm_layer
+
+        with self.assertRaises(ValueError):
+            get_norm_layer("unknown_norm", HID_DIM)
+
+
+class TestApplyNorm(unittest.TestCase):
+    def test_identity_no_batch(self):
+        from models.model_utils import apply_norm
+
+        x = torch.randn(NUM_NODES, HID_DIM)
+        out = apply_norm(nn.Identity(), x)
+        self.assertTrue(torch.equal(out, x))
+
+    def test_batch_norm_no_batch_arg(self):
+        from torch_geometric.nn import BatchNorm
+
+        from models.model_utils import apply_norm
+
+        norm = BatchNorm(HID_DIM)
+        norm.eval()
+        x = torch.randn(NUM_NODES, HID_DIM)
+        out = apply_norm(norm, x, batch=None)
+        self.assertEqual(out.shape, x.shape)
+
+    def test_layer_norm_receives_batch_arg(self):
+        from torch_geometric.nn import LayerNorm
+
+        from models.model_utils import apply_norm
+
+        norm = LayerNorm(HID_DIM)
+        norm.eval()
+        x = torch.randn(NUM_NODES, HID_DIM)
+        batch = torch.zeros(NUM_NODES, dtype=torch.long)
+        out = apply_norm(norm, x, batch=batch)
+        self.assertEqual(out.shape, x.shape)
+
+    def test_graph_norm_receives_batch_arg(self):
+        from torch_geometric.nn import GraphNorm
+
+        from models.model_utils import apply_norm
+
+        norm = GraphNorm(HID_DIM)
+        norm.eval()
+        x = torch.randn(NUM_NODES, HID_DIM)
+        batch = torch.zeros(NUM_NODES, dtype=torch.long)
+        out = apply_norm(norm, x, batch=batch)
+        self.assertEqual(out.shape, x.shape)
+
+
+# ==========================================================================
+# constants — get_output_dim_for_encoder
+# ==========================================================================
+
+
+class TestGetOutputDimForEncoder(unittest.TestCase):
+    def test_egin_always_returns_task_out_dim(self):
+        from constants import TASK_OUT_DIM, get_output_dim_for_encoder
+
+        result = get_output_dim_for_encoder("egin", {"hid_dim": 64, "num_layers": 3})
+        self.assertEqual(result, TASK_OUT_DIM)
+
+    def test_jk_cat_multiplies_layers(self):
+        from constants import get_output_dim_for_encoder
+
+        # cat mode: hid_dim * (num_layers + 1)
+        result = get_output_dim_for_encoder(
+            "gine", {"hid_dim": 32, "num_layers": 3, "jk_mode": "cat"}
+        )
+        self.assertEqual(result, 32 * 4)
+
+    def test_jk_last_returns_hid_dim(self):
+        from constants import get_output_dim_for_encoder
+
+        result = get_output_dim_for_encoder(
+            "gine", {"hid_dim": 64, "num_layers": 3, "jk_mode": "last"}
+        )
+        self.assertEqual(result, 64)
+
+    def test_jk_mean_returns_hid_dim(self):
+        from constants import get_output_dim_for_encoder
+
+        result = get_output_dim_for_encoder(
+            "gcn", {"hid_dim": 128, "num_layers": 2, "jk_mode": "mean"}
+        )
+        self.assertEqual(result, 128)
+
+    def test_default_jk_mode_is_cat(self):
+        """No jk_mode key defaults to 'cat'."""
+        from constants import get_output_dim_for_encoder
+
+        result = get_output_dim_for_encoder("gine", {"hid_dim": 16, "num_layers": 2})
+        self.assertEqual(result, 16 * 3)

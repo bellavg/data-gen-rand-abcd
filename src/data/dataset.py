@@ -26,6 +26,24 @@ class GraphSample:
     y_node_opt: float
 
 
+# Module-level cache for raw CSV samples. The CSVs do not change during a run,
+# so re-reading and re-parsing them on every trial (2× per trial for train+val)
+# is pure waste.  Key: tuple of resolved CSV path strings.
+_CSV_SAMPLE_CACHE: Dict[Tuple[str, ...], List[GraphSample]] = {}
+
+# Module-level cache for the cache signature (keyed by same CSV key + run params).
+# Avoids 4 GPFS stat() calls per dataset instantiation after the first.
+_SIGNATURE_CACHE: Dict[Tuple, str] = {}
+
+# Module-level cache for splits JSON (keyed by resolved cache_file path string).
+# The splits file for a given algo+num_samples tag never changes once written.
+_SPLITS_CACHE: Dict[str, Dict[str, List[str]]] = {}
+
+# Module-level cache for manifest dicts (keyed by resolved manifest path string).
+# The manifest for a given cache_signature never changes once written.
+_MANIFEST_CACHE: Dict[str, dict] = {}
+
+
 class AIGGraphRegressionDataset(PyGDataset):
     """
     Minimal graph-level regression dataset.
@@ -135,12 +153,31 @@ class AIGGraphRegressionDataset(PyGDataset):
         pyg_root = str(self._cache_meta_dir) if self._cache_meta_dir is not None else None
         super().__init__(root=pyg_root)
 
+        # When cache_dir is present, process() returns True on first run (manifest
+        # freshly built) and False on subsequent runs (loaded from disk cache —
+        # graphs were already validated on the first run so no re-validation needed).
+        # When there is no cache_dir we always validate to catch corrupt graphs early.
+        manifest_was_rebuilt = self.cache_dir is None
         if self.cache_dir is not None:
-            self.process()
+            manifest_was_rebuilt = self.process()
 
-        self._verify_first_sample(self.samples)
+        # Verify the first sample when running for the first time (fresh manifest
+        # or no cache_dir). Skipped on reload from disk to avoid redundant I/O.
+        if manifest_was_rebuilt:
+            self._verify_first_sample(self.samples)
 
     def _build_cache_signature(self) -> str:
+        sig_key = (
+            self.seed,
+            self.split,
+            self.num_samples,
+            tuple(self.split_ratios),
+            tuple(str(p.resolve()) for p in sorted(self.csv_paths)),
+            str(Path(self.hp_tuning_splits_path).resolve()) if self.hp_tuning_splits_path is not None else None,
+        )
+        if sig_key in _SIGNATURE_CACHE:
+            return _SIGNATURE_CACHE[sig_key]
+
         hasher = hashlib.sha1()
         hasher.update(str(self.seed).encode())
         hasher.update(str(self.split).encode())
@@ -167,22 +204,30 @@ class AIGGraphRegressionDataset(PyGDataset):
             except OSError:
                 pass
 
-        return hasher.hexdigest()[:16]
+        sig = hasher.hexdigest()[:16]
+        _SIGNATURE_CACHE[sig_key] = sig
+        return sig
 
     def _read_candidate_samples(self) -> List[GraphSample]:
+        cache_key = tuple(str(p.resolve()) for p in self.csv_paths)
+        if cache_key in _CSV_SAMPLE_CACHE:
+            return _CSV_SAMPLE_CACHE[cache_key]
+
         df = pd.concat(
             [pd.read_csv(p, dtype=str).fillna("") for p in self.csv_paths],
             ignore_index=True,
         )
         df["optimizability"] = df["optimizability"].astype(float)
 
-        return [
+        samples = [
             GraphSample(
                 graph_path=row["unoptimized_graph_path"],
                 y_node_opt=row["optimizability"],
             )
             for row in df.to_dict("records")
         ]
+        _CSV_SAMPLE_CACHE[cache_key] = samples
+        return samples
 
     def _load_or_create_split_keys(self, all_keys: List[str]) -> Dict[str, List[str]]:
         if self.cache_dir is None or self.split is None:
@@ -194,25 +239,26 @@ class AIGGraphRegressionDataset(PyGDataset):
         # Include num_samples in the cache filename so it doesn't collide with full datasets
         sample_tag = f"_{self.num_samples}" if self.num_samples is not None else "_all"
         cache_file = self.cache_dir / f"{algo_tag}{sample_tag}_splits.json"
+        cache_key = str(cache_file.resolve())
+
+        if cache_key in _SPLITS_CACHE:
+            return _SPLITS_CACHE[cache_key]
 
         if cache_file.is_file():
             try:
                 with open(cache_file, encoding="utf-8") as fh:
                     splits = json.load(fh)
                 if all(name in splits for name in ("train", "val", "test")):
+                    _SPLITS_CACHE[cache_key] = splits
                     return splits
             except (json.JSONDecodeError, OSError):
-                # If another worker is currently writing directly to the file without atomic renames,
-                # it might be corrupted/empty. We catch that here and safely overwrite it below.
                 pass
 
         split_keys = self._create_split_keys(all_keys)
-
-        # --- FIX: Atomic write using a unique temporary file ---
         temp_file = cache_file.with_suffix(f".tmp_{uuid.uuid4().hex[:8]}")
         temp_file.write_text(json.dumps(split_keys, indent=2, sort_keys=True))
-        temp_file.rename(cache_file)  # This operation is atomic on Linux/Snellius
-
+        temp_file.rename(cache_file)
+        _SPLITS_CACHE[cache_key] = split_keys
         return split_keys
 
     def _create_split_keys(self, all_keys: List[str]) -> Dict[str, List[str]]:
@@ -334,31 +380,29 @@ class AIGGraphRegressionDataset(PyGDataset):
         tmp_path.replace(cache_path)
         return str(cache_path), num_nodes
 
-    def _manifest_is_valid(self, manifest: dict) -> bool:
-        if not isinstance(manifest, dict):
-            return False
-        if manifest.get("version") != self._MANIFEST_VERSION:
-            return False
-        if manifest.get("num_samples") != len(self.samples):
-            return False
-        entries = manifest.get("entries")
-        if not isinstance(entries, list) or len(entries) != len(self.samples):
-            return False
+    def _load_manifest(self) -> Optional[dict]:
+        if self._manifest_path is None or not self._manifest_path.is_file():
+            return None
 
-        for entry in entries:
-            if not isinstance(entry, dict):
-                return False
-            graph_path = entry.get("graph_path")
-            cache_path = entry.get("cache_path")
-            num_nodes = entry.get("num_nodes")
-            if not isinstance(graph_path, str) or not isinstance(cache_path, str):
-                return False
-            if not isinstance(num_nodes, int) or num_nodes <= 0:
-                return False
-            if not Path(cache_path).is_file():
-                return False
+        cache_key = str(self._manifest_path.resolve())
+        if cache_key in _MANIFEST_CACHE:
+            return _MANIFEST_CACHE[cache_key]
 
-        return True
+        try:
+            with open(self._manifest_path, encoding="utf-8") as fh:
+                manifest = json.load(fh)
+        except (json.JSONDecodeError, OSError):
+            return None
+
+        # Minimal shape guard: the signature-based filename already ensures this
+        # manifest belongs to the right seed/split/num_samples/CSV combination.
+        # Full per-entry validation was removed — it caused thousands of GPFS
+        # stat() calls per trial.
+        if not isinstance(manifest, dict) or not isinstance(manifest.get("entries"), list):
+            return None
+
+        _MANIFEST_CACHE[cache_key] = manifest
+        return manifest
 
     def _rebuild_graph_cache(self) -> dict:
         unique_paths = sorted({sample.graph_path for sample in self.samples})
@@ -388,20 +432,6 @@ class AIGGraphRegressionDataset(PyGDataset):
             "entries": entries,
         }
 
-    def _load_manifest(self) -> Optional[dict]:
-        if self._manifest_path is None or not self._manifest_path.is_file():
-            return None
-
-        try:
-            with open(self._manifest_path, encoding="utf-8") as fh:
-                manifest = json.load(fh)
-        except (json.JSONDecodeError, OSError):
-            return None
-
-        if not self._manifest_is_valid(manifest):
-            return None
-        return manifest
-
     def _apply_manifest(self, manifest: dict) -> None:
         self._graph_cache_map.clear()
         self._graph_num_nodes_map.clear()
@@ -412,12 +442,14 @@ class AIGGraphRegressionDataset(PyGDataset):
             self._graph_cache_map[graph_path] = cache_path
             self._graph_num_nodes_map[graph_path] = num_nodes
 
-    def process(self) -> None:
+    def process(self) -> bool:
+        """Load or build the graph cache manifest.  Returns True if the manifest
+        was freshly rebuilt (first run), False if loaded from disk cache."""
         if self.cache_dir is None:
-            return
+            return True
 
         if self._cache_meta_dir is None or self._manifest_path is None:
-            return
+            return True
 
         self._cache_meta_dir.mkdir(parents=True, exist_ok=True)
 
@@ -427,21 +459,31 @@ class AIGGraphRegressionDataset(PyGDataset):
             tmp = self._manifest_path.with_suffix(f".tmp_{uuid.uuid4().hex[:8]}")
             tmp.write_text(json.dumps(manifest, indent=2, sort_keys=True))
             tmp.replace(self._manifest_path)
+            self._apply_manifest(manifest)
+            return True
 
         self._apply_manifest(manifest)
+        return False
 
     def _load_graph_for_sample(self, sample: GraphSample):
         graph_path = sample.graph_path
         if self.cache_dir is not None:
             cached_path = self._graph_cache_map.get(graph_path)
-            if cached_path is None or not Path(cached_path).is_file():
+            if cached_path is None:
                 rebuilt_cache_path, num_nodes = self._cache_single_graph(graph_path)
                 self._graph_cache_map[graph_path] = rebuilt_cache_path
                 self._graph_num_nodes_map[graph_path] = num_nodes
                 cached_path = rebuilt_cache_path
             graph_path = cached_path
 
-        return torch.load(graph_path, map_location="cpu", weights_only=False)
+        try:
+            return torch.load(graph_path, map_location="cpu", weights_only=False)
+        except (FileNotFoundError, OSError):
+            # Cached file was deleted from under us — rebuild and retry once.
+            rebuilt_cache_path, num_nodes = self._cache_single_graph(sample.graph_path)
+            self._graph_cache_map[sample.graph_path] = rebuilt_cache_path
+            self._graph_num_nodes_map[sample.graph_path] = num_nodes
+            return torch.load(rebuilt_cache_path, map_location="cpu", weights_only=False)
 
     def _verify_first_sample(self, samples: List[GraphSample]) -> None:
         if not samples:
