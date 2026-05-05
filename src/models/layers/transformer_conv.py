@@ -68,7 +68,7 @@ class TransformerConvLayer(nn.Module):
         self.ff_act = nn.LeakyReLU()
         self.norm2 = get_norm_layer(norm_type, hid_dim)
 
-    def _ff_block(self, x: Tensor, batch: Tensor | None = None) -> Tensor:
+    def _ff_block(self, x: Tensor) -> Tensor:
         """Feed Forward block with graph-aware dropout."""
         x = self.ff_act(self.ff_linear1(x))
         x = F.dropout(x, p=self.dropout, training=self.training)

@@ -143,11 +143,14 @@ def _estimate_memory_tokens(
 ) -> float:
     jk_multiplier = (num_layers + 1) if jk_mode == "cat" else 1
     attn_multiplier = heads if encoder_name in ATTENTION_ENCODERS else 1
+    # GPS runs both a local MPNN pass and a global Performer pass per layer;
+    # apply an extra 1.5x over plain TransformerConv to reflect dual-path cost.
+    gps_multiplier = 1.5 if encoder_name == "graphgps" else 1.0
     layer_multiplier = max(1, num_layers)
 
     node_term = num_nodes * hidden_dim * layer_multiplier * jk_multiplier
     edge_term = num_edges * hidden_dim * attn_multiplier
-    return (node_term + edge_term) * expansion_factor
+    return (node_term + edge_term) * expansion_factor * gps_multiplier
 
 
 def _build_guarded_collate(memory_guard: dict) -> Callable[[List], Batch]:
@@ -160,7 +163,8 @@ def _build_guarded_collate(memory_guard: dict) -> Callable[[List], Batch]:
     expansion_factor = float(memory_guard.get("expansion_factor", 1.0))
 
     def guarded_collate(data_list: List) -> Batch:
-        for data in data_list:
+        total_batch_tokens = 0.0
+        for idx, data in enumerate(data_list):
             num_nodes = int(data.num_nodes)
             num_edges = int(data.edge_index.size(1))
             est_tokens = _estimate_memory_tokens(
@@ -173,11 +177,15 @@ def _build_guarded_collate(memory_guard: dict) -> Callable[[List], Batch]:
                 heads=heads,
                 expansion_factor=expansion_factor,
             )
-            if est_tokens > max_tokens:
+            total_batch_tokens += est_tokens
+            if total_batch_tokens > max_tokens:
                 raise HPMemoryGuardError(
-                    "Memory guard pruned graph before forward allocation: "
+                    "Memory guard pruned batch before forward allocation: "
+                    f"batch_graphs={len(data_list)}, offending_index={idx}, "
                     f"nodes={num_nodes}, edges={num_edges}, "
-                    f"est_tokens={est_tokens:.2e}, max_tokens={max_tokens:.2e}"
+                    f"graph_tokens={est_tokens:.2e}, "
+                    f"batch_tokens={total_batch_tokens:.2e}, "
+                    f"max_tokens={max_tokens:.2e}"
                 )
         return Batch.from_data_list(data_list)
 
@@ -243,7 +251,7 @@ def _is_oom_like_runtime_error(exc: RuntimeError) -> bool:
     text = str(exc).lower()
     if "out of memory" in text or "oom" in text:
         return True
-    if "dataloader worker" in text and "killed by signal" in text and "killed" in text:
+    if "dataloader worker" in text and "killed by signal" in text:
         return True
     if "dataloader worker" in text and "exited unexpectedly" in text:
         return True
@@ -265,8 +273,18 @@ def _estimate_trial_risk(
 ) -> float:
     jk_multiplier = (num_layers + 1) if jk_mode == "cat" else 1
     attn_multiplier = heads if encoder_name in ATTENTION_ENCODERS else 1
+    # GPS has local MPNN + global Performer per layer; extra 1.5x vs TransformerConv.
+    gps_multiplier = 1.5 if encoder_name == "graphgps" else 1.0
     pe_multiplier = 1.0 + (float(pos_enc_dim) / 128.0 if pe_type != "none" else 0.0)
-    return float(batch_size * hidden_dim * num_layers * jk_multiplier * attn_multiplier * pe_multiplier)
+    return float(
+        batch_size
+        * hidden_dim
+        * num_layers
+        * jk_multiplier
+        * attn_multiplier
+        * pe_multiplier
+        * gps_multiplier
+    )
 
 
 def _purge_trial_memory(
@@ -281,39 +299,91 @@ def _purge_trial_memory(
     pruning_cb,
     early_stop_cb,
 ):
+    # 1. Sever callback-to-trainer back-references first so PL can't keep the
+    #    trainer alive through a callback's self.trainer reference.
     if pruning_cb is not None:
         pruning_cb.trainer = None
     if early_stop_cb is not None:
         early_stop_cb.trainer = None
 
     if trainer is not None:
+        # 2. Explicit PL teardown sequence: strategy → accelerator → loggers
+        try:
+            trainer._teardown()
+        except Exception:
+            pass
+        try:
+            if hasattr(trainer, "strategy") and trainer.strategy is not None:
+                trainer.strategy.teardown()
+        except Exception:
+            pass
+        try:
+            if hasattr(trainer, "_accelerator_connector"):
+                del trainer._accelerator_connector
+        except Exception:
+            pass
+        # 3. Clear all circular PL state containers
+        try:
+            trainer.fit_loop = None
+        except Exception:
+            pass
+        try:
+            trainer.validate_loop = None
+        except Exception:
+            pass
+        try:
+            trainer.test_loop = None
+        except Exception:
+            pass
+        try:
+            trainer.predict_loop = None
+        except Exception:
+            pass
+        try:
+            if hasattr(trainer, "_data_connector"):
+                del trainer._data_connector
+        except Exception:
+            pass
+        # 4. Clear loggers and callbacks
+        for lg in list(getattr(trainer, "loggers", []) or []):
+            try:
+                lg.finalize("failed")
+            except Exception:
+                pass
         trainer.callbacks = []
         trainer.loggers = []
+        # 5. Detach model from trainer to break any final cycle
+        try:
+            trainer.lightning_module = None
+        except Exception:
+            pass
 
+    # 6. Tear down DataModule
     if datamodule is not None:
         try:
             datamodule.teardown("fit")
         except Exception:
             pass
 
-    if batch is not None:
-        del batch
+    # 7. Zero-out optimiser state tensors before del to reclaim GPU memory faster
     if optimizer is not None:
-        del optimizer
-    if dataloader is not None:
-        del dataloader
-    if val_dataloader is not None:
-        del val_dataloader
-    if trainer is not None:
-        del trainer
-    if datamodule is not None:
-        del datamodule
-    if model is not None:
-        del model
+        try:
+            for group in optimizer.param_groups:
+                for p in group.get("params", []):
+                    if p.grad is not None:
+                        p.grad = None
+        except Exception:
+            pass
 
+    # 8. Delete all references — individual dels + None assignments here are
+    # redundant with the return-None tuple, but gc.collect below needs the
+    # refcounts to drop first.  The return tuple unpack in the caller is what
+    # actually zeros out the outer names.
     gc.collect()
+    gc.collect()  # Two passes to break complex reference cycles
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
+        torch.cuda.synchronize()  # Ensure GPU ops drained before next trial
 
     return (None, None, None, None, None, None, None, None, None)
 
@@ -358,6 +428,10 @@ def objective(trial: optuna.Trial, args):
 
     if encoder_name in ATTENTION_ENCODERS:
         hidden_choices = [32, 64, 128, 256]
+        # GPS already performs global Performer attention every layer; JK cat
+        # multiplies the output size by (num_layers+1) with little gain and
+        # significant memory cost.  TransformerConv has the same concern.
+        # "cat" is intentionally excluded for all attention-based encoders.
         jk_choices = ["last", "max", "sum"]
     else:
         hidden_choices = [32, 64, 128, 256, 512]
@@ -451,7 +525,13 @@ def objective(trial: optuna.Trial, args):
         workers = getattr(args, "num_workers", 2)
         persistent = getattr(args, "persistent_workers", False)
         pin_memory = getattr(args, "pin_memory", False)
-        prefetch_factor = getattr(args, "prefetch_factor", 1)
+        prefetch_factor = int(getattr(args, "prefetch_factor", 1))
+        if workers > 0 and prefetch_factor != 1:
+            print(
+                "[safety] Overriding prefetch_factor to 1 "
+                f"(received {prefetch_factor}) to cap host-memory queue depth."
+            )
+            prefetch_factor = 1
         dynamic_batching = getattr(args, "dynamic_batching", False)
         dataset_seed = int(getattr(args, "dataset_seed", 42))
 
@@ -709,7 +789,12 @@ if __name__ == "__main__":
     parser.add_argument(
         "--cache_dir", type=str, help="Directory to save dataset splits"
     )
-    parser.add_argument("--log_dir", type=str, help="Directory to save lightning logs")
+    parser.add_argument(
+        "--log_dir",
+        type=str,
+        default=".",
+        help="Directory to save lightning logs (default: current working directory).",
+    )
     parser.add_argument(
         "--train_samples",
         type=int,

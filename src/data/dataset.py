@@ -40,6 +40,22 @@ class AIGGraphRegressionDataset(PyGDataset):
     _MANIFEST_VERSION = 1
 
     @property
+    def raw_dir(self) -> str:
+        # Keep PyG's raw_dir inside cache_dir when available so it never
+        # escapes to an uncontrolled location.
+        if self._cache_meta_dir is not None:
+            return str(self._cache_meta_dir / "raw")
+        return super().raw_dir
+
+    @property
+    def processed_dir(self) -> str:
+        # Redirect PyG's processed_dir into cache_dir/metadata/processed so that
+        # pre_transform.pt / pre_filter.pt are written there, not in ???/processed.
+        if self._cache_meta_dir is not None:
+            return str(self._cache_meta_dir / "processed")
+        return super().processed_dir
+
+    @property
     def raw_file_names(self) -> List[str]:
         # This dataset reads existing .pt paths from CSV and has no raw download step.
         return []
@@ -48,6 +64,19 @@ class AIGGraphRegressionDataset(PyGDataset):
     def processed_file_names(self) -> List[str]:
         # Processing is handled by custom cache manifests, not PyG's processed_dir files.
         return []
+
+    @property
+    def has_process(self) -> bool:
+        # Only allow PyG's _process() machinery (which calls makedirs) when we
+        # actually have a cache_dir.  Without one there is nothing to persist and
+        # the MISSING/"???" sentinel root must not materialise on disk.
+        return self._cache_meta_dir is not None
+
+    @property
+    def has_download(self) -> bool:
+        # Same rationale as has_process: suppress PyG's _download() makedirs
+        # when there is no cache_dir to avoid the "???" sentinel directory.
+        return False
 
     def download(self) -> None:
         return
@@ -99,7 +128,12 @@ class AIGGraphRegressionDataset(PyGDataset):
         )
 
         self.samples = self._build_samples()
-        super().__init__(root=None)
+        # Pass a real root so PyG never falls back to the "???" sentinel.  All
+        # actual I/O still uses our own cache_dir paths; this only prevents the
+        # stray "???" directory from being created in the working directory when
+        # the dataset is used without a cache_dir.
+        pyg_root = str(self._cache_meta_dir) if self._cache_meta_dir is not None else None
+        super().__init__(root=pyg_root)
 
         if self.cache_dir is not None:
             self.process()
@@ -163,10 +197,11 @@ class AIGGraphRegressionDataset(PyGDataset):
 
         if cache_file.is_file():
             try:
-                splits = json.loads(cache_file.read_text())
+                with open(cache_file, encoding="utf-8") as fh:
+                    splits = json.load(fh)
                 if all(name in splits for name in ("train", "val", "test")):
                     return splits
-            except json.JSONDecodeError:
+            except (json.JSONDecodeError, OSError):
                 # If another worker is currently writing directly to the file without atomic renames,
                 # it might be corrupted/empty. We catch that here and safely overwrite it below.
                 pass
@@ -209,14 +244,15 @@ class AIGGraphRegressionDataset(PyGDataset):
             hp_path = Path(self.hp_tuning_splits_path)
             if hp_path.is_file():
                 try:
-                    hp_splits = json.loads(hp_path.read_text())
+                    with open(hp_path, encoding="utf-8") as fh:
+                        hp_splits = json.load(fh)
                     hp_keys = set(
                         hp_splits.get("train", [])
                         + hp_splits.get("val", [])
                         + hp_splits.get("test", [])
                     )
                     samples = [s for s in samples if s.graph_path not in hp_keys]
-                except json.JSONDecodeError:
+                except (json.JSONDecodeError, OSError):
                     pass
 
         # 2. Handle when no specific split is requested
@@ -357,7 +393,8 @@ class AIGGraphRegressionDataset(PyGDataset):
             return None
 
         try:
-            manifest = json.loads(self._manifest_path.read_text())
+            with open(self._manifest_path, encoding="utf-8") as fh:
+                manifest = json.load(fh)
         except (json.JSONDecodeError, OSError):
             return None
 
@@ -439,7 +476,8 @@ class AIGGraphRegressionDataset(PyGDataset):
     def get(self, idx: int):
         sample = self.samples[idx]
         data_obj = self._load_graph_for_sample(sample)
-        self._validate_graph(data_obj, sample.graph_path)
+        # Validation already occurred at startup via _verify_first_sample() and
+        # process(); do not repeat it on every item fetch in the training hot path.
 
         # Apply positional encoding transform (attaches to data_obj.pos_enc)
         data_obj = self.pe_transform(data_obj)
@@ -475,7 +513,8 @@ class AIGGraphRegressionDataset(PyGDataset):
         # --- fast path: disk cache hit ---
         if sizes_cache_path is not None and sizes_cache_path.is_file():
             try:
-                data = json.loads(sizes_cache_path.read_text())
+                with open(sizes_cache_path, encoding="utf-8") as fh:
+                    data = json.load(fh)
                 if isinstance(data, list) and len(data) == len(self.samples):
                     return data
             except (json.JSONDecodeError, OSError):

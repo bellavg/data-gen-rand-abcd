@@ -123,8 +123,6 @@ class GINEEncoder(nn.Module):
                 )
             )
 
-        self.out_dim = output_dim
-
     def forward(
         self,
         x: Tensor,

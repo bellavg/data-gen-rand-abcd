@@ -5,7 +5,7 @@
 #SBATCH --cpus-per-task=16
 #SBATCH --partition=gpu_h100
 #SBATCH --gpus=1
-#SBATCH --mem=180G
+#SBATCH --mem=192G
 #SBATCH --output=logs/big_optuna_worker_1.out
 
 set -euo pipefail
@@ -27,6 +27,15 @@ module purge
 module load 2025
 module load Python/3.13.1-GCCcore-14.2.0
 module load SciPy-bundle/2025.06-gfbf-2025a
+
+# --- Load gperftools TCMalloc to prevent glibc malloc fragmentation.
+# TCMalloc aggressively returns freed memory to the OS so that thousands of
+# sequential torch.load() calls over a long tuning run do not silently balloon
+# the process RSS until SLURM kills it.
+module load gperftools/2.16-GCCcore-14.2.0
+export LD_PRELOAD="${EBROOTGPERFTOOLS}/lib/libtcmalloc.so${LD_PRELOAD:+:${LD_PRELOAD}}"
+echo "TCMalloc preloaded from: ${EBROOTGPERFTOOLS}/lib/libtcmalloc.so"
+# -------------------------------------------------------------------------
 
 VENV_PATH="${VENV_PATH:-/scratch-shared/$USER/.venv}"
 echo "Activating virtual environment at: $VENV_PATH"
@@ -65,13 +74,11 @@ CSV_4="$BASE_DIR/data/designs/design_metadata/algo_C2RS_ml.csv"
 # ---------------------------------------------------------
 # EXECUTE OPTUNA WORKER (big run)
 # ---------------------------------------------------------
-# num_workers=0: DataLoader runs in the main process — no worker subprocesses that
-# SLURM can silently OOM-kill. If a batch is too large, PyTorch raises
-# torch.OutOfMemoryError in the main process, which hp_tuning.py catches and prunes.
-# Increase to 2-4 only if you are confident memory is not the limiting factor.
-NUM_WORKERS="${NUM_WORKERS:-0}"
+# Default to small parallelism to reduce main-process fragmentation from long
+# single-process runs, while keeping host-memory queue depth constrained.
+NUM_WORKERS="${NUM_WORKERS:-2}"
 
-export MALLOC_ARENA_MAX=2
+export MALLOC_ARENA_MAX="${MALLOC_ARENA_MAX:-2}"
 
 # DataLoader tuning flags (can be overridden via env)
 PIN_MEMORY="${PIN_MEMORY:-false}"
@@ -79,6 +86,22 @@ PERSISTENT_WORKERS="${PERSISTENT_WORKERS:-false}"
 PREFETCH_FACTOR="${PREFETCH_FACTOR:-1}"
 DYNAMIC_BATCHING="${DYNAMIC_BATCHING:-true}"
 MEMORY_TELEMETRY_TRIALS="${MEMORY_TELEMETRY_TRIALS:-0}"
+
+if [ "$NUM_WORKERS" -gt 0 ]; then
+    if ! [[ "$PREFETCH_FACTOR" =~ ^[0-9]+$ ]]; then
+        echo "Invalid PREFETCH_FACTOR='$PREFETCH_FACTOR'; defaulting to 1."
+        PREFETCH_FACTOR=1
+    fi
+
+    if [ "$PREFETCH_FACTOR" -ne 1 ]; then
+        echo "Clamping PREFETCH_FACTOR from $PREFETCH_FACTOR to 1 for OOM safety."
+        PREFETCH_FACTOR=1
+    fi
+fi
+
+if [ "$NUM_WORKERS" -eq 0 ]; then
+    PERSISTENT_WORKERS=false
+fi
 
 EXTRA_FLAGS=()
 if [ "$PIN_MEMORY" = "true" ]; then

@@ -21,31 +21,22 @@ class GCNConvWithEdges(MessagePassing):
         self,
         in_channels: int,
         out_channels: int,
-        edge_dim: int | None = None,
+        edge_dim: int,  # Always required: AIG graphs always carry edge attributes.
         bias: bool = True,
     ):
         super().__init__(aggr="add")
         # 2. Use gnn.Linear for GNN-optimized weight initialization
         self.lin = gnn.Linear(in_channels, out_channels, bias=False)
-
-        self.edge_encoder = (
-            gnn.Linear(edge_dim, out_channels, bias=False)
-            if edge_dim is not None
-            else None
-        )
+        # Edge encoder is always created; edge_attr is mandatory.
+        self.edge_encoder = gnn.Linear(edge_dim, out_channels, bias=False)
         self.bias_param = nn.Parameter(torch.zeros(out_channels)) if bias else None
-        self._edge_attr = None
 
-    def message(self, x_j: Tensor, edge_weight: Tensor) -> Tensor:
-        # 1. Apply edge attributes
-        ea = self._edge_attr
-        if ea is not None:
-            edge_msg = self.edge_encoder(ea) if self.edge_encoder is not None else ea
-            msg = F.leaky_relu(x_j + edge_msg)
-        else:
-            msg = F.leaky_relu(x_j)
-
-        # 2. Scale the message by the GCN normalization weight
+    def message(self, x_j: Tensor, edge_weight: Tensor, edge_attr: Tensor) -> Tensor:
+        # Encode edge attributes and fuse with neighbour features before GCN scaling.
+        # edge_attr is passed directly through propagate() — no instance-variable side
+        # channel so this is thread-safe and works correctly with DataLoader workers.
+        edge_msg = self.edge_encoder(edge_attr)
+        msg = F.leaky_relu(x_j + edge_msg)
         return msg * edge_weight.view(-1, 1)
 
     def forward(
@@ -61,10 +52,10 @@ class GCNConvWithEdges(MessagePassing):
         deg_inv_sqrt[deg_inv_sqrt == float("inf")] = 0
         edge_weight = deg_inv_sqrt[row] * deg_inv_sqrt[col]
 
-        self._edge_attr = edge_attr
         x = self.lin(x)
-        out = self.propagate(edge_index, x=x, edge_weight=edge_weight, size=None)
-        self._edge_attr = None
+        # Pass edge_attr through propagate so message() receives it as a named
+        # argument — safe with multi-process DataLoader workers.
+        out = self.propagate(edge_index, x=x, edge_weight=edge_weight, edge_attr=edge_attr, size=None)
 
         if self.bias_param is not None:
             out = out + self.bias_param
@@ -81,7 +72,7 @@ class GCNConvLayer(nn.Module):
         self,
         dim_in: int,
         dim_out: int,
-        edge_dim: int | None,
+        edge_dim: int,  # Always required: matches GCNConvWithEdges.
         dropout: float,
         norm_type: str,
     ):
@@ -146,6 +137,8 @@ class GCNEncoder(nn.Module):
         **kwargs,
     ):
         super().__init__()
+        if num_layers < 1:
+            raise ValueError("num_layers must be >= 1")
         self.num_layers = num_layers
         self.jk_mode = kwargs.get("jk_mode", "cat")
 

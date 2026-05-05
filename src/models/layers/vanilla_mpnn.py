@@ -101,6 +101,8 @@ class MPNNEncoder(nn.Module):
         **kwargs,
     ):
         super(MPNNEncoder, self).__init__()
+        if num_layers < 1:
+            raise ValueError("num_layers must be >= 1")
         self.num_layers = num_layers
         self.jk_mode = kwargs.get("jk_mode", "cat")
         self.dropout = dropout

@@ -311,6 +311,7 @@ class TestOOMTrialCleanup(unittest.TestCase):
                 "hp_tuning.torch.cuda.empty_cache",
                 side_effect=lambda: events.append("empty_cache"),
             ),
+            patch("hp_tuning.torch.cuda.synchronize"),
         ):
             _ = hp_tuning.objective(self._make_trial(0), args)
             with self.assertRaises(hp_tuning.optuna.TrialPruned):
@@ -323,3 +324,68 @@ class TestOOMTrialCleanup(unittest.TestCase):
 
         self.assertIn("gc", between)
         self.assertIn("empty_cache", between)
+
+
+class TestMemoryGuardBatchAccumulation(unittest.TestCase):
+    @staticmethod
+    def _make_graph(num_nodes: int, num_edges: int) -> Data:
+        src = torch.arange(num_edges) % max(1, num_nodes)
+        dst = (torch.arange(num_edges) + 1) % max(1, num_nodes)
+        edge_index = torch.stack([src, dst], dim=0)
+        return Data(x=torch.zeros((num_nodes, 4)), edge_index=edge_index)
+
+    def test_guard_prunes_when_batch_total_exceeds_limit(self):
+        guarded_collate = hp_tuning._build_guarded_collate(
+            {
+                "max_tokens": 100.0,
+                "hidden_dim": 1,
+                "num_layers": 1,
+                "jk_mode": "last",
+                "encoder_name": "gine",
+                "heads": 1,
+                "expansion_factor": 1.0,
+            }
+        )
+
+        # Each graph is 80 tokens (40 nodes + 40 edges) so each one is safe alone,
+        # but the two-graph batch totals 160 and must be pruned.
+        graphs = [self._make_graph(40, 40), self._make_graph(40, 40)]
+        with self.assertRaises(hp_tuning.HPMemoryGuardError) as caught:
+            guarded_collate(graphs)
+
+        self.assertIn("batch_tokens", str(caught.exception))
+
+    def test_guard_allows_batch_under_limit(self):
+        guarded_collate = hp_tuning._build_guarded_collate(
+            {
+                "max_tokens": 100.0,
+                "hidden_dim": 1,
+                "num_layers": 1,
+                "jk_mode": "last",
+                "encoder_name": "gine",
+                "heads": 1,
+                "expansion_factor": 1.0,
+            }
+        )
+
+        batch = guarded_collate([self._make_graph(20, 20), self._make_graph(20, 20)])
+        self.assertEqual(batch.num_graphs, 2)
+
+    def test_error_message_contains_total_batch_tokens(self):
+        """Regression: error message must name total_batch_tokens, not total_tokens."""
+        guarded_collate = hp_tuning._build_guarded_collate(
+            {
+                "max_tokens": 50.0,
+                "hidden_dim": 1,
+                "num_layers": 1,
+                "jk_mode": "last",
+                "encoder_name": "gine",
+                "heads": 1,
+                "expansion_factor": 1.0,
+            }
+        )
+        with self.assertRaises(hp_tuning.HPMemoryGuardError) as ctx:
+            guarded_collate([self._make_graph(30, 30), self._make_graph(30, 30)])
+        msg = str(ctx.exception)
+        self.assertIn("batch_tokens=", msg)
+        self.assertNotIn("total_tokens=", msg)
