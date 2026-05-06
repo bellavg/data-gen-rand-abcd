@@ -1,22 +1,23 @@
 #!/bin/bash
 #SBATCH --job-name=big_optuna
-#SBATCH --time=72:00:00
+#SBATCH --time=96:00:00
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=16
 #SBATCH --partition=gpu_h100
 #SBATCH --gpus=1
 #SBATCH --mem=192G
-#SBATCH --output=logs/big_optuna_worker_1.out
+#SBATCH --array=1-3
+#SBATCH --output=logs/big_optuna_worker_%a.out
 
 set -euo pipefail
 
 # No array: always worker 1
-TASK_ID=1
+TASK_ID=${SLURM_ARRAY_TASK_ID}
 
-SCRIPT_VERSION="2026-04-24 (Big Optuna Array Workers 1-3 - No Pip Install)"
+SCRIPT_VERSION="2026-05-06 (96h Two-Stage Array Job: Stage 1 = explore, Stage 2 = exploit)"
 
 echo "=========================================="
-echo "JOB: Big Optuna Hyperparameter Tuning (Worker $TASK_ID)"
+echo "JOB: Big Optuna Hyperparameter Tuning (array_task=${SLURM_ARRAY_TASK_ID} job=${SLURM_ARRAY_JOB_ID:-n/a})"
 echo "Running on: $(hostname)"
 echo "Start time: $(date)"
 echo "Script version: $SCRIPT_VERSION"
@@ -52,12 +53,42 @@ export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
 
 cd "$BASE_DIR"
 
-# 4. Define Output Paths in Scratch (separate big-run workspace)
-WORKSPACE="/scratch-shared/$USER/big_optuna_run"
+# 4. Define Output Paths in Scratch
+# Each array task has its own workspace and study to avoid DB locking and
+# log-file conflicts. All tasks share one preprocessed dataset cache directory
+# so graph preprocessing is done at most once across the three workers.
+#
+# Two-stage tuning strategy (set STAGE=1 or STAGE=2 at submission time):
+#   Stage 1  — fast exploration: 15K samples × 50 trials per worker
+#              1 h/trial cap → ~21 h worst-case; finds promising HP regions
+#   Stage 2  — reliable exploitation: 35K samples × 20 trials per worker
+#              2 h/trial cap → ~40 h worst-case; warm-starts from Stage-1 DB
+# Per-worker budget: ~61 h worst-case → 3 workers each fit inside 96 h.
+# In practice (early-stopping patience=3, BF16 pruning): ~39 h per worker.
+STAGE="${STAGE:-1}"
+if [[ "$STAGE" == "1" ]]; then
+    TRAIN_SAMPLES=15000
+    N_TRIALS=50
+    MAX_TRIAL_HOURS=1.0
+elif [[ "$STAGE" == "2" ]]; then
+    TRAIN_SAMPLES=35000
+    N_TRIALS=20
+    MAX_TRIAL_HOURS=2.0
+else
+    echo "ERROR: STAGE must be 1 or 2 (got '$STAGE')." >&2
+    exit 1
+fi
+echo "Stage: $STAGE  train_samples=$TRAIN_SAMPLES  n_trials=$N_TRIALS  max_trial_hours=$MAX_TRIAL_HOURS"
+
+WORKSPACE="/scratch-shared/$USER/big_optuna_run_s${STAGE}_${TASK_ID}"
 CHECKPOINT_DIR="$WORKSPACE/checkpoints"
 LOG_DIR="$WORKSPACE/logs"
 
-STUDY_NAME="${STUDY_NAME:-big_optuna_hp_tuning}"
+# Common cache shared by all array workers (read-only after first warm-up).
+SHARED_CACHE="/scratch-shared/$USER/big_optuna_run/shared_dataset_cache"
+
+# Study name is worker-scoped but stage-consistent so Stage-2 warm-start works.
+STUDY_NAME="${STUDY_NAME:-big_optuna_hp_tuning}_worker${TASK_ID}"
 
 # Use node-local scratch for SQLite to avoid GPFS file-lock hangs.
 # The DB is copied to WORKSPACE at the end so results are preserved.
@@ -67,6 +98,21 @@ STORAGE_PATH="sqlite:///$LOCAL_SCRATCH/optuna_study.db"
 
 mkdir -p "$CHECKPOINT_DIR"
 mkdir -p "$LOG_DIR"
+mkdir -p "$SHARED_CACHE"
+
+# Stage 2 warm-start: copy the Stage-1 DB into local scratch so the TPE sampler
+# already has the knowledge from Stage-1 exploration.
+# Even though Stage-1 scores were evaluated on 15K samples, the relative
+# rankings are preserved well enough for TPE to skip re-exploring bad regions.
+if [[ "$STAGE" == "2" ]]; then
+    S1_DB="/scratch-shared/$USER/big_optuna_run_s1_${TASK_ID}/optuna_study.db"
+    if [[ -f "$S1_DB" ]]; then
+        echo "Warm-starting Stage 2 from Stage-1 DB: $S1_DB"
+        cp "$S1_DB" "$LOCAL_SCRATCH/optuna_study.db"
+    else
+        echo "WARNING: Stage-1 DB not found at $S1_DB; starting Stage 2 cold." >&2
+    fi
+fi
 
 # 5. Define Input CSVs
 CSV_1="$BASE_DIR/data/designs/design_metadata/algo_Orchestrate_ml.csv"
@@ -77,6 +123,11 @@ CSV_4="$BASE_DIR/data/designs/design_metadata/algo_C2RS_ml.csv"
 # ---------------------------------------------------------
 # EXECUTE OPTUNA WORKER (big run)
 # ---------------------------------------------------------
+# Each worker uses a distinct sampler seed so TPE explores a different
+# region of the HP space. dataset_seed stays fixed so the train/val split
+# is identical across all workers (comparable evaluation).
+SAMPLER_SEED=$((40 + TASK_ID))   # workers 1/2/3 → seeds 41/42/43
+
 # Default to small parallelism to reduce main-process fragmentation from long
 # single-process runs, while keeping host-memory queue depth constrained.
 NUM_WORKERS="${NUM_WORKERS:-2}"
@@ -124,7 +175,7 @@ fi
 echo "DataLoader config: num_workers=$NUM_WORKERS pin_memory=$PIN_MEMORY persistent_workers=$PERSISTENT_WORKERS prefetch_factor=$PREFETCH_FACTOR dynamic_batching=$DYNAMIC_BATCHING"
 echo "Memory telemetry: first $MEMORY_TELEMETRY_TRIALS trial(s)"
 
-echo "Starting Big Worker $TASK_ID on GPU 0..."
+echo "Starting Big Worker $TASK_ID on GPU 0 (stage=$STAGE sampler_seed=$SAMPLER_SEED, study=$STUDY_NAME)..."
 
 # Background sync loop: copy the node-local SQLite DB to scratch-shared every
 # 5 minutes so that completed trials are preserved even if the job crashes.
@@ -146,7 +197,7 @@ CUDA_VISIBLE_DEVICES=0 python -u -m hp_tuning \
     --db_url "$STORAGE_PATH" \
     --study_name "$STUDY_NAME" \
     --checkpoint_dir "$CHECKPOINT_DIR" \
-    --cache_dir "$WORKSPACE/hp_tuning/shared_cache" \
+    --cache_dir "$SHARED_CACHE" \
     --log_dir "$LOG_DIR/worker_${TASK_ID}" \
     --csv_paths "$CSV_1" "$CSV_2" "$CSV_3" "$CSV_4" \
     --num_workers "$NUM_WORKERS" \
@@ -154,8 +205,11 @@ CUDA_VISIBLE_DEVICES=0 python -u -m hp_tuning \
     --memory_guard_max_tokens 3.5e8 \
     --hard_prune_risk 120000 \
     --dataset_seed 42 \
+    --sampler_seed "$SAMPLER_SEED" \
     --memory_telemetry_trials "$MEMORY_TELEMETRY_TRIALS" \
-    --train_samples 20000 \
+    --train_samples "$TRAIN_SAMPLES" \
+    --max_trial_hours "$MAX_TRIAL_HOURS" \
+    --n_trials "$N_TRIALS" \
     > "$LOG_DIR/worker_${TASK_ID}.log" 2>&1
 EXIT_CODE=$?
 
@@ -176,5 +230,5 @@ if (( EXIT_CODE != 0 )); then
 fi
 
 echo "=========================================="
-echo "BIG JOB complete."
+echo "BIG JOB complete (worker $TASK_ID)."
 echo "End time: $(date)"
