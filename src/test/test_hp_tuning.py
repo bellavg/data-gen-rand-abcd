@@ -124,8 +124,92 @@ class TestHpTuningObjectiveWiring(unittest.TestCase):
         # Verify DataModule received None for positional_encoding
         self.assertIsNone(out["datamodule_call"].kwargs["positional_encoding"])
 
+    def test_hidden_dim_choices_are_fixed_across_encoders(self):
+        """hidden_dim must use the same choice set for all encoders.
+
+        Using different sets per encoder caused an Optuna RDB error:
+        'CategoricalDistribution does not support dynamic value space'.
+        This ensures the bug cannot regress.
+        """
+        all_encoders = [
+            "gine", "transformer_conv", "graphgps", "egin", "gcn", "vanilla_mpnn"
+        ]
+        seen_choices = None
+        for encoder in all_encoders:
+            params = {
+                "batch_size": 4,
+                "lr": 1e-3,
+                "huber_delta": 1.0,
+                "encoder_name": encoder,
+                "hidden_dim": 32,
+                "pe_type": "none",
+                "pooling_type": "mean",
+                "num_layers": 2,
+                "dropout": 0.0,
+                "norm_type": "batch",
+                "jk_mode": "last",
+            }
+            if encoder in ("transformer_conv", "graphgps"):
+                params["heads"] = 1
+            if encoder == "egin":
+                params.update(
+                    {"num_mlp_layers": 2, "egin_dot_update": False,
+                     "egin_edge_mlp": False, "edge_hidden_dim": 32}
+                )
+            out = _run_objective_for_test(params)
+            choices = tuple(out["trial"].requested_choices["hidden_dim"])
+            if seen_choices is None:
+                seen_choices = choices
+            else:
+                self.assertEqual(
+                    choices,
+                    seen_choices,
+                    f"hidden_dim choices differ for encoder '{encoder}': "
+                    f"{choices} != {seen_choices}",
+                )
+        # 512 must be reachable from every encoder
+        self.assertIn(512, seen_choices)
+
+    def test_jk_mode_choices_are_fixed_across_encoders(self):
+        """jk_mode must include 'cat' for all encoders (same distribution set).
+
+        Previously attention encoders excluded 'cat', causing dynamic value space errors.
+        """
+        all_encoders = [
+            "gine", "transformer_conv", "graphgps", "egin", "gcn", "vanilla_mpnn"
+        ]
+        for encoder in all_encoders:
+            params = {
+                "batch_size": 4,
+                "lr": 1e-3,
+                "huber_delta": 1.0,
+                "encoder_name": encoder,
+                "hidden_dim": 32,
+                "pe_type": "none",
+                "pooling_type": "mean",
+                "num_layers": 2,
+                "dropout": 0.0,
+                "norm_type": "batch",
+                "jk_mode": "last",
+            }
+            if encoder in ("transformer_conv", "graphgps"):
+                params["heads"] = 1
+            if encoder == "egin":
+                params.update(
+                    {"num_mlp_layers": 2, "egin_dot_update": False,
+                     "egin_edge_mlp": False, "edge_hidden_dim": 32}
+                )
+            with self.subTest(encoder=encoder):
+                out = _run_objective_for_test(params)
+                jk_choices = out["trial"].requested_choices["jk_mode"]
+                self.assertIn(
+                    "cat",
+                    jk_choices,
+                    f"'cat' missing from jk_mode choices for encoder '{encoder}'",
+                )
+
     def test_hidden_dim_filtering(self):
-        """Verify hidden_dim choices are exposed as expected."""
+        """Verify hidden_dim choices contain the expected values for any encoder."""
         out = _run_objective_for_test(
             {
                 "batch_size": 16,
@@ -146,6 +230,8 @@ class TestHpTuningObjectiveWiring(unittest.TestCase):
         self.assertIn(32, hid_choices)
         self.assertIn(128, hid_choices)
         self.assertIn(256, hid_choices)
+        # 512 must also be present (unified choice set)
+        self.assertIn(512, hid_choices)
 
     def test_egin_mapping_correctly(self):
         out = _run_objective_for_test(

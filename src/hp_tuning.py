@@ -4,7 +4,7 @@ import logging
 import os
 import resource
 import warnings
-from typing import Callable, List
+from collections.abc import Callable
 
 import optuna
 from optuna.storages import RDBStorage
@@ -29,7 +29,11 @@ except ModuleNotFoundError:
 
 from models.lightning_model import AIGRegressionLightningModule
 
-warnings.filterwarnings("ignore")
+warnings.filterwarnings("ignore", category=UserWarning, module="torch_geometric")
+warnings.filterwarnings("ignore", category=UserWarning, module="pytorch_lightning")
+warnings.filterwarnings("ignore", category=UserWarning, module="lightning")
+warnings.filterwarnings("ignore", category=DeprecationWarning, module="torch")
+warnings.filterwarnings("ignore", category=FutureWarning, module="optuna")
 logging.getLogger("pytorch_lightning").setLevel(logging.ERROR)
 
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
@@ -153,7 +157,7 @@ def _estimate_memory_tokens(
     return (node_term + edge_term) * expansion_factor * gps_multiplier
 
 
-def _build_guarded_collate(memory_guard: dict) -> Callable[[List], Batch]:
+def _build_guarded_collate(memory_guard: dict) -> Callable[[list], Batch]:
     max_tokens = float(memory_guard.get("max_tokens", float("inf")))
     hidden_dim = int(memory_guard.get("hidden_dim", 32))
     num_layers = int(memory_guard.get("num_layers", 2))
@@ -162,7 +166,7 @@ def _build_guarded_collate(memory_guard: dict) -> Callable[[List], Batch]:
     heads = int(memory_guard.get("heads", 1))
     expansion_factor = float(memory_guard.get("expansion_factor", 1.0))
 
-    def guarded_collate(data_list: List) -> Batch:
+    def guarded_collate(data_list: list) -> Batch:
         total_batch_tokens = 0.0
         for idx, data in enumerate(data_list):
             num_nodes = int(data.num_nodes)
@@ -417,8 +421,9 @@ def _trial_outcome_callback(study: optuna.Study, frozen_trial) -> None:
 def objective(trial: optuna.Trial, args):
     _mark_trial_outcome(trial, outcome="running", oom_like=False)
 
-    batch_size = trial.suggest_categorical("batch_size", [4, 8, 16])
+    batch_size = trial.suggest_categorical("batch_size", [4, 8, 16, 32])
     lr = trial.suggest_float("lr", 1e-4, 1e-2, log=True)
+    weight_decay = trial.suggest_float("weight_decay", 1e-5, 1e-2, log=True)
     huber_delta = trial.suggest_float("huber_delta", 0.5, 2.0)
 
     encoder_name = trial.suggest_categorical(
@@ -426,18 +431,14 @@ def objective(trial: optuna.Trial, args):
         ["gine", "transformer_conv", "graphgps", "egin", "gcn", "vanilla_mpnn"],
     )
 
-    if encoder_name in ATTENTION_ENCODERS:
-        hidden_choices = [32, 64, 128, 256]
-        # GPS already performs global Performer attention every layer; JK cat
-        # multiplies the output size by (num_layers+1) with little gain and
-        # significant memory cost.  TransformerConv has the same concern.
-        # "cat" is intentionally excluded for all attention-based encoders.
-        jk_choices = ["last", "max", "sum"]
-    else:
-        hidden_choices = [32, 64, 128, 256, 512]
-        jk_choices = ["last", "max", "sum", "cat"]
-
-    hidden_dim = trial.suggest_categorical("hidden_dim", hidden_choices)
+    # Use a single, fixed choice set for every parameter so that the Optuna
+    # RDB distribution stays identical across all trials regardless of which
+    # encoder was sampled.  Dynamic per-encoder subsets caused a
+    # "CategoricalDistribution does not support dynamic value space" error
+    # when Trial N registered a different set than Trial 0.
+    # The risk-score system (_estimate_trial_risk) and hard_prune_risk threshold
+    # already prune attention + jk_cat + large hidden_dim combos before training.
+    hidden_dim = trial.suggest_categorical("hidden_dim", [32, 64, 128, 256, 512])
 
     pe_type = trial.suggest_categorical(
         "pe_type",
@@ -456,7 +457,7 @@ def objective(trial: optuna.Trial, args):
         "norm_type": trial.suggest_categorical(
             "norm_type", ["batch", "layer", "graph"]
         ),
-        "jk_mode": trial.suggest_categorical("jk_mode", jk_choices),
+        "jk_mode": trial.suggest_categorical("jk_mode", ["last", "max", "sum", "cat"]),
         "hid_dim": hidden_dim,
     }
 
@@ -576,6 +577,7 @@ def objective(trial: optuna.Trial, args):
             pooling_type=pooling_type,
             encoder_kwargs=encoder_kwargs,
             lr=lr,
+            weight_decay=weight_decay,
             huber_delta=huber_delta,
         )
 
@@ -588,11 +590,21 @@ def objective(trial: optuna.Trial, args):
             version=f"trial_{trial.number}",
         )
 
+        # H100 supports BF16 tensor cores natively; fall back to FP32 elsewhere.
+        try:
+            _use_bf16 = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
+        except (AssertionError, RuntimeError):
+            _use_bf16 = False
+        _precision = "bf16-mixed" if _use_bf16 else "32-true"
+
         trainer = pl.Trainer(
-            max_epochs=10,
-            max_time={"hours": 6},
+            max_epochs=15,
+            max_time={"hours": float(getattr(args, "max_trial_hours", 2.0))},
             accelerator="auto",
             devices=1,
+            precision=_precision,
+            gradient_clip_val=1.0,
+            log_every_n_steps=10,
             callbacks=[pruning_cb, early_stop_cb],
             logger=csv_logger,
             enable_checkpointing=False,
@@ -737,7 +749,7 @@ if __name__ == "__main__":
         "--checkpoint_dir", type=str, required=True, help="Checkpoint directory"
     )
     parser.add_argument("--csv_paths", nargs="+", required=True, help="Paths to CSVs")
-    parser.add_argument("--num_workers", type=int, default=2, help="DataLoader workers")
+    parser.add_argument("--num_workers", type=int, default=4, help="DataLoader workers")
     parser.add_argument(
         "--pin_memory",
         action="store_true",
@@ -801,6 +813,31 @@ if __name__ == "__main__":
         default=50000,
         help="Number of graphs for HP training",
     )
+    parser.add_argument(
+        "--n_trials",
+        type=int,
+        default=None,
+        help="Maximum number of Optuna trials (None = run until wall-time limit).",
+    )
+    parser.add_argument(
+        "--max_trial_hours",
+        type=float,
+        default=2.0,
+        help=(
+            "Per-trial wall-time cap passed to the Lightning Trainer. "
+            "Set lower for Stage-1 exploration (e.g. 1.0) to avoid long trials "
+            "consuming the budget that could run two shorter ones."
+        ),
+    )
+    parser.add_argument(
+        "--sampler_seed",
+        type=int,
+        default=42,
+        help=(
+            "Random seed for the Optuna TPE sampler. Use a different value per "
+            "array-job worker so each worker explores a distinct HP region."
+        ),
+    )
     args = parser.parse_args()
 
     storage = RDBStorage(url=args.db_url)
@@ -810,11 +847,12 @@ if __name__ == "__main__":
         storage=storage,
         load_if_exists=True,
         direction="minimize",
-        pruner=optuna.pruners.MedianPruner(n_startup_trials=5, n_warmup_steps=3),
+        sampler=optuna.samplers.TPESampler(multivariate=True, seed=args.sampler_seed),
+        pruner=optuna.pruners.MedianPruner(n_startup_trials=10, n_warmup_steps=5),
     )
 
     study.optimize(
         lambda trial: objective(trial, args),
-        n_trials=None,
+        n_trials=args.n_trials,
         callbacks=[_trial_outcome_callback],
     )
