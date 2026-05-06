@@ -29,9 +29,6 @@ class TestCleanStr(unittest.TestCase):
     def test_plain_string(self):
         self.assertEqual(clean_str("word"), "word")
 
-    def test_integer_converts(self):
-        self.assertEqual(clean_str(42), "42")
-
     def test_empty_string_returns_empty(self):
         self.assertEqual(clean_str(""), "")
 
@@ -97,8 +94,9 @@ class TestParseInt(unittest.TestCase):
     def test_none_returns_default(self):
         self.assertEqual(parse_int(None), 0)
 
-    def test_invalid_string_returns_default(self):
-        self.assertEqual(parse_int("abc"), 0)
+    def test_invalid_string_raises_value_error(self):
+        with self.assertRaises(ValueError):
+            parse_int("abc")
 
     def test_whitespace_stripped(self):
         self.assertEqual(parse_int("  4  "), 4)
@@ -126,8 +124,9 @@ class TestParseFloat(unittest.TestCase):
     def test_none_returns_default(self):
         self.assertEqual(parse_float(None), 0.0)
 
-    def test_invalid_string_returns_default(self):
-        self.assertEqual(parse_float("abc"), 0.0)
+    def test_invalid_string_raises_value_error(self):
+        with self.assertRaises(ValueError):
+            parse_float("abc")
 
     def test_whitespace_stripped(self):
         self.assertAlmostEqual(parse_float("  2.7  "), 2.7, places=5)

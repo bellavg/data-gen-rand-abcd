@@ -11,13 +11,13 @@
 
 set -euo pipefail
 
-# No array: always worker 1
-TASK_ID=${SLURM_ARRAY_TASK_ID}
+# Array-task id, or 1 when run outside an array for local debugging.
+TASK_ID=${SLURM_ARRAY_TASK_ID:-1}
 
 SCRIPT_VERSION="2026-05-06 (96h Two-Stage Array Job: Stage 1 = explore, Stage 2 = exploit)"
 
 echo "=========================================="
-echo "JOB: Big Optuna Hyperparameter Tuning (array_task=${SLURM_ARRAY_TASK_ID} job=${SLURM_ARRAY_JOB_ID:-n/a})"
+echo "JOB: Big Optuna Hyperparameter Tuning (array_task=${TASK_ID} job=${SLURM_ARRAY_JOB_ID:-n/a})"
 echo "Running on: $(hostname)"
 echo "Start time: $(date)"
 echo "Script version: $SCRIPT_VERSION"
@@ -100,10 +100,48 @@ mkdir -p "$CHECKPOINT_DIR"
 mkdir -p "$LOG_DIR"
 mkdir -p "$SHARED_CACHE"
 
-# Stage 2 warm-start: copy the Stage-1 DB into local scratch so the TPE sampler
-# already has the knowledge from Stage-1 exploration.
-# Even though Stage-1 scores were evaluated on 15K samples, the relative
-# rankings are preserved well enough for TPE to skip re-exploring bad regions.
+# 5. Define Input CSVs
+CSV_1="$BASE_DIR/data/designs/design_metadata/algo_Orchestrate_ml.csv"
+CSV_2="$BASE_DIR/data/designs/design_metadata/algo_Deepsyn_ml.csv"
+CSV_3="$BASE_DIR/data/designs/design_metadata/algo_Syn4_ml.csv"
+CSV_4="$BASE_DIR/data/designs/design_metadata/algo_C2RS_ml.csv"
+
+# ---------------------------------------------------------
+# CACHE SENTINEL CHECK
+# The dedicated warmup_cache.sh job should be submitted and completed before
+# this array job.  All 3 tasks simply wait until the sentinel is present;
+# they never build the cache themselves (avoids GPFS contention and wasted
+# GPU-node time on file I/O).
+# If warmup_cache.sh was not run first, fail fast after timeout instead of
+# letting all GPU workers start cold and stampede shared storage.
+# ---------------------------------------------------------
+CACHE_READY_SENTINEL="$SHARED_CACHE/cache_ready_n${TRAIN_SAMPLES}.sentinel"
+
+if [[ -f "$CACHE_READY_SENTINEL" ]]; then
+    echo "Cache warm (sentinel found). Task $TASK_ID proceeding immediately."
+else
+    echo "Task $TASK_ID: sentinel not found — waiting up to 30 min for cache..."
+    echo "  (Run warmup_cache.sh before big_hp_tuning.sh to avoid this wait.)"
+    MAX_WAIT=1800
+    WAITED=0
+    while [[ ! -f "$CACHE_READY_SENTINEL" ]]; do
+        sleep 30
+        WAITED=$((WAITED + 30))
+        if [[ $((WAITED % 300)) -eq 0 ]]; then
+            echo "  ... still waiting (${WAITED}s elapsed)"
+        fi
+        if [[ $WAITED -ge $MAX_WAIT ]]; then
+            echo "ERROR: timed out waiting for cache sentinel '$CACHE_READY_SENTINEL'." >&2
+            echo "Submit warmup_cache.sh first, or chain via --dependency=afterok." >&2
+            exit 1
+        fi
+    done
+    echo "Task $TASK_ID proceeding."
+fi
+# ---------------------------------------------------------
+
+# Stage 2 warm-start: copy the Stage-1 DB into local scratch so TPE already
+# knows the good region and does not re-explore it in Stage 2.
 if [[ "$STAGE" == "2" ]]; then
     S1_DB="/scratch-shared/$USER/big_optuna_run_s1_${TASK_ID}/optuna_study.db"
     if [[ -f "$S1_DB" ]]; then
@@ -114,12 +152,6 @@ if [[ "$STAGE" == "2" ]]; then
     fi
 fi
 
-# 5. Define Input CSVs
-CSV_1="$BASE_DIR/data/designs/design_metadata/algo_Orchestrate_ml.csv"
-CSV_2="$BASE_DIR/data/designs/design_metadata/algo_Deepsyn_ml.csv"
-CSV_3="$BASE_DIR/data/designs/design_metadata/algo_Syn4_ml.csv"
-CSV_4="$BASE_DIR/data/designs/design_metadata/algo_C2RS_ml.csv"
-
 # ---------------------------------------------------------
 # EXECUTE OPTUNA WORKER (big run)
 # ---------------------------------------------------------
@@ -128,8 +160,7 @@ CSV_4="$BASE_DIR/data/designs/design_metadata/algo_C2RS_ml.csv"
 # is identical across all workers (comparable evaluation).
 SAMPLER_SEED=$((40 + TASK_ID))   # workers 1/2/3 → seeds 41/42/43
 
-# Default to small parallelism to reduce main-process fragmentation from long
-# single-process runs, while keeping host-memory queue depth constrained.
+# Default to small parallelism to reduce main-process fragmentation.
 NUM_WORKERS="${NUM_WORKERS:-2}"
 
 export MALLOC_ARENA_MAX="${MALLOC_ARENA_MAX:-2}"
@@ -137,21 +168,9 @@ export MALLOC_ARENA_MAX="${MALLOC_ARENA_MAX:-2}"
 # DataLoader tuning flags (can be overridden via env)
 PIN_MEMORY="${PIN_MEMORY:-false}"
 PERSISTENT_WORKERS="${PERSISTENT_WORKERS:-false}"
-PREFETCH_FACTOR="${PREFETCH_FACTOR:-1}"
+PREFETCH_FACTOR=1
 DYNAMIC_BATCHING="${DYNAMIC_BATCHING:-true}"
 MEMORY_TELEMETRY_TRIALS="${MEMORY_TELEMETRY_TRIALS:-0}"
-
-if [ "$NUM_WORKERS" -gt 0 ]; then
-    if ! [[ "$PREFETCH_FACTOR" =~ ^[0-9]+$ ]]; then
-        echo "Invalid PREFETCH_FACTOR='$PREFETCH_FACTOR'; defaulting to 1."
-        PREFETCH_FACTOR=1
-    fi
-
-    if [ "$PREFETCH_FACTOR" -ne 1 ]; then
-        echo "Clamping PREFETCH_FACTOR from $PREFETCH_FACTOR to 1 for OOM safety."
-        PREFETCH_FACTOR=1
-    fi
-fi
 
 if [ "$NUM_WORKERS" -eq 0 ]; then
     PERSISTENT_WORKERS=false
@@ -164,7 +183,6 @@ fi
 if [ "$PERSISTENT_WORKERS" = "true" ]; then
     EXTRA_FLAGS+=(--persistent_workers)
 fi
-
 if [ "$NUM_WORKERS" -gt 0 ]; then
     EXTRA_FLAGS+=(--prefetch_factor "$PREFETCH_FACTOR")
 fi
@@ -177,23 +195,64 @@ echo "Memory telemetry: first $MEMORY_TELEMETRY_TRIALS trial(s)"
 
 echo "Starting Big Worker $TASK_ID on GPU 0 (stage=$STAGE sampler_seed=$SAMPLER_SEED, study=$STUDY_NAME)..."
 
+sync_optuna_db() {
+    local src_db="$1"
+    local dst_tmp="$2"
+
+    if [ ! -f "$src_db" ]; then
+        return 0
+    fi
+
+    python - "$src_db" "$dst_tmp" <<'PYEOF'
+import sqlite3
+import sys
+from pathlib import Path
+
+src = Path(sys.argv[1])
+dst = Path(sys.argv[2])
+dst.parent.mkdir(parents=True, exist_ok=True)
+
+src_conn = sqlite3.connect(f"file:{src}?mode=ro", uri=True)
+dst_conn = sqlite3.connect(str(dst))
+try:
+    with dst_conn:
+        src_conn.backup(dst_conn)
+finally:
+    dst_conn.close()
+    src_conn.close()
+PYEOF
+}
+
+SYNC_PID=""
+cleanup_sync_loop() {
+    if [ -n "${SYNC_PID:-}" ]; then
+        kill "$SYNC_PID" 2>/dev/null || true
+        wait "$SYNC_PID" 2>/dev/null || true
+    fi
+}
+trap cleanup_sync_loop EXIT INT TERM
+
 # Background sync loop: copy the node-local SQLite DB to scratch-shared every
 # 5 minutes so that completed trials are preserved even if the job crashes.
 DB_SYNC_INTERVAL="${DB_SYNC_INTERVAL:-300}"
 (
     while true; do
         sleep "$DB_SYNC_INTERVAL"
-        if [ -f "$LOCAL_SCRATCH/optuna_study.db" ]; then
-            cp "$LOCAL_SCRATCH/optuna_study.db" "$WORKSPACE/optuna_study.db.tmp" \
-                && mv "$WORKSPACE/optuna_study.db.tmp" "$WORKSPACE/optuna_study.db" \
-                && echo "[db_sync] $(date) synced DB to $WORKSPACE/optuna_study.db" \
-                || echo "[db_sync] $(date) WARNING: sync failed" >&2
+        if sync_optuna_db "$LOCAL_SCRATCH/optuna_study.db" "$WORKSPACE/optuna_study.db.tmp"; then
+            if mv "$WORKSPACE/optuna_study.db.tmp" "$WORKSPACE/optuna_study.db"; then
+                echo "[db_sync] $(date) synced DB to $WORKSPACE/optuna_study.db"
+            else
+                echo "[db_sync] $(date) WARNING: atomic rename failed" >&2
+            fi
+        else
+            echo "[db_sync] $(date) WARNING: SQLite backup failed" >&2
         fi
     done
 ) &
 SYNC_PID=$!
 
-CUDA_VISIBLE_DEVICES=0 python -u -m hp_tuning \
+EXIT_CODE=0
+python -u -m hp_tuning \
     --db_url "$STORAGE_PATH" \
     --study_name "$STUDY_NAME" \
     --checkpoint_dir "$CHECKPOINT_DIR" \
@@ -203,30 +262,32 @@ CUDA_VISIBLE_DEVICES=0 python -u -m hp_tuning \
     --num_workers "$NUM_WORKERS" \
     ${EXTRA_FLAGS[@]+"${EXTRA_FLAGS[@]}"} \
     --memory_guard_max_tokens 3.5e8 \
-    --hard_prune_risk 120000 \
+    --hard_prune_risk 200000 \
     --dataset_seed 42 \
     --sampler_seed "$SAMPLER_SEED" \
     --memory_telemetry_trials "$MEMORY_TELEMETRY_TRIALS" \
     --train_samples "$TRAIN_SAMPLES" \
     --max_trial_hours "$MAX_TRIAL_HOURS" \
     --n_trials "$N_TRIALS" \
-    > "$LOG_DIR/worker_${TASK_ID}.log" 2>&1
-EXIT_CODE=$?
+    > "$LOG_DIR/worker_${TASK_ID}.log" 2>&1 || EXIT_CODE=$?
 
 # Stop the background sync loop
-kill "$SYNC_PID" 2>/dev/null || true
-wait "$SYNC_PID" 2>/dev/null || true
+cleanup_sync_loop
+SYNC_PID=""
 
 # Final copy regardless of exit code
 echo "Final sync of SQLite DB to $WORKSPACE/optuna_study.db ..."
-cp "$LOCAL_SCRATCH/optuna_study.db" "$WORKSPACE/optuna_study.db.tmp" \
-    && mv "$WORKSPACE/optuna_study.db.tmp" "$WORKSPACE/optuna_study.db" \
-    || echo "WARNING: final DB sync failed" >&2
+if sync_optuna_db "$LOCAL_SCRATCH/optuna_study.db" "$WORKSPACE/optuna_study.db.tmp"; then
+    mv "$WORKSPACE/optuna_study.db.tmp" "$WORKSPACE/optuna_study.db" \
+        || echo "WARNING: final DB rename failed" >&2
+else
+    echo "WARNING: final DB sync failed" >&2
+fi
 
 if (( EXIT_CODE != 0 )); then
     echo "Worker $TASK_ID failed (exit $EXIT_CODE). Last 80 lines:"
     tail -n 80 "$LOG_DIR/worker_${TASK_ID}.log" || true
-    exit 1
+    exit "$EXIT_CODE"
 fi
 
 echo "=========================================="

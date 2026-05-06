@@ -3,6 +3,7 @@ import gc
 import logging
 import os
 import resource
+import sys
 import warnings
 from collections.abc import Callable
 
@@ -10,24 +11,16 @@ import optuna
 from optuna.storages import RDBStorage
 import pytorch_lightning as pl
 import torch
-from pytorch_lightning.callbacks import Callback, EarlyStopping
+from pytorch_lightning.callbacks import EarlyStopping
 from pytorch_lightning.loggers import CSVLogger
 from torch_geometric.data import Batch
 from torch_geometric.loader import DataLoader
 
 from data.datamodule import AIGDataModule, BalancedDynamicBatchSampler
-
-
-try:
-    from optuna.integration import PyTorchLightningPruningCallback
-except ModuleNotFoundError:
-
-    class PyTorchLightningPruningCallback(Callback):
-        def __init__(self, *args, **kwargs):
-            super().__init__()
-
-
 from models.lightning_model import AIGRegressionLightningModule
+from optuna.integration import PyTorchLightningPruningCallback
+
+
 
 warnings.filterwarnings("ignore", category=UserWarning, module="torch_geometric")
 warnings.filterwarnings("ignore", category=UserWarning, module="pytorch_lightning")
@@ -45,7 +38,7 @@ if hasattr(torch.backends, "cudnn"):
 ATTENTION_ENCODERS = {"transformer_conv", "graphgps"}
 
 
-def _set_trial_user_attr(trial: optuna.Trial, key: str, value) -> None:
+def _set_trial_user_attr(trial: optuna.Trial, key: str, value: str | int | float | bool) -> None:
     setter = getattr(trial, "set_user_attr", None)
     if callable(setter):
         setter(key, value)
@@ -72,11 +65,9 @@ def _mark_trial_outcome(
 
 
 def _peak_rss_bytes() -> int:
-    # On Linux ru_maxrss is KB; on macOS it is bytes.
+    # On Linux ru_maxrss is KiB; on macOS it is bytes.
     rss = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
-    if rss < 10_000_000:
-        return rss * 1024
-    return rss
+    return rss if sys.platform == "darwin" else rss * 1024
 
 
 def _current_rss_bytes() -> int | None:
@@ -84,16 +75,13 @@ def _current_rss_bytes() -> int | None:
     statm = "/proc/self/statm"
     if not os.path.exists(statm):
         return None
-    try:
-        with open(statm, "r", encoding="utf-8") as f:
-            fields = f.read().strip().split()
-        if len(fields) < 2:
-            return None
-        resident_pages = int(fields[1])
-        page_size = int(os.sysconf("SC_PAGE_SIZE"))
-        return resident_pages * page_size
-    except (OSError, ValueError):
+    with open(statm, "r", encoding="utf-8") as f:
+        fields = f.read().strip().split()
+    if len(fields) < 2:
         return None
+    resident_pages = int(fields[1])
+    page_size = int(os.sysconf("SC_PAGE_SIZE"))
+    return resident_pages * page_size
 
 
 def _format_gib(value_bytes: int | None) -> str:
@@ -386,8 +374,12 @@ def _purge_trial_memory(
     gc.collect()
     gc.collect()  # Two passes to break complex reference cycles
     if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-        torch.cuda.synchronize()  # Ensure GPU ops drained before next trial
+        try:
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()  # Ensure GPU ops drained before next trial
+        except RuntimeError:
+            # Never let cleanup exceptions mask the real trial outcome.
+            pass
 
     return (None, None, None, None, None, None, None, None, None)
 
@@ -503,7 +495,7 @@ def objective(trial: optuna.Trial, args):
         pos_enc_dim=pos_enc_dim,
     )
 
-    hard_prune_risk = float(getattr(args, "hard_prune_risk", 120000.0))
+    hard_prune_risk = float(getattr(args, "hard_prune_risk", 200000.0))
     _set_trial_user_attr(trial, "hard_prune_risk", hard_prune_risk)
     _set_trial_user_attr(trial, "risk_score", float(risk_score))
     if risk_score > hard_prune_risk:
@@ -527,12 +519,6 @@ def objective(trial: optuna.Trial, args):
         persistent = getattr(args, "persistent_workers", False)
         pin_memory = getattr(args, "pin_memory", False)
         prefetch_factor = int(getattr(args, "prefetch_factor", 1))
-        if workers > 0 and prefetch_factor != 1:
-            print(
-                "[safety] Overriding prefetch_factor to 1 "
-                f"(received {prefetch_factor}) to cap host-memory queue depth."
-            )
-            prefetch_factor = 1
         dynamic_batching = getattr(args, "dynamic_batching", False)
         dataset_seed = int(getattr(args, "dataset_seed", 42))
 
@@ -746,7 +732,10 @@ if __name__ == "__main__":
         "--study_name", type=str, required=True, help="Optuna study name"
     )
     parser.add_argument(
-        "--checkpoint_dir", type=str, required=True, help="Checkpoint directory"
+        "--checkpoint_dir",
+        type=str,
+        default=".",
+        help="Checkpoint directory (currently unused).",
     )
     parser.add_argument("--csv_paths", nargs="+", required=True, help="Paths to CSVs")
     parser.add_argument("--num_workers", type=int, default=4, help="DataLoader workers")
@@ -780,7 +769,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--hard_prune_risk",
         type=float,
-        default=120000.0,
+        default=200000.0,
         help="Prune trial before trainer start if risk score exceeds this.",
     )
     parser.add_argument(
