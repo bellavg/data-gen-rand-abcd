@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import random
+import warnings
 from pathlib import Path
-from typing import List, Optional, Tuple
 
 import pytorch_lightning as pl
 from torch_geometric.loader import DataLoader
@@ -19,7 +19,7 @@ class BalancedDynamicBatchSampler:
 
     def __init__(
         self,
-        sizes: List[int],
+        sizes: list[int],
         *,
         batch_size: int,
         shuffle: bool,
@@ -42,10 +42,10 @@ class BalancedDynamicBatchSampler:
         indices = sorted(range(len(self.sizes)), key=lambda i: self.sizes[i])
         left = 0
         right = len(indices) - 1
-        batches: List[List[int]] = []
+        batches: list[list[int]] = []
 
         while left <= right:
-            batch: List[int] = []
+            batch: list[int] = []
             take_large = True
             while left <= right and len(batch) < self.batch_size:
                 if take_large:
@@ -67,11 +67,11 @@ class BalancedDynamicBatchSampler:
 class AIGDataModule(pl.LightningDataModule):
     def __init__(
         self,
-        csv_paths: str | Path | List[str | Path],
+        csv_paths: str | Path | list[str | Path],
         *,
-        positional_encoding: Optional[str] = None,
-        cache_dir: Optional[str | Path] = None,
-        split_ratios: Tuple[float, float, float] = (0.8, 0.1, 0.1),
+        positional_encoding: str | None = None,
+        cache_dir: str | Path | None = None,
+        split_ratios: tuple[float, float, float] = (0.8, 0.1, 0.1),
         seed: int = 42,
         batch_size: int = 32,
         num_workers: int = 6,
@@ -79,8 +79,10 @@ class AIGDataModule(pl.LightningDataModule):
         pin_memory: bool = False,
         prefetch_factor: int = 1,
         dynamic_batching: bool = False,
-        train_num_samples: Optional[int] = None,
-        hp_tuning_splits_path: Optional[str | Path] = None,
+        train_num_samples: int | None = None,
+        test_num_samples: int | None = None,
+        use_full_test_set: bool = False,
+        hp_tuning_splits_path: str | Path | None = None,
     ) -> None:
         super().__init__()
         self.csv_paths = csv_paths
@@ -95,7 +97,21 @@ class AIGDataModule(pl.LightningDataModule):
         self.prefetch_factor = prefetch_factor
         self.dynamic_batching = dynamic_batching
         self.train_num_samples = train_num_samples
+        self.test_num_samples = test_num_samples
+        self.use_full_test_set = use_full_test_set
         self.hp_tuning_splits_path = hp_tuning_splits_path
+
+        if self.num_workers > 0 and self.prefetch_factor < 1:
+            raise ValueError(
+                f"prefetch_factor must be >= 1 when num_workers > 0, got {self.prefetch_factor}"
+            )
+        if self.num_workers <= 0 and self.prefetch_factor != 1:
+            warnings.warn(
+                "prefetch_factor is ignored when num_workers == 0; forcing it to 1.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            self.prefetch_factor = 1
 
     def _loader_kwargs(self, *, include_batch_size: bool = True) -> dict:
         kwargs = {
@@ -109,7 +125,7 @@ class AIGDataModule(pl.LightningDataModule):
             kwargs["prefetch_factor"] = self.prefetch_factor
         return kwargs
 
-    def _make_dataset(self, split: str, num_samples: Optional[int] = None):
+    def _make_dataset(self, split: str, num_samples: int | None = None) -> AIGGraphRegressionDataset:
         return AIGGraphRegressionDataset(
             self.csv_paths,
             positional_encoding=self.positional_encoding,
@@ -122,7 +138,7 @@ class AIGDataModule(pl.LightningDataModule):
             hp_tuning_splits_path=self.hp_tuning_splits_path,
         )
 
-    def setup(self, stage: Optional[str] = None) -> None:
+    def setup(self, stage: str | None = None) -> None:
         if stage in ("fit", None):
             self.train_ds = self._make_dataset("train", self.train_num_samples)
             # Pass the same limit to val so it knows to use the 10k cache!
@@ -130,11 +146,22 @@ class AIGDataModule(pl.LightningDataModule):
             # Pre-compute node sizes once per trial (result is disk-cached so
             # subsequent trials/workers pay < 1 s instead of scanning 50 K files).
             if self.dynamic_batching:
-                self._train_sizes: List[int] = self.train_ds.get_num_nodes_list()
+                self._train_sizes: list[int] = self.train_ds.get_num_nodes_list()
+
+        elif stage == "validate":
+            self.val_ds = self._make_dataset("val", self.train_num_samples)
 
         if stage in ("test", None):
-            # Pass the same limit to test
-            self.test_ds = self._make_dataset("test", self.train_num_samples)
+            # Backward-compatible default: mirror train_num_samples when no
+            # explicit test limit is provided. Set use_full_test_set=True to
+            # evaluate the complete test split.
+            if self.use_full_test_set:
+                test_limit = None
+            elif self.test_num_samples is not None:
+                test_limit = self.test_num_samples
+            else:
+                test_limit = self.train_num_samples
+            self.test_ds = self._make_dataset("test", test_limit)
 
     def train_dataloader(self) -> DataLoader:
         if self.dynamic_batching:

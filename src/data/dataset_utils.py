@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Dict, Optional
 
 from src.constants import VALID_ALGORITHMS
 
@@ -17,13 +16,13 @@ _TIER2_STEM_RE = re.compile(
 )
 
 
-def clean_str(value: object) -> str:
+def clean_str(value: str | None) -> str:
 	if value is None:
 		return ""
 	return str(value).strip()
 
 
-def normalize_algorithm(value: Optional[str]) -> Optional[str]:
+def normalize_algorithm(value: str | None) -> str | None:
 	text = clean_str(value)
 	if text == "" or text.lower() == "all":
 		return None
@@ -35,27 +34,21 @@ def normalize_algorithm(value: Optional[str]) -> Optional[str]:
 	return text
 
 
-def parse_int(value: object, default: int = 0) -> int:
+def parse_int(value: str | None, default: int = 0) -> int:
 	text = clean_str(value)
 	if text == "":
 		return default
-	try:
-		return int(float(text))
-	except ValueError:
-		return default
+	return int(float(text))
 
 
-def parse_float(value: object, default: float = 0.0) -> float:
+def parse_float(value: str | None, default: float = 0.0) -> float:
 	text = clean_str(value)
 	if text == "":
 		return default
-	try:
-		return float(text)
-	except ValueError:
-		return default
+	return float(text)
 
 
-def graph_input_path_from_csv_row(graph_root: Path, row: Dict[str, str]) -> Path:
+def graph_input_path_from_csv_row(graph_root: Path, row: dict[str, str]) -> Path:
 	"""
 	Resolve the *input* graph artifact path for a CSV row.
 

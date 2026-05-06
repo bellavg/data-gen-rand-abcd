@@ -338,8 +338,8 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
 
     # --- edge_attr validation ---
 
-    def test_getitem_raises_value_error_if_edge_attr_missing(self):
-        """Ensure __getitem__ raises ValueError if edge_attr is None."""
+    def test_getitem_allows_edge_attr_missing(self):
+        """Lean mode: dataset no longer pre-validates edge_attr at load time."""
         bad_pt = self.root / "bad_graph.pt"
         valid_data = torch.load(self.pt_paths[0], weights_only=False)
         valid_data.edge_attr = None  # Corrupt the data
@@ -352,11 +352,12 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
 
         from data.dataset import AIGGraphRegressionDataset
 
-        with self.assertRaisesRegex(ValueError, "edge_attr=None"):
-            AIGGraphRegressionDataset(bad_csv)
+        ds = AIGGraphRegressionDataset(bad_csv)
+        item = ds[0]
+        self.assertIsNone(item.edge_attr)
 
-    def test_getitem_raises_value_error_if_edge_attr_1d(self):
-        """Ensure __getitem__ raises ValueError if edge_attr is not 2D."""
+    def test_getitem_allows_edge_attr_1d(self):
+        """Lean mode: dataset no longer enforces edge_attr dimensionality."""
         bad_pt = self.root / "bad_graph_1d.pt"
         valid_data = torch.load(self.pt_paths[0], weights_only=False)
         valid_data.edge_attr = torch.tensor([1.0, 0.0])  # 1D instead of 2D
@@ -369,13 +370,14 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
 
         from data.dataset import AIGGraphRegressionDataset
 
-        with self.assertRaisesRegex(ValueError, "edge_attr must be 2D"):
-            AIGGraphRegressionDataset(bad_csv)
+        ds = AIGGraphRegressionDataset(bad_csv)
+        item = ds[0]
+        self.assertEqual(item.edge_attr.dim(), 1)
 
     # --- dataset initialization verification ---
 
-    def test_verify_first_sample_raises_assertion_error_on_bad_x(self):
-        """Ensure initialization fails early if the first graph's x attribute is not 2D."""
+    def test_bad_x_is_not_prevalidated(self):
+        """Lean mode: dataset initialization does not assert on malformed x shape."""
         bad_pt = self.root / "bad_x_graph.pt"
         valid_data = torch.load(self.pt_paths[0], weights_only=False)
         valid_data.x = torch.rand(10)  # 1D instead of 2D
@@ -388,8 +390,8 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
 
         from data.dataset import AIGGraphRegressionDataset
 
-        with self.assertRaisesRegex(AssertionError, "x should be 2D"):
-            AIGGraphRegressionDataset(bad_csv)
+        ds = AIGGraphRegressionDataset(bad_csv)
+        self.assertEqual(ds[0].x.dim(), 1)
 
     # --- seed stability ---
 
