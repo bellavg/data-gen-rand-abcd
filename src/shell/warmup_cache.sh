@@ -1,8 +1,8 @@
 #!/bin/bash
 #SBATCH --job-name=cache_warmup
-#SBATCH --time=02:00:00
+#SBATCH --time=08:00:00
 #SBATCH --nodes=1
-#SBATCH --cpus-per-task=16
+#SBATCH --cpus-per-task=24
 #SBATCH --partition=genoa
 #SBATCH --output=logs/cache_warmup.out
 
@@ -58,10 +58,8 @@ CSV_2="$BASE_DIR/data/designs/design_metadata/algo_Deepsyn_ml.csv"
 CSV_3="$BASE_DIR/data/designs/design_metadata/algo_Syn4_ml.csv"
 CSV_4="$BASE_DIR/data/designs/design_metadata/algo_C2RS_ml.csv"
 
-# Use all available CPUs for parallel I/O during cache build.
-# The dataset _rebuild_graph_cache now uses ThreadPoolExecutor internally;
-# setting num_workers here controls the thread count.
-N_IO_WORKERS="${N_IO_WORKERS:-14}"
+# Use all CPUs allocated by SLURM for parallel I/O during cache build.
+N_IO_WORKERS="${N_IO_WORKERS:-$(nproc)}"
 
 warm_cache() {
     local n_samples=$1
@@ -104,9 +102,11 @@ PYEOF
     echo "[warmup] Sentinel written: $sentinel"
 }
 
-# Warm both Stage 1 and Stage 2 sample counts in one job.
-warm_cache 15000
+# Warm 35K first (superset): all source graphs are fetched and cached in one pass.
+# 15K is a strict subset of 35K (same seed/shuffle), so its warm_cache call only
+# re-reads already-cached files from scratch-shared — fast, a few minutes at most.
 warm_cache 35000
+warm_cache 15000
 
 echo "=========================================="
 echo "Cache warmup complete."

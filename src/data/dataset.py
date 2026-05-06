@@ -298,19 +298,26 @@ class AIGGraphRegressionDataset(PyGDataset):
 
     def _cache_single_graph(self, graph_path: str) -> tuple[str, int]:
         cache_path = self._cached_graph_path(graph_path)
-        source_path = Path(graph_path)
+        meta_path = cache_path.with_suffix(".n")
 
         if cache_path.is_file():
+            if meta_path.is_file():
+                return str(cache_path), int(meta_path.read_text())
+            # .pt exists but sidecar missing (graphs cached before this change):
+            # load once to recover num_nodes and write the sidecar for next time.
             cached_obj = torch.load(cache_path, map_location="cpu", weights_only=False)
-            return str(cache_path), int(cached_obj.x.shape[0])
+            num_nodes = int(cached_obj.x.shape[0])
+            meta_path.write_text(str(num_nodes))
+            return str(cache_path), num_nodes
 
-        source_obj = torch.load(source_path, map_location="cpu", weights_only=False)
+        source_obj = torch.load(Path(graph_path), map_location="cpu", weights_only=False)
         num_nodes = int(source_obj.x.shape[0])
 
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         tmp_path = cache_path.with_suffix(f".tmp_{uuid.uuid4().hex[:8]}")
         torch.save(source_obj, tmp_path)
         tmp_path.replace(cache_path)
+        meta_path.write_text(str(num_nodes))
         return str(cache_path), num_nodes
 
     def _load_manifest(self) -> dict | None:
@@ -336,13 +343,16 @@ class AIGGraphRegressionDataset(PyGDataset):
 
         # Use threads for parallel I/O: torch.load/save releases the GIL so
         # multiple threads can saturate GPFS bandwidth concurrently.
-        # Fallback to self.num_workers if set, else 8, capped at 16.
+        # Respect SLURM --cpus-per-task via sched_getaffinity; fall back to
+        # cpu_count() on macOS/Windows where it is not present.
+        cpu_limit = (
+            len(os.sched_getaffinity(0))
+            if hasattr(os, "sched_getaffinity")
+            else (os.cpu_count() or 1)
+        )
         n_threads = max(1, min(
-            self.num_workers if self.num_workers > 0 else 8,
-            # Use sched_getaffinity when available (respects SLURM --cpus-per-task);
-            # fall back to cpu_count() on macOS/Windows where it is not present.
-            len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else (os.cpu_count() or 1),
-            16,
+            self.num_workers if self.num_workers > 0 else cpu_limit,
+            cpu_limit,
         ))
         print(
             f"[cache] Building graph cache: {len(unique_paths)} unique graphs "
