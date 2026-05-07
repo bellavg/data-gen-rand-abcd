@@ -4,7 +4,7 @@
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=96
 #SBATCH --partition=genoa
-#SBATCH --output=logs/cache_warmup_15.out
+#SBATCH --output=logs/cache_warmup_35.out
 
 # ---------------------------------------------------------------------------
 # Dedicated cache pre-warm job.
@@ -159,8 +159,8 @@ PYEOF
 # Before Stage 2, resubmit this script — warm_cache 15000 will skip (sentinel
 # already present) and warm_cache 35000 will run on the disjoint graph set.
 # ---------------------------------------------------------------------------
-warm_cache 15000
-# warm_cache 35000  # uncomment (or resubmit) before Stage 2
+# warm_cache 15000
+warm_cache 35000  # uncomment (or resubmit) before Stage 2
 
 echo "=========================================="
 echo "Cache warmup complete."
