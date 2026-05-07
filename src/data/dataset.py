@@ -107,7 +107,7 @@ class AIGGraphRegressionDataset(PyGDataset):
 
         self.positional_encoding = positional_encoding
         self.split = split
-        self.cache_dir = Path(cache_dir).resolve() if cache_dir is not None else None
+        self.cache_dir = Path(cache_dir) if cache_dir is not None else None
         self.split_ratios = split_ratios
         self.seed = seed
         self.num_samples = num_samples
@@ -134,7 +134,9 @@ class AIGGraphRegressionDataset(PyGDataset):
         )
 
         self.samples = self._build_samples()
-        pyg_root = str(self._cache_meta_dir) if self._cache_meta_dir is not None else None
+        pyg_root = (
+            str(self._cache_meta_dir) if self._cache_meta_dir is not None else None
+        )
         super().__init__(root=pyg_root)
         if self.cache_dir is not None:
             self.process()
@@ -147,14 +149,14 @@ class AIGGraphRegressionDataset(PyGDataset):
         hasher.update("|".join(map(str, self.split_ratios)).encode())
 
         for csv_path in sorted(self.csv_paths):
-            resolved = csv_path.resolve()
-            st = resolved.stat()
-            hasher.update(str(resolved).encode())
+            # Stop resolving symlinks here too
+            st = csv_path.stat()
+            hasher.update(str(csv_path.absolute()).encode())
             hasher.update(str(st.st_size).encode())
             hasher.update(str(st.st_mtime_ns).encode())
 
         if self.hp_tuning_splits_path is not None:
-            hp_path = Path(self.hp_tuning_splits_path).resolve()
+            hp_path = Path(self.hp_tuning_splits_path)
             hp_st = hp_path.stat()
             hasher.update(str(hp_path).encode())
             hasher.update(str(hp_st.st_size).encode())
@@ -163,7 +165,7 @@ class AIGGraphRegressionDataset(PyGDataset):
         return hasher.hexdigest()[:16]
 
     def _read_candidate_samples(self) -> list[GraphSample]:
-        cache_key = tuple(str(p.resolve()) for p in self.csv_paths)
+        cache_key = tuple(str(p) for p in self.csv_paths)
         if cache_key in _CSV_SAMPLE_CACHE:
             return _CSV_SAMPLE_CACHE[cache_key]
 
@@ -186,9 +188,7 @@ class AIGGraphRegressionDataset(PyGDataset):
         _CSV_SAMPLE_CACHE[cache_key] = samples
         return samples
 
-    def _load_or_create_split_keys(
-        self, all_keys: list[str]
-    ) -> dict[str, list[str]]:
+    def _load_or_create_split_keys(self, all_keys: list[str]) -> dict[str, list[str]]:
         if self.cache_dir is None or self.split is None:
             return self._create_split_keys(all_keys)
 
@@ -198,7 +198,7 @@ class AIGGraphRegressionDataset(PyGDataset):
         # Include num_samples in the cache filename so it doesn't collide with full datasets
         sample_tag = f"_{self.num_samples}" if self.num_samples is not None else "_all"
         cache_file = self.cache_dir / f"{algo_tag}{sample_tag}_splits.json"
-        cache_key = str(cache_file.resolve())
+        cache_key = str(cache_file)
 
         if cache_key in _SPLITS_CACHE:
             return _SPLITS_CACHE[cache_key]
@@ -215,7 +215,9 @@ class AIGGraphRegressionDataset(PyGDataset):
 
         split_keys = self._create_split_keys(all_keys)
         temp_file = cache_file.with_suffix(f".tmp_{uuid.uuid4().hex[:8]}")
-        temp_file.write_text(json.dumps(split_keys, indent=2, sort_keys=True), encoding="utf-8")
+        temp_file.write_text(
+            json.dumps(split_keys, indent=2, sort_keys=True), encoding="utf-8"
+        )
         os.replace(temp_file, cache_file)
         _SPLITS_CACHE[cache_key] = split_keys
         return split_keys
@@ -286,9 +288,9 @@ class AIGGraphRegressionDataset(PyGDataset):
 
     def _stable_graph_cache_name(self, graph_path: str) -> str:
         source = Path(graph_path)
-        resolved = source.resolve()
-        st = resolved.stat()
-        token = f"{resolved}|{st.st_size}|{st.st_mtime_ns}"
+        # Stop resolving symlinks to avoid compute node mount issues
+        st = source.stat()
+        token = f"{source.absolute()}|{st.st_size}|{st.st_mtime_ns}"
 
         digest = hashlib.sha1(token.encode()).hexdigest()
         return f"{digest}.pt"
@@ -312,7 +314,9 @@ class AIGGraphRegressionDataset(PyGDataset):
             meta_path.write_text(str(num_nodes))
             return str(cache_path), num_nodes
 
-        source_obj = torch.load(Path(graph_path), map_location="cpu", weights_only=False)
+        source_obj = torch.load(
+            Path(graph_path), map_location="cpu", weights_only=False
+        )
         num_nodes = int(source_obj.x.shape[0])
 
         cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -336,7 +340,9 @@ class AIGGraphRegressionDataset(PyGDataset):
         # manifest belongs to the right seed/split/num_samples/CSV combination.
         # Full per-entry validation was removed — it caused thousands of GPFS
         # stat() calls per trial.
-        if not isinstance(manifest, dict) or not isinstance(manifest.get("entries"), list):
+        if not isinstance(manifest, dict) or not isinstance(
+            manifest.get("entries"), list
+        ):
             return None
         return manifest
 
@@ -352,10 +358,13 @@ class AIGGraphRegressionDataset(PyGDataset):
             if hasattr(os, "sched_getaffinity")
             else (os.cpu_count() or 1)
         )
-        n_threads = max(1, min(
-            self.num_workers if self.num_workers > 0 else cpu_limit,
-            cpu_limit,
-        ))
+        n_threads = max(
+            1,
+            min(
+                self.num_workers if self.num_workers > 0 else cpu_limit,
+                cpu_limit,
+            ),
+        )
         print(
             f"[cache] Building graph cache: {len(unique_paths)} unique graphs "
             f"using {n_threads} threads -> {self._cache_graph_dir}",
@@ -471,9 +480,7 @@ class AIGGraphRegressionDataset(PyGDataset):
         self._graph_num_nodes_map[sample.graph_path] = num_nodes
         return num_nodes
 
-    def _read_sizes_cache(
-        self, sizes_cache_path: Path | None
-    ) -> list[int] | None:
+    def _read_sizes_cache(self, sizes_cache_path: Path | None) -> list[int] | None:
         if sizes_cache_path is None or not sizes_cache_path.is_file():
             return None
         try:
