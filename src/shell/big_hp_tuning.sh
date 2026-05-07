@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=big_optuna
-#SBATCH --time=96:00:00
+#SBATCH --time=48:00:00
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=16
 #SBATCH --partition=gpu_h100
@@ -14,7 +14,7 @@ set -euo pipefail
 # Array-task id, or 1 when run outside an array for local debugging.
 TASK_ID=${SLURM_ARRAY_TASK_ID:-1}
 
-SCRIPT_VERSION="2026-05-06 (96h Two-Stage Array Job: Stage 1 = explore, Stage 2 = exploit)"
+SCRIPT_VERSION="2026-05-06 (48h Two-Stage Array Job: Stage 1 = explore, Stage 2 = exploit)"
 
 echo "=========================================="
 echo "JOB: Big Optuna Hyperparameter Tuning (array_task=${TASK_ID} job=${SLURM_ARRAY_JOB_ID:-n/a})"

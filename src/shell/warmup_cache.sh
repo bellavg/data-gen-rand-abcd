@@ -1,24 +1,19 @@
 #!/bin/bash
 #SBATCH --job-name=cache_warmup
-#SBATCH --time=08:00:00
+#SBATCH --time=02:00:00
 #SBATCH --nodes=1
-#SBATCH --cpus-per-task=48
+#SBATCH --cpus-per-task=96
 #SBATCH --partition=genoa
-#SBATCH --output=logs/cache_warmup.out
+#SBATCH --output=logs/cache_warmup_15.out
 
 # ---------------------------------------------------------------------------
 # Dedicated cache pre-warm job.
 #
-# Run this ONCE before submitting big_hp_tuning.sh.  It builds the shared
-# dataset cache on a cheap CPU node so that:
-#   - All 3 HP tuning workers skip serialised GPFS I/O at trial start
-#   - Both Stage 1 (15 K samples) and Stage 2 (35 K samples) are ready
+# Run this before submitting big_hp_tuning.sh. Builds the shared dataset
+# cache on a CPU node so HP tuning workers skip GPFS I/O at trial start.
 #
 # Usage:
 #   sbatch src/shell/warmup_cache.sh
-#
-# Then submit HP tuning:
-#   STAGE=1 sbatch src/shell/big_hp_tuning.sh
 #
 # Or chain automatically:
 #   WID=$(sbatch --parsable src/shell/warmup_cache.sh)
@@ -32,6 +27,7 @@ echo "CACHE WARMUP JOB"
 echo "Running on: $(hostname)"
 echo "Start time: $(date)"
 echo "CPUs available: $(nproc)"
+echo "Memory available: $(free -h | awk '/^Mem:/{print $2}')"
 echo "=========================================="
 
 module purge
@@ -102,10 +98,7 @@ PYEOF
     echo "[warmup] Sentinel written: $sentinel"
 }
 
-# Warm 35K first (superset): all source graphs are fetched and cached in one pass.
-# 15K is a strict subset of 35K (same seed/shuffle), so its warm_cache call only
-# re-reads already-cached files from scratch-shared — fast, a few minutes at most.
-warm_cache 35000
+# Warm 15K for Stage 1. Re-run with n_samples=35000 before Stage 2.
 warm_cache 15000
 
 echo "=========================================="
