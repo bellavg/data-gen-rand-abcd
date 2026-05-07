@@ -284,7 +284,14 @@ class AIGGraphRegressionDataset(PyGDataset):
     def _build_samples(self) -> list[GraphSample]:
         samples = self._read_candidate_samples()
         samples = self._apply_split(samples)
-        return samples
+        valid_samples = []
+        for s in samples:
+            if Path(s.graph_path).is_file():
+                valid_samples.append(s)
+            else:
+                print(f"[warning] Skipping missing graph on disk: {s.graph_path}")
+
+        return valid_samples
 
     def _stable_graph_cache_name(self, graph_path: str) -> str:
         source = Path(graph_path)
