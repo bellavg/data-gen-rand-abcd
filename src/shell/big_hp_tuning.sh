@@ -5,7 +5,6 @@
 #SBATCH --cpus-per-task=16
 #SBATCH --partition=gpu_h100
 #SBATCH --gpus=1
-#SBATCH --mem=192G
 #SBATCH --array=1-3
 #SBATCH --output=logs/big_optuna_worker_%a.out
 
