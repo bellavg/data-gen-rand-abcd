@@ -98,8 +98,69 @@ PYEOF
     echo "[warmup] Sentinel written: $sentinel"
 }
 
-# Warm 15K for Stage 1. Re-run with n_samples=35000 before Stage 2.
+# ---------------------------------------------------------------------------
+# Step 1: pre-compute disjoint splits for both stages.
+#
+# Shuffle all unique graph paths with seed=42, then partition:
+#   Stage 1: first 15K unique paths  (80/20 train/val)
+#   Stage 2: next  35K unique paths  (80/20 train/val)
+# Writes the splits JSONs to the exact paths _load_or_create_split_keys
+# expects, so warm_cache and HP workers both pick them up without rebuilding.
+# ---------------------------------------------------------------------------
+echo "[splits] Generating disjoint 15K / 35K splits from 50K pool..."
+python -u - <<PYEOF
+import json
+import random
+from pathlib import Path
+
+import pandas as pd
+
+csv_paths = ["$CSV_1", "$CSV_2", "$CSV_3", "$CSV_4"]
+shared_cache = Path("$SHARED_CACHE")
+shared_cache.mkdir(parents=True, exist_ok=True)
+
+df = pd.concat(
+    [pd.read_csv(p, dtype=str).fillna("") for p in csv_paths],
+    ignore_index=True,
+)
+unique_keys = list(dict.fromkeys(df["unoptimized_graph_path"].tolist()))
+print(f"[splits] Total unique graph paths: {len(unique_keys)}", flush=True)
+
+rng = random.Random(42)
+rng.shuffle(unique_keys)
+
+stage1_keys = unique_keys[:15000]
+stage2_keys = unique_keys[15000:50000]
+
+def make_split(keys):
+    n = len(keys)
+    n_train = int(n * 0.8)
+    n_val = int(n * 0.2)
+    return {
+        "train": keys[:n_train],
+        "val": keys[n_train : n_train + n_val],
+        "test": keys[n_train + n_val :],
+    }
+
+algo_tag = "_".join(Path(p).stem for p in csv_paths)
+for n, stage_keys in [(15000, stage1_keys), (35000, stage2_keys)]:
+    split = make_split(stage_keys)
+    out = shared_cache / f"{algo_tag}_{n}_splits.json"
+    out.write_text(json.dumps(split, indent=2, sort_keys=True), encoding="utf-8")
+    print(
+        f"[splits] {n}: {len(split['train'])} train / {len(split['val'])} val "
+        f"from {len(stage_keys)} unique graphs → {out.name}",
+        flush=True,
+    )
+PYEOF
+
+# ---------------------------------------------------------------------------
+# Step 2: cache the graphs for Stage 1 now.
+# Before Stage 2, resubmit this script — warm_cache 15000 will skip (sentinel
+# already present) and warm_cache 35000 will run on the disjoint graph set.
+# ---------------------------------------------------------------------------
 warm_cache 15000
+# warm_cache 35000  # uncomment (or resubmit) before Stage 2
 
 echo "=========================================="
 echo "Cache warmup complete."
