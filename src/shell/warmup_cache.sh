@@ -2,8 +2,8 @@
 #SBATCH --job-name=cache_warmup
 #SBATCH --time=08:00:00
 #SBATCH --nodes=1
-#SBATCH --cpus-per-task=24
-#SBATCH --partition=fat_genoa
+#SBATCH --cpus-per-task=48
+#SBATCH --partition=genoa
 #SBATCH --output=logs/cache_warmup.out
 
 # ---------------------------------------------------------------------------
