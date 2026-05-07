@@ -175,7 +175,9 @@ class AIGGraphRegressionDataset(PyGDataset):
 
         samples = [
             GraphSample(
-                graph_path=row["unoptimized_graph_path"],
+                graph_path=row["unoptimized_graph_path"].replace(
+                    "/gpfs/scratch1/shared", "/scratch-shared"
+                ),
                 y_node_opt=float(row["optimizability"]),
             )
             for row in df.to_dict("records")
