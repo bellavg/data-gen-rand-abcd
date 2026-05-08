@@ -32,7 +32,10 @@ TIER2_AIG_ROOT="${TIER2_AIG_ROOT:-/scratch-shared/$USER/data-gen-rand-abcd/tier2
 
 WORKERS="${WORKERS:-${SLURM_CPUS_PER_TASK:-24}}"
 EXAMPLES="${EXAMPLES:-5}"
+TOP_K="${TOP_K:-10}"
+BUCKET_EXAMPLES="${BUCKET_EXAMPLES:-3}"
 INCLUDE_PER_DESIGN_CSV="${INCLUDE_PER_DESIGN_CSV:-0}"
+ISSUES_OUT_DIR="${ISSUES_OUT_DIR:-}"
 
 CSV_GLOBS=(
 	"$BASE_DIR/data/designs/design_metadata/algo_*_ml.csv"
@@ -59,6 +62,8 @@ ARGS=(
 	--pt-root "$PT_ROOT"
 	--workers "$WORKERS"
 	--examples "$EXAMPLES"
+	--top-k "$TOP_K"
+	--bucket-examples "$BUCKET_EXAMPLES"
 )
 
 for g in "${CSV_GLOBS[@]}"; do
@@ -99,6 +104,10 @@ if [[ -n "${EXTRA_CSV_GLOBS:-}" ]]; then
 	done
 fi
 
+if [[ -n "$ISSUES_OUT_DIR" ]]; then
+	ARGS+=(--issues-out-dir "$ISSUES_OUT_DIR")
+fi
+
 echo "Audit configuration:"
 echo "  BASE_DIR=$BASE_DIR"
 echo "  AIG_ROOT=$AIG_ROOT"
@@ -106,7 +115,14 @@ echo "  PT_ROOT=$PT_ROOT"
 echo "  TIER2_AIG_ROOT=$TIER2_AIG_ROOT"
 echo "  WORKERS=$WORKERS"
 echo "  EXAMPLES=$EXAMPLES"
+echo "  TOP_K=$TOP_K"
+echo "  BUCKET_EXAMPLES=$BUCKET_EXAMPLES"
 echo "  INCLUDE_PER_DESIGN_CSV=$INCLUDE_PER_DESIGN_CSV"
+if [[ -n "$ISSUES_OUT_DIR" ]]; then
+	echo "  ISSUES_OUT_DIR=$ISSUES_OUT_DIR"
+else
+	echo "  ISSUES_OUT_DIR=(disabled)"
+fi
 echo "  PYTHON_BIN=$PYTHON_BIN"
 echo ""
 echo "NOTE: This script is read-only. It only scans files and prints a report."
