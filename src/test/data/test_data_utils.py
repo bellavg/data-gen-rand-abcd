@@ -18,9 +18,11 @@ from data.data_utils import (
 # Imports for testing preprocess_data.py
 from data.preprocess_data import (
     GraphTask,
+    WorkerConfig,
     artifact_output_base_path,
     discover_graph_tasks,
     graph_output_path,
+    process_task,
 )
 
 
@@ -79,9 +81,10 @@ class TestDataUtilsFunctions(unittest.TestCase):
             parse_aig_name("adder_Orchestrate_tier1_syn1_step0.aig"),
             (1, "Orchestrate", "adder"),
         )
-        self.assertEqual(
-            parse_aig_name("multiplier_Deepsyn_tier1_Deepsyn_v2_synX_step5.aig"),
-            (1, "Deepsyn", "multiplier"),
+        # Messy names (with mktemp junk token) must no longer parse — cleanup_naming.py
+        # must clean ZIPs first so that preprocess_data can't save messy .pt stems.
+        self.assertIsNone(
+            parse_aig_name("multiplier_Deepsyn_tier1_Deepsyn_v2_synX_step5.aig")
         )
         # Tier 2 outputs should be ignored (fallback to None)
         self.assertIsNone(
@@ -227,6 +230,89 @@ class TestPreprocessData(unittest.TestCase):
         # Test fail on unmatched
         with self.assertRaises(ValueError):
             discover_graph_tasks(self.root, allow_unmatched_names=False)
+
+    def test_discover_graph_tasks_messy_tier1_unmatched(self):
+        """Messy tier-1 AIG names (junk token from ABC mktemp) must be unmatched.
+
+        After cleanup_naming.py cleans all ZIP members, messy names should never
+        appear.  This test confirms that if one somehow does, it is NOT silently
+        processed into a .pt with a messy stem — it is rejected as unmatched.
+        """
+        design_dir = self.root / "sqrt"
+        design_dir.mkdir()
+        (design_dir / "tier1").mkdir()
+
+        zip_path = design_dir / "tier1" / "sqrt_Deepsyn.zip"
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            # Messy name: mktemp token "Deepsyn_sqrt_M7pRPw" inserted after tier1_
+            zf.writestr(
+                "sqrt_Deepsyn_tier1_Deepsyn_sqrt_M7pRPw_syn81_step9.aig", "dummy"
+            )
+            # Clean name alongside — should still be matched
+            zf.writestr("sqrt_Deepsyn_tier1_syn81_step9.aig", "dummy")
+
+        tasks, unmatched, source_counts = discover_graph_tasks(
+            self.root, allow_unmatched_names=True
+        )
+        # Only the clean name should produce a task; the messy one is unmatched.
+        self.assertEqual(len(tasks), 1)
+        self.assertEqual(tasks[0].filename, "sqrt_Deepsyn_tier1_syn81_step9.aig")
+        self.assertEqual(unmatched, 1)
+
+    def test_process_task_skips_existing(self):
+        """process_task returns skipped:exists when the .pt is already present and overwrite=False."""
+        final_out = self.root / "out"
+        pt_path = final_out / "graphs" / "tier0" / "adder" / "adder_syn1_step0.pt"
+        pt_path.parent.mkdir(parents=True, exist_ok=True)
+        pt_path.write_bytes(b"\x00" * 8)
+
+        task = GraphTask(1, 0, "", "adder", "adder_syn1_step0.aig", "dummy.aig", "", "")
+        cfg = WorkerConfig(final_out_root=str(final_out), overwrite=False)
+
+        result = process_task(task, cfg)
+        self.assertEqual(result["status"], "skipped:exists")
+        self.assertEqual(result["output_path"], str(pt_path))
+        # Source file should not have been touched.
+        self.assertEqual(pt_path.read_bytes(), b"\x00" * 8)
+
+    def test_process_task_overwrite_attempts_processing(self):
+        """When overwrite=True, process_task does not skip even when .pt exists.
+
+        The task will fail (no real AIG at the dummy path) but the key assertion
+        is that the status is NOT 'skipped:exists'.
+        """
+        final_out = self.root / "out"
+        pt_path = (
+            final_out
+            / "graphs"
+            / "tier1"
+            / "Deepsyn"
+            / "sqrt"
+            / "sqrt_Deepsyn_tier1_syn1_step1.pt"
+        )
+        pt_path.parent.mkdir(parents=True, exist_ok=True)
+        pt_path.write_bytes(b"\x00" * 8)
+
+        task = GraphTask(
+            1,
+            1,
+            "Deepsyn",
+            "sqrt",
+            "sqrt_Deepsyn_tier1_syn1_step1.aig",
+            "nonexistent.aig",
+            "",
+            "",
+        )
+        cfg = WorkerConfig(final_out_root=str(final_out), overwrite=True)
+
+        result = process_task(task, cfg)
+        self.assertNotEqual(
+            result["status"],
+            "skipped:exists",
+            "overwrite=True must not short-circuit to skipped:exists",
+        )
+        # Without a real AIG file, processing will error — that is expected here.
+        self.assertEqual(result["status"], "error")
 
 
 class TestDatasetAigNodeLabelAudit(unittest.TestCase):

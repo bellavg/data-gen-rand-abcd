@@ -46,10 +46,6 @@ def default_workers() -> int:
 TIER1_NAME_RE = re.compile(
     r"^(?P<design>.+?)_(?P<algorithm>Orchestrate|Deepsyn|Syn4|C2RS)_tier1_syn(?P<recipe>[0-9X]+)_step(?P<step>\d+)\.aig$"
 )
-TIER1_EXT_NAME_RE = re.compile(
-    r"^(?P<design>.+?)_(?P<algorithm>Orchestrate|Deepsyn|Syn4|C2RS)_tier1_"
-    r"(?:Orchestrate|Deepsyn|Syn4|C2RS)_.+_syn(?P<recipe>[0-9X]+)_step(?P<step>\d+)\.aig$"
-)
 TIER0_NAME_RE = re.compile(
     r"^(?P<design>.+?)_syn(?P<recipe>[0-9X]+)_step(?P<step>\d+)\.aig$"
 )
@@ -65,11 +61,8 @@ def parse_aig_name(name: str) -> Optional[Tuple[int, str, str]]:
     if match_t1:
         return 1, match_t1.group("algorithm"), match_t1.group("design")
 
-    match_t1_ext = TIER1_EXT_NAME_RE.match(name)
-    if match_t1_ext:
-        return 1, match_t1_ext.group("algorithm"), match_t1_ext.group("design")
-
-    # If the name claims tier1 but does not match the strict tier1 pattern, skip it.
+    # If the name claims tier1 but does not match the strict canonical pattern, skip it.
+    # Messy names (with mktemp junk token) must be cleaned by cleanup_naming.py first.
     if "_tier1_" in name:
         return None
 
@@ -103,9 +96,7 @@ def _extract_topology(
     # creation/order-of-assignment. Check and assert this invariant so we
     # catch unexpected ordering during development.
     other_nodes_sorted = sorted(other_nodes_original)
-    assert (
-        other_nodes_original == other_nodes_sorted
-    ), (
+    assert other_nodes_original == other_nodes_sorted, (
         "AIG nodes are not in ascending ID order; expected creation-order IDs."
     )
 
@@ -114,9 +105,9 @@ def _extract_topology(
     # Assert that node labels are contiguous 0..(n-1). We rely on this
     # invariant for stable indexing and topological propagation.
     num_base_nodes = len(base_nodes)
-    assert (
-        base_nodes == list(range(num_base_nodes))
-    ), f"AIG node labels must be contiguous 0..n-1, got: {base_nodes}"
+    assert base_nodes == list(range(num_base_nodes)), (
+        f"AIG node labels must be contiguous 0..n-1, got: {base_nodes}"
+    )
     num_nodes = num_base_nodes + aig.num_pos()
 
     node_to_idx = {n: i for i, n in enumerate(base_nodes)}
