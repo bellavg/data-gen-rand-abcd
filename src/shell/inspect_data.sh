@@ -35,7 +35,11 @@ EXAMPLES="${EXAMPLES:-5}"
 TOP_K="${TOP_K:-10}"
 BUCKET_EXAMPLES="${BUCKET_EXAMPLES:-3}"
 INCLUDE_PER_DESIGN_CSV="${INCLUDE_PER_DESIGN_CSV:-0}"
-ISSUES_OUT_DIR="${ISSUES_OUT_DIR:-}"
+RUN_TAG="${RUN_TAG:-${SLURM_JOB_ID:-$(date +%Y%m%d_%H%M%S)}}"
+ISSUES_OUT_DIR="${ISSUES_OUT_DIR:-$BASE_DIR/logs/inspect_issues_$RUN_TAG}"
+EXPORT_NAMING_CANDIDATES="${EXPORT_NAMING_CANDIDATES:-1}"
+NAMING_MAX_ROWS="${NAMING_MAX_ROWS:-0}"
+CLEANUP_PREVIEW="${CLEANUP_PREVIEW:-1}"
 
 CSV_GLOBS=(
 	"$BASE_DIR/data/designs/design_metadata/algo_*_ml.csv"
@@ -108,6 +112,16 @@ if [[ -n "$ISSUES_OUT_DIR" ]]; then
 	ARGS+=(--issues-out-dir "$ISSUES_OUT_DIR")
 fi
 
+if [[ "$EXPORT_NAMING_CANDIDATES" == "0" ]]; then
+	ARGS+=(--no-export-naming-candidates)
+fi
+
+if [[ "$CLEANUP_PREVIEW" == "0" ]]; then
+	ARGS+=(--no-cleanup-preview)
+fi
+
+ARGS+=(--naming-max-rows "$NAMING_MAX_ROWS")
+
 echo "Audit configuration:"
 echo "  BASE_DIR=$BASE_DIR"
 echo "  AIG_ROOT=$AIG_ROOT"
@@ -123,6 +137,9 @@ if [[ -n "$ISSUES_OUT_DIR" ]]; then
 else
 	echo "  ISSUES_OUT_DIR=(disabled)"
 fi
+echo "  EXPORT_NAMING_CANDIDATES=$EXPORT_NAMING_CANDIDATES"
+echo "  NAMING_MAX_ROWS=$NAMING_MAX_ROWS"
+echo "  CLEANUP_PREVIEW=$CLEANUP_PREVIEW"
 echo "  PYTHON_BIN=$PYTHON_BIN"
 echo ""
 echo "NOTE: This script is read-only. It only scans files and prints a report."

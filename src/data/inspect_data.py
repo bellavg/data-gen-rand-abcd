@@ -45,6 +45,52 @@ def format_key(tier: int, key: tuple[str, ...]) -> str:
     return f"tier{tier}:{key}"
 
 
+def clean_basename_for_key(tier: int, key: tuple[str, ...], suffix: str) -> str:
+    if tier == 0:
+        design, recipe, step = key
+        return f"{design}_syn{recipe}_step{step}{suffix}"
+    if tier == 1:
+        design, algorithm, recipe, step = key
+        return f"{design}_{algorithm}_tier1_syn{recipe}_step{step}{suffix}"
+    if tier == 2:
+        design, src_algorithm, dst_algorithm, recipe, step = key
+        return (
+            f"{design}_{src_algorithm}_{dst_algorithm}_tier2_syn{recipe}_step{step}{suffix}"
+        )
+    return ""
+
+
+def replace_basename(path_str: str, new_basename: str) -> str:
+    path = Path(path_str)
+    parent = path.parent
+    if str(parent) == ".":
+        return new_basename
+    return str(parent / new_basename)
+
+
+def normalize_graph_root(pt_root: Path) -> Path:
+    if (pt_root / "graphs").is_dir():
+        return pt_root / "graphs"
+    return pt_root
+
+
+def expected_pt_path_for_key(graph_root: Path, tier: int, key: tuple[str, ...]) -> str:
+    if tier == 0:
+        design, recipe, step = key
+        return str(graph_root / "tier0" / design / f"{design}_syn{recipe}_step{step}.pt")
+    if tier == 1:
+        design, algorithm, recipe, step = key
+        basename = f"{design}_{algorithm}_tier1_syn{recipe}_step{step}.pt"
+        return str(graph_root / "tier1" / algorithm / design / basename)
+    if tier == 2:
+        design, src_algorithm, dst_algorithm, recipe, step = key
+        basename = (
+            f"{design}_{src_algorithm}_{dst_algorithm}_tier2_syn{recipe}_step{step}.pt"
+        )
+        return str(graph_root / "tier2" / design / basename)
+    return ""
+
+
 def parse_artifact_name(
     name: str,
     *,
@@ -259,6 +305,7 @@ def discover_zip_files(
 
 def scan_single_zip(zip_path: str) -> dict[str, object]:
     tier_keys = init_tier_sets()
+    tier_keys_clean = init_tier_sets()
     state_counts: dict[int, Counter[str]] = defaultdict(Counter)
     tier_member_counts: Counter[int] = Counter()
     unrecognized = 0
@@ -278,6 +325,8 @@ def scan_single_zip(zip_path: str) -> dict[str, object]:
                     continue
 
                 tier_keys[tier].add(key)
+                if state == "clean":
+                    tier_keys_clean[tier].add(key)
                 state_counts[tier][state] += 1
                 tier_member_counts[tier] += 1
     except Exception as exc:  # noqa: BLE001
@@ -286,6 +335,7 @@ def scan_single_zip(zip_path: str) -> dict[str, object]:
     return {
         "zip_path": zip_path,
         "tier_keys": tier_keys,
+        "tier_keys_clean": tier_keys_clean,
         "state_counts": state_counts,
         "tier_member_counts": dict(tier_member_counts),
         "unrecognized": unrecognized,
@@ -492,6 +542,572 @@ def print_tier2_linkage_missing_details(
         print(f"    {algo}: {', '.join(examples)}")
 
 
+def print_generation_coverage_diagnostics(
+    t0_keys: set[tuple[str, ...]],
+    t1_keys: set[tuple[str, ...]],
+    t2_keys: set[tuple[str, ...]],
+    *,
+    top_k: int,
+    bucket_examples: int,
+    collect_tier1_missing_keys: bool,
+) -> dict[str, object]:
+    print("\nGeneration coverage diagnostics:")
+
+    t0_base = {(design, recipe, step) for (design, recipe, step) in t0_keys}
+    t1_observed_by_algo: dict[str, set[tuple[str, str, str]]] = {
+        algo: set() for algo in ALGORITHMS
+    }
+    for design, algorithm, recipe, step in t1_keys:
+        if algorithm in t1_observed_by_algo:
+            t1_observed_by_algo[algorithm].add((design, recipe, step))
+
+    tier1_expected_by_algo: Counter[str] = Counter()
+    tier1_observed_by_algo: Counter[str] = Counter()
+    tier1_missing_by_algo: Counter[str] = Counter()
+    tier1_missing_by_design_algo: Counter[str] = Counter()
+    tier1_missing_examples_by_algo: dict[str, list[str]] = defaultdict(list)
+    tier1_missing_keys: set[tuple[str, ...]] = set()
+
+    for algo in ALGORITHMS:
+        observed_set = t1_observed_by_algo[algo]
+        expected_n = len(t0_base)
+        observed_n = len(observed_set)
+        missing_n = max(0, expected_n - observed_n)
+        tier1_expected_by_algo[algo] = expected_n
+        tier1_observed_by_algo[algo] = observed_n
+        tier1_missing_by_algo[algo] = missing_n
+
+    for design, recipe, step in t0_base:
+        for algo in ALGORITHMS:
+            if (design, recipe, step) in t1_observed_by_algo[algo]:
+                continue
+            tier1_missing_by_design_algo[f"{design}|{algo}"] += 1
+            if len(tier1_missing_examples_by_algo[algo]) < bucket_examples:
+                tier1_missing_examples_by_algo[algo].append(
+                    format_key(1, (design, algo, recipe, step))
+                )
+            if collect_tier1_missing_keys:
+                tier1_missing_keys.add((design, algo, recipe, step))
+
+    total_tier1_expected = len(t0_base) * len(ALGORITHMS)
+    total_tier1_observed = len(t1_keys)
+    total_tier1_missing = max(0, total_tier1_expected - total_tier1_observed)
+    pct_tier1 = (
+        (100.0 * total_tier1_observed / total_tier1_expected)
+        if total_tier1_expected
+        else 0.0
+    )
+
+    print(
+        f"  Tier1 from Tier0: observed={total_tier1_observed:,} "
+        f"expected={total_tier1_expected:,} missing={total_tier1_missing:,} "
+        f"coverage={pct_tier1:.2f}%"
+    )
+    print("  Tier1 generation coverage by algorithm:")
+    for algo in ALGORITHMS:
+        expected_n = tier1_expected_by_algo[algo]
+        observed_n = tier1_observed_by_algo[algo]
+        missing_n = tier1_missing_by_algo[algo]
+        pct = (100.0 * observed_n / expected_n) if expected_n else 0.0
+        print(
+            f"    {algo}: observed={observed_n:,} expected={expected_n:,} "
+            f"missing={missing_n:,} coverage={pct:.2f}%"
+        )
+
+    print_counter_top(
+        "  Tier1 expected-missing AIG by design|algorithm:",
+        tier1_missing_by_design_algo,
+        top_k,
+    )
+    print("  Tier1 expected-missing examples by algorithm:")
+    for algo in ALGORITHMS:
+        samples = tier1_missing_examples_by_algo.get(algo, [])
+        if not samples:
+            continue
+        print(f"    {algo}: {', '.join(samples)}")
+
+    tier2_expected_by_dst: Counter[str] = Counter()
+    tier2_observed_by_dst: Counter[str] = Counter()
+    tier2_missing_by_dst: Counter[str] = Counter()
+    tier2_missing_by_src: Counter[str] = Counter()
+    tier2_missing_by_design_dst: Counter[str] = Counter()
+    tier2_missing_examples_by_dst: dict[str, list[str]] = defaultdict(list)
+
+    total_tier2_expected = 0
+    total_tier2_observed = 0
+    total_tier2_missing = 0
+
+    for design, src_algo, recipe, step in t1_keys:
+        for dst_algo in ALGORITHMS:
+            if dst_algo == src_algo:
+                continue
+            total_tier2_expected += 1
+            tier2_expected_by_dst[dst_algo] += 1
+
+            key = (design, src_algo, dst_algo, recipe, step)
+            if key in t2_keys:
+                total_tier2_observed += 1
+                tier2_observed_by_dst[dst_algo] += 1
+                continue
+
+            total_tier2_missing += 1
+            tier2_missing_by_dst[dst_algo] += 1
+            tier2_missing_by_src[src_algo] += 1
+            tier2_missing_by_design_dst[f"{design}|{dst_algo}"] += 1
+            if len(tier2_missing_examples_by_dst[dst_algo]) < bucket_examples:
+                tier2_missing_examples_by_dst[dst_algo].append(format_key(2, key))
+
+    pct_tier2 = (
+        (100.0 * total_tier2_observed / total_tier2_expected)
+        if total_tier2_expected
+        else 0.0
+    )
+    print(
+        f"  Tier2 from Tier1: observed={total_tier2_observed:,} "
+        f"expected={total_tier2_expected:,} missing={total_tier2_missing:,} "
+        f"coverage={pct_tier2:.2f}%"
+    )
+
+    print("  Tier2 generation coverage by target algorithm:")
+    for algo in ALGORITHMS:
+        expected_n = tier2_expected_by_dst.get(algo, 0)
+        observed_n = tier2_observed_by_dst.get(algo, 0)
+        missing_n = tier2_missing_by_dst.get(algo, 0)
+        pct = (100.0 * observed_n / expected_n) if expected_n else 0.0
+        print(
+            f"    {algo}: observed={observed_n:,} expected={expected_n:,} "
+            f"missing={missing_n:,} coverage={pct:.2f}%"
+        )
+
+    print_counter_top(
+        "  Tier2 expected-missing AIG by source algorithm:",
+        tier2_missing_by_src,
+        top_k,
+    )
+    print_counter_top(
+        "  Tier2 expected-missing AIG by design|target algorithm:",
+        tier2_missing_by_design_dst,
+        top_k,
+    )
+    print("  Tier2 expected-missing examples by target algorithm:")
+    for algo in ALGORITHMS:
+        samples = tier2_missing_examples_by_dst.get(algo, [])
+        if not samples:
+            continue
+        print(f"    {algo}: {', '.join(samples)}")
+
+    return {
+        "tier1_expected_by_algo": tier1_expected_by_algo,
+        "tier1_observed_by_algo": tier1_observed_by_algo,
+        "tier1_missing_by_algo": tier1_missing_by_algo,
+        "tier1_missing_by_design_algo": tier1_missing_by_design_algo,
+        "tier1_missing_keys": tier1_missing_keys,
+        "tier1_total_expected": total_tier1_expected,
+        "tier1_total_observed": total_tier1_observed,
+        "tier1_total_missing": total_tier1_missing,
+        "tier2_expected_by_dst": tier2_expected_by_dst,
+        "tier2_observed_by_dst": tier2_observed_by_dst,
+        "tier2_missing_by_dst": tier2_missing_by_dst,
+        "tier2_missing_by_src": tier2_missing_by_src,
+        "tier2_missing_by_design_dst": tier2_missing_by_design_dst,
+        "tier2_total_expected": total_tier2_expected,
+        "tier2_total_observed": total_tier2_observed,
+        "tier2_total_missing": total_tier2_missing,
+    }
+
+
+def compute_artifact_metrics_for_tier(
+    tier: int,
+    *,
+    aig_keys: dict[int, set[tuple[str, ...]]],
+    pt_keys: dict[int, set[tuple[str, ...]]],
+    csv_artifact_keys: dict[int, set[tuple[str, ...]]],
+) -> dict[str, int]:
+    metrics: dict[str, int] = {
+        "aig_keys": len(aig_keys[tier]),
+        "pt_keys": len(pt_keys[tier]),
+        "csv_artifact_keys": len(csv_artifact_keys[tier]),
+    }
+
+    if tier in (0, 1):
+        metrics.update(
+            {
+                "perfect": len(aig_keys[tier] & pt_keys[tier] & csv_artifact_keys[tier]),
+                "missing_pt": len((aig_keys[tier] & csv_artifact_keys[tier]) - pt_keys[tier]),
+                "csv_without_aig": len(csv_artifact_keys[tier] - aig_keys[tier]),
+                "pt_without_aig": len(pt_keys[tier] - aig_keys[tier]),
+            }
+        )
+    else:
+        metrics.update(
+            {
+                "aig_and_csv": len(aig_keys[tier] & csv_artifact_keys[tier]),
+                "csv_without_aig": len(csv_artifact_keys[tier] - aig_keys[tier]),
+                "aig_without_csv": len(aig_keys[tier] - csv_artifact_keys[tier]),
+            }
+        )
+
+    return metrics
+
+
+def compute_linkage_metrics(
+    *,
+    csv_artifact_keys: dict[int, set[tuple[str, ...]]],
+    csv_input_keys: dict[int, set[tuple[str, ...]]],
+    pt_keys: dict[int, set[tuple[str, ...]]],
+) -> dict[str, int]:
+    expected_t1_from_t2_csv = {
+        (design, src_algorithm, recipe, step)
+        for (design, src_algorithm, _dst_algorithm, recipe, step) in csv_artifact_keys[
+            2
+        ]
+    }
+    covered_pt = expected_t1_from_t2_csv & pt_keys[1]
+    covered_csv_input = expected_t1_from_t2_csv & csv_input_keys[1]
+
+    return {
+        "expected_tier1_inputs_from_tier2_csv": len(expected_t1_from_t2_csv),
+        "covered_by_tier1_pt": len(covered_pt),
+        "missing_tier1_pt": len(expected_t1_from_t2_csv - pt_keys[1]),
+        "covered_in_csv_input": len(covered_csv_input),
+        "missing_in_csv_input": len(expected_t1_from_t2_csv - csv_input_keys[1]),
+    }
+
+
+def compute_generation_totals(
+    *,
+    t0_keys: set[tuple[str, ...]],
+    t1_keys: set[tuple[str, ...]],
+    t2_keys: set[tuple[str, ...]],
+) -> dict[str, int]:
+    tier1_expected = len(t0_keys) * len(ALGORITHMS)
+    tier1_observed = len(t1_keys)
+    tier1_missing = max(0, tier1_expected - tier1_observed)
+
+    tier2_expected = len(t1_keys) * max(0, len(ALGORITHMS) - 1)
+    tier2_observed = len(t2_keys)
+    tier2_missing = max(0, tier2_expected - tier2_observed)
+
+    return {
+        "tier1_expected": tier1_expected,
+        "tier1_observed": tier1_observed,
+        "tier1_missing": tier1_missing,
+        "tier2_expected": tier2_expected,
+        "tier2_observed": tier2_observed,
+        "tier2_missing": tier2_missing,
+    }
+
+
+def add_cleanup_preview_rows(
+    rows: list[dict[str, str]],
+    *,
+    category: str,
+    scope: str,
+    strict_metrics: dict[str, int],
+    simulated_metrics: dict[str, int],
+) -> None:
+    metric_keys = sorted(set(strict_metrics) | set(simulated_metrics))
+    for metric in metric_keys:
+        strict_value = int(strict_metrics.get(metric, 0))
+        simulated_value = int(simulated_metrics.get(metric, 0))
+        rows.append(
+            {
+                "category": category,
+                "scope": scope,
+                "metric": metric,
+                "strict_clean_only": str(strict_value),
+                "simulated_after_cleanup": str(simulated_value),
+                "delta": str(simulated_value - strict_value),
+            }
+        )
+
+
+def build_cleanup_preview_rows(
+    *,
+    aig_keys_all: dict[int, set[tuple[str, ...]]],
+    pt_keys_all: dict[int, set[tuple[str, ...]]],
+    csv_artifact_keys_all: dict[int, set[tuple[str, ...]]],
+    csv_input_keys_all: dict[int, set[tuple[str, ...]]],
+    aig_keys_clean: dict[int, set[tuple[str, ...]]],
+    pt_keys_clean: dict[int, set[tuple[str, ...]]],
+    csv_artifact_keys_clean: dict[int, set[tuple[str, ...]]],
+    csv_input_keys_clean: dict[int, set[tuple[str, ...]]],
+) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+
+    for tier in (0, 1, 2):
+        strict_metrics = compute_artifact_metrics_for_tier(
+            tier,
+            aig_keys=aig_keys_clean,
+            pt_keys=pt_keys_clean,
+            csv_artifact_keys=csv_artifact_keys_clean,
+        )
+        simulated_metrics = compute_artifact_metrics_for_tier(
+            tier,
+            aig_keys=aig_keys_all,
+            pt_keys=pt_keys_all,
+            csv_artifact_keys=csv_artifact_keys_all,
+        )
+        add_cleanup_preview_rows(
+            rows,
+            category="artifact",
+            scope=f"tier{tier}",
+            strict_metrics=strict_metrics,
+            simulated_metrics=simulated_metrics,
+        )
+
+    strict_linkage = compute_linkage_metrics(
+        csv_artifact_keys=csv_artifact_keys_clean,
+        csv_input_keys=csv_input_keys_clean,
+        pt_keys=pt_keys_clean,
+    )
+    simulated_linkage = compute_linkage_metrics(
+        csv_artifact_keys=csv_artifact_keys_all,
+        csv_input_keys=csv_input_keys_all,
+        pt_keys=pt_keys_all,
+    )
+    add_cleanup_preview_rows(
+        rows,
+        category="linkage",
+        scope="tier2_to_tier1",
+        strict_metrics=strict_linkage,
+        simulated_metrics=simulated_linkage,
+    )
+
+    strict_generation = compute_generation_totals(
+        t0_keys=aig_keys_clean[0],
+        t1_keys=aig_keys_clean[1],
+        t2_keys=aig_keys_clean[2],
+    )
+    simulated_generation = compute_generation_totals(
+        t0_keys=aig_keys_all[0],
+        t1_keys=aig_keys_all[1],
+        t2_keys=aig_keys_all[2],
+    )
+    add_cleanup_preview_rows(
+        rows,
+        category="generation",
+        scope="tier_flow",
+        strict_metrics=strict_generation,
+        simulated_metrics=simulated_generation,
+    )
+
+    return rows
+
+
+def print_cleanup_preview(rows: list[dict[str, str]]) -> None:
+    print("\n==========================================")
+    print("8. CLEANUP PREVIEW (STRICT VS SIMULATED)")
+    print("==========================================")
+    print(
+        "Strict clean-only = only already-clean names. "
+        "Simulated after-cleanup = clean + messy names normalized virtually."
+    )
+
+    grouped: dict[str, list[dict[str, str]]] = defaultdict(list)
+    for row in rows:
+        grouped[f"{row['category']}:{row['scope']}"] += [row]
+
+    for group_key in sorted(grouped):
+        category, scope = group_key.split(":", 1)
+        print(f"\n  {category} / {scope}:")
+        for row in sorted(grouped[group_key], key=lambda r: r["metric"]):
+            strict_value = int(row["strict_clean_only"])
+            simulated_value = int(row["simulated_after_cleanup"])
+            delta = int(row["delta"])
+            sign = "+" if delta > 0 else ""
+            print(
+                f"    {row['metric']}: strict={strict_value:,} "
+                f"simulated={simulated_value:,} delta={sign}{delta:,}"
+            )
+
+
+def export_cleanup_preview(out_dir: Path, rows: list[dict[str, str]]) -> int:
+    return write_issue_csv(
+        out_dir / "tmp_cleanup_preview_comparison.csv",
+        [
+            "category",
+            "scope",
+            "metric",
+            "strict_clean_only",
+            "simulated_after_cleanup",
+            "delta",
+        ],
+        rows,
+    )
+
+
+def export_generation_missing_key_sets(
+    out_dir: Path,
+    *,
+    t0_keys: set[tuple[str, ...]],
+    t1_keys: set[tuple[str, ...]],
+    t2_keys: set[tuple[str, ...]],
+) -> tuple[int, int]:
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    t1_missing_path = out_dir / "generation_missing_tier1_expected_aig.csv"
+    t2_missing_path = out_dir / "generation_missing_tier2_expected_aig.csv"
+
+    t1_written = 0
+    with open(t1_missing_path, "w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(
+            fh,
+            fieldnames=[
+                "canonical_id",
+                "design",
+                "algorithm",
+                "recipe",
+                "step",
+                "expected_clean_aig_name",
+            ],
+        )
+        writer.writeheader()
+
+        for design, recipe, step in sorted(t0_keys):
+            for algo in ALGORITHMS:
+                key = (design, algo, recipe, step)
+                if key in t1_keys:
+                    continue
+                writer.writerow(
+                    {
+                        "canonical_id": format_key(1, key),
+                        "design": design,
+                        "algorithm": algo,
+                        "recipe": recipe,
+                        "step": step,
+                        "expected_clean_aig_name": clean_basename_for_key(
+                            1,
+                            key,
+                            ".aig",
+                        ),
+                    }
+                )
+                t1_written += 1
+
+    t2_written = 0
+    with open(t2_missing_path, "w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(
+            fh,
+            fieldnames=[
+                "canonical_id",
+                "design",
+                "source_algorithm",
+                "target_algorithm",
+                "recipe",
+                "step",
+                "expected_clean_aig_name",
+            ],
+        )
+        writer.writeheader()
+
+        for design, src_algo, recipe, step in sorted(t1_keys):
+            for dst_algo in ALGORITHMS:
+                if dst_algo == src_algo:
+                    continue
+                key = (design, src_algo, dst_algo, recipe, step)
+                if key in t2_keys:
+                    continue
+                writer.writerow(
+                    {
+                        "canonical_id": format_key(2, key),
+                        "design": design,
+                        "source_algorithm": src_algo,
+                        "target_algorithm": dst_algo,
+                        "recipe": recipe,
+                        "step": step,
+                        "expected_clean_aig_name": clean_basename_for_key(
+                            2,
+                            key,
+                            ".aig",
+                        ),
+                    }
+                )
+                t2_written += 1
+
+    return t1_written, t2_written
+
+
+def export_zip_naming_candidates(
+    out_path: Path,
+    zip_paths: list[Path],
+    zip_source_map: dict[str, str],
+    *,
+    max_rows: int,
+) -> tuple[int, int, int, bool]:
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    scanned_members = 0
+    candidates = 0
+    written = 0
+    truncated = False
+
+    fieldnames = [
+        "zip_path",
+        "zip_source",
+        "member_path",
+        "member_name",
+        "tier",
+        "naming_state",
+        "canonical_id",
+        "suggested_member_path",
+        "suggested_member_name",
+    ]
+
+    with open(out_path, "w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=fieldnames)
+        writer.writeheader()
+
+        for zip_path in tqdm(zip_paths, desc="Exporting AIG naming candidates", unit="zip"):
+            try:
+                with zipfile.ZipFile(zip_path, "r") as zf:
+                    for info in zf.infolist():
+                        if info.is_dir() or not info.filename.lower().endswith(".aig"):
+                            continue
+
+                        scanned_members += 1
+                        member_path = info.filename
+                        member_name = Path(member_path).name
+                        tier, key, state = parse_artifact_name(member_name)
+                        if key is None:
+                            continue
+
+                        suggested_name = clean_basename_for_key(tier, key, ".aig")
+                        if not suggested_name or suggested_name == member_name:
+                            continue
+
+                        candidates += 1
+                        if max_rows > 0 and written >= max_rows:
+                            truncated = True
+                            continue
+
+                        member_parent = Path(member_path).parent
+                        if str(member_parent) == ".":
+                            suggested_member_path = suggested_name
+                        else:
+                            suggested_member_path = str(member_parent / suggested_name)
+
+                        writer.writerow(
+                            {
+                                "zip_path": str(zip_path),
+                                "zip_source": zip_source_map.get(str(zip_path), "unknown"),
+                                "member_path": member_path,
+                                "member_name": member_name,
+                                "tier": str(tier),
+                                "naming_state": state,
+                                "canonical_id": format_key(tier, key),
+                                "suggested_member_path": suggested_member_path,
+                                "suggested_member_name": suggested_name,
+                            }
+                        )
+                        written += 1
+            except OSError:
+                continue
+            except zipfile.BadZipFile:
+                continue
+
+    return scanned_members, candidates, written, truncated
+
+
 def write_issue_csv(
     path: Path, fieldnames: list[str], rows: Iterable[dict[str, str]]
 ) -> int:
@@ -509,13 +1125,15 @@ def write_issue_csv(
 def export_issue_sets(
     out_dir: Path,
     *,
+    graph_root: Path,
     tier0_missing_pt: set[tuple[str, ...]],
     tier1_missing_pt: set[tuple[str, ...]],
     tier2_csv_without_aig: set[tuple[str, ...]],
     tier2_expected_missing_pt: set[tuple[str, ...]],
+    generation_stats: dict[str, object],
 ) -> None:
     print("\n==========================================")
-    print("7. ISSUE CSV EXPORT")
+    print("9. ISSUE CSV EXPORT")
     print("==========================================")
     print(f"Issue export directory: {out_dir}")
 
@@ -526,12 +1144,13 @@ def export_issue_sets(
             "design": key[0],
             "recipe": key[1],
             "step": key[2],
+            "expected_pt_path": expected_pt_path_for_key(graph_root, 0, key),
         }
         for key in tier0_missing_pt
     )
     t0_written = write_issue_csv(
         out_dir / "tier0_missing_pt.csv",
-        ["tier", "canonical_id", "design", "recipe", "step"],
+        ["tier", "canonical_id", "design", "recipe", "step", "expected_pt_path"],
         t0_rows,
     )
 
@@ -543,12 +1162,21 @@ def export_issue_sets(
             "algorithm": key[1],
             "recipe": key[2],
             "step": key[3],
+            "expected_pt_path": expected_pt_path_for_key(graph_root, 1, key),
         }
         for key in tier1_missing_pt
     )
     t1_written = write_issue_csv(
         out_dir / "tier1_missing_pt.csv",
-        ["tier", "canonical_id", "design", "algorithm", "recipe", "step"],
+        [
+            "tier",
+            "canonical_id",
+            "design",
+            "algorithm",
+            "recipe",
+            "step",
+            "expected_pt_path",
+        ],
         t1_rows,
     )
 
@@ -586,12 +1214,21 @@ def export_issue_sets(
             "source_algorithm": key[1],
             "recipe": key[2],
             "step": key[3],
+            "expected_pt_path": expected_pt_path_for_key(graph_root, 1, key),
         }
         for key in tier2_expected_missing_pt
     )
     linkage_written = write_issue_csv(
         out_dir / "tier2_expected_tier1_input_missing_pt.csv",
-        ["tier", "canonical_id", "design", "source_algorithm", "recipe", "step"],
+        [
+            "tier",
+            "canonical_id",
+            "design",
+            "source_algorithm",
+            "recipe",
+            "step",
+            "expected_pt_path",
+        ],
         linkage_rows,
     )
 
@@ -599,6 +1236,173 @@ def export_issue_sets(
     print(f"  tier1_missing_pt.csv rows: {t1_written:,}")
     print(f"  tier2_csv_without_aig.csv rows: {t2_csv_written:,}")
     print(f"  tier2_expected_tier1_input_missing_pt.csv rows: {linkage_written:,}")
+
+    # Aggregated summaries for purification planning.
+    tier0_missing_by_design = Counter(key[0] for key in tier0_missing_pt)
+    tier1_missing_by_design_algo = Counter(f"{key[0]}|{key[1]}" for key in tier1_missing_pt)
+    tier2_csv_ghost_by_design_dst = Counter(
+        f"{key[0]}|{key[2]}" for key in tier2_csv_without_aig
+    )
+    tier2_expected_missing_by_design_algo = Counter(
+        f"{key[0]}|{key[1]}" for key in tier2_expected_missing_pt
+    )
+
+    summary_t0 = (
+        {"design": design, "missing_pt_count": str(count)}
+        for design, count in sorted(
+            tier0_missing_by_design.items(), key=lambda x: (-x[1], x[0])
+        )
+    )
+    write_issue_csv(
+        out_dir / "summary_tier0_missing_pt_by_design.csv",
+        ["design", "missing_pt_count"],
+        summary_t0,
+    )
+
+    summary_t1 = (
+        {
+            "design": key.split("|", 1)[0],
+            "algorithm": key.split("|", 1)[1],
+            "missing_pt_count": str(count),
+        }
+        for key, count in sorted(
+            tier1_missing_by_design_algo.items(), key=lambda x: (-x[1], x[0])
+        )
+    )
+    write_issue_csv(
+        out_dir / "summary_tier1_missing_pt_by_design_algorithm.csv",
+        ["design", "algorithm", "missing_pt_count"],
+        summary_t1,
+    )
+
+    summary_t2_csv = (
+        {
+            "design": key.split("|", 1)[0],
+            "target_algorithm": key.split("|", 1)[1],
+            "csv_without_aig_count": str(count),
+        }
+        for key, count in sorted(
+            tier2_csv_ghost_by_design_dst.items(), key=lambda x: (-x[1], x[0])
+        )
+    )
+    write_issue_csv(
+        out_dir / "summary_tier2_csv_without_aig_by_design_target.csv",
+        ["design", "target_algorithm", "csv_without_aig_count"],
+        summary_t2_csv,
+    )
+
+    summary_t2_link = (
+        {
+            "design": key.split("|", 1)[0],
+            "source_algorithm": key.split("|", 1)[1],
+            "missing_tier1_pt_count": str(count),
+        }
+        for key, count in sorted(
+            tier2_expected_missing_by_design_algo.items(),
+            key=lambda x: (-x[1], x[0]),
+        )
+    )
+    write_issue_csv(
+        out_dir / "summary_tier2_expected_input_missing_tier1_pt_by_design_source.csv",
+        ["design", "source_algorithm", "missing_tier1_pt_count"],
+        summary_t2_link,
+    )
+
+    # Generation coverage summaries from section 7.
+    t1_gen_expected = generation_stats["tier1_expected_by_algo"]
+    t1_gen_observed = generation_stats["tier1_observed_by_algo"]
+    t1_gen_missing = generation_stats["tier1_missing_by_algo"]
+    t1_gen_missing_design_algo = generation_stats["tier1_missing_by_design_algo"]
+    t2_gen_expected = generation_stats["tier2_expected_by_dst"]
+    t2_gen_observed = generation_stats["tier2_observed_by_dst"]
+    t2_gen_missing = generation_stats["tier2_missing_by_dst"]
+    t2_gen_missing_design_dst = generation_stats["tier2_missing_by_design_dst"]
+
+    gen_t1_rows = []
+    for algo in ALGORITHMS:
+        exp = int(t1_gen_expected.get(algo, 0))
+        obs = int(t1_gen_observed.get(algo, 0))
+        miss = int(t1_gen_missing.get(algo, 0))
+        pct = (100.0 * obs / exp) if exp else 0.0
+        gen_t1_rows.append(
+            {
+                "algorithm": algo,
+                "expected_tier1_aig_count": str(exp),
+                "observed_tier1_aig_count": str(obs),
+                "missing_tier1_aig_count": str(miss),
+                "coverage_pct": f"{pct:.6f}",
+            }
+        )
+    write_issue_csv(
+        out_dir / "summary_generation_tier1_from_tier0_by_algorithm.csv",
+        [
+            "algorithm",
+            "expected_tier1_aig_count",
+            "observed_tier1_aig_count",
+            "missing_tier1_aig_count",
+            "coverage_pct",
+        ],
+        gen_t1_rows,
+    )
+
+    gen_t1_miss_rows = (
+        {
+            "design": key.split("|", 1)[0],
+            "algorithm": key.split("|", 1)[1],
+            "missing_tier1_aig_count": str(count),
+        }
+        for key, count in sorted(
+            t1_gen_missing_design_algo.items(), key=lambda x: (-x[1], x[0])
+        )
+    )
+    write_issue_csv(
+        out_dir / "summary_generation_tier1_missing_aig_by_design_algorithm.csv",
+        ["design", "algorithm", "missing_tier1_aig_count"],
+        gen_t1_miss_rows,
+    )
+
+    gen_t2_rows = []
+    for algo in ALGORITHMS:
+        exp = int(t2_gen_expected.get(algo, 0))
+        obs = int(t2_gen_observed.get(algo, 0))
+        miss = int(t2_gen_missing.get(algo, 0))
+        pct = (100.0 * obs / exp) if exp else 0.0
+        gen_t2_rows.append(
+            {
+                "target_algorithm": algo,
+                "expected_tier2_aig_count": str(exp),
+                "observed_tier2_aig_count": str(obs),
+                "missing_tier2_aig_count": str(miss),
+                "coverage_pct": f"{pct:.6f}",
+            }
+        )
+    write_issue_csv(
+        out_dir / "summary_generation_tier2_from_tier1_by_target_algorithm.csv",
+        [
+            "target_algorithm",
+            "expected_tier2_aig_count",
+            "observed_tier2_aig_count",
+            "missing_tier2_aig_count",
+            "coverage_pct",
+        ],
+        gen_t2_rows,
+    )
+
+    gen_t2_miss_rows = (
+        {
+            "design": key.split("|", 1)[0],
+            "target_algorithm": key.split("|", 1)[1],
+            "missing_tier2_aig_count": str(count),
+        }
+        for key, count in sorted(
+            t2_gen_missing_design_dst.items(), key=lambda x: (-x[1], x[0])
+        )
+    )
+    write_issue_csv(
+        out_dir / "summary_generation_tier2_missing_aig_by_design_target.csv",
+        ["design", "target_algorithm", "missing_tier2_aig_count"],
+        gen_t2_miss_rows,
+    )
 
 
 def print_artifact_tier_summary(
@@ -720,6 +1524,33 @@ def build_parser() -> argparse.ArgumentParser:
             "tier2 expected-input missing PTs)."
         ),
     )
+    parser.add_argument(
+        "--export-naming-candidates",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "When issues-out-dir is set, also export file-level naming cleanup candidates "
+            "for CSV paths, PT files, and AIG zip members."
+        ),
+    )
+    parser.add_argument(
+        "--naming-max-rows",
+        type=int,
+        default=0,
+        help=(
+            "Max rows to write per naming-candidate CSV (0 = unlimited). Useful to cap "
+            "very large exports."
+        ),
+    )
+    parser.add_argument(
+        "--cleanup-preview",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Compare strict clean-only reconciliation against simulated post-cleanup "
+            "reconciliation (read-only, no file mutations)."
+        ),
+    )
     return parser
 
 
@@ -728,6 +1559,7 @@ def main() -> int:
     args = parser.parse_args()
 
     tier2_roots = [Path(p) for p in args.tier2_aig_root]
+    graph_root = normalize_graph_root(args.pt_root)
 
     csv_globs = list(args.csv_glob)
     if not args.csv_file and not csv_globs:
@@ -756,10 +1588,14 @@ def main() -> int:
     print(f"Workers: {args.workers}")
     print(f"Top-k diagnostics: {args.top_k}")
     print(f"Bucket examples: {args.bucket_examples}")
+    print(f"Graph root (normalized): {graph_root}")
     if args.issues_out_dir is None:
         print("Issue CSV export: disabled")
     else:
         print(f"Issue CSV export: {args.issues_out_dir}")
+    print(f"Export naming candidates: {args.export_naming_candidates}")
+    print(f"Naming max rows per file: {args.naming_max_rows}")
+    print(f"Cleanup preview: {args.cleanup_preview}")
 
     print("ZIP discovery by source:")
     if not zip_source_counts:
@@ -781,13 +1617,46 @@ def main() -> int:
     print("==========================================")
 
     csv_artifact_keys = init_tier_sets()
+    csv_artifact_clean_keys = init_tier_sets()
     csv_input_keys = init_tier_sets()
+    csv_input_clean_keys = init_tier_sets()
     csv_artifact_states: dict[int, Counter[str]] = defaultdict(Counter)
     csv_input_states: dict[int, Counter[str]] = defaultdict(Counter)
     csv_schema_counts = Counter()
     csv_rows_total = 0
     csv_artifact_unrecognized = 0
     csv_input_unrecognized = 0
+    export_naming = args.issues_out_dir is not None and args.export_naming_candidates
+    csv_naming_fh = None
+    csv_naming_writer = None
+    csv_naming_rows = 0
+    csv_naming_candidates = 0
+    csv_naming_truncated = False
+
+    if export_naming and args.issues_out_dir is not None:
+        args.issues_out_dir.mkdir(parents=True, exist_ok=True)
+        csv_naming_fh = open(
+            args.issues_out_dir / "csv_naming_candidates.csv",
+            "w",
+            newline="",
+            encoding="utf-8",
+        )
+        csv_naming_writer = csv.DictWriter(
+            csv_naming_fh,
+            fieldnames=[
+                "csv_file",
+                "row_number",
+                "column",
+                "tier",
+                "naming_state",
+                "canonical_id",
+                "original_path",
+                "suggested_path",
+                "original_basename",
+                "suggested_basename",
+            ],
+        )
+        csv_naming_writer.writeheader()
 
     for csv_path in tqdm(csv_paths, desc="Reading CSVs", unit="csv"):
         try:
@@ -802,7 +1671,7 @@ def main() -> int:
                 if has_unoptimized:
                     csv_schema_counts["unoptimized_graph_path"] += 1
 
-                for row in reader:
+                for row_idx, row in enumerate(reader, start=2):
                     csv_rows_total += 1
 
                     if has_file_path:
@@ -813,7 +1682,43 @@ def main() -> int:
                                 csv_artifact_unrecognized += 1
                             else:
                                 csv_artifact_keys[tier].add(key)
+                                if state == "clean":
+                                    csv_artifact_clean_keys[tier].add(key)
                                 csv_artifact_states[tier][state] += 1
+                                if csv_naming_writer is not None:
+                                    suffix = Path(artifact_path).suffix or ".aig"
+                                    suggested_basename = clean_basename_for_key(
+                                        tier, key, suffix
+                                    )
+                                    original_basename = Path(artifact_path).name
+                                    if (
+                                        suggested_basename
+                                        and suggested_basename != original_basename
+                                    ):
+                                        csv_naming_candidates += 1
+                                        if (
+                                            args.naming_max_rows > 0
+                                            and csv_naming_rows >= args.naming_max_rows
+                                        ):
+                                            csv_naming_truncated = True
+                                        else:
+                                            csv_naming_writer.writerow(
+                                                {
+                                                    "csv_file": str(csv_path),
+                                                    "row_number": str(row_idx),
+                                                    "column": "file_path",
+                                                    "tier": str(tier),
+                                                    "naming_state": state,
+                                                    "canonical_id": format_key(tier, key),
+                                                    "original_path": artifact_path,
+                                                    "suggested_path": replace_basename(
+                                                        artifact_path, suggested_basename
+                                                    ),
+                                                    "original_basename": original_basename,
+                                                    "suggested_basename": suggested_basename,
+                                                }
+                                            )
+                                            csv_naming_rows += 1
 
                     if has_unoptimized:
                         input_path = (row.get("unoptimized_graph_path") or "").strip()
@@ -823,9 +1728,48 @@ def main() -> int:
                                 csv_input_unrecognized += 1
                             else:
                                 csv_input_keys[tier].add(key)
+                                if state == "clean":
+                                    csv_input_clean_keys[tier].add(key)
                                 csv_input_states[tier][state] += 1
+                                if csv_naming_writer is not None:
+                                    suffix = Path(input_path).suffix or ".pt"
+                                    suggested_basename = clean_basename_for_key(
+                                        tier, key, suffix
+                                    )
+                                    original_basename = Path(input_path).name
+                                    if (
+                                        suggested_basename
+                                        and suggested_basename != original_basename
+                                    ):
+                                        csv_naming_candidates += 1
+                                        if (
+                                            args.naming_max_rows > 0
+                                            and csv_naming_rows >= args.naming_max_rows
+                                        ):
+                                            csv_naming_truncated = True
+                                        else:
+                                            csv_naming_writer.writerow(
+                                                {
+                                                    "csv_file": str(csv_path),
+                                                    "row_number": str(row_idx),
+                                                    "column": "unoptimized_graph_path",
+                                                    "tier": str(tier),
+                                                    "naming_state": state,
+                                                    "canonical_id": format_key(tier, key),
+                                                    "original_path": input_path,
+                                                    "suggested_path": replace_basename(
+                                                        input_path, suggested_basename
+                                                    ),
+                                                    "original_basename": original_basename,
+                                                    "suggested_basename": suggested_basename,
+                                                }
+                                            )
+                                            csv_naming_rows += 1
         except OSError as exc:
             print(f"[warning] Failed to read CSV {csv_path}: {exc}")
+
+    if csv_naming_fh is not None:
+        csv_naming_fh.close()
 
     print(f"CSV rows scanned: {csv_rows_total:,}")
     print(
@@ -835,6 +1779,14 @@ def main() -> int:
     )
     print(f"CSV artifact unrecognized rows: {csv_artifact_unrecognized:,}")
     print(f"CSV input unrecognized rows: {csv_input_unrecognized:,}")
+    if csv_naming_writer is not None:
+        print(f"CSV naming candidates: {csv_naming_candidates:,}")
+        print(f"CSV naming rows written: {csv_naming_rows:,}")
+        if csv_naming_truncated:
+            print(
+                "[warning] CSV naming candidate export was truncated by "
+                "--naming-max-rows"
+            )
 
     # ------------------------------------------------------------------
     # 2) AIG zip scan
@@ -844,6 +1796,7 @@ def main() -> int:
     print("==========================================")
 
     aig_keys = init_tier_sets()
+    aig_clean_keys = init_tier_sets()
     aig_states: dict[int, Counter[str]] = defaultdict(Counter)
     zip_unrecognized_total = 0
     zip_aig_files_total = 0
@@ -868,6 +1821,7 @@ def main() -> int:
                     continue
 
                 tier_data = result["tier_keys"]
+                tier_clean_data = result["tier_keys_clean"]
                 state_data = result["state_counts"]
                 tier_member_data = result["tier_member_counts"]
                 zip_unrecognized_total += int(result["unrecognized"])
@@ -880,6 +1834,7 @@ def main() -> int:
 
                 for tier in (0, 1, 2):
                     aig_keys[tier].update(tier_data[tier])
+                    aig_clean_keys[tier].update(tier_clean_data[tier])
                     aig_states[tier].update(state_data[tier])
 
     print(f"ZIP AIG members scanned: {zip_aig_files_total:,}")
@@ -915,6 +1870,30 @@ def main() -> int:
                 f"unrecognized={unrec:,} errors={errs:,}"
             )
 
+    if export_naming and args.issues_out_dir is not None:
+        zip_naming_path = args.issues_out_dir / "aig_zip_naming_candidates.csv"
+        (
+            zip_members_scanned,
+            zip_naming_candidates,
+            zip_naming_rows,
+            zip_naming_truncated,
+        ) = export_zip_naming_candidates(
+            zip_naming_path,
+            zip_paths,
+            zip_source_map,
+            max_rows=args.naming_max_rows,
+        )
+        print(
+            f"AIG ZIP naming candidates: {zip_naming_candidates:,} "
+            f"(members scanned: {zip_members_scanned:,})"
+        )
+        print(f"AIG ZIP naming rows written: {zip_naming_rows:,}")
+        if zip_naming_truncated:
+            print(
+                "[warning] AIG ZIP naming candidate export was truncated by "
+                "--naming-max-rows"
+            )
+
     # ------------------------------------------------------------------
     # 3) PT artifact scan
     # ------------------------------------------------------------------
@@ -923,13 +1902,38 @@ def main() -> int:
     print("==========================================")
 
     pt_keys = init_tier_sets()
+    pt_clean_keys = init_tier_sets()
     pt_states: dict[int, Counter[str]] = defaultdict(Counter)
     pt_unrecognized_total = 0
     pt_files_total = 0
+    pt_naming_fh = None
+    pt_naming_writer = None
+    pt_naming_rows = 0
+    pt_naming_candidates = 0
+    pt_naming_truncated = False
 
-    pt_glob_root = args.pt_root
-    if (args.pt_root / "graphs").is_dir():
-        pt_glob_root = args.pt_root / "graphs"
+    if export_naming and args.issues_out_dir is not None:
+        pt_naming_fh = open(
+            args.issues_out_dir / "pt_naming_candidates.csv",
+            "w",
+            newline="",
+            encoding="utf-8",
+        )
+        pt_naming_writer = csv.DictWriter(
+            pt_naming_fh,
+            fieldnames=[
+                "pt_path",
+                "tier",
+                "naming_state",
+                "canonical_id",
+                "original_basename",
+                "suggested_basename",
+                "suggested_path",
+            ],
+        )
+        pt_naming_writer.writeheader()
+
+    pt_glob_root = graph_root
 
     for pt_path in tqdm(pt_glob_root.rglob("*.pt"), desc="Scanning PTs", unit="pt"):
         pt_files_total += 1
@@ -938,10 +1942,49 @@ def main() -> int:
             pt_unrecognized_total += 1
             continue
         pt_keys[tier].add(key)
+        if state == "clean":
+            pt_clean_keys[tier].add(key)
         pt_states[tier][state] += 1
+
+        if pt_naming_writer is not None:
+            suggested_basename = clean_basename_for_key(tier, key, ".pt")
+            original_basename = pt_path.name
+            if suggested_basename and suggested_basename != original_basename:
+                pt_naming_candidates += 1
+                if args.naming_max_rows > 0 and pt_naming_rows >= args.naming_max_rows:
+                    pt_naming_truncated = True
+                else:
+                    pt_naming_writer.writerow(
+                        {
+                            "pt_path": str(pt_path),
+                            "tier": str(tier),
+                            "naming_state": state,
+                            "canonical_id": format_key(tier, key),
+                            "original_basename": original_basename,
+                            "suggested_basename": suggested_basename,
+                            "suggested_path": str(pt_path.parent / suggested_basename),
+                        }
+                    )
+                    pt_naming_rows += 1
+
+    if pt_naming_fh is not None:
+        pt_naming_fh.close()
 
     print(f"PT files scanned: {pt_files_total:,}")
     print(f"PT unrecognized names: {pt_unrecognized_total:,}")
+    if pt_keys[2]:
+        print(
+            f"[warning] Unexpected tier2 PT artifacts detected: {len(pt_keys[2]):,} "
+            "(your expected state is no tier2 PT files)."
+        )
+    if pt_naming_writer is not None:
+        print(f"PT naming candidates: {pt_naming_candidates:,}")
+        print(f"PT naming rows written: {pt_naming_rows:,}")
+        if pt_naming_truncated:
+            print(
+                "[warning] PT naming candidate export was truncated by "
+                "--naming-max-rows"
+            )
 
     # ------------------------------------------------------------------
     # 4) Reconciliation output
@@ -1066,13 +2109,79 @@ def main() -> int:
         bucket_examples=max(1, args.bucket_examples),
     )
 
+    # ------------------------------------------------------------------
+    # 7) Generation coverage diagnostics for expected tier transitions
+    # ------------------------------------------------------------------
+    print("\n==========================================")
+    print("7. GENERATION COVERAGE")
+    print("==========================================")
+    generation_stats = print_generation_coverage_diagnostics(
+        aig_keys[0],
+        aig_keys[1],
+        aig_keys[2],
+        top_k=max(1, args.top_k),
+        bucket_examples=max(1, args.bucket_examples),
+        collect_tier1_missing_keys=False,
+    )
+
+    cleanup_preview_rows: list[dict[str, str]] = []
+    if args.cleanup_preview:
+        cleanup_preview_rows = build_cleanup_preview_rows(
+            aig_keys_all=aig_keys,
+            pt_keys_all=pt_keys,
+            csv_artifact_keys_all=csv_artifact_keys,
+            csv_input_keys_all=csv_input_keys,
+            aig_keys_clean=aig_clean_keys,
+            pt_keys_clean=pt_clean_keys,
+            csv_artifact_keys_clean=csv_artifact_clean_keys,
+            csv_input_keys_clean=csv_input_clean_keys,
+        )
+        print_cleanup_preview(cleanup_preview_rows)
+
+        if args.issues_out_dir is not None:
+            preview_written = export_cleanup_preview(
+                args.issues_out_dir,
+                cleanup_preview_rows,
+            )
+            print(
+                f"Cleanup preview comparison rows exported: {preview_written:,} "
+                f"(tmp_cleanup_preview_comparison.csv)"
+            )
+
     if args.issues_out_dir is not None:
+        gen_t1_missing_rows, gen_t2_missing_rows = export_generation_missing_key_sets(
+            args.issues_out_dir,
+            t0_keys=aig_keys[0],
+            t1_keys=aig_keys[1],
+            t2_keys=aig_keys[2],
+        )
+        print(
+            "Generation missing key exports: "
+            f"tier1={gen_t1_missing_rows:,} (generation_missing_tier1_expected_aig.csv), "
+            f"tier2={gen_t2_missing_rows:,} (generation_missing_tier2_expected_aig.csv)"
+        )
+
+        expected_t1_missing = int(generation_stats["tier1_total_missing"])
+        expected_t2_missing = int(generation_stats["tier2_total_missing"])
+        if gen_t1_missing_rows != expected_t1_missing:
+            print(
+                "[warning] Tier1 generation missing export row count mismatch: "
+                f"exported={gen_t1_missing_rows:,} expected={expected_t1_missing:,}"
+            )
+        if gen_t2_missing_rows != expected_t2_missing:
+            print(
+                "[warning] Tier2 generation missing export row count mismatch: "
+                f"exported={gen_t2_missing_rows:,} expected={expected_t2_missing:,}"
+            )
+
         export_issue_sets(
             args.issues_out_dir,
+            graph_root=graph_root,
             tier0_missing_pt=tier0_missing_pt,
             tier1_missing_pt=tier1_missing_pt,
             tier2_csv_without_aig=tier2_csv_without_aig,
             tier2_expected_missing_pt=tier2_expected_missing_pt,
+            generation_stats=generation_stats,
         )
 
     return 0
