@@ -364,7 +364,7 @@ class TestZipRewrites(unittest.TestCase):
             members[0]: _CLEAN_AIG,
             members[1]: "1024_C2RS_tier1_synX_step1.aig",
         }
-        _rewrite_single_zip((str(zip_path), member_map, True))
+        _rewrite_single_zip((str(zip_path), member_map, True, ""))
         self.assertEqual(zip_path.read_bytes(), original_bytes)
 
     def test_apply_renames_zip_members(self):
@@ -373,7 +373,7 @@ class TestZipRewrites(unittest.TestCase):
         clean0 = _CLEAN_AIG
         clean1 = "1024_C2RS_tier1_synX_step1.aig"
         member_map = {members[0]: clean0, members[1]: clean1}
-        result = _rewrite_single_zip((str(zip_path), member_map, False))
+        result = _rewrite_single_zip((str(zip_path), member_map, False, ""))
         self.assertEqual(result["errors"], 0)
         self.assertEqual(result["members_renamed"], 2)
         with zipfile.ZipFile(zip_path) as zf:
@@ -389,7 +389,7 @@ class TestZipRewrites(unittest.TestCase):
             members[0]: _CLEAN_AIG,
             members[1]: "1024_C2RS_tier1_synX_step1.aig",
         }
-        _rewrite_single_zip((str(zip_path), member_map, False))
+        _rewrite_single_zip((str(zip_path), member_map, False, ""))
         with zipfile.ZipFile(zip_path) as zf:
             self.assertEqual(len(zf.infolist()), 2)
 
@@ -400,7 +400,7 @@ class TestZipRewrites(unittest.TestCase):
             members[0]: _CLEAN_AIG,
             members[1]: "1024_C2RS_tier1_synX_step1.aig",
         }
-        _rewrite_single_zip((str(zip_path), member_map, False))
+        _rewrite_single_zip((str(zip_path), member_map, False, ""))
         self.assertFalse(zip_path.with_suffix(".zip.rewriting").exists())
 
     def test_no_tmp_zip_left_after_dry_run(self):
@@ -410,7 +410,7 @@ class TestZipRewrites(unittest.TestCase):
             members[0]: _CLEAN_AIG,
             members[1]: "1024_C2RS_tier1_synX_step1.aig",
         }
-        _rewrite_single_zip((str(zip_path), member_map, True))
+        _rewrite_single_zip((str(zip_path), member_map, True, ""))
         self.assertFalse(zip_path.with_suffix(".zip.rewriting").exists())
 
     def test_verify_passes_after_rewrite(self):
@@ -420,7 +420,7 @@ class TestZipRewrites(unittest.TestCase):
             members[0]: _CLEAN_AIG,
             members[1]: "1024_C2RS_tier1_synX_step1.aig",
         }
-        _rewrite_single_zip((str(zip_path), member_map, False))
+        _rewrite_single_zip((str(zip_path), member_map, False, ""))
         vcounts = verify_zip_rewrites({str(zip_path): member_map})
         self.assertEqual(vcounts["still_messy"], 0)
         self.assertEqual(vcounts["ok"], 1)

@@ -33,6 +33,14 @@ WORKERS="${WORKERS:-${SLURM_CPUS_PER_TASK:-8}}"
 APPLY="${APPLY:-1}"
 PHASES="${PHASES:-}"      # e.g. "pt csv" to restrict phases; empty = all
 NO_VERIFY="${NO_VERIFY:-0}"
+# Write ZIP temp files to node-local scratch (fast NVMe, auto-cleaned after job)
+# to avoid doubling home quota during rewrite. Mirrors 9_preprocess_graphs.sh.
+if [[ -n "${TMPDIR:-}" ]]; then
+	LOCAL_SCRATCH="$TMPDIR"
+else
+	LOCAL_SCRATCH="/scratch-shared/$USER/tmp"
+fi
+ZIP_TMP_DIR="${ZIP_TMP_DIR:-$LOCAL_SCRATCH/zip_rewrite_tmp}"
 
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 if [[ -x "$VENV_PATH/bin/python" ]]; then
@@ -59,7 +67,10 @@ ARGS=(
 	"$BASE_DIR/src/data/cleanup_naming.py"
 	--issues-dir "$ISSUES_DIR"
 	--workers "$WORKERS"
+	--zip-tmp-dir "$ZIP_TMP_DIR"
 )
+
+mkdir -p "$ZIP_TMP_DIR"
 
 if [[ "$APPLY" == "1" ]]; then
 	ARGS+=(--apply)
@@ -86,6 +97,7 @@ echo "  WORKERS=$WORKERS"
 echo "  APPLY=$APPLY"
 echo "  PHASES=${PHASES:-all}"
 echo "  NO_VERIFY=$NO_VERIFY"
+echo "  ZIP_TMP_DIR=$ZIP_TMP_DIR"
 echo "  PYTHON_BIN=$PYTHON_BIN"
 echo ""
 

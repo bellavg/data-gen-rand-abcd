@@ -317,15 +317,24 @@ def verify_csv_rewrites(
 
 
 def _rewrite_single_zip(
-    args_tuple: tuple[str, dict[str, str], bool],
+    args_tuple: tuple[str, dict[str, str], bool, str],
 ) -> dict[str, object]:
     """Worker function: rewrite one ZIP with renamed members.
 
+    args_tuple: (zip_path_str, member_map, dry_run, tmp_dir_str)
+      tmp_dir_str: directory for the .rewriting temp file.  Empty string means
+      same directory as the original ZIP (same filesystem, tmp_zip.replace() works).
+      When set, the temp file is written to that directory and shutil.move() is used
+      for the final replace — safe across filesystems (e.g. scratch-shared → home).
+
     Returns a result dict so it can be used with ProcessPoolExecutor.
     """
-    zip_path_str, member_map, dry_run = args_tuple
+    zip_path_str, member_map, dry_run, tmp_dir_str = args_tuple
     zip_path = Path(zip_path_str)
-    tmp_zip = zip_path.with_suffix(".zip.rewriting")
+    if tmp_dir_str:
+        tmp_zip = Path(tmp_dir_str) / (zip_path.stem + ".zip.rewriting")
+    else:
+        tmp_zip = zip_path.with_suffix(".zip.rewriting")
     result: dict[str, object] = {
         "zip_path": zip_path_str,
         "members_renamed": 0,
@@ -379,7 +388,9 @@ def _rewrite_single_zip(
     if dry_run:
         tmp_zip.unlink(missing_ok=True)
     else:
-        tmp_zip.replace(zip_path)
+        # shutil.move handles both same-filesystem (rename) and cross-filesystem
+        # (copy+delete) so it works whether tmp_zip is on scratch or on home.
+        shutil.move(str(tmp_zip), zip_path)
 
     return result
 
@@ -389,6 +400,7 @@ def apply_zip_rewrites(
     *,
     dry_run: bool,
     workers: int = 4,
+    zip_tmp_dir: str = "",
 ) -> dict[str, int]:
     totals: dict[str, int] = {
         "zips_processed": 0,
@@ -396,7 +408,7 @@ def apply_zip_rewrites(
         "members_unchanged": 0,
         "errors": 0,
     }
-    work = [(p, m, dry_run) for p, m in mapping.items()]
+    work = [(p, m, dry_run, zip_tmp_dir) for p, m in mapping.items()]
     with ProcessPoolExecutor(max_workers=max(1, workers)) as executor:
         futures = {executor.submit(_rewrite_single_zip, item): item[0] for item in work}
         for future in tqdm(
@@ -478,6 +490,16 @@ def build_parser() -> argparse.ArgumentParser:
             "ProcessPoolExecutor batch-renames for PT, "
             "ThreadPoolExecutor per-file for CSV, "
             "ProcessPoolExecutor per-zip for ZIP (default: 8)."
+        ),
+    )
+    parser.add_argument(
+        "--zip-tmp-dir",
+        type=str,
+        default="",
+        help=(
+            "Directory for .zip.rewriting temp files during ZIP rewrite."
+            " Use a scratch filesystem to avoid home quota doubling."
+            " Defaults to same directory as each ZIP (requires 2× ZIP size on home)."
         ),
     )
     parser.add_argument(
@@ -608,7 +630,10 @@ def main() -> int:
             total_members = sum(len(v) for v in mapping_zip.values())
             print(f"Total member renames: {total_members:,}")
             counts = apply_zip_rewrites(
-                mapping_zip, dry_run=dry_run, workers=args.workers
+                mapping_zip,
+                dry_run=dry_run,
+                workers=args.workers,
+                zip_tmp_dir=args.zip_tmp_dir,
             )
             _print_counts("ZIP rewrite results", counts)
 
