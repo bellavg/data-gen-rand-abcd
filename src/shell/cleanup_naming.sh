@@ -28,7 +28,7 @@ fi
 
 BASE_DIR="${BASE_DIR:-$HOME/data-gen-rand-abcd}"
 VENV_PATH="${VENV_PATH:-/scratch-shared/$USER/.venv}"
-ISSUES_DIR="${ISSUES_DIR:-}"
+ISSUES_DIR="${ISSUES_DIR:-$HOME/data-gen-rand-abcd/logs/inspect_issues_22600850}"
 WORKERS="${WORKERS:-${SLURM_CPUS_PER_TASK:-8}}"
 APPLY="${APPLY:-0}"
 PHASES="${PHASES:-}"      # e.g. "pt csv" to restrict phases; empty = all
