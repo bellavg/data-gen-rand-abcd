@@ -98,35 +98,23 @@ _PT_STATUS = (
 )
 
 
-def _rename_pt_batch(args: tuple[list[tuple[str, str]], bool]) -> dict[str, int]:
-    """ProcessPoolExecutor worker: rename one batch of PT files.
-
-    Accepts string paths (not Path objects) for efficient pickling.
-    """
-    batch, dry_run = args
-    counts: dict[str, int] = dict.fromkeys(_PT_STATUS, 0)
-    for src_str, dst_str in batch:
-        src = Path(src_str)
-        dst = Path(dst_str)
-        if not src.exists() and dst.exists():
-            counts["already_renamed"] += 1
-            continue
-        if not src.exists():
-            counts["skipped_missing_src"] += 1
-            continue
-        if dst.exists():
-            counts["skipped_dst_exists"] += 1
-            continue
-        if dry_run:
-            counts["renamed"] += 1
-            continue
-        try:
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            src.rename(dst)
-            counts["renamed"] += 1
-        except OSError:
-            counts["errors"] += 1
-    return counts
+def _do_pt_rename(pair: tuple[Path, Path]) -> str:
+    """ThreadPoolExecutor worker: rename one PT file, return status key."""
+    src, dst = pair
+    src_ex = src.exists()
+    dst_ex = dst.exists()
+    if not src_ex and dst_ex:
+        return "already_renamed"
+    if not src_ex:
+        return "skipped_missing_src"
+    if dst_ex:
+        return "skipped_dst_exists"
+    try:
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        src.rename(dst)
+        return "renamed"
+    except OSError:
+        return "errors"
 
 
 def apply_pt_renames(
@@ -147,48 +135,64 @@ def apply_pt_renames(
         return counts
 
     if dry_run:
-        # Count-only: no filesystem access needed.
-        for src, dst in tqdm(pairs, desc="Counting PT renames (dry-run)", unit="pt"):
-            if not src.exists() and dst.exists():
-                counts["already_renamed"] += 1
-            elif not src.exists():
-                counts["skipped_missing_src"] += 1
-            elif dst.exists():
-                counts["skipped_dst_exists"] += 1
-            else:
-                counts["renamed"] += 1
+        # Stat calls are I/O-bound on NFS/Lustre — parallelise with threads.
+        def _check_pair(pair: tuple[Path, Path]) -> str:
+            src, dst = pair
+            src_ex = src.exists()
+            dst_ex = dst.exists()
+            if not src_ex and dst_ex:
+                return "already_renamed"
+            if not src_ex:
+                return "skipped_missing_src"
+            if dst_ex:
+                return "skipped_dst_exists"
+            return "renamed"
+
+        n = max(1, workers)
+        with ThreadPoolExecutor(max_workers=n) as executor:
+            results = list(
+                tqdm(
+                    executor.map(_check_pair, pairs),
+                    total=len(pairs),
+                    desc="Counting PT renames (dry-run)",
+                    unit="pt",
+                )
+            )
+        for status in results:
+            counts[status] += 1
         return counts
 
     n = max(1, workers)
-    str_pairs = [(str(s), str(d)) for s, d in pairs]
-    batch_size = max(1, (len(str_pairs) + n - 1) // n)
-    batches = [
-        str_pairs[i : i + batch_size] for i in range(0, len(str_pairs), batch_size)
-    ]
-    with ProcessPoolExecutor(max_workers=n) as executor:
-        futures = [executor.submit(_rename_pt_batch, (b, False)) for b in batches]
-        for fut in tqdm(
-            as_completed(futures),
-            total=len(futures),
-            desc="Renaming PT files",
-            unit="batch",
-        ):
-            for k, v in fut.result().items():
-                counts[k] = counts.get(k, 0) + v
+    with ThreadPoolExecutor(max_workers=n) as executor:
+        results = list(
+            tqdm(
+                executor.map(_do_pt_rename, pairs),
+                total=len(pairs),
+                desc="Renaming PT files",
+                unit="pt",
+            )
+        )
+    for status in results:
+        counts[status] = counts.get(status, 0) + 1
     return counts
 
 
-def verify_pt_renames(pairs: list[tuple[Path, Path]]) -> dict[str, int]:
+def verify_pt_renames(
+    pairs: list[tuple[Path, Path]], workers: int = 8
+) -> dict[str, int]:
     counts = {"ok": 0, "src_still_exists": 0, "dst_missing": 0}
-    for src, dst in pairs:
-        dst_ok = dst.exists()
-        src_ok = not src.exists()
-        if dst_ok and src_ok:
-            counts["ok"] += 1
-        elif not src_ok:
-            counts["src_still_exists"] += 1
-        else:
-            counts["dst_missing"] += 1
+
+    def _check(pair: tuple[Path, Path]) -> str:
+        src, dst = pair
+        if dst.exists() and not src.exists():
+            return "ok"
+        if src.exists():
+            return "src_still_exists"
+        return "dst_missing"
+
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as executor:
+        for status in executor.map(_check, pairs):
+            counts[status] += 1
     return counts
 
 
@@ -537,7 +541,7 @@ def main() -> int:
 
             if not dry_run and not args.no_verify:
                 print("\nVerifying PT renames …")
-                vcounts = verify_pt_renames(pairs)
+                vcounts = verify_pt_renames(pairs, workers=args.workers)
                 _print_counts("PT verify", vcounts)
                 if vcounts.get("src_still_exists", 0) or vcounts.get("dst_missing", 0):
                     print(

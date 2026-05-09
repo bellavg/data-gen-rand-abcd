@@ -3,7 +3,7 @@
 #SBATCH --time=08:00:00
 #SBATCH -N 1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=24
+#SBATCH --cpus-per-task=72
 #SBATCH --partition=genoa
 #SBATCH --output=logs/cleanup_naming_%j.out
 
