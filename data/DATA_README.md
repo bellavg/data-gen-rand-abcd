@@ -74,7 +74,7 @@ data/
    │     │     │     └─ optimize_{algorithm}_{design}.zip  # contains {design}_{algorithm}_tier1_syn{recipe_id}_step{step}.log
    │     │     └─ tier2/
    │     │        └─ {algorithm}/
-   │     │           └─ opt_t2_{algorithm}_{design}.zip   # contains {design}_{tier1_algorithm}_{algorithm}_tier2_syn{recipe_id}_step{step}.log
+   │     │           └─ opt_t2_{algorithm}_{design}.zip   # contains {design}_{tier1_algorithm}_{tier2_algorithm}_tier2_syn{recipe_id}_step{step}.log
    │     └─ {design}.csv                  # per-design stats CSV (one row per AIG)
    └─ ...                          # repeated per-design folders
 
