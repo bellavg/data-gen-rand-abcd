@@ -3,7 +3,7 @@
 #SBATCH --time=12:00:00
 #SBATCH -N 1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=96
+#SBATCH --cpus-per-task=144
 #SBATCH --constraint=scratch-node
 #SBATCH --partition=genoa
 #SBATCH --output=logs/preprocess_%j.out
