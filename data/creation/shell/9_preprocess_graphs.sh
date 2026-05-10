@@ -3,7 +3,7 @@
 #SBATCH --time=12:00:00
 #SBATCH -N 1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=48
+#SBATCH --cpus-per-task=96
 #SBATCH --constraint=scratch-node
 #SBATCH --partition=genoa
 #SBATCH --output=logs/preprocess_%j.out
@@ -14,7 +14,7 @@ BASE_DIR="${BASE_DIR:-$HOME/data-gen-rand-abcd}"
 AIG_ROOT="${AIG_ROOT:-$HOME/data-gen-rand-abcd/data/designs}"
 FINAL_OUT="${FINAL_OUT:-/scratch-shared/$USER/}"
 VENV_PATH="${VENV_PATH:-/scratch-shared/$USER/.venv}"
-WORKERS="${WORKERS:-${SLURM_CPUS_PER_TASK:-48}}"
+WORKERS="${WORKERS:-${SLURM_CPUS_PER_TASK:-96}}"
 AIG_DEBUG_PATH_COUNTS="${AIG_DEBUG_PATH_COUNTS:-0}"
 FAIL_FAST="${FAIL_FAST:-1}"
 STAGE_TO_SCRATCH="${STAGE_TO_SCRATCH:-1}"
