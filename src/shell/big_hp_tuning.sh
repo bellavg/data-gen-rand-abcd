@@ -199,7 +199,7 @@ sync_optuna_db() {
     local dst_tmp="$2"
 
     if [ ! -f "$src_db" ]; then
-        return 0
+        return 2  # nothing to sync yet; not an error
     fi
 
     python - "$src_db" "$dst_tmp" <<'PYEOF'
@@ -233,17 +233,19 @@ trap cleanup_sync_loop EXIT INT TERM
 
 # Background sync loop: copy the node-local SQLite DB to scratch-shared every
 # 5 minutes so that completed trials are preserved even if the job crashes.
-DB_SYNC_INTERVAL="${DB_SYNC_INTERVAL:-300}"
+DB_SYNC_INTERVAL="${DB_SYNC_INTERVAL:-3600}"
 (
     while true; do
         sleep "$DB_SYNC_INTERVAL"
-        if sync_optuna_db "$LOCAL_SCRATCH/optuna_study.db" "$WORKSPACE/optuna_study.db.tmp"; then
+        _sync_rc=0
+        sync_optuna_db "$LOCAL_SCRATCH/optuna_study.db" "$WORKSPACE/optuna_study.db.tmp" || _sync_rc=$?
+        if [ "$_sync_rc" -eq 0 ]; then
             if mv "$WORKSPACE/optuna_study.db.tmp" "$WORKSPACE/optuna_study.db"; then
                 echo "[db_sync] $(date) synced DB to $WORKSPACE/optuna_study.db"
             else
                 echo "[db_sync] $(date) WARNING: atomic rename failed" >&2
             fi
-        else
+        elif [ "$_sync_rc" -ne 2 ]; then
             echo "[db_sync] $(date) WARNING: SQLite backup failed" >&2
         fi
     done
@@ -261,7 +263,6 @@ python -u -m hp_tuning \
     --num_workers "$NUM_WORKERS" \
     ${EXTRA_FLAGS[@]+"${EXTRA_FLAGS[@]}"} \
     --memory_guard_max_tokens 3.5e8 \
-    --hard_prune_risk 200000 \
     --dataset_seed 42 \
     --sampler_seed "$SAMPLER_SEED" \
     --memory_telemetry_trials "$MEMORY_TELEMETRY_TRIALS" \
@@ -276,10 +277,12 @@ SYNC_PID=""
 
 # Final copy regardless of exit code
 echo "Final sync of SQLite DB to $WORKSPACE/optuna_study.db ..."
-if sync_optuna_db "$LOCAL_SCRATCH/optuna_study.db" "$WORKSPACE/optuna_study.db.tmp"; then
+_final_rc=0
+sync_optuna_db "$LOCAL_SCRATCH/optuna_study.db" "$WORKSPACE/optuna_study.db.tmp" || _final_rc=$?
+if [ "$_final_rc" -eq 0 ]; then
     mv "$WORKSPACE/optuna_study.db.tmp" "$WORKSPACE/optuna_study.db" \
         || echo "WARNING: final DB rename failed" >&2
-else
+elif [ "$_final_rc" -ne 2 ]; then
     echo "WARNING: final DB sync failed" >&2
 fi
 

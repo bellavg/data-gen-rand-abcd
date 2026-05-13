@@ -28,6 +28,7 @@ warnings.filterwarnings("ignore", category=UserWarning, module="lightning")
 warnings.filterwarnings("ignore", category=DeprecationWarning, module="torch")
 warnings.filterwarnings("ignore", category=FutureWarning, module="optuna")
 logging.getLogger("pytorch_lightning").setLevel(logging.ERROR)
+logging.getLogger("lightning").setLevel(logging.ERROR)
 
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 torch.backends.cuda.matmul.allow_tf32 = True
@@ -428,8 +429,6 @@ def objective(trial: optuna.Trial, args):
     # encoder was sampled.  Dynamic per-encoder subsets caused a
     # "CategoricalDistribution does not support dynamic value space" error
     # when Trial N registered a different set than Trial 0.
-    # The risk-score system (_estimate_trial_risk) and hard_prune_risk threshold
-    # already prune attention + jk_cat + large hidden_dim combos before training.
     hidden_dim = trial.suggest_categorical("hidden_dim", [32, 64, 128, 256, 512])
 
     pe_type = trial.suggest_categorical(
@@ -484,35 +483,34 @@ def objective(trial: optuna.Trial, args):
     val_dataloader = None
     pruning_cb = None
     early_stop_cb = None
-    risk_score = _estimate_trial_risk(
-        batch_size=batch_size,
-        hidden_dim=hidden_dim,
-        num_layers=encoder_kwargs["num_layers"],
-        jk_mode=encoder_kwargs["jk_mode"],
-        encoder_name=encoder_name,
-        heads=int(encoder_kwargs.get("heads", 1)),
-        pe_type=pe_type,
-        pos_enc_dim=pos_enc_dim,
-    )
-
-    hard_prune_risk = float(getattr(args, "hard_prune_risk", 200000.0))
-    _set_trial_user_attr(trial, "hard_prune_risk", hard_prune_risk)
-    _set_trial_user_attr(trial, "risk_score", float(risk_score))
-    if risk_score > hard_prune_risk:
-        msg = (
-            f"Pre-allocation prune for high-risk trial. "
-            f"estimated_risk={risk_score:.2f} threshold={hard_prune_risk:.2f} "
-            f"params={trial.params}"
+    risk_score = None
+    if getattr(args, "hard_prune", False):
+        risk_score = _estimate_trial_risk(
+            batch_size=batch_size,
+            hidden_dim=hidden_dim,
+            num_layers=encoder_kwargs["num_layers"],
+            jk_mode=encoder_kwargs["jk_mode"],
+            encoder_name=encoder_name,
+            heads=int(encoder_kwargs.get("heads", 1)),
+            pe_type=pe_type,
+            pos_enc_dim=pos_enc_dim,
         )
-        print(f"\n{msg}")
-        _mark_trial_outcome(
-            trial,
-            outcome="pruned",
-            oom_like=True,
-            prune_reason="hard_prune_risk",
-            risk_score=risk_score,
-        )
-        raise optuna.TrialPruned(msg)
+        hard_prune_risk = float(getattr(args, "hard_prune_risk", 200000.0))
+        _set_trial_user_attr(trial, "risk_score", float(risk_score))
+        if risk_score > hard_prune_risk:
+            msg = (
+                f"Pre-allocation prune for high-risk trial. "
+                f"estimated_risk={risk_score:.2f} threshold={hard_prune_risk:.2f}"
+            )
+            print(f"\n{msg}")
+            _mark_trial_outcome(
+                trial,
+                outcome="pruned",
+                oom_like=True,
+                prune_reason="hard_prune_risk",
+                risk_score=risk_score,
+            )
+            raise optuna.TrialPruned(msg)
 
     try:
         workers = getattr(args, "num_workers", 2)
@@ -656,10 +654,7 @@ def objective(trial: optuna.Trial, args):
 
     except RuntimeError as e:
         if _is_oom_like_runtime_error(e):
-            msg = (
-                f"OOM-like RuntimeError. [Trial {trial.number}] "
-                f"estimated_risk={risk_score:.2f} Params: {trial.params}. Error: {e}"
-            )
+            msg = f"OOM-like RuntimeError. [Trial {trial.number}] Error: {e}"
             print(f"\n{msg}")
             _mark_trial_outcome(
                 trial,
@@ -767,10 +762,15 @@ if __name__ == "__main__":
         help="Memory guard threshold in heuristic activation tokens.",
     )
     parser.add_argument(
+        "--hard_prune",
+        action="store_true",
+        help="Enable pre-allocation pruning of high-risk trials (default: off).",
+    )
+    parser.add_argument(
         "--hard_prune_risk",
         type=float,
         default=200000.0,
-        help="Prune trial before trainer start if risk score exceeds this.",
+        help="Risk threshold used when --hard_prune is set.",
     )
     parser.add_argument(
         "--dataset_seed",
@@ -829,14 +829,14 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    storage = RDBStorage(url=args.db_url)
+    storage = RDBStorage(url=args.db_url, engine_kwargs={"connect_args": {"timeout": 30}})
 
     study = optuna.create_study(
         study_name=args.study_name,
         storage=storage,
         load_if_exists=True,
         direction="minimize",
-        sampler=optuna.samplers.TPESampler(multivariate=True, seed=args.sampler_seed),
+        sampler=optuna.samplers.TPESampler(multivariate=True, seed=args.sampler_seed, warn_independent_sampling=False),
         pruner=optuna.pruners.MedianPruner(n_startup_trials=10, n_warmup_steps=5),
     )
 
@@ -845,3 +845,13 @@ if __name__ == "__main__":
         n_trials=args.n_trials,
         callbacks=[_trial_outcome_callback],
     )
+
+    try:
+        best = study.best_trial
+        print(f"\n{'=' * 60}")
+        print(f"BEST TRIAL: #{best.number}  score={best.value:.6f}")
+        for k, v in best.params.items():
+            print(f"  {k}: {v}")
+        print(f"{'=' * 60}\n")
+    except ValueError:
+        print("No completed trials found.")
