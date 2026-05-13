@@ -137,7 +137,7 @@ class AIGGraphRegressionDataset(PyGDataset):
         pyg_root = (
             str(self._cache_meta_dir) if self._cache_meta_dir is not None else None
         )
-        super().__init__(root=pyg_root)
+        super().__init__(root=pyg_root, log=False)
         if self.cache_dir is not None:
             self.process()
 
