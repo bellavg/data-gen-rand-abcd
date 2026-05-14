@@ -1,10 +1,11 @@
 import argparse
 import os
+import time
 
 import pytorch_lightning as pl
 import torch
 from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
-from pytorch_lightning.loggers import WandbLogger  #
+from pytorch_lightning.loggers import WandbLogger
 
 from constants import ENCODER_KWARGS_DEFAULTS, VALID_ALGORITHMS
 
@@ -36,7 +37,18 @@ def main(args):
         batch_size=args.batch_size,
         split_ratios=(0.8, 0.1, 0.1),
         num_workers=args.num_workers,
+        cache_dir=args.cache_dir if args.cache_dir else None,
+        hp_tuning_splits_path=args.hp_tuning_splits_path,
+        use_full_test_set=True,
     )
+
+    # 2a. Pre-warm dataset cache on CPU before the GPU trainer starts.
+    # setup() loads/builds the graph cache from disk (pure I/O). Doing it
+    # here keeps the GPU idle time to a minimum.
+    print("--- Pre-warming dataset cache (CPU I/O phase) ---")
+    _t0 = time.monotonic()
+    datamodule.setup("fit")
+    print(f"--- Cache warm in {time.monotonic() - _t0:.1f}s ---")
 
     # 3. Configure Encoder Kwargs
     encoder_kwargs = ENCODER_KWARGS_DEFAULTS.copy()
@@ -51,7 +63,7 @@ def main(args):
     )
 
     if args.encoder_name in ["transformer_conv", "graphgps"]:
-        encoder_kwargs["heads"] = getattr(args, "heads", 4)
+        encoder_kwargs["heads"] = args.heads
 
     if args.encoder_name == "egin":
         encoder_kwargs["egin_kwargs"].update(
@@ -142,6 +154,9 @@ if __name__ == "__main__":
     parser.add_argument("--gradient_clip_val", type=float, default=1.0)  #
     parser.add_argument("--check_val_every_n", type=int, default=1)  #
     parser.add_argument("--num_workers", type=int, default=4)
+
+    # Algorithm & Data Arguments
+    parser.add_argument("--heads", type=int, default=4, help="Attention heads (transformer_conv / graphgps only)")
 
     # Algorithm & Data Arguments
     parser.add_argument("--algorithm", type=str, required=True)

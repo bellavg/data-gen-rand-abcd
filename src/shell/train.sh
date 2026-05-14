@@ -1,12 +1,21 @@
 #!/bin/bash
 #SBATCH --job-name=aig_train_array
-#SBATCH --time=72:00:00                  
+#SBATCH --time=72:00:00
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=16
 #SBATCH --partition=gpu_h100
 #SBATCH --gpus=1
 #SBATCH --array=0-3                      # 4 jobs total (indices 0, 1, 2, 3)
 #SBATCH --output=logs/train_%A_%a.out    # %A is the array master job ID, %a is the task index
+#
+# Recommended: pre-warm the dataset cache on a CPU node before submitting this
+# job so the GPU is not idle during graph loading.  Chain with warmup_cache.sh:
+#
+#   WID=$(sbatch --parsable src/shell/warmup_cache.sh)
+#   sbatch --dependency=afterok:$WID src/shell/train.sh
+#
+# If the cache already exists (sentinel file present) the warmup script exits
+# immediately, so the dependency is cheap.
 
 set -euo pipefail
 
@@ -82,31 +91,67 @@ fi
 
 # =========================================================
 # 4. USER CONFIGURATION (Model Hyperparameters)
+# **** FILL THESE IN AFTER HP TUNING COMPLETES ****
 # =========================================================
 
+# --- Architecture (set from best Optuna trial) ---
+ENCODER_NAME="gine"         # TODO: replace with best trial value
+BATCH_SIZE=32               # TODO: replace with best trial value
+HIDDEN_DIM=128              # TODO: replace with best trial value
+NUM_LAYERS=4                # TODO: replace with best trial value
+DROPOUT=0.1                 # TODO: replace with best trial value
+NORM_TYPE="batch"           # TODO: replace with best trial value
+JK_MODE="last"              # TODO: replace with best trial value
+HEADS=4                     # only used by transformer_conv / graphgps
 
+# --- Positional encoding ---
+PE_TYPE="none"              # TODO: replace with best trial value ("none", "level", "pi_paths", ...)
+POS_ENC_DIM=16              # ignored when PE_TYPE="none"
+
+# --- Pooling & loss ---
+POOLING_TYPE="mean"         # TODO: replace with best trial value
+HUBER_DELTA=1.0             # TODO: replace with best trial value
+
+# --- Optimiser ---
+LR=1e-3                     # TODO: replace with best trial value
+
+# --- Training loop ---
 MAX_EPOCHS=100
-NUM_WORKERS=16 # Matches SLURM_CPUS_PER_TASK
+GRADIENT_CLIP_VAL=1.0
+NUM_WORKERS=16              # should match --cpus-per-task
 
 # =========================================================
 # 5. EXECUTE TRAINING
 # =========================================================
 
 echo "Starting Final Training for $ALGORITHM on GPU 0..."
+echo "  encoder=$ENCODER_NAME  batch=$BATCH_SIZE  hid=$HIDDEN_DIM  layers=$NUM_LAYERS"
 
 CUDA_VISIBLE_DEVICES=0 python src/train.py \
-    --algorithm "$ALGORITHM" \
-    --csv_paths "$CSV_PATH" \
-    --checkpoint_dir "$CHECKPOINT_DIR" \
-    --log_dir "$LOG_DIR" \
-    --cache_dir "$CACHE_DIR" \
+    --algorithm         "$ALGORITHM" \
+    --csv_paths         "$CSV_PATH" \
+    --checkpoint_dir    "$CHECKPOINT_DIR" \
+    --log_dir           "$LOG_DIR" \
+    --cache_dir         "$CACHE_DIR" \
     --hp_tuning_splits_path "$HP_TUNING_SPLITS" \
-    --encoder_name "$ENCODER_NAME" \
-    --batch_size "$BATCH_SIZE" \
-    --max_epochs "$MAX_EPOCHS" \
-    --num_workers "$NUM_WORKERS" \
+    --encoder_name      "$ENCODER_NAME" \
+    --batch_size        "$BATCH_SIZE" \
+    --hidden_dim        "$HIDDEN_DIM" \
+    --num_layers        "$NUM_LAYERS" \
+    --dropout           "$DROPOUT" \
+    --norm_type         "$NORM_TYPE" \
+    --jk_mode           "$JK_MODE" \
+    --heads             "$HEADS" \
+    --pe_type           "$PE_TYPE" \
+    --pos_enc_dim       "$POS_ENC_DIM" \
+    --pooling_type      "$POOLING_TYPE" \
+    --huber_delta       "$HUBER_DELTA" \
+    --lr                "$LR" \
+    --max_epochs        "$MAX_EPOCHS" \
+    --gradient_clip_val "$GRADIENT_CLIP_VAL" \
+    --num_workers       "$NUM_WORKERS" \
     --check_val_every_n 3 \
-    --patience 10 \
+    --patience          10 \
     --scheduler_patience 4
 
 echo "=========================================="

@@ -91,7 +91,8 @@ LOG_DIR="$WORKSPACE/logs"
 SHARED_CACHE="/scratch-shared/$USER/big_optuna_run/shared_dataset_cache"
 
 # Study name is worker-scoped but stage-consistent so Stage-2 warm-start works.
-STUDY_NAME="${STUDY_NAME:-big_optuna_hp_tuning}_worker${TASK_ID}"
+STUDY_NAME_BASE="${STUDY_NAME:-big_optuna_hp_tuning}"
+STUDY_NAME="${STUDY_NAME_BASE}_worker${TASK_ID}"
 
 # Use node-local scratch for SQLite to avoid GPFS file-lock hangs.
 # The DB is copied to WORKSPACE at the end so results are preserved.
@@ -147,15 +148,21 @@ fi
 # Those are enqueued first so Stage 2 immediately re-evaluates the most promising
 # regions on the larger dataset; TPE then explores adjacent space for the
 # remaining (N_TRIALS - SEED_TOP_N) trials.
+#
+# SEED_FROM_WORKER: override which worker's Stage-1 DB to seed from.
+# Useful when a worker's own Stage-1 failed or was corrupted.
+# Example: SEED_FROM_WORKER=1 makes workers 2/3 reuse worker 1's Stage-1 results.
 SEED_TOP_N="${SEED_TOP_N:-10}"
 SEED_FLAGS=()
 if [[ "$STAGE" == "2" ]]; then
-    S1_DB="/scratch-shared/$USER/big_optuna_run_s1_${TASK_ID}/optuna_study.db"
+    SEED_WORKER="${SEED_FROM_WORKER:-1}"
+    SEED_STUDY="${STUDY_NAME_BASE}_worker${SEED_WORKER}"
+    S1_DB="/scratch-shared/$USER/big_optuna_run_s1_${SEED_WORKER}/optuna_study.db"
     if [[ -f "$S1_DB" ]]; then
-        echo "Stage 2: seeding from top-${SEED_TOP_N} Stage-1 trials (DB: $S1_DB)"
+        echo "Stage 2: seeding from top-${SEED_TOP_N} Stage-1 trials (worker=${SEED_WORKER} study=${SEED_STUDY} DB: $S1_DB)"
         SEED_FLAGS=(
             --seed_from_db_url "sqlite:///$S1_DB"
-            --seed_study_name "$STUDY_NAME"
+            --seed_study_name "$SEED_STUDY"
             --seed_top_n "$SEED_TOP_N"
         )
     else

@@ -297,6 +297,10 @@ def _is_oom_like_runtime_error(exc: RuntimeError) -> bool:
         return True
     if "memory guard" in text:
         return True
+    # CUDA illegal memory access / device errors indicate corrupted GPU state
+    # (typically a downstream symptom of OOM or a bad allocation).
+    if "cuda error" in text or "illegal memory access" in text or "acceleratorerror" in text:
+        return True
     return False
 
 
@@ -398,12 +402,19 @@ def _purge_trial_memory(
         except Exception:
             pass
 
-    # 6. Tear down DataModule
+    # 6. Tear down DataModule and explicitly drop dataset objects so that
+    # PE tensors (e.g. pi_paths with pos_enc_dim=128 × 35K graphs) are
+    # released from GPU/CPU memory before the next trial starts.
     if datamodule is not None:
         try:
             datamodule.teardown("fit")
         except Exception:
             pass
+        for attr in ("train_ds", "val_ds", "test_ds", "_train_sizes"):
+            try:
+                setattr(datamodule, attr, None)
+            except Exception:
+                pass
 
     # 7. Zero-out optimiser state tensors before del to reclaim GPU memory faster
     if optimizer is not None:
