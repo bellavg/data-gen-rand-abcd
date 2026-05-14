@@ -3,6 +3,8 @@ import gc
 import logging
 import os
 import resource
+import sqlite3
+import time
 import sys
 import warnings
 from collections.abc import Callable
@@ -41,8 +43,30 @@ ATTENTION_ENCODERS = {"transformer_conv", "graphgps"}
 
 def _set_trial_user_attr(trial: optuna.Trial, key: str, value: str | int | float | bool) -> None:
     setter = getattr(trial, "set_user_attr", None)
-    if callable(setter):
-        setter(key, value)
+    if not callable(setter):
+        return
+
+    # Some storages (SQLite) can intermittently raise locking/commit errors
+    # under contention. Retry a few times with a short backoff and swallow
+    # failures to avoid crashing the worker for a transient DB lock.
+    max_attempts = 3
+    for attempt in range(1, max_attempts + 1):
+        try:
+            setter(key, value)
+            return
+        except Exception as exc:  # pragma: no cover - regression protection
+            if attempt >= max_attempts:
+                logging.warning(
+                    "Failed to set trial user attr %s=%s for trial %s after %d attempts: %s",
+                    key,
+                    value,
+                    getattr(trial, "number", "n/a"),
+                    attempt,
+                    exc,
+                )
+                return
+            # backoff and retry
+            time.sleep(0.5 * attempt)
 
 
 def _mark_trial_outcome(
@@ -718,6 +742,56 @@ def objective(trial: optuna.Trial, args):
         _log_trial_memory("post_cleanup", trial, args)
 
 
+def _seed_study_from_best(
+    study: optuna.Study,
+    *,
+    source_db_url: str,
+    source_study_name: str,
+    top_n: int,
+) -> None:
+    """Enqueue the top-N completed trials from a Stage-1 study as the first
+    trials of this study so TPE explores promising regions immediately.
+
+    Only trials where ``selection_eligible=True`` (i.e. completed without OOM)
+    are considered. The trials are sorted by objective value (ascending) and the
+    top *top_n* are enqueued via ``study.enqueue_trial``.  Trials with
+    parameters that are no longer in the search space are skipped silently.
+    """
+    if top_n <= 0:
+        return
+
+    source_storage = RDBStorage(
+        url=source_db_url,
+        engine_kwargs={"connect_args": {"timeout": 60, "check_same_thread": False}},
+    )
+    source_study = optuna.load_study(
+        study_name=source_study_name,
+        storage=source_storage,
+    )
+
+    eligible = [
+        t
+        for t in source_study.trials
+        if t.state == optuna.trial.TrialState.COMPLETE
+        and t.user_attrs.get("selection_eligible", False)
+        and t.value is not None
+    ]
+    eligible.sort(key=lambda t: t.value)
+    top_trials = eligible[:top_n]
+
+    if not top_trials:
+        print("[seed] No eligible Stage-1 trials found to seed from.")
+        return
+
+    print(f"[seed] Seeding Stage-2 study with top-{len(top_trials)} Stage-1 trials.")
+    for t in top_trials:
+        try:
+            study.enqueue_trial(t.params)
+            print(f"[seed]   enqueued trial #{t.number} value={t.value:.6f}")
+        except Exception as exc:
+            print(f"[seed]   skipped trial #{t.number}: {exc}")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Optuna Hyperparameter Tuning for AIG Regression"
@@ -827,9 +901,42 @@ if __name__ == "__main__":
             "array-job worker so each worker explores a distinct HP region."
         ),
     )
+    parser.add_argument(
+        "--seed_from_db_url",
+        type=str,
+        default=None,
+        help=(
+            "Stage-1 SQLite DB URL to seed Stage-2 from (e.g. sqlite:///stage1.db). "
+            "If set, the top --seed_top_n trials from that study are enqueued first."
+        ),
+    )
+    parser.add_argument(
+        "--seed_study_name",
+        type=str,
+        default=None,
+        help="Study name inside --seed_from_db_url to read Stage-1 results from.",
+    )
+    parser.add_argument(
+        "--seed_top_n",
+        type=int,
+        default=20,
+        help="Number of top Stage-1 trials to enqueue at the start of Stage-2 (default: 20).",
+    )
     args = parser.parse_args()
 
-    storage = RDBStorage(url=args.db_url, engine_kwargs={"connect_args": {"timeout": 30}})
+    # Enable WAL journal mode on SQLite so concurrent readers/writers don't
+    # deadlock each other. Must be done before creating the RDBStorage so the
+    # PRAGMA takes effect on the same connection pool that Optuna will use.
+    if args.db_url.startswith("sqlite:///"):
+        db_path = args.db_url[len("sqlite:///"):]
+        _wal_con = sqlite3.connect(db_path)
+        _wal_con.execute("PRAGMA journal_mode=WAL;")
+        _wal_con.close()
+
+    storage = RDBStorage(
+        url=args.db_url,
+        engine_kwargs={"connect_args": {"timeout": 60, "check_same_thread": False}},
+    )
 
     study = optuna.create_study(
         study_name=args.study_name,
@@ -839,6 +946,14 @@ if __name__ == "__main__":
         sampler=optuna.samplers.TPESampler(multivariate=True, seed=args.sampler_seed, warn_independent_sampling=False),
         pruner=optuna.pruners.MedianPruner(n_startup_trials=10, n_warmup_steps=5),
     )
+
+    if args.seed_from_db_url and args.seed_study_name:
+        _seed_study_from_best(
+            study,
+            source_db_url=args.seed_from_db_url,
+            source_study_name=args.seed_study_name,
+            top_n=args.seed_top_n,
+        )
 
     study.optimize(
         lambda trial: objective(trial, args),
