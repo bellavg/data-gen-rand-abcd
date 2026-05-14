@@ -68,7 +68,7 @@ cd "$BASE_DIR"
 #              enqueued first, remainder are new TPE-guided trials
 # 72h job limit → both stages comfortably fit. In practice (patience=3,
 # BF16 pruning): Stage 1 ~25-30h, Stage 2 ~25-35h per worker.
-STAGE="${STAGE:-1}"
+STAGE=2
 if [[ "$STAGE" == "1" ]]; then
     TRAIN_SAMPLES=15000
     N_TRIALS=50
