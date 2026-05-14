@@ -4,7 +4,7 @@
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=96
 #SBATCH --partition=genoa
-#SBATCH --output=logs/cache_warmup_15_35.out
+#SBATCH --output=logs/cache_warmup_35.out
 
 # ---------------------------------------------------------------------------
 # Dedicated cache pre-warm job.
