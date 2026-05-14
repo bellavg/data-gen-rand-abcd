@@ -20,7 +20,30 @@ from torch_geometric.loader import DataLoader
 
 from data.datamodule import AIGDataModule, BalancedDynamicBatchSampler
 from models.lightning_model import AIGRegressionLightningModule
-from optuna.integration import PyTorchLightningPruningCallback
+
+
+class PyTorchLightningPruningCallback(pl.Callback):
+    """Minimal Optuna pruning callback for pytorch_lightning.
+
+    Replaces ``optuna.integration.PyTorchLightningPruningCallback`` which
+    requires the unified ``lightning`` package.  This version depends only on
+    ``pytorch_lightning`` (standalone) and ``optuna``.
+    """
+
+    def __init__(self, trial: optuna.Trial, monitor: str) -> None:
+        super().__init__()
+        self._trial = trial
+        self._monitor = monitor
+
+    def on_validation_epoch_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule) -> None:
+        logs = trainer.callback_metrics
+        if self._monitor not in logs:
+            return
+        value = float(logs[self._monitor])
+        step = trainer.current_epoch
+        self._trial.report(value, step=step)
+        if self._trial.should_prune():
+            raise optuna.TrialPruned(f"Trial pruned at epoch {step} ({self._monitor}={value:.6f})")
 
 
 
