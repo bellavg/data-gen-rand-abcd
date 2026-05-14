@@ -412,6 +412,122 @@ class TestOOMTrialCleanup(unittest.TestCase):
         self.assertIn("empty_cache", between)
 
 
+class TestSeedStudyFromBest(unittest.TestCase):
+    """Unit tests for _seed_study_from_best."""
+
+    def _make_frozen_trial(self, number, value, eligible, params):
+        t = MagicMock()
+        t.number = number
+        t.value = value
+        t.state = optuna.trial.TrialState.COMPLETE
+        t.user_attrs = {"selection_eligible": eligible}
+        t.params = params
+        return t
+
+    def test_enqueues_top_n_eligible_trials(self):
+        params_a = {"lr": 1e-3, "hidden_dim": 64}
+        params_b = {"lr": 5e-4, "hidden_dim": 128}
+        params_c = {"lr": 1e-2, "hidden_dim": 32}
+
+        trials = [
+            self._make_frozen_trial(0, 0.5, True, params_a),
+            self._make_frozen_trial(1, 0.3, True, params_b),   # best eligible
+            self._make_frozen_trial(2, 0.1, False, params_c),  # not eligible
+            self._make_frozen_trial(3, 0.4, True, params_a),
+        ]
+
+        fake_source_study = MagicMock()
+        fake_source_study.trials = trials
+
+        dest_study = MagicMock()
+        enqueued = []
+        dest_study.enqueue_trial.side_effect = lambda p: enqueued.append(p)
+
+        with (
+            patch("hp_tuning.RDBStorage"),
+            patch("hp_tuning.optuna.load_study", return_value=fake_source_study),
+        ):
+            hp_tuning._seed_study_from_best(
+                dest_study,
+                source_db_url="sqlite:///fake.db",
+                source_study_name="stage1",
+                top_n=2,
+            )
+
+        # Only eligible trials, sorted by value asc, top 2
+        self.assertEqual(len(enqueued), 2)
+        self.assertEqual(enqueued[0], params_b)  # value=0.3 (best eligible)
+        self.assertEqual(enqueued[1], params_a)  # value=0.4 (next best; trial 3)
+
+    def test_skips_ineligible_trials(self):
+        trials = [
+            self._make_frozen_trial(0, 0.2, False, {"lr": 1e-3}),
+            self._make_frozen_trial(1, 0.9, False, {"lr": 5e-3}),
+        ]
+        fake_source_study = MagicMock()
+        fake_source_study.trials = trials
+
+        dest_study = MagicMock()
+        with (
+            patch("hp_tuning.RDBStorage"),
+            patch("hp_tuning.optuna.load_study", return_value=fake_source_study),
+        ):
+            hp_tuning._seed_study_from_best(
+                dest_study,
+                source_db_url="sqlite:///fake.db",
+                source_study_name="stage1",
+                top_n=5,
+            )
+        dest_study.enqueue_trial.assert_not_called()
+
+    def test_top_n_zero_is_noop(self):
+        dest_study = MagicMock()
+        with patch("hp_tuning.RDBStorage"):
+            hp_tuning._seed_study_from_best(
+                dest_study,
+                source_db_url="sqlite:///fake.db",
+                source_study_name="stage1",
+                top_n=0,
+            )
+        dest_study.enqueue_trial.assert_not_called()
+
+    def test_enqueue_error_is_swallowed(self):
+        """A broken param set should be skipped without crashing."""
+        params_good = {"lr": 1e-3}
+        params_bad = {"lr": 999}  # will raise when enqueued
+        trials = [
+            self._make_frozen_trial(0, 0.1, True, params_bad),
+            self._make_frozen_trial(1, 0.2, True, params_good),
+        ]
+        fake_source_study = MagicMock()
+        fake_source_study.trials = trials
+
+        dest_study = MagicMock()
+        dest_study.enqueue_trial.side_effect = [ValueError("bad param"), None]
+
+        enqueued = []
+
+        def _enqueue(p):
+            if p is params_bad:
+                raise ValueError("bad param")
+            enqueued.append(p)
+
+        dest_study.enqueue_trial.side_effect = _enqueue
+
+        with (
+            patch("hp_tuning.RDBStorage"),
+            patch("hp_tuning.optuna.load_study", return_value=fake_source_study),
+        ):
+            # Must not raise
+            hp_tuning._seed_study_from_best(
+                dest_study,
+                source_db_url="sqlite:///fake.db",
+                source_study_name="stage1",
+                top_n=2,
+            )
+        self.assertEqual(enqueued, [params_good])
+
+
 class TestMemoryGuardBatchAccumulation(unittest.TestCase):
     @staticmethod
     def _make_graph(num_nodes: int, num_edges: int) -> Data:

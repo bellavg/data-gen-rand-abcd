@@ -1,19 +1,23 @@
 #!/bin/bash
 #SBATCH --job-name=big_optuna
-#SBATCH --time=48:00:00
+#SBATCH --time=72:00:00
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=16
 #SBATCH --partition=gpu_h100
 #SBATCH --gpus=1
 #SBATCH --array=1-3
-#SBATCH --output=logs/big_optuna_worker_%a.out
+#SBATCH --output=logs/big_optuna_worker_%a_s2.out
+# NOTE: SBATCH directives cannot reference shell variables, so override --output
+# at submit time to avoid overwriting previous stage logs:
+#   Stage 1: sbatch --output="logs/big_optuna_worker_%a_s1.out" src/shell/big_hp_tuning.sh
+#   Stage 2: STAGE=2 sbatch --output="logs/big_optuna_worker_%a_s2.out" src/shell/big_hp_tuning.sh
 
 set -euo pipefail
 
 # Array-task id, or 1 when run outside an array for local debugging.
 TASK_ID=${SLURM_ARRAY_TASK_ID:-1}
 
-SCRIPT_VERSION="2026-05-06 (48h Two-Stage Array Job: Stage 1 = explore, Stage 2 = exploit)"
+SCRIPT_VERSION="2026-05-14 (72h Two-Stage Array Job: Stage 1 = explore, Stage 2 = seed+exploit)"
 
 echo "=========================================="
 echo "JOB: Big Optuna Hyperparameter Tuning (array_task=${TASK_ID} job=${SLURM_ARRAY_JOB_ID:-n/a})"
@@ -59,11 +63,12 @@ cd "$BASE_DIR"
 #
 # Two-stage tuning strategy (set STAGE=1 or STAGE=2 at submission time):
 #   Stage 1  — fast exploration: 15K samples × 50 trials per worker
-#              1 h/trial cap → ~21 h worst-case; finds promising HP regions
-#   Stage 2  — reliable exploitation: 35K samples × 20 trials per worker
-#              2 h/trial cap → ~40 h worst-case; warm-starts from Stage-1 DB
-# Per-worker budget: ~61 h worst-case → 3 workers each fit inside 96 h.
-# In practice (early-stopping patience=3, BF16 pruning): ~39 h per worker.
+#              1 h/trial cap → ~50 h worst-case; finds promising HP regions
+#   Stage 2  — seeded exploitation: 35K samples × 20 trials per worker
+#              2 h/trial cap → ~40 h worst-case; top-SEED_TOP_N Stage-1 configs
+#              enqueued first, remainder are new TPE-guided trials
+# 72h job limit → both stages comfortably fit. In practice (patience=3,
+# BF16 pruning): Stage 1 ~25-30h, Stage 2 ~25-35h per worker.
 STAGE="${STAGE:-1}"
 if [[ "$STAGE" == "1" ]]; then
     TRAIN_SAMPLES=15000
@@ -139,17 +144,27 @@ else
 fi
 # ---------------------------------------------------------
 
-# Stage 2 warm-start: copy the Stage-1 DB into local scratch so TPE already
-# knows the good region and does not re-explore it in Stage 2.
+# Stage 2: seed a fresh study with the top-SEED_TOP_N completed Stage-1 configs.
+# Those are enqueued first so Stage 2 immediately re-evaluates the most promising
+# regions on the larger dataset; TPE then explores adjacent space for the
+# remaining (N_TRIALS - SEED_TOP_N) trials.
+SEED_TOP_N="${SEED_TOP_N:-10}"
+SEED_FLAGS=()
 if [[ "$STAGE" == "2" ]]; then
     S1_DB="/scratch-shared/$USER/big_optuna_run_s1_${TASK_ID}/optuna_study.db"
     if [[ -f "$S1_DB" ]]; then
-        echo "Warm-starting Stage 2 from Stage-1 DB: $S1_DB"
-        cp "$S1_DB" "$LOCAL_SCRATCH/optuna_study.db"
+        echo "Stage 2: seeding from top-${SEED_TOP_N} Stage-1 trials (DB: $S1_DB)"
+        SEED_FLAGS=(
+            --seed_from_db_url "sqlite:///$S1_DB"
+            --seed_study_name "$STUDY_NAME"
+            --seed_top_n "$SEED_TOP_N"
+        )
     else
         echo "WARNING: Stage-1 DB not found at $S1_DB; starting Stage 2 cold." >&2
     fi
 fi
+echo "Seed flags: ${SEED_FLAGS[*]:-(none)}"
+echo "Seed top-N: $SEED_TOP_N"
 
 # ---------------------------------------------------------
 # EXECUTE OPTUNA WORKER (big run)
@@ -262,6 +277,7 @@ python -u -m hp_tuning \
     --csv_paths "$CSV_1" "$CSV_2" "$CSV_3" "$CSV_4" \
     --num_workers "$NUM_WORKERS" \
     ${EXTRA_FLAGS[@]+"${EXTRA_FLAGS[@]}"} \
+    ${SEED_FLAGS[@]+"${SEED_FLAGS[@]}"} \
     --memory_guard_max_tokens 3.5e8 \
     --dataset_seed 42 \
     --sampler_seed "$SAMPLER_SEED" \
