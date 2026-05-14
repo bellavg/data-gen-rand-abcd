@@ -14,16 +14,7 @@ try:
 except ModuleNotFoundError:
     optuna_stub = types.ModuleType("optuna")
     optuna_stub.Trial = object
-    optuna_integration_stub = types.ModuleType("optuna.integration")
-
-    class _NoOpPruningCallback:
-        def __init__(self, *args, **kwargs):
-            pass
-
-    optuna_integration_stub.PyTorchLightningPruningCallback = _NoOpPruningCallback
-    optuna_stub.integration = optuna_integration_stub
     sys.modules["optuna"] = optuna_stub
-    sys.modules["optuna.integration"] = optuna_integration_stub
 
 # Import the module under the package namespace
 import hp_tuning
@@ -132,7 +123,12 @@ class TestHpTuningObjectiveWiring(unittest.TestCase):
         This ensures the bug cannot regress.
         """
         all_encoders = [
-            "gine", "transformer_conv", "graphgps", "egin", "gcn", "vanilla_mpnn"
+            "gine",
+            "transformer_conv",
+            "graphgps",
+            "egin",
+            "gcn",
+            "vanilla_mpnn",
         ]
         seen_choices = None
         for encoder in all_encoders:
@@ -153,8 +149,12 @@ class TestHpTuningObjectiveWiring(unittest.TestCase):
                 params["heads"] = 1
             if encoder == "egin":
                 params.update(
-                    {"num_mlp_layers": 2, "egin_dot_update": False,
-                     "egin_edge_mlp": False, "edge_hidden_dim": 32}
+                    {
+                        "num_mlp_layers": 2,
+                        "egin_dot_update": False,
+                        "egin_edge_mlp": False,
+                        "edge_hidden_dim": 32,
+                    }
                 )
             out = _run_objective_for_test(params)
             choices = tuple(out["trial"].requested_choices["hidden_dim"])
@@ -176,7 +176,12 @@ class TestHpTuningObjectiveWiring(unittest.TestCase):
         Previously attention encoders excluded 'cat', causing dynamic value space errors.
         """
         all_encoders = [
-            "gine", "transformer_conv", "graphgps", "egin", "gcn", "vanilla_mpnn"
+            "gine",
+            "transformer_conv",
+            "graphgps",
+            "egin",
+            "gcn",
+            "vanilla_mpnn",
         ]
         for encoder in all_encoders:
             params = {
@@ -196,8 +201,12 @@ class TestHpTuningObjectiveWiring(unittest.TestCase):
                 params["heads"] = 1
             if encoder == "egin":
                 params.update(
-                    {"num_mlp_layers": 2, "egin_dot_update": False,
-                     "egin_edge_mlp": False, "edge_hidden_dim": 32}
+                    {
+                        "num_mlp_layers": 2,
+                        "egin_dot_update": False,
+                        "egin_edge_mlp": False,
+                        "edge_hidden_dim": 32,
+                    }
                 )
             with self.subTest(encoder=encoder):
                 out = _run_objective_for_test(params)
@@ -431,7 +440,7 @@ class TestSeedStudyFromBest(unittest.TestCase):
 
         trials = [
             self._make_frozen_trial(0, 0.5, True, params_a),
-            self._make_frozen_trial(1, 0.3, True, params_b),   # best eligible
+            self._make_frozen_trial(1, 0.3, True, params_b),  # best eligible
             self._make_frozen_trial(2, 0.1, False, params_c),  # not eligible
             self._make_frozen_trial(3, 0.4, True, params_a),
         ]

@@ -44,7 +44,6 @@ echo "TCMalloc preloaded from: ${EBROOTGPERFTOOLS}/lib/libtcmalloc.so"
 VENV_PATH="${VENV_PATH:-/scratch-shared/$USER/.venv}"
 echo "Activating virtual environment at: $VENV_PATH"
 source "$VENV_PATH/bin/activate"
-
 # Skip pip installations since the venv is already set up!
 
 BASE_DIR="${BASE_DIR:-$HOME/data-gen-rand-abcd}"
