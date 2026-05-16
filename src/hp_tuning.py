@@ -845,13 +845,9 @@ def _seed_study_from_best(
     source_study_name: str,
     top_n: int,
 ) -> None:
-    """Enqueue the top-N completed trials from a Stage-1 study as the first
-    trials of this study so TPE explores promising regions immediately.
-
-    Only trials where ``selection_eligible=True`` (i.e. completed without OOM)
-    are considered. The trials are sorted by objective value (ascending) and the
-    top *top_n* are enqueued via ``study.enqueue_trial``.  Trials with
-    parameters that are no longer in the search space are skipped silently.
+    """Import the top-N completed Stage-1 trials into this study as already-completed
+    trials so the TPE sampler treats them as prior observations and immediately
+    focuses on promising regions — without re-running any of them.
     """
     if top_n <= 0:
         return
@@ -879,11 +875,20 @@ def _seed_study_from_best(
         print("[seed] No eligible Stage-1 trials found to seed from.")
         return
 
-    print(f"[seed] Seeding Stage-2 study with top-{len(top_trials)} Stage-1 trials.")
+    print(f"[seed] Importing top-{len(top_trials)} Stage-1 trials as prior observations (no re-run).")
+    imported = 0
     for t in top_trials:
         try:
-            study.enqueue_trial(t.params)
-            print(f"[seed]   enqueued trial #{t.number} value={t.value:.6f}")
+            study.add_trial(
+                optuna.trial.create_trial(
+                    params=t.params,
+                    distributions=t.distributions,
+                    value=t.value,
+                    user_attrs={**t.user_attrs, "seeded_from_stage1": True},
+                )
+            )
+            imported += 1
+            print(f"[seed]   imported trial #{t.number} value={t.value:.6f}")
         except Exception as exc:
             print(f"[seed]   skipped trial #{t.number}: {exc}")
 
