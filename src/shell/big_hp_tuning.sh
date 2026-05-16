@@ -76,7 +76,7 @@ if [[ "$STAGE" == "1" ]]; then
 elif [[ "$STAGE" == "2" ]]; then
     TRAIN_SAMPLES=35000
     N_TRIALS=20
-    MAX_TRIAL_HOURS=2.0
+    MAX_TRIAL_HOURS=4.0
 else
     echo "ERROR: STAGE must be 1 or 2 (got '$STAGE')." >&2
     exit 1

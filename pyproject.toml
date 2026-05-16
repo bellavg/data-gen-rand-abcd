@@ -9,17 +9,20 @@ description = "AIG to PyG preprocessing and GNN experimentation utilities."
 readme = "AIG_DATASET_README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "aigverse[adapters]",
-    "numpy>=1.23",
-    "networkx>=3.0",
-    "pandas>=1.5",
-    "scipy>=1.10",
-    "torch>=2.1",
-    "torch-geometric>=2.5",
-    "optuna>=3.0",
-    "pytorch-lightning>=2.0",
-    "lightning>=2.0",
+    "aigverse[adapters]>=0.0.27",
+    "numpy>=2.4,<3",
+    "networkx>=3.6",
+    "pandas>=3.0",
+    "scipy>=1.17",
+    "torch>=2.11,<2.12",
+    "torch-geometric>=2.7,<2.8",
+    "optuna>=4.8,<5",
+    "optuna-integration>=4.8,<5",
+    "sqlalchemy>=2.0",
+    "pytorch-lightning>=2.6,<3",
     "tqdm>=4.66",
+    "psutil>=5.9",
+    "xxhash>=3.0",
 ]
 
 [project.optional-dependencies]
@@ -28,6 +31,8 @@ dev = [
     "ruff>=0.6",
 ]
 pyg = [
+    # Install with the PyG wheel index — see src/shell/rebuild_venv.sh
+    # pip install ".[pyg]" --find-links https://data.pyg.org/whl/torch-2.11.0+cu130.html
     "torch-scatter>=2.1",
 ]
 
