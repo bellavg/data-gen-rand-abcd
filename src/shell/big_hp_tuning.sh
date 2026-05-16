@@ -180,8 +180,17 @@ echo "Seed top-N: $SEED_TOP_N"
 # is identical across all workers (comparable evaluation).
 SAMPLER_SEED=$((40 + TASK_ID))   # workers 1/2/3 → seeds 41/42/43
 
-# Default to small parallelism to reduce main-process fragmentation.
-NUM_WORKERS="${NUM_WORKERS:-2}"
+# Stage 2 uses num_workers=0: with 35k samples the DataLoader worker processes
+# consume enough CPU RAM to trigger SLURM's OOM killer.  Killed workers leave
+# CUDA tensors unreclaimable in GPU memory, snowballing until the GPU is full.
+# num_workers=0 (in-process loading) avoids the issue; the dataset is already
+# cached as individual .pt files so per-batch I/O overhead is minimal.
+# Stage 1 (15k samples) is safe with 2 workers.
+if [[ "$STAGE" == "2" ]]; then
+    NUM_WORKERS="${NUM_WORKERS:-0}"
+else
+    NUM_WORKERS="${NUM_WORKERS:-2}"
+fi
 
 export MALLOC_ARENA_MAX="${MALLOC_ARENA_MAX:-2}"
 

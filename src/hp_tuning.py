@@ -570,6 +570,27 @@ def objective(trial: optuna.Trial, args):
             )
             raise optuna.TrialPruned(msg)
 
+    # Pre-trial GPU memory check: if previous trials leaked memory the GPU can
+    # be nearly full before any allocation, causing every trial to OOM.
+    # Threshold: >10 GiB allocated before trial start is unexpected; run an
+    # extra purge pass and warn so the pattern is visible in logs.
+    if torch.cuda.is_available():
+        _pre_alloc_gib = torch.cuda.memory_allocated() / (1024 ** 3)
+        if _pre_alloc_gib > 10.0:
+            print(
+                f"\n[Trial {trial.number}] WARNING: {_pre_alloc_gib:.1f} GiB of GPU "
+                f"memory already allocated before trial start (expected ~0). "
+                f"Residual from previous trial cleanup. Attempting extra purge."
+            )
+            gc.collect()
+            gc.collect()
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+            _post_purge_gib = torch.cuda.memory_allocated() / (1024 ** 3)
+            print(
+                f"[Trial {trial.number}] Post-extra-purge: {_post_purge_gib:.1f} GiB allocated."
+            )
+
     try:
         workers = getattr(args, "num_workers", 2)
         persistent = getattr(args, "persistent_workers", False)
@@ -687,6 +708,47 @@ def objective(trial: optuna.Trial, args):
             risk_score=risk_score,
         )
         _log_trial_memory("guard_pruned", trial, args)
+        (
+            model,
+            trainer,
+            datamodule,
+            pruning_cb,
+            early_stop_cb,
+            optimizer,
+            batch,
+            dataloader,
+            val_dataloader,
+        ) = _purge_trial_memory(
+            trainer=trainer,
+            datamodule=datamodule,
+            model=model,
+            optimizer=optimizer,
+            batch=batch,
+            dataloader=dataloader,
+            val_dataloader=val_dataloader,
+            pruning_cb=pruning_cb,
+            early_stop_cb=early_stop_cb,
+        )
+        raise optuna.TrialPruned(msg) from None
+
+    except (ConnectionResetError, BrokenPipeError) as e:
+        # DataLoader worker was killed by the OS/SLURM OOM killer while
+        # transferring a tensor over IPC.  Not a RuntimeError, but the
+        # root cause is the same as a worker-OOM kill: treat as prunable.
+        msg = f"OOM-like IPC failure (worker killed). [Trial {trial.number}] Error: {e}"
+        print(f"\n{msg}")
+        _mark_trial_outcome(
+            trial,
+            outcome="pruned",
+            oom_like=True,
+            prune_reason="runtime_oom",
+            risk_score=risk_score,
+        )
+        _log_trial_memory("oom_caught", trial, args)
+        if optimizer is None and trainer is not None:
+            optimizers = getattr(trainer, "optimizers", None)
+            if optimizers:
+                optimizer = optimizers[0]
         (
             model,
             trainer,
