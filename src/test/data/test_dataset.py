@@ -599,13 +599,67 @@ class TestBalancedDynamicBatchSampler(unittest.TestCase):
         dynamic_totals = [sum(sizes[i] for i in batch) for batch in dynamic_batches]
 
         # Baseline: descending contiguous chunks, which tend to pack large graphs.
-        descending_indices = sorted(range(len(sizes)), key=lambda i: sizes[i], reverse=True)
+        descending_indices = sorted(
+            range(len(sizes)), key=lambda i: sizes[i], reverse=True
+        )
         baseline_totals = []
         for start in range(0, len(sizes), batch_size):
             chunk = descending_indices[start : start + batch_size]
             baseline_totals.append(sum(sizes[i] for i in chunk))
 
         self.assertLess(max(dynamic_totals), max(baseline_totals))
+
+    def test_bucket_rules_create_singletons_for_huge_graphs(self):
+        from data.datamodule import BalancedDynamicBatchSampler
+
+        sizes = [1, 2, 3, 4, 100, 101, 300, 350]
+        sampler = BalancedDynamicBatchSampler(
+            sizes,
+            batch_size=8,
+            shuffle=False,
+            seed=1,
+            bucket_rules=[(300, 1), (100, 2)],
+        )
+
+        batches = list(sampler)
+
+        idx_350 = sizes.index(350)
+        idx_300 = sizes.index(300)
+
+        batch_350 = next(batch for batch in batches if idx_350 in batch)
+        batch_300 = next(batch for batch in batches if idx_300 in batch)
+        self.assertEqual(len(batch_350), 1)
+        self.assertEqual(len(batch_300), 1)
+
+        flattened = [idx for batch in batches for idx in batch]
+        self.assertEqual(set(flattened), set(range(len(sizes))))
+
+    def test_bucket_rules_pair_large_with_small(self):
+        from data.datamodule import BalancedDynamicBatchSampler
+
+        sizes = [1, 2, 3, 4, 100, 101, 300, 350]
+        sampler = BalancedDynamicBatchSampler(
+            sizes,
+            batch_size=8,
+            shuffle=False,
+            seed=1,
+            bucket_rules=[(300, 1), (100, 2)],
+        )
+
+        batches = list(sampler)
+        idx_101 = sizes.index(101)
+        idx_100 = sizes.index(100)
+
+        batch_101 = next(batch for batch in batches if idx_101 in batch)
+        batch_100 = next(batch for batch in batches if idx_100 in batch)
+
+        self.assertEqual(len(batch_101), 2)
+        self.assertEqual(len(batch_100), 2)
+
+        mate_101 = next(i for i in batch_101 if i != idx_101)
+        mate_100 = next(i for i in batch_100 if i != idx_100)
+        self.assertLessEqual(sizes[mate_101], 2)
+        self.assertLessEqual(sizes[mate_100], 3)
 
 
 # ---------------------------------------------------------------------------

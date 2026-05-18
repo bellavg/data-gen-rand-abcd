@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=big_optuna
-#SBATCH --time=72:00:00
+#SBATCH --time=48:00:00
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=16
 #SBATCH --partition=gpu_h100
@@ -68,7 +68,7 @@ cd "$BASE_DIR"
 #              enqueued first, remainder are new TPE-guided trials
 # 72h job limit → both stages comfortably fit. In practice (patience=3,
 # BF16 pruning): Stage 1 ~25-30h, Stage 2 ~25-35h per worker.
-STAGE=2
+STAGE="${STAGE:-2}"
 if [[ "$STAGE" == "1" ]]; then
     TRAIN_SAMPLES=15000
     N_TRIALS=50
@@ -81,6 +81,19 @@ else
     echo "ERROR: STAGE must be 1 or 2 (got '$STAGE')." >&2
     exit 1
 fi
+
+# Stage-specific memory defaults. Stage 2 uses stricter limits to avoid
+# catastrophic trial batches that trigger CUDA OOM and eventual cgroup kills.
+if [[ "$STAGE" == "2" ]]; then
+    MEMORY_GUARD_MAX_TOKENS="${MEMORY_GUARD_MAX_TOKENS:-1.2e10}"
+    HARD_PRUNE_RISK="${HARD_PRUNE_RISK:-5e9}"
+    DYNAMIC_BUCKET_RULES="${DYNAMIC_BUCKET_RULES:-240000:1,160000:2,100000:4}"
+else
+    MEMORY_GUARD_MAX_TOKENS="${MEMORY_GUARD_MAX_TOKENS:-2.5e8}"
+    HARD_PRUNE_RISK="${HARD_PRUNE_RISK:-1e10}"
+    DYNAMIC_BUCKET_RULES="${DYNAMIC_BUCKET_RULES:-}"
+fi
+HARD_PRUNE="${HARD_PRUNE:-true}"
 echo "Stage: $STAGE  train_samples=$TRAIN_SAMPLES  n_trials=$N_TRIALS  max_trial_hours=$MAX_TRIAL_HOURS"
 
 WORKSPACE="/scratch-shared/$USER/big_optuna_run_s${STAGE}_${TASK_ID}"
@@ -144,33 +157,30 @@ else
 fi
 # ---------------------------------------------------------
 
-# Stage 2: seed a fresh study with the top-SEED_TOP_N completed Stage-1 configs.
-# Those are enqueued first so Stage 2 immediately re-evaluates the most promising
-# regions on the larger dataset; TPE then explores adjacent space for the
-# remaining (N_TRIALS - SEED_TOP_N) trials.
-#
-# SEED_FROM_WORKER: override which worker's Stage-1 DB to seed from.
-# Useful when a worker's own Stage-1 failed or was corrupted.
-# Example: SEED_FROM_WORKER=1 makes workers 2/3 reuse worker 1's Stage-1 results.
+# Stage-2 seed policy:
+# - Worker 1 defaults to enqueue (re-run top-N first)
+# - Workers 2/3 default to import (prior observations, no re-run)
+# Override with SEED_MODE={enqueue|import} and/or SEED_FROM_WORKER.
 SEED_TOP_N="${SEED_TOP_N:-10}"
 SEED_FLAGS=()
 if [[ "$STAGE" == "2" ]]; then
     SEED_WORKER="${SEED_FROM_WORKER:-1}"
     SEED_STUDY="${STUDY_NAME_BASE}_worker${SEED_WORKER}"
     S1_DB="/scratch-shared/$USER/big_optuna_run_s1_${SEED_WORKER}/optuna_study.db"
+
     if [[ -f "$S1_DB" ]]; then
-        echo "Stage 2: seeding from top-${SEED_TOP_N} Stage-1 trials (worker=${SEED_WORKER} study=${SEED_STUDY} DB: $S1_DB)"
+        : "${SEED_MODE:=$([[ "$TASK_ID" -eq 1 ]] && echo enqueue || echo import)}"
+        echo "Stage 2 seed: worker=${SEED_WORKER} mode=${SEED_MODE} top_n=${SEED_TOP_N}"
         SEED_FLAGS=(
             --seed_from_db_url "sqlite:///$S1_DB"
             --seed_study_name "$SEED_STUDY"
             --seed_top_n "$SEED_TOP_N"
+            --seed_mode "$SEED_MODE"
         )
     else
         echo "WARNING: Stage-1 DB not found at $S1_DB; starting Stage 2 cold." >&2
     fi
 fi
-echo "Seed flags: ${SEED_FLAGS[*]:-(none)}"
-echo "Seed top-N: $SEED_TOP_N"
 
 # ---------------------------------------------------------
 # EXECUTE OPTUNA WORKER (big run)
@@ -199,7 +209,9 @@ PIN_MEMORY="${PIN_MEMORY:-false}"
 PERSISTENT_WORKERS="${PERSISTENT_WORKERS:-false}"
 PREFETCH_FACTOR=1
 DYNAMIC_BATCHING="${DYNAMIC_BATCHING:-true}"
-MEMORY_TELEMETRY_TRIALS="${MEMORY_TELEMETRY_TRIALS:-0}"
+MEMORY_TELEMETRY_TRIALS="${MEMORY_TELEMETRY_TRIALS:-3}"
+MAX_RESTARTS_ON_OOM="${MAX_RESTARTS_ON_OOM:-0}"
+RESTART_DELAY_SEC="${RESTART_DELAY_SEC:-20}"
 
 if [ "$NUM_WORKERS" -eq 0 ]; then
     PERSISTENT_WORKERS=false
@@ -218,9 +230,18 @@ fi
 if [ "$DYNAMIC_BATCHING" = "true" ]; then
     EXTRA_FLAGS+=(--dynamic_batching)
 fi
+if [ "$DYNAMIC_BATCHING" = "true" ] && [ -n "$DYNAMIC_BUCKET_RULES" ]; then
+    EXTRA_FLAGS+=(--dynamic_bucket_rules "$DYNAMIC_BUCKET_RULES")
+fi
+if [ "$HARD_PRUNE" = "true" ]; then
+    EXTRA_FLAGS+=(--hard_prune --hard_prune_risk "$HARD_PRUNE_RISK")
+fi
 
 echo "DataLoader config: num_workers=$NUM_WORKERS pin_memory=$PIN_MEMORY persistent_workers=$PERSISTENT_WORKERS prefetch_factor=$PREFETCH_FACTOR dynamic_batching=$DYNAMIC_BATCHING"
 echo "Memory telemetry: first $MEMORY_TELEMETRY_TRIALS trial(s)"
+echo "Memory guard: max_tokens=$MEMORY_GUARD_MAX_TOKENS hard_prune=$HARD_PRUNE hard_prune_risk=$HARD_PRUNE_RISK"
+echo "Dynamic buckets: ${DYNAMIC_BUCKET_RULES:-(disabled)}"
+echo "Restart policy: max_restarts_on_oom=$MAX_RESTARTS_ON_OOM restart_delay_sec=$RESTART_DELAY_SEC"
 
 echo "Starting Big Worker $TASK_ID on GPU 0 (stage=$STAGE sampler_seed=$SAMPLER_SEED, study=$STUDY_NAME)..."
 
@@ -283,24 +304,46 @@ DB_SYNC_INTERVAL="${DB_SYNC_INTERVAL:-3600}"
 SYNC_PID=$!
 
 EXIT_CODE=0
-python -u -m hp_tuning \
-    --db_url "$STORAGE_PATH" \
-    --study_name "$STUDY_NAME" \
-    --checkpoint_dir "$CHECKPOINT_DIR" \
-    --cache_dir "$SHARED_CACHE" \
-    --log_dir "$LOG_DIR/worker_${TASK_ID}" \
-    --csv_paths "$CSV_1" "$CSV_2" "$CSV_3" "$CSV_4" \
-    --num_workers "$NUM_WORKERS" \
-    ${EXTRA_FLAGS[@]+"${EXTRA_FLAGS[@]}"} \
-    ${SEED_FLAGS[@]+"${SEED_FLAGS[@]}"} \
-    --memory_guard_max_tokens 3.5e8 \
-    --dataset_seed 42 \
-    --sampler_seed "$SAMPLER_SEED" \
-    --memory_telemetry_trials "$MEMORY_TELEMETRY_TRIALS" \
-    --train_samples "$TRAIN_SAMPLES" \
-    --max_trial_hours "$MAX_TRIAL_HOURS" \
-    --n_trials "$N_TRIALS" \
-    > "$LOG_DIR/worker_${TASK_ID}.log" 2>&1 || EXIT_CODE=$?
+ATTEMPT=0
+while true; do
+    ATTEMPT=$((ATTEMPT + 1))
+    echo "Launching worker attempt $ATTEMPT ..."
+
+    EXIT_CODE=0
+    python -u -m hp_tuning \
+        --db_url "$STORAGE_PATH" \
+        --study_name "$STUDY_NAME" \
+        --checkpoint_dir "$CHECKPOINT_DIR" \
+        --cache_dir "$SHARED_CACHE" \
+        --log_dir "$LOG_DIR/worker_${TASK_ID}" \
+        --csv_paths "$CSV_1" "$CSV_2" "$CSV_3" "$CSV_4" \
+        --num_workers "$NUM_WORKERS" \
+        ${EXTRA_FLAGS[@]+"${EXTRA_FLAGS[@]}"} \
+        ${SEED_FLAGS[@]+"${SEED_FLAGS[@]}"} \
+        --memory_guard_max_tokens "$MEMORY_GUARD_MAX_TOKENS" \
+        --dataset_seed 42 \
+        --sampler_seed "$SAMPLER_SEED" \
+        --memory_telemetry_trials "$MEMORY_TELEMETRY_TRIALS" \
+        --train_samples "$TRAIN_SAMPLES" \
+        --max_trial_hours "$MAX_TRIAL_HOURS" \
+        --n_trials "$N_TRIALS" \
+        > "$LOG_DIR/worker_${TASK_ID}.log" 2>&1 || EXIT_CODE=$?
+
+    if (( EXIT_CODE == 0 )); then
+        break
+    fi
+
+    # Exit 137 means SIGKILL (typically cgroup OOM kill). The Python process
+    # cannot catch this in-process, so restart the worker process and continue
+    # from the same Optuna DB/study.
+    if (( EXIT_CODE == 137 )) && (( ATTEMPT <= MAX_RESTARTS_ON_OOM )); then
+        echo "Worker $TASK_ID hit exit 137 (OOM kill). Restarting in ${RESTART_DELAY_SEC}s (${ATTEMPT}/${MAX_RESTARTS_ON_OOM} restart(s) used)."
+        sleep "$RESTART_DELAY_SEC"
+        continue
+    fi
+
+    break
+done
 
 # Stop the background sync loop
 cleanup_sync_loop
@@ -318,7 +361,7 @@ elif [ "$_final_rc" -ne 2 ]; then
 fi
 
 if (( EXIT_CODE != 0 )); then
-    echo "Worker $TASK_ID failed (exit $EXIT_CODE). Last 80 lines:"
+    echo "Worker $TASK_ID failed after $ATTEMPT attempt(s) (exit $EXIT_CODE). Last 80 lines:"
     tail -n 80 "$LOG_DIR/worker_${TASK_ID}.log" || true
     exit "$EXIT_CODE"
 fi
