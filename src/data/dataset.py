@@ -125,7 +125,6 @@ class AIGGraphRegressionDataset(PyGDataset):
             if self._cache_meta_dir is not None
             else None
         )
-        self._graph_cache_map: dict[str, str] = {}
         self._graph_num_nodes_map: dict[str, int] = {}
 
         # Initialize the PE transform factory
@@ -387,7 +386,6 @@ class AIGGraphRegressionDataset(PyGDataset):
             for graph_path, cached_path, num_nodes in executor.map(
                 _process_one, unique_paths
             ):
-                self._graph_cache_map[graph_path] = cached_path
                 self._graph_num_nodes_map[graph_path] = num_nodes
                 completed += 1
                 if completed % 1000 == 0 or completed == len(unique_paths):
@@ -399,7 +397,6 @@ class AIGGraphRegressionDataset(PyGDataset):
         entries: list[dict] = [
             {
                 "graph_path": sample.graph_path,
-                "cache_path": self._graph_cache_map[sample.graph_path],
                 "num_nodes": self._graph_num_nodes_map[sample.graph_path],
             }
             for sample in self.samples
@@ -412,13 +409,10 @@ class AIGGraphRegressionDataset(PyGDataset):
         }
 
     def _apply_manifest(self, manifest: dict) -> None:
-        self._graph_cache_map.clear()
         self._graph_num_nodes_map.clear()
         for entry in manifest["entries"]:
             graph_path = str(entry["graph_path"])
-            cache_path = str(entry["cache_path"])
             num_nodes = int(entry["num_nodes"])
-            self._graph_cache_map[graph_path] = cache_path
             self._graph_num_nodes_map[graph_path] = num_nodes
 
     def process(self) -> bool:
@@ -447,13 +441,13 @@ class AIGGraphRegressionDataset(PyGDataset):
     def _load_graph_for_sample(self, sample: GraphSample):
         graph_path = sample.graph_path
         if self.cache_dir is not None:
-            cached_path = self._graph_cache_map.get(graph_path)
-            if cached_path is None:
+            cached_path = self._cached_graph_path(graph_path)
+            if cached_path.is_file():
+                graph_path = str(cached_path)
+            else:
                 rebuilt_cache_path, num_nodes = self._cache_single_graph(graph_path)
-                self._graph_cache_map[graph_path] = rebuilt_cache_path
-                self._graph_num_nodes_map[graph_path] = num_nodes
-                cached_path = rebuilt_cache_path
-            graph_path = cached_path
+                self._graph_num_nodes_map[sample.graph_path] = num_nodes
+                graph_path = rebuilt_cache_path
 
         return torch.load(graph_path, map_location="cpu", weights_only=False)
 
@@ -520,6 +514,10 @@ class AIGGraphRegressionDataset(PyGDataset):
         sizes = [self._num_nodes_for_sample(sample) for sample in self.samples]
         self._write_sizes_cache(sizes_cache_path, sizes)
         return sizes
+
+    def release_runtime_caches(self) -> None:
+        """Drop in-memory per-graph metadata once batch planning is complete."""
+        self._graph_num_nodes_map.clear()
 
 
 __all__ = ["AIGGraphRegressionDataset", "GraphSample"]

@@ -62,6 +62,7 @@ if hasattr(torch.backends, "cudnn"):
 
 
 ATTENTION_ENCODERS = {"transformer_conv", "graphgps"}
+BATCH_SIZE_CHOICES = [4, 8, 16, 32]
 
 
 def _set_trial_user_attr(trial: optuna.Trial, key: str, value: str | int | float | bool) -> None:
@@ -193,6 +194,25 @@ def _estimate_memory_tokens(
     return (node_term + edge_term) * expansion_factor * gps_multiplier
 
 
+def _parse_dynamic_bucket_rules(
+    rule_text: str | None,
+) -> list[tuple[int, int]]:
+    """Parse dynamic bucket rules from CLI text.
+
+    Format: "min_nodes:batch_size,min_nodes:batch_size,...".
+    Example: "300000:1,180000:2,90000:4".
+    """
+    if not rule_text:
+        return []
+
+    parsed: list[tuple[int, int]] = []
+    for chunk in (r.strip() for r in rule_text.split(",") if r.strip()):
+        min_nodes, target = chunk.split(":", 1)
+        parsed.append((int(min_nodes), int(target)))
+
+    return parsed
+
+
 def _build_guarded_collate(memory_guard: dict) -> Callable[[list], Batch]:
     max_tokens = float(memory_guard.get("max_tokens", float("inf")))
     hidden_dim = int(memory_guard.get("hidden_dim", 32))
@@ -240,18 +260,35 @@ def _install_hp_guarded_dataloaders(
 ) -> None:
     guarded_collate = _build_guarded_collate(memory_guard)
     seed = int(getattr(datamodule, "seed", 42))
+    bucket_rules = list(datamodule.dynamic_bucket_rules)
+    use_buckets = dynamic_batching and bool(bucket_rules)
+
+    if use_buckets:
+        rules_text = ", ".join(f"{nodes}:{size}" for nodes, size in bucket_rules)
+        print(
+            "[memory_guard] "
+            f"dynamic bucket rules (min_nodes:batch_size): {rules_text}"
+        )
 
     def train_dataloader() -> DataLoader:
-        if dynamic_batching:
-            sizes = getattr(datamodule, "_train_sizes", None)
-            if sizes is None:
+        if use_buckets:
+            precomputed_batches = getattr(datamodule, "_train_batch_plan", None)
+            # sizes is only needed if we have to build the plan from scratch;
+            # when precomputed_batches is already available the sampler ignores sizes.
+            sampler_sizes: list[int] = []
+            if precomputed_batches is None:
                 sizes = datamodule.train_ds.get_num_nodes_list()
+                precomputed_batches = datamodule._load_or_build_train_batch_plan(sizes)
+                sampler_sizes = sizes
             sampler = BalancedDynamicBatchSampler(
-                sizes,
+                sampler_sizes,
                 batch_size=datamodule.batch_size,
                 shuffle=True,
                 seed=seed,
+                bucket_rules=bucket_rules,
+                precomputed_batches=precomputed_batches,
             )
+            datamodule._train_batch_plan = None
             return DataLoader(
                 datamodule.train_ds,
                 batch_sampler=sampler,
@@ -307,6 +344,8 @@ def _is_oom_like_runtime_error(exc: RuntimeError) -> bool:
 def _estimate_trial_risk(
     *,
     batch_size: int,
+    num_nodes: int,
+    num_edges: int,
     hidden_dim: int,
     num_layers: int,
     jk_mode: str,
@@ -317,18 +356,11 @@ def _estimate_trial_risk(
 ) -> float:
     jk_multiplier = (num_layers + 1) if jk_mode == "cat" else 1
     attn_multiplier = heads if encoder_name in ATTENTION_ENCODERS else 1
-    # GPS has local MPNN + global Performer per layer; extra 1.5x vs TransformerConv.
     gps_multiplier = 1.5 if encoder_name == "graphgps" else 1.0
     pe_multiplier = 1.0 + (float(pos_enc_dim) / 128.0 if pe_type != "none" else 0.0)
-    return float(
-        batch_size
-        * hidden_dim
-        * num_layers
-        * jk_multiplier
-        * attn_multiplier
-        * pe_multiplier
-        * gps_multiplier
-    )
+    node_term = num_nodes * hidden_dim * num_layers * jk_multiplier * pe_multiplier
+    edge_term = num_edges * hidden_dim * attn_multiplier
+    return float(batch_size * (node_term + edge_term) * gps_multiplier)
 
 
 def _purge_trial_memory(
@@ -472,7 +504,7 @@ def _trial_outcome_callback(study: optuna.Study, frozen_trial) -> None:
 def objective(trial: optuna.Trial, args):
     _mark_trial_outcome(trial, outcome="running", oom_like=False)
 
-    batch_size = trial.suggest_categorical("batch_size", [4, 8, 16, 32])
+    batch_size = trial.suggest_categorical("batch_size", BATCH_SIZE_CHOICES)
     lr = trial.suggest_float("lr", 1e-4, 1e-2, log=True)
     weight_decay = trial.suggest_float("weight_decay", 1e-5, 1e-2, log=True)
     huber_delta = trial.suggest_float("huber_delta", 0.5, 2.0)
@@ -542,9 +574,11 @@ def objective(trial: optuna.Trial, args):
     pruning_cb = None
     early_stop_cb = None
     risk_score = None
-    if getattr(args, "hard_prune", False):
+    if getattr(args, "hard_prune", False) and batch_size == min(BATCH_SIZE_CHOICES):
         risk_score = _estimate_trial_risk(
             batch_size=batch_size,
+            num_nodes=360_000,
+            num_edges=700_000,
             hidden_dim=hidden_dim,
             num_layers=encoder_kwargs["num_layers"],
             jk_mode=encoder_kwargs["jk_mode"],
@@ -553,12 +587,12 @@ def objective(trial: optuna.Trial, args):
             pe_type=pe_type,
             pos_enc_dim=pos_enc_dim,
         )
-        hard_prune_risk = float(getattr(args, "hard_prune_risk", 200000.0))
+        hard_prune_risk = float(getattr(args, "hard_prune_risk", 1e10))
         _set_trial_user_attr(trial, "risk_score", float(risk_score))
         if risk_score > hard_prune_risk:
             msg = (
                 f"Pre-allocation prune for high-risk trial. "
-                f"estimated_risk={risk_score:.2f} threshold={hard_prune_risk:.2f}"
+                f"estimated_risk={risk_score:.2e} threshold={hard_prune_risk:.2e}"
             )
             print(f"\n{msg}")
             _mark_trial_outcome(
@@ -598,6 +632,9 @@ def objective(trial: optuna.Trial, args):
         prefetch_factor = int(getattr(args, "prefetch_factor", 1))
         dynamic_batching = getattr(args, "dynamic_batching", False)
         dataset_seed = int(getattr(args, "dataset_seed", 42))
+        dynamic_bucket_rules = _parse_dynamic_bucket_rules(
+            getattr(args, "dynamic_bucket_rules", ""),
+        )
 
         guard_expansion = 3.0 if encoder_name in ATTENTION_ENCODERS else 2.0
         memory_guard = {
@@ -623,6 +660,7 @@ def objective(trial: optuna.Trial, args):
             pin_memory=pin_memory,
             prefetch_factor=prefetch_factor,
             dynamic_batching=dynamic_batching,
+            dynamic_bucket_rules=dynamic_bucket_rules,
         )
         _install_hp_guarded_dataloaders(
             datamodule,
@@ -844,14 +882,16 @@ def _seed_study_from_best(
     source_db_url: str,
     source_study_name: str,
     top_n: int,
+    seed_mode: str = "import",
 ) -> None:
-    """Import the top-N completed Stage-1 trials into this study as already-completed
-    trials so the TPE sampler treats them as prior observations and immediately
-    focuses on promising regions — without re-running any of them.
+    """Seed Stage-2 from top-N Stage-1 completed trials.
+
+    seed_mode:
+      - "enqueue": add the configs to the waiting queue so they are re-run first.
+      - "import": add them as already-completed observations (no re-run).
     """
     if top_n <= 0:
         return
-
     source_storage = RDBStorage(
         url=source_db_url,
         engine_kwargs={"connect_args": {"timeout": 60, "check_same_thread": False}},
@@ -875,22 +915,40 @@ def _seed_study_from_best(
         print("[seed] No eligible Stage-1 trials found to seed from.")
         return
 
-    print(f"[seed] Importing top-{len(top_trials)} Stage-1 trials as prior observations (no re-run).")
-    imported = 0
+    if seed_mode == "enqueue":
+        print(f"[seed] Seeding Stage-2 study with top-{len(top_trials)} Stage-1 trials.")
+    else:
+        print(
+            f"[seed] Importing top-{len(top_trials)} Stage-1 trials "
+            "as prior observations (no re-run)."
+        )
+
     for t in top_trials:
-        try:
-            study.add_trial(
-                optuna.trial.create_trial(
-                    params=t.params,
-                    distributions=t.distributions,
-                    value=t.value,
-                    user_attrs={**t.user_attrs, "seeded_from_stage1": True},
-                )
+        seed_attrs = {
+            **t.user_attrs,
+            "seeded_from_stage1": True,
+            "seed_source_trial_number": int(t.number),
+            "seed_mode": seed_mode,
+        }
+
+        if seed_mode == "enqueue":
+            study.enqueue_trial(
+                t.params,
+                user_attrs=seed_attrs,
+                skip_if_exists=True,
             )
-            imported += 1
-            print(f"[seed]   imported trial #{t.number} value={t.value:.6f}")
-        except Exception as exc:
-            print(f"[seed]   skipped trial #{t.number}: {exc}")
+            print(f"[seed]   enqueued trial #{t.number} value={t.value:.6f}")
+            continue
+
+        study.add_trial(
+            optuna.trial.create_trial(
+                params=t.params,
+                distributions=t.distributions,
+                value=t.value,
+                user_attrs=seed_attrs,
+            )
+        )
+        print(f"[seed]   imported trial #{t.number} value={t.value:.6f}")
 
 
 if __name__ == "__main__":
@@ -931,6 +989,16 @@ if __name__ == "__main__":
         help="Enable dynamic batch construction based on graph size.",
     )
     parser.add_argument(
+        "--dynamic_bucket_rules",
+        type=str,
+        default="",
+        help=(
+            "Optional bucket rules for dynamic batching in the format "
+            "'min_nodes:batch_size,min_nodes:batch_size'. "
+            "Example: '300000:1,180000:2,90000:4'."
+        ),
+    )
+    parser.add_argument(
         "--memory_guard_max_tokens",
         type=float,
         default=3.5e8,
@@ -944,8 +1012,12 @@ if __name__ == "__main__":
     parser.add_argument(
         "--hard_prune_risk",
         type=float,
-        default=200000.0,
-        help="Risk threshold used when --hard_prune is set.",
+        default=1e10,
+        help=(
+            "Risk threshold used when --hard_prune is set. Evaluated against a "
+            f"360K-node graph at batch_size={min(BATCH_SIZE_CHOICES)} (the minimum). "
+            "Accounts for nodes, edges, hidden_dim, layers, jk_mode, encoder, and PE."
+        ),
     )
     parser.add_argument(
         "--dataset_seed",
@@ -956,7 +1028,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--memory_telemetry_trials",
         type=int,
-        default=0,
+        default=3,
         help=(
             "Log RSS/CUDA memory telemetry only for the first N trials "
             "(0 disables telemetry)."
@@ -1023,6 +1095,16 @@ if __name__ == "__main__":
         default=20,
         help="Number of top Stage-1 trials to enqueue at the start of Stage-2 (default: 20).",
     )
+    parser.add_argument(
+        "--seed_mode",
+        type=str,
+        choices=["enqueue", "import"],
+        default="import",
+        help=(
+            "How to apply Stage-1 seeds in Stage-2: 'enqueue' re-runs seeded configs first; "
+            "'import' adds them as completed observations without re-running."
+        ),
+    )
     args = parser.parse_args()
 
     # Enable WAL journal mode on SQLite so concurrent readers/writers don't
@@ -1054,6 +1136,7 @@ if __name__ == "__main__":
             source_db_url=args.seed_from_db_url,
             source_study_name=args.seed_study_name,
             top_n=args.seed_top_n,
+            seed_mode=args.seed_mode,
         )
 
     study.optimize(

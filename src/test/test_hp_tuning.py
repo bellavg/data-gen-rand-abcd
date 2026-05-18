@@ -431,6 +431,7 @@ class TestSeedStudyFromBest(unittest.TestCase):
         t.state = optuna.trial.TrialState.COMPLETE
         t.user_attrs = {"selection_eligible": eligible}
         t.params = params
+        t.distributions = {k: MagicMock() for k in params.keys()}
         return t
 
     def test_enqueues_top_n_eligible_trials(self):
@@ -449,8 +450,13 @@ class TestSeedStudyFromBest(unittest.TestCase):
         fake_source_study.trials = trials
 
         dest_study = MagicMock()
+        dest_study.get_trials.return_value = []
         enqueued = []
-        dest_study.enqueue_trial.side_effect = lambda p: enqueued.append(p)
+
+        def _enqueue(params, **kwargs):
+            enqueued.append((params, kwargs))
+
+        dest_study.enqueue_trial.side_effect = _enqueue
 
         with (
             patch("hp_tuning.RDBStorage"),
@@ -461,12 +467,56 @@ class TestSeedStudyFromBest(unittest.TestCase):
                 source_db_url="sqlite:///fake.db",
                 source_study_name="stage1",
                 top_n=2,
+                seed_mode="enqueue",
             )
 
         # Only eligible trials, sorted by value asc, top 2
         self.assertEqual(len(enqueued), 2)
-        self.assertEqual(enqueued[0], params_b)  # value=0.3 (best eligible)
-        self.assertEqual(enqueued[1], params_a)  # value=0.4 (next best; trial 3)
+        self.assertEqual(enqueued[0][0], params_b)  # value=0.3 (best eligible)
+        self.assertEqual(enqueued[1][0], params_a)  # value=0.4 (next best; trial 3)
+        self.assertTrue(enqueued[0][1]["skip_if_exists"])
+        self.assertEqual(enqueued[0][1]["user_attrs"]["seed_mode"], "enqueue")
+
+    def test_imports_top_n_eligible_trials(self):
+        params_a = {"lr": 1e-3, "hidden_dim": 64}
+        params_b = {"lr": 5e-4, "hidden_dim": 128}
+
+        trials = [
+            self._make_frozen_trial(0, 0.5, True, params_a),
+            self._make_frozen_trial(1, 0.3, True, params_b),
+        ]
+
+        fake_source_study = MagicMock()
+        fake_source_study.trials = trials
+
+        dest_study = MagicMock()
+        dest_study.get_trials.return_value = []
+        created_trials = []
+        imported = []
+
+        def _create_trial(**kwargs):
+            created_trials.append(kwargs)
+            return kwargs
+
+        dest_study.add_trial.side_effect = lambda trial: imported.append(trial)
+
+        with (
+            patch("hp_tuning.RDBStorage"),
+            patch("hp_tuning.optuna.load_study", return_value=fake_source_study),
+            patch("hp_tuning.optuna.trial.create_trial", side_effect=_create_trial),
+        ):
+            hp_tuning._seed_study_from_best(
+                dest_study,
+                source_db_url="sqlite:///fake.db",
+                source_study_name="stage1",
+                top_n=2,
+                seed_mode="import",
+            )
+
+        self.assertEqual(len(imported), 2)
+        self.assertEqual(created_trials[0]["params"], params_b)
+        self.assertEqual(created_trials[1]["params"], params_a)
+        self.assertEqual(created_trials[0]["user_attrs"]["seed_mode"], "import")
 
     def test_skips_ineligible_trials(self):
         trials = [
@@ -477,6 +527,7 @@ class TestSeedStudyFromBest(unittest.TestCase):
         fake_source_study.trials = trials
 
         dest_study = MagicMock()
+        dest_study.get_trials.return_value = []
         with (
             patch("hp_tuning.RDBStorage"),
             patch("hp_tuning.optuna.load_study", return_value=fake_source_study),
@@ -486,8 +537,10 @@ class TestSeedStudyFromBest(unittest.TestCase):
                 source_db_url="sqlite:///fake.db",
                 source_study_name="stage1",
                 top_n=5,
+                seed_mode="enqueue",
             )
         dest_study.enqueue_trial.assert_not_called()
+        dest_study.add_trial.assert_not_called()
 
     def test_top_n_zero_is_noop(self):
         dest_study = MagicMock()
@@ -497,11 +550,13 @@ class TestSeedStudyFromBest(unittest.TestCase):
                 source_db_url="sqlite:///fake.db",
                 source_study_name="stage1",
                 top_n=0,
+                seed_mode="enqueue",
             )
         dest_study.enqueue_trial.assert_not_called()
+        dest_study.add_trial.assert_not_called()
 
-    def test_enqueue_error_is_swallowed(self):
-        """A broken param set should be skipped without crashing."""
+    def test_enqueue_error_is_raised(self):
+        """A broken param set should propagate instead of being swallowed."""
         params_good = {"lr": 1e-3}
         params_bad = {"lr": 999}  # will raise when enqueued
         trials = [
@@ -512,14 +567,14 @@ class TestSeedStudyFromBest(unittest.TestCase):
         fake_source_study.trials = trials
 
         dest_study = MagicMock()
-        dest_study.enqueue_trial.side_effect = [ValueError("bad param"), None]
+        dest_study.get_trials.return_value = []
 
         enqueued = []
 
-        def _enqueue(p):
-            if p is params_bad:
+        def _enqueue(params, **kwargs):
+            if params is params_bad:
                 raise ValueError("bad param")
-            enqueued.append(p)
+            enqueued.append(params)
 
         dest_study.enqueue_trial.side_effect = _enqueue
 
@@ -527,14 +582,50 @@ class TestSeedStudyFromBest(unittest.TestCase):
             patch("hp_tuning.RDBStorage"),
             patch("hp_tuning.optuna.load_study", return_value=fake_source_study),
         ):
-            # Must not raise
+            with self.assertRaises(ValueError):
+                hp_tuning._seed_study_from_best(
+                    dest_study,
+                    source_db_url="sqlite:///fake.db",
+                    source_study_name="stage1",
+                    top_n=2,
+                    seed_mode="enqueue",
+                )
+
+    def test_import_includes_params_even_if_present_in_destination_study(self):
+        params_a = {"lr": 1e-3, "hidden_dim": 64}
+        params_b = {"lr": 5e-4, "hidden_dim": 128}
+        trials = [
+            self._make_frozen_trial(10, 0.1, True, params_a),
+            self._make_frozen_trial(11, 0.2, True, params_b),
+        ]
+        fake_source_study = MagicMock()
+        fake_source_study.trials = trials
+
+        existing = MagicMock()
+        existing.params = params_a
+        existing.user_attrs = {}
+
+        dest_study = MagicMock()
+        dest_study.get_trials.return_value = [existing]
+        imported = []
+        dest_study.add_trial.side_effect = lambda trial: imported.append(trial)
+
+        with (
+            patch("hp_tuning.RDBStorage"),
+            patch("hp_tuning.optuna.load_study", return_value=fake_source_study),
+            patch("hp_tuning.optuna.trial.create_trial", side_effect=lambda **kwargs: kwargs),
+        ):
             hp_tuning._seed_study_from_best(
                 dest_study,
                 source_db_url="sqlite:///fake.db",
                 source_study_name="stage1",
                 top_n=2,
+                seed_mode="import",
             )
-        self.assertEqual(enqueued, [params_good])
+
+        self.assertEqual(len(imported), 2)
+        self.assertEqual(imported[0]["params"], params_a)
+        self.assertEqual(imported[1]["params"], params_b)
 
 
 class TestMemoryGuardBatchAccumulation(unittest.TestCase):
