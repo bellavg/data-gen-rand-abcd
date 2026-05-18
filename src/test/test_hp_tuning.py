@@ -613,7 +613,10 @@ class TestSeedStudyFromBest(unittest.TestCase):
         with (
             patch("hp_tuning.RDBStorage"),
             patch("hp_tuning.optuna.load_study", return_value=fake_source_study),
-            patch("hp_tuning.optuna.trial.create_trial", side_effect=lambda **kwargs: kwargs),
+            patch(
+                "hp_tuning.optuna.trial.create_trial",
+                side_effect=lambda **kwargs: kwargs,
+            ),
         ):
             hp_tuning._seed_study_from_best(
                 dest_study,
