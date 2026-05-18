@@ -574,7 +574,7 @@ def objective(trial: optuna.Trial, args):
     pruning_cb = None
     early_stop_cb = None
     risk_score = None
-    if getattr(args, "hard_prune", False) and batch_size == min(BATCH_SIZE_CHOICES):
+    if getattr(args, "hard_prune", False):
         risk_score = _estimate_trial_risk(
             batch_size=batch_size,
             num_nodes=360_000,
@@ -592,6 +592,7 @@ def objective(trial: optuna.Trial, args):
         if risk_score > hard_prune_risk:
             msg = (
                 f"Pre-allocation prune for high-risk trial. "
+                f"batch_size={batch_size} "
                 f"estimated_risk={risk_score:.2e} threshold={hard_prune_risk:.2e}"
             )
             print(f"\n{msg}")
@@ -1015,7 +1016,7 @@ if __name__ == "__main__":
         default=1e10,
         help=(
             "Risk threshold used when --hard_prune is set. Evaluated against a "
-            f"360K-node graph at batch_size={min(BATCH_SIZE_CHOICES)} (the minimum). "
+            "360K-node graph at each sampled trial batch_size. "
             "Accounts for nodes, edges, hidden_dim, layers, jk_mode, encoder, and PE."
         ),
     )

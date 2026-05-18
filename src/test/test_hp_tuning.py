@@ -421,6 +421,48 @@ class TestOOMTrialCleanup(unittest.TestCase):
         self.assertIn("empty_cache", between)
 
 
+class TestHardPruneRiskScope(unittest.TestCase):
+    def test_hard_prune_applies_to_large_batch_trials(self):
+        args = argparse.Namespace(
+            csv_paths=["algo_a.csv", "algo_b.csv"],
+            checkpoint_dir="/tmp/ckpt",
+            cache_dir="/tmp/hp_cache",
+            num_workers=0,
+            train_samples=20000,
+            log_dir="/tmp",
+            hard_prune=True,
+            hard_prune_risk=1.0,
+        )
+
+        trial = _FakeTrial(
+            {
+                "batch_size": 32,
+                "lr": 1e-3,
+                "huber_delta": 1.0,
+                "encoder_name": "gcn",
+                "hidden_dim": 32,
+                "pe_type": "none",
+                "pooling_type": "mean",
+                "num_layers": 2,
+                "dropout": 0.1,
+                "norm_type": "batch",
+                "jk_mode": "last",
+            }
+        )
+
+        with (
+            patch(
+                "hp_tuning.AIGDataModule",
+                side_effect=AssertionError(
+                    "hard prune should trigger before datamodule construction"
+                ),
+            ),
+            patch("hp_tuning.torch.cuda.is_available", return_value=False),
+        ):
+            with self.assertRaises(hp_tuning.optuna.TrialPruned):
+                hp_tuning.objective(trial, args)
+
+
 class TestSeedStudyFromBest(unittest.TestCase):
     """Unit tests for _seed_study_from_best."""
 
