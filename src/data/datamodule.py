@@ -245,7 +245,7 @@ class AIGDataModule(pl.LightningDataModule):
         rules_str = json.dumps(self.dynamic_bucket_rules, separators=(",", ":"))
         key = f"{dataset_signature}|bs={self.batch_size}|rules={rules_str}"
         digest = hashlib.sha1(key.encode("utf-8")).hexdigest()[:16]
-        return self.cache_dir / "metadata" / "dynamic_batches" / f"train_{digest}.json"
+        return Path(self.cache_dir) / "metadata" / "dynamic_batches" / f"train_{digest}.json"
 
     def _normalize_cached_batch_plan(
         self,
