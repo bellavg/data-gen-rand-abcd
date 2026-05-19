@@ -328,6 +328,7 @@ class AIGGraphRegressionDataset(PyGDataset):
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         tmp_path = cache_path.with_suffix(f".tmp_{uuid.uuid4().hex[:8]}")
         torch.save(source_obj, tmp_path)
+        del source_obj  # release tensor memory immediately after saving
         tmp_path.replace(cache_path)
         meta_path.write_text(str(num_nodes))
         return str(cache_path), num_nodes
@@ -381,18 +382,26 @@ class AIGGraphRegressionDataset(PyGDataset):
             cached_path, num_nodes = self._cache_single_graph(graph_path)
             return graph_path, cached_path, num_nodes
 
+        # Submit in bounded chunks so the executor queue never holds more than
+        # CHUNK_SIZE loaded graph tensors in memory simultaneously.  executor.map()
+        # is eager and would buffer all 600K+ futures at once, causing OOM on
+        # large algorithms (Deepsyn: 688K graphs × ~13 MB = hundreds of GB).
+        CHUNK_SIZE = max(n_threads * 4, 256)
         completed = 0
+        total = len(unique_paths)
         with ThreadPoolExecutor(max_workers=n_threads) as executor:
-            for graph_path, cached_path, num_nodes in executor.map(
-                _process_one, unique_paths
-            ):
-                self._graph_num_nodes_map[graph_path] = num_nodes
-                completed += 1
-                if completed % 1000 == 0 or completed == len(unique_paths):
-                    print(
-                        f"[cache] {completed}/{len(unique_paths)} graphs cached",
-                        flush=True,
-                    )
+            for chunk_start in range(0, total, CHUNK_SIZE):
+                chunk = unique_paths[chunk_start : chunk_start + CHUNK_SIZE]
+                for graph_path, cached_path, num_nodes in executor.map(
+                    _process_one, chunk
+                ):
+                    self._graph_num_nodes_map[graph_path] = num_nodes
+                    completed += 1
+                    if completed % 1000 == 0 or completed == total:
+                        print(
+                            f"[cache] {completed}/{total} graphs cached",
+                            flush=True,
+                        )
 
         entries: list[dict] = [
             {
