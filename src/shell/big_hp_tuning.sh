@@ -82,11 +82,11 @@ else
     exit 1
 fi
 
-# Stage-specific memory defaults. Stage 2 uses stricter limits to avoid
-# catastrophic trial batches that trigger CUDA OOM and eventual cgroup kills.
+# Stage-specific memory defaults. Stage 2 keeps safety guards enabled but uses
+# larger H100-oriented limits and less restrictive dynamic buckets.
 if [[ "$STAGE" == "2" ]]; then
-    MEMORY_GUARD_MAX_TOKENS="${MEMORY_GUARD_MAX_TOKENS:-6e9}"
-    HARD_PRUNE_RISK="${HARD_PRUNE_RISK:-2.4e9}"
+    MEMORY_GUARD_MAX_TOKENS="${MEMORY_GUARD_MAX_TOKENS:-1.2e11}"
+    HARD_PRUNE_RISK="${HARD_PRUNE_RISK:-1.5e11}"
     DYNAMIC_BUCKET_RULES="${DYNAMIC_BUCKET_RULES:-240000:1,160000:1,100000:2}"
 else
     MEMORY_GUARD_MAX_TOKENS="${MEMORY_GUARD_MAX_TOKENS:-2.5e8}"
