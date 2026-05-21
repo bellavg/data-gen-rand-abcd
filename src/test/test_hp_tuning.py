@@ -18,6 +18,7 @@ except ModuleNotFoundError:
 
 # Import the module under the package namespace
 import hp_tuning
+import hp_tuning_utils
 from models.lightning_model import AIGRegressionLightningModule
 
 
@@ -400,13 +401,13 @@ class TestOOMTrialCleanup(unittest.TestCase):
             patch("hp_tuning.AIGDataModule", return_value=fake_datamodule),
             patch("hp_tuning.AIGRegressionLightningModule", return_value=MagicMock()),
             patch("hp_tuning.pl.Trainer", side_effect=lambda *a, **k: _FakeTrainer()),
-            patch("hp_tuning.gc.collect", side_effect=lambda: events.append("gc")),
-            patch("hp_tuning.torch.cuda.is_available", return_value=True),
+            patch("hp_tuning_utils.gc.collect", side_effect=lambda: events.append("gc")),
+            patch("hp_tuning_utils.torch.cuda.is_available", return_value=True),
             patch(
-                "hp_tuning.torch.cuda.empty_cache",
+                "hp_tuning_utils.torch.cuda.empty_cache",
                 side_effect=lambda: events.append("empty_cache"),
             ),
-            patch("hp_tuning.torch.cuda.synchronize"),
+            patch("hp_tuning_utils.torch.cuda.synchronize"),
         ):
             _ = hp_tuning.objective(self._make_trial(0), args)
             with self.assertRaises(hp_tuning.optuna.TrialPruned):
@@ -419,6 +420,23 @@ class TestOOMTrialCleanup(unittest.TestCase):
 
         self.assertIn("gc", between)
         self.assertIn("empty_cache", between)
+
+
+class TestRuntimeOOMClassification(unittest.TestCase):
+    def test_classifies_mmap_enomem_as_host_oom(self):
+        exc = RuntimeError(
+            "unable to mmap 1012833 bytes from file </tmp/a.pt>: "
+            "Cannot allocate memory (12)"
+        )
+        kind = hp_tuning_utils._classify_oom_runtime_error(exc)
+        self.assertIsNotNone(kind)
+        self.assertEqual(kind, "host")
+
+    def test_classifies_cuda_oom_as_cuda(self):
+        exc = RuntimeError("CUDA out of memory. Tried to allocate 512.00 MiB")
+        kind = hp_tuning_utils._classify_oom_runtime_error(exc)
+        self.assertIsNotNone(kind)
+        self.assertEqual(kind, "cuda")
 
 
 class TestHardPruneRiskScope(unittest.TestCase):
@@ -682,7 +700,7 @@ class TestMemoryGuardBatchAccumulation(unittest.TestCase):
         return Data(x=torch.zeros((num_nodes, 4)), edge_index=edge_index)
 
     def test_guard_prunes_when_batch_total_exceeds_limit(self):
-        guarded_collate = hp_tuning._build_guarded_collate(
+        guarded_collate = hp_tuning_utils._build_guarded_collate(
             {
                 "max_tokens": 100.0,
                 "hidden_dim": 1,
@@ -697,13 +715,13 @@ class TestMemoryGuardBatchAccumulation(unittest.TestCase):
         # Each graph is 80 tokens (40 nodes + 40 edges) so each one is safe alone,
         # but the two-graph batch totals 160 and must be pruned.
         graphs = [self._make_graph(40, 40), self._make_graph(40, 40)]
-        with self.assertRaises(hp_tuning.HPMemoryGuardError) as caught:
+        with self.assertRaises(hp_tuning_utils.HPMemoryGuardError) as caught:
             guarded_collate(graphs)
 
         self.assertIn("batch_tokens", str(caught.exception))
 
     def test_guard_allows_batch_under_limit(self):
-        guarded_collate = hp_tuning._build_guarded_collate(
+        guarded_collate = hp_tuning_utils._build_guarded_collate(
             {
                 "max_tokens": 100.0,
                 "hidden_dim": 1,
@@ -720,7 +738,7 @@ class TestMemoryGuardBatchAccumulation(unittest.TestCase):
 
     def test_error_message_contains_total_batch_tokens(self):
         """Regression: error message must name total_batch_tokens, not total_tokens."""
-        guarded_collate = hp_tuning._build_guarded_collate(
+        guarded_collate = hp_tuning_utils._build_guarded_collate(
             {
                 "max_tokens": 50.0,
                 "hidden_dim": 1,
@@ -731,7 +749,7 @@ class TestMemoryGuardBatchAccumulation(unittest.TestCase):
                 "expansion_factor": 1.0,
             }
         )
-        with self.assertRaises(hp_tuning.HPMemoryGuardError) as ctx:
+        with self.assertRaises(hp_tuning_utils.HPMemoryGuardError) as ctx:
             guarded_collate([self._make_graph(30, 30), self._make_graph(30, 30)])
         msg = str(ctx.exception)
         self.assertIn("batch_tokens=", msg)

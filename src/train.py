@@ -39,7 +39,6 @@ def main(args):
         num_workers=args.num_workers,
         cache_dir=args.cache_dir if args.cache_dir else None,
         hp_tuning_splits_path=args.hp_tuning_splits_path,
-        use_full_test_set=True,
     )
 
     # 2a. Pre-warm dataset cache on CPU before the GPU trainer starts.

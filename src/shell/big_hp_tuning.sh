@@ -85,8 +85,8 @@ fi
 # Stage-specific memory defaults. Stage 2 keeps safety guards enabled but uses
 # larger H100-oriented limits and less restrictive dynamic buckets.
 if [[ "$STAGE" == "2" ]]; then
-    MEMORY_GUARD_MAX_TOKENS="${MEMORY_GUARD_MAX_TOKENS:-1.2e11}"
-    HARD_PRUNE_RISK="${HARD_PRUNE_RISK:-1.5e11}"
+    MEMORY_GUARD_MAX_TOKENS="${MEMORY_GUARD_MAX_TOKENS:-1.2e10}"
+    HARD_PRUNE_RISK="${HARD_PRUNE_RISK:-1.5e10}"
     DYNAMIC_BUCKET_RULES="${DYNAMIC_BUCKET_RULES:-240000:1,160000:1,100000:2}"
 else
     MEMORY_GUARD_MAX_TOKENS="${MEMORY_GUARD_MAX_TOKENS:-2.5e8}"
@@ -209,7 +209,6 @@ PIN_MEMORY="${PIN_MEMORY:-false}"
 PERSISTENT_WORKERS="${PERSISTENT_WORKERS:-false}"
 PREFETCH_FACTOR=1
 DYNAMIC_BATCHING="${DYNAMIC_BATCHING:-true}"
-MEMORY_TELEMETRY_TRIALS="${MEMORY_TELEMETRY_TRIALS:-3}"
 MAX_RESTARTS_ON_OOM="${MAX_RESTARTS_ON_OOM:-0}"
 RESTART_DELAY_SEC="${RESTART_DELAY_SEC:-20}"
 
@@ -238,7 +237,6 @@ if [ "$HARD_PRUNE" = "true" ]; then
 fi
 
 echo "DataLoader config: num_workers=$NUM_WORKERS pin_memory=$PIN_MEMORY persistent_workers=$PERSISTENT_WORKERS prefetch_factor=$PREFETCH_FACTOR dynamic_batching=$DYNAMIC_BATCHING"
-echo "Memory telemetry: first $MEMORY_TELEMETRY_TRIALS trial(s)"
 echo "Memory guard: max_tokens=$MEMORY_GUARD_MAX_TOKENS hard_prune=$HARD_PRUNE hard_prune_risk=$HARD_PRUNE_RISK"
 echo "Dynamic buckets: ${DYNAMIC_BUCKET_RULES:-(disabled)}"
 echo "Restart policy: max_restarts_on_oom=$MAX_RESTARTS_ON_OOM restart_delay_sec=$RESTART_DELAY_SEC"
@@ -323,7 +321,6 @@ while true; do
         --memory_guard_max_tokens "$MEMORY_GUARD_MAX_TOKENS" \
         --dataset_seed 42 \
         --sampler_seed "$SAMPLER_SEED" \
-        --memory_telemetry_trials "$MEMORY_TELEMETRY_TRIALS" \
         --train_samples "$TRAIN_SAMPLES" \
         --max_trial_hours "$MAX_TRIAL_HOURS" \
         --n_trials "$N_TRIALS" \
