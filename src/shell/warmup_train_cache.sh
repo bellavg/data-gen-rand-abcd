@@ -167,7 +167,6 @@ dm = AIGDataModule(
     seed=42,
     cache_dir="$cache_dir",
     num_workers=$N_IO_WORKERS,
-    use_full_test_set=True,
     hp_tuning_splits_path=$splits_arg,
     # Precompute node-sizes so dynamic_batching=True is instant at training time.
     dynamic_batching=True,
@@ -177,7 +176,7 @@ dm = AIGDataModule(
 dm.setup("fit")
 n_train = len(dm.train_ds)
 n_val   = len(dm.val_ds)
-n_sizes = len(getattr(dm, "_train_sizes", []))
+n_sizes = len(dm.train_ds.get_num_nodes_list()) if getattr(dm, "train_ds", None) is not None else 0
 
 # Warm test
 dm.setup("test")

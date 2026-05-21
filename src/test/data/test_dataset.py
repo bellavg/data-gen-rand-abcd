@@ -5,7 +5,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import torch
 
@@ -150,6 +150,21 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
         self.assertEqual(item.edge_index.shape[0], 2)
         self.assertEqual(item.edge_attr.dim(), 2)
         self.assertEqual(item.edge_attr.shape[0], item.edge_index.shape[1])
+
+    def test_torch_load_graph_uses_plain_load(self):
+        ds = self._make_ds()
+        loaded_graph = torch.load(self.pt_paths[0], weights_only=False)
+        call_kwargs = []
+
+        def _fake_load(*args, **kwargs):
+            call_kwargs.append(dict(kwargs))
+            return loaded_graph
+
+        with patch("data.dataset.torch.load", side_effect=_fake_load):
+            result = ds._torch_load_graph(self.pt_paths[0])
+
+        self.assertIs(result, loaded_graph)
+        self.assertNotIn("mmap", call_kwargs[0])
 
     # --- positional encoding ---
 
@@ -476,7 +491,8 @@ class TestAIGDataModule(unittest.TestCase):
         self.assertEqual(batch.edge_attr.dim(), 2)
 
     def test_train_num_samples(self):
-        dm = self._make_dm(train_num_samples=10)  # Changed to 10 for cleaner math
+        # Explicit test_num_samples applies only to the test split.
+        dm = self._make_dm(train_num_samples=10, test_num_samples=10)
 
         # 10 total samples * 80% train ratio = 8 samples in train_ds
         self.assertEqual(len(dm.train_ds), 8)
@@ -489,6 +505,12 @@ class TestAIGDataModule(unittest.TestCase):
 
         # Ensure the total pool across all splits strictly equals the requested num_samples limit
         self.assertEqual(len(dm.train_ds) + len(dm.val_ds) + len(dm.test_ds), 10)
+
+    def test_test_num_samples_unset_uses_full_test_split(self):
+        # When test_num_samples is None (default), the test split is unlimited.
+        dm = self._make_dm(train_num_samples=10)
+        # 30 total files, 10% test ratio = 3 test samples (not limited to train pool)
+        self.assertEqual(len(dm.test_ds), 3)
 
     def test_test_loader(self):
         from data.datamodule import AIGDataModule
@@ -580,7 +602,7 @@ class TestAIGDataModule(unittest.TestCase):
 
 class TestBalancedDynamicBatchSampler(unittest.TestCase):
     def test_pairs_large_and_small_in_same_batch(self):
-        from data.datamodule import BalancedDynamicBatchSampler
+        from data.sampler import BalancedDynamicBatchSampler
 
         sizes = [1, 2, 3, 4, 100, 101, 102, 103]
         sampler = BalancedDynamicBatchSampler(
@@ -601,7 +623,7 @@ class TestBalancedDynamicBatchSampler(unittest.TestCase):
         self.assertEqual(set(flattened), set(range(len(sizes))))
 
     def test_pairing_reduces_peak_batch_node_total(self):
-        from data.datamodule import BalancedDynamicBatchSampler
+        from data.sampler import BalancedDynamicBatchSampler
 
         sizes = [1, 2, 3, 4, 100, 101, 102, 103]
         batch_size = 4
@@ -624,7 +646,7 @@ class TestBalancedDynamicBatchSampler(unittest.TestCase):
         self.assertLess(max(dynamic_totals), max(baseline_totals))
 
     def test_bucket_rules_create_singletons_for_huge_graphs(self):
-        from data.datamodule import BalancedDynamicBatchSampler
+        from data.sampler import BalancedDynamicBatchSampler
 
         sizes = [1, 2, 3, 4, 100, 101, 300, 350]
         sampler = BalancedDynamicBatchSampler(
@@ -649,7 +671,7 @@ class TestBalancedDynamicBatchSampler(unittest.TestCase):
         self.assertEqual(set(flattened), set(range(len(sizes))))
 
     def test_bucket_rules_pair_large_with_small(self):
-        from data.datamodule import BalancedDynamicBatchSampler
+        from data.sampler import BalancedDynamicBatchSampler
 
         sizes = [1, 2, 3, 4, 100, 101, 300, 350]
         sampler = BalancedDynamicBatchSampler(
@@ -716,12 +738,16 @@ class TestGetNumNodesList(unittest.TestCase):
         for i, s in enumerate(sizes):
             self.assertEqual(s, ds[i].x.shape[0])
 
-    def test_sizes_cached_to_disk_when_cache_dir_set(self):
+    def test_sizes_in_memory_after_setup(self):
+        # Sizes are now stored in _node_sizes (from manifest), not a separate JSON file.
         cache_dir = self.root / "cache_sizes"
         ds = self._make_ds(cache_dir=cache_dir)
-        ds.get_num_nodes_list()
+        sizes = ds.get_num_nodes_list()
+        self.assertIsNotNone(ds._node_sizes)
+        self.assertEqual(len(sizes), len(ds))
+        # No separate node_sizes.json file should be written.
         json_files = list(cache_dir.glob("*_node_sizes.json"))
-        self.assertEqual(len(json_files), 1)
+        self.assertEqual(len(json_files), 0)
 
     def test_second_call_loads_from_cache(self):
         cache_dir = self.root / "cache_sizes2"
@@ -743,7 +769,7 @@ class TestGetNumNodesList(unittest.TestCase):
         self.assertEqual(len(sizes), len(ds))
         ds._load_graph_for_sample.assert_not_called()
 
-    def test_no_cache_file_without_cache_dir(self):
+    def test_no_sizes_file_written_anywhere(self):
         ds = self._make_ds()
         ds.get_num_nodes_list()
         json_files = list(self.root.rglob("*_node_sizes.json"))
