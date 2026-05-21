@@ -56,6 +56,7 @@ CSV_4="$BASE_DIR/data/designs/design_metadata/algo_C2RS_ml.csv"
 
 # Use all CPUs allocated by SLURM for parallel I/O during cache build.
 N_IO_WORKERS="${N_IO_WORKERS:-$(nproc)}"
+DYNAMIC_BUCKET_RULES="${DYNAMIC_BUCKET_RULES:-240000:1,160000:1,100000:2}"
 
 warm_cache() {
     local n_samples=$1
@@ -72,6 +73,17 @@ import sys
 sys.path.insert(0, "$BASE_DIR/src")
 from data.datamodule import AIGDataModule
 
+
+def parse_rules(text: str):
+    out = []
+    for chunk in (c.strip() for c in text.split(",") if c.strip()):
+        min_nodes, batch_size = chunk.split(":", 1)
+        out.append((int(min_nodes), int(batch_size)))
+    return out
+
+
+dynamic_rules = parse_rules("$DYNAMIC_BUCKET_RULES")
+
 dm = AIGDataModule(
     csv_paths=["$CSV_1", "$CSV_2", "$CSV_3", "$CSV_4"],
     batch_size=4,
@@ -84,12 +96,15 @@ dm = AIGDataModule(
     # writes the node-sizes JSON cache.  Subsequent HP trials read this in < 1 s
     # instead of computing it from scratch.
     dynamic_batching=True,
+    dynamic_bucket_rules=dynamic_rules,
 )
 dm.setup("fit")
+n_plan_batches = len(getattr(dm, "_train_batch_plan", []) or [])
 print(
     f"[warmup] n_samples=${n_samples}: "
     f"{len(dm.train_ds)} train / {len(dm.val_ds)} val graphs cached, "
-    f"{len(dm._train_sizes)} node-sizes written.",
+    f"dynamic_batch_plan_batches={n_plan_batches} "
+    f"(rules=$DYNAMIC_BUCKET_RULES).",
     flush=True,
 )
 PYEOF
