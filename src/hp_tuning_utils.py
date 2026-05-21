@@ -389,7 +389,7 @@ def _purge_trial_memory(
             datamodule.teardown("fit")
         except Exception:
             pass
-        for attr in ("train_ds", "val_ds", "test_ds", "_train_sizes"):
+        for attr in ("train_ds", "val_ds", "test_ds"):
             try:
                 setattr(datamodule, attr, None)
             except Exception:
