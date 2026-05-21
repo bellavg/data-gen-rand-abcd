@@ -306,6 +306,15 @@ class AIGGraphRegressionDataset(PyGDataset):
             return Path(graph_path)
         return self._cache_graph_dir / self._stable_graph_cache_name(graph_path)
 
+    def _torch_load_graph(self, graph_path: str | Path):
+        load_kwargs = {"map_location": "cpu", "weights_only": False}
+        try:
+            # mmap reduces host RSS spikes when loading very large .pt graph files.
+            return torch.load(graph_path, mmap=True, **load_kwargs)
+        except TypeError:
+            # Older torch versions may not support mmap.
+            return torch.load(graph_path, **load_kwargs)
+
     def _cache_single_graph(self, graph_path: str) -> tuple[str, int]:
         cache_path = self._cached_graph_path(graph_path)
         meta_path = cache_path.with_suffix(".n")
@@ -315,14 +324,13 @@ class AIGGraphRegressionDataset(PyGDataset):
                 return str(cache_path), int(meta_path.read_text())
             # .pt exists but sidecar missing (graphs cached before this change):
             # load once to recover num_nodes and write the sidecar for next time.
-            cached_obj = torch.load(cache_path, map_location="cpu", weights_only=False)
+            cached_obj = self._torch_load_graph(cache_path)
             num_nodes = int(cached_obj.x.shape[0])
+            del cached_obj
             meta_path.write_text(str(num_nodes))
             return str(cache_path), num_nodes
 
-        source_obj = torch.load(
-            Path(graph_path), map_location="cpu", weights_only=False
-        )
+        source_obj = self._torch_load_graph(Path(graph_path))
         num_nodes = int(source_obj.x.shape[0])
 
         cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -458,7 +466,7 @@ class AIGGraphRegressionDataset(PyGDataset):
                 self._graph_num_nodes_map[sample.graph_path] = num_nodes
                 graph_path = rebuilt_cache_path
 
-        return torch.load(graph_path, map_location="cpu", weights_only=False)
+        return self._torch_load_graph(graph_path)
 
     def len(self) -> int:
         return len(self.samples)
@@ -469,6 +477,12 @@ class AIGGraphRegressionDataset(PyGDataset):
 
         # Apply positional encoding transform (attaches to data_obj.pos_enc)
         data_obj = self.pe_transform(data_obj)
+
+        # Keep only the normalized pos_enc tensor; raw PE sources are not used
+        # by the model and can dominate host/GPU memory on huge graphs.
+        for raw_pe_key in ("level", "pi_paths", "local_sp_sum"):
+            if hasattr(data_obj, raw_pe_key):
+                delattr(data_obj, raw_pe_key)
 
         # Keep targets on the Data object for graph-level regression.
         data_obj.y = torch.tensor([[sample.y_node_opt]], dtype=torch.float32)
@@ -485,8 +499,14 @@ class AIGGraphRegressionDataset(PyGDataset):
         if cached is not None:
             return cached
 
-        data_obj = self._load_graph_for_sample(sample)
-        num_nodes = int(data_obj.x.shape[0])
+        if self.cache_dir is not None:
+            # Fast path: reuse the cached sidecar written by _cache_single_graph
+            # instead of loading the full graph tensor from disk.
+            _, num_nodes = self._cache_single_graph(sample.graph_path)
+        else:
+            data_obj = self._load_graph_for_sample(sample)
+            num_nodes = int(data_obj.x.shape[0])
+
         self._graph_num_nodes_map[sample.graph_path] = num_nodes
         return num_nodes
 

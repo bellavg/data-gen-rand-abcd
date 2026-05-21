@@ -5,6 +5,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import torch
 
@@ -157,6 +158,9 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
         item = ds[0]
         # PyG raises AttributeError for missing keys; use getattr
         self.assertIsNone(getattr(item, "pos_enc", None))
+        self.assertIsNone(getattr(item, "level", None))
+        self.assertIsNone(getattr(item, "pi_paths", None))
+        self.assertIsNone(getattr(item, "local_sp_sum", None))
 
     def test_pos_enc_level(self):
         ds = self._make_ds(positional_encoding="level")
@@ -164,6 +168,16 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
         pe = getattr(item, "pos_enc", None)
         self.assertIsNotNone(pe)
         self.assertEqual(pe.shape, (item.x.shape[0], 1))
+
+    def test_only_pos_enc_tensor_retained_for_each_pe_mode(self):
+        for pe_name in ("level", "pi_paths", "local_sp_sum"):
+            with self.subTest(pe_name=pe_name):
+                ds = self._make_ds(positional_encoding=pe_name)
+                item = ds[0]
+                self.assertIsNotNone(getattr(item, "pos_enc", None))
+                self.assertIsNone(getattr(item, "level", None))
+                self.assertIsNone(getattr(item, "pi_paths", None))
+                self.assertIsNone(getattr(item, "local_sp_sum", None))
 
     # --- num_samples ---
 
@@ -716,6 +730,18 @@ class TestGetNumNodesList(unittest.TestCase):
         # Second call should return identical results (loaded from JSON cache)
         sizes2 = ds.get_num_nodes_list()
         self.assertEqual(sizes1, sizes2)
+
+    def test_num_nodes_list_uses_sidecar_without_full_graph_loads(self):
+        cache_dir = self.root / "cache_sizes_sidecar"
+        ds = self._make_ds(cache_dir=cache_dir)
+        ds._load_graph_for_sample = MagicMock(
+            side_effect=AssertionError("should use sidecar node-count path")
+        )
+
+        sizes = ds.get_num_nodes_list()
+
+        self.assertEqual(len(sizes), len(ds))
+        ds._load_graph_for_sample.assert_not_called()
 
     def test_no_cache_file_without_cache_dir(self):
         ds = self._make_ds()
