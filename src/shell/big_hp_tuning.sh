@@ -17,7 +17,7 @@ set -euo pipefail
 # Array-task id, or 1 when run outside an array for local debugging.
 TASK_ID=${SLURM_ARRAY_TASK_ID:-1}
 
-SCRIPT_VERSION="2026-05-14 (72h Two-Stage Array Job: Stage 1 = explore, Stage 2 = seed+exploit)"
+SCRIPT_VERSION="2026-05-21 (48h Two-Stage Array Job: Stage 1 = explore, Stage 2 = seed+exploit)"
 
 echo "=========================================="
 echo "JOB: Big Optuna Hyperparameter Tuning (array_task=${TASK_ID} job=${SLURM_ARRAY_JOB_ID:-n/a})"
@@ -55,7 +55,7 @@ export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
 
 cd "$BASE_DIR"
 
-# 4. Define Output Paths in Scratch
+# 2. Stage Config & Output Paths
 # Each array task has its own workspace and study to avoid DB locking and
 # log-file conflicts. All tasks share one preprocessed dataset cache directory
 # so graph preprocessing is done at most once across the three workers.
@@ -64,10 +64,9 @@ cd "$BASE_DIR"
 #   Stage 1  — fast exploration: 15K samples × 50 trials per worker
 #              1 h/trial cap → ~50 h worst-case; finds promising HP regions
 #   Stage 2  — seeded exploitation: 35K samples × 20 trials per worker
-#              2 h/trial cap → ~40 h worst-case; top-SEED_TOP_N Stage-1 configs
+#              4 h/trial cap → ~80 h worst-case; top-SEED_TOP_N Stage-1 configs
 #              enqueued first, remainder are new TPE-guided trials
-# 72h job limit → both stages comfortably fit. In practice (patience=3,
-# BF16 pruning): Stage 1 ~25-30h, Stage 2 ~25-35h per worker.
+# 48h job limit — each stage fits in one submission.
 STAGE="${STAGE:-2}"
 if [[ "$STAGE" == "1" ]]; then
     TRAIN_SAMPLES=15000
@@ -97,7 +96,6 @@ HARD_PRUNE="${HARD_PRUNE:-true}"
 echo "Stage: $STAGE  train_samples=$TRAIN_SAMPLES  n_trials=$N_TRIALS  max_trial_hours=$MAX_TRIAL_HOURS"
 
 WORKSPACE="/scratch-shared/$USER/big_optuna_run_s${STAGE}_${TASK_ID}"
-CHECKPOINT_DIR="$WORKSPACE/checkpoints"
 LOG_DIR="$WORKSPACE/logs"
 
 # Common cache shared by all array workers (read-only after first warm-up).
@@ -113,11 +111,10 @@ LOCAL_SCRATCH="${TMPDIR:-/tmp}/optuna_${SLURM_JOB_ID:-$$}"
 mkdir -p "$LOCAL_SCRATCH"
 STORAGE_PATH="sqlite:///$LOCAL_SCRATCH/optuna_study.db"
 
-mkdir -p "$CHECKPOINT_DIR"
 mkdir -p "$LOG_DIR"
 mkdir -p "$SHARED_CACHE"
 
-# 5. Define Input CSVs
+# 3. Input CSVs
 CSV_1="$BASE_DIR/data/designs/design_metadata/algo_Orchestrate_ml.csv"
 CSV_2="$BASE_DIR/data/designs/design_metadata/algo_Deepsyn_ml.csv"
 CSV_3="$BASE_DIR/data/designs/design_metadata/algo_Syn4_ml.csv"
@@ -207,7 +204,7 @@ export MALLOC_ARENA_MAX="${MALLOC_ARENA_MAX:-2}"
 # DataLoader tuning flags (can be overridden via env)
 PIN_MEMORY="${PIN_MEMORY:-false}"
 PERSISTENT_WORKERS="${PERSISTENT_WORKERS:-false}"
-PREFETCH_FACTOR=1
+PREFETCH_FACTOR="${PREFETCH_FACTOR:-1}"
 DYNAMIC_BATCHING="${DYNAMIC_BATCHING:-true}"
 MAX_RESTARTS_ON_OOM="${MAX_RESTARTS_ON_OOM:-0}"
 RESTART_DELAY_SEC="${RESTART_DELAY_SEC:-20}"
@@ -281,7 +278,7 @@ cleanup_sync_loop() {
 trap cleanup_sync_loop EXIT INT TERM
 
 # Background sync loop: copy the node-local SQLite DB to scratch-shared every
-# 5 minutes so that completed trials are preserved even if the job crashes.
+# hour so completed trials are preserved even if the job crashes.
 DB_SYNC_INTERVAL="${DB_SYNC_INTERVAL:-3600}"
 (
     while true; do
@@ -311,9 +308,8 @@ while true; do
     python -u -m hp_tuning \
         --db_url "$STORAGE_PATH" \
         --study_name "$STUDY_NAME" \
-        --checkpoint_dir "$CHECKPOINT_DIR" \
-        --cache_dir "$SHARED_CACHE" \
         --log_dir "$LOG_DIR/worker_${TASK_ID}" \
+        --cache_dir "$SHARED_CACHE" \
         --csv_paths "$CSV_1" "$CSV_2" "$CSV_3" "$CSV_4" \
         --num_workers "$NUM_WORKERS" \
         ${EXTRA_FLAGS[@]+"${EXTRA_FLAGS[@]}"} \
@@ -358,8 +354,8 @@ elif [ "$_final_rc" -ne 2 ]; then
 fi
 
 if (( EXIT_CODE != 0 )); then
-    echo "Worker $TASK_ID failed after $ATTEMPT attempt(s) (exit $EXIT_CODE). Last 80 lines:"
-    tail -n 80 "$LOG_DIR/worker_${TASK_ID}.log" || true
+    echo "Worker $TASK_ID failed after $ATTEMPT attempt(s) (exit $EXIT_CODE). Last 200 lines:"
+    tail -n 200 "$LOG_DIR/worker_${TASK_ID}.log" || true
     exit "$EXIT_CODE"
 fi
 

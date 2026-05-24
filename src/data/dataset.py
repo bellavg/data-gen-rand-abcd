@@ -449,7 +449,14 @@ class AIGGraphRegressionDataset(PyGDataset):
     def get_num_nodes_list(self) -> list[int]:
         if self._node_sizes is not None:
             return self._node_sizes
-        # No cache_dir: load each unique graph once to get num_nodes.
+        # _node_sizes was cleared (release_runtime_caches) but the manifest
+        # already has every node count — recover from it before touching disk.
+        if self._manifest_path is not None:
+            manifest = self._load_manifest()
+            if manifest is not None:
+                self._node_sizes = [int(e["num_nodes"]) for e in manifest["entries"]]
+                return self._node_sizes
+        # Last resort: no manifest, load each unique graph once from disk.
         seen: dict[str, int] = {}
         sizes = []
         for s in self.samples:

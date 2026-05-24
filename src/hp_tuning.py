@@ -279,6 +279,7 @@ def objective(trial: optuna.Trial, args):
 
         _precision = _select_trainer_precision()
         log_every_n_steps = max(1, int(getattr(args, "log_every_n_steps", 100)))
+        val_check_interval = int(getattr(args, "val_check_interval", 2000))
 
         trainer = pl.Trainer(
             max_epochs=15,
@@ -288,6 +289,7 @@ def objective(trial: optuna.Trial, args):
             precision=_precision,
             gradient_clip_val=1.0,
             log_every_n_steps=log_every_n_steps,
+            val_check_interval=val_check_interval,
             callbacks=[pruning_cb, early_stop_cb],
             logger=csv_logger,
             enable_checkpointing=False,
@@ -553,6 +555,16 @@ if __name__ == "__main__":
         type=int,
         default=100,
         help="Trainer metric logging interval in steps (default: 100).",
+    )
+    parser.add_argument(
+        "--val_check_interval",
+        type=int,
+        default=2000,
+        help=(
+            "Run validation every N training steps (default: 2000). "
+            "With dynamic batching at batch_size=1, one epoch can be 28k+ steps; "
+            "without this, early stopping and pruning never fire within a trial."
+        ),
     )
     parser.add_argument(
         "--sampler_seed",
