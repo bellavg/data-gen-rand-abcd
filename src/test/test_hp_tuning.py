@@ -401,7 +401,9 @@ class TestOOMTrialCleanup(unittest.TestCase):
             patch("hp_tuning.AIGDataModule", return_value=fake_datamodule),
             patch("hp_tuning.AIGRegressionLightningModule", return_value=MagicMock()),
             patch("hp_tuning.pl.Trainer", side_effect=lambda *a, **k: _FakeTrainer()),
-            patch("hp_tuning_utils.gc.collect", side_effect=lambda: events.append("gc")),
+            patch(
+                "hp_tuning_utils.gc.collect", side_effect=lambda: events.append("gc")
+            ),
             patch("hp_tuning_utils.torch.cuda.is_available", return_value=True),
             patch(
                 "hp_tuning_utils.torch.cuda.empty_cache",
@@ -754,3 +756,46 @@ class TestMemoryGuardBatchAccumulation(unittest.TestCase):
         msg = str(ctx.exception)
         self.assertIn("batch_tokens=", msg)
         self.assertNotIn("total_tokens=", msg)
+
+
+class TestPeriodicMemoryReleaseCallback(unittest.TestCase):
+    def test_releases_memory_for_train_and_validation_hooks(self):
+        callback = hp_tuning.PeriodicMemoryReleaseCallback(
+            every_train_steps=500,
+            every_val_batches=2,
+        )
+        trainer = types.SimpleNamespace(global_step=1000)
+        pl_module = MagicMock()
+
+        with patch.object(
+            hp_tuning.PeriodicMemoryReleaseCallback,
+            "_release_memory",
+        ) as release_mock:
+            callback.on_train_batch_end(
+                trainer,
+                pl_module,
+                outputs=None,
+                batch=None,
+                batch_idx=0,
+            )
+            callback.on_validation_start(trainer, pl_module)
+            callback.on_validation_batch_end(
+                trainer,
+                pl_module,
+                outputs=None,
+                batch=None,
+                batch_idx=0,
+                dataloader_idx=0,
+            )
+            callback.on_validation_batch_end(
+                trainer,
+                pl_module,
+                outputs=None,
+                batch=None,
+                batch_idx=1,
+                dataloader_idx=0,
+            )
+            callback.on_validation_end(trainer, pl_module)
+
+        # train-end + val-start + val-batch(2nd) + val-end
+        self.assertEqual(release_mock.call_count, 4)
