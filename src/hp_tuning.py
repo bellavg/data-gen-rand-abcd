@@ -559,9 +559,9 @@ if __name__ == "__main__":
     parser.add_argument(
         "--val_check_interval",
         type=int,
-        default=2000,
+        default=7000,
         help=(
-            "Run validation every N training steps (default: 2000). "
+            "Run validation every N training steps (default: 7000). "
             "With dynamic batching at batch_size=1, one epoch can be 28k+ steps; "
             "without this, early stopping and pruning never fire within a trial."
         ),
