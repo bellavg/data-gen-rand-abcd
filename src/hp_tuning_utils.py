@@ -205,6 +205,29 @@ def _install_hp_guarded_dataloaders(
         )
 
     def val_dataloader() -> DataLoader:
+        if use_buckets:
+            val_plan = getattr(datamodule, "_val_batch_plan", None)
+            if val_plan is None:
+                val_sizes = datamodule.val_ds.get_num_nodes_list()
+                val_plan = BalancedDynamicBatchSampler.build_batch_plan(
+                    val_sizes,
+                    batch_size=datamodule.batch_size,
+                    bucket_rules=bucket_rules,
+                )
+            datamodule._val_batch_plan = None
+            sampler = BalancedDynamicBatchSampler(
+                batch_size=datamodule.batch_size,
+                shuffle=False,
+                seed=seed,
+                bucket_rules=bucket_rules,
+                precomputed_batches=val_plan,
+            )
+            return DataLoader(
+                datamodule.val_ds,
+                batch_sampler=sampler,
+                collate_fn=guarded_collate,
+                **datamodule._loader_kwargs(include_batch_size=False),
+            )
         return DataLoader(
             datamodule.val_ds,
             shuffle=False,
