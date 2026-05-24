@@ -31,6 +31,10 @@ module load 2025
 module load Python/3.13.1-GCCcore-14.2.0
 module load SciPy-bundle/2025.06-gfbf-2025a
 
+# TCMalloc prevents glibc malloc fragmentation over long training runs.
+module load gperftools/2.16-GCCcore-14.2.0
+export LD_PRELOAD="${EBROOTGPERFTOOLS}/lib/libtcmalloc.so${LD_PRELOAD:+:${LD_PRELOAD}}"
+
 # Activate Virtual Environment
 VENV_PATH="${VENV_PATH:-/scratch-shared/$USER/.venv}"
 echo "Activating virtual environment at: $VENV_PATH"
@@ -42,6 +46,7 @@ unset PYTHONPATH
 unset PYTHONHOME
 export PYTHONNOUSERSITE=1
 export PYTHONPATH="$BASE_DIR/src"
+export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
 
 cd "$BASE_DIR"
 
@@ -103,7 +108,10 @@ NUM_LAYERS=4                # TODO: replace with best trial value
 DROPOUT=0.1                 # TODO: replace with best trial value
 NORM_TYPE="batch"           # TODO: replace with best trial value
 JK_MODE="last"              # TODO: replace with best trial value
-HEADS=4                     # only used by transformer_conv / graphgps
+HEADS=4                     # TODO: replace with best trial value (only used by transformer_conv / graphgps)
+
+# --- Regularisation ---
+WEIGHT_DECAY=1e-4           # TODO: replace with best trial value
 
 # --- Positional encoding ---
 PE_TYPE="none"              # TODO: replace with best trial value ("none", "level", "pi_paths", ...)
@@ -128,7 +136,7 @@ NUM_WORKERS=16              # should match --cpus-per-task
 echo "Starting Final Training for $ALGORITHM on GPU 0..."
 echo "  encoder=$ENCODER_NAME  batch=$BATCH_SIZE  hid=$HIDDEN_DIM  layers=$NUM_LAYERS"
 
-CUDA_VISIBLE_DEVICES=0 python src/train.py \
+python -u -m train \
     --algorithm         "$ALGORITHM" \
     --csv_paths         "$CSV_PATH" \
     --checkpoint_dir    "$CHECKPOINT_DIR" \
@@ -147,6 +155,7 @@ CUDA_VISIBLE_DEVICES=0 python src/train.py \
     --pos_enc_dim       "$POS_ENC_DIM" \
     --pooling_type      "$POOLING_TYPE" \
     --huber_delta       "$HUBER_DELTA" \
+    --weight_decay      "$WEIGHT_DECAY" \
     --lr                "$LR" \
     --max_epochs        "$MAX_EPOCHS" \
     --gradient_clip_val "$GRADIENT_CLIP_VAL" \

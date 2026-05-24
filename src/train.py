@@ -1,6 +1,5 @@
 import argparse
 import os
-import time
 
 import pytorch_lightning as pl
 import torch
@@ -12,6 +11,13 @@ from constants import ENCODER_KWARGS_DEFAULTS, VALID_ALGORITHMS
 # Project Imports
 from data.datamodule import AIGDataModule
 from models.lightning_model import AIGRegressionLightningModule
+
+
+def _select_precision() -> str:
+    try:
+        return "bf16-mixed" if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else "32-true"
+    except (AssertionError, RuntimeError):
+        return "32-true"
 
 
 def main(args):
@@ -40,14 +46,6 @@ def main(args):
         cache_dir=args.cache_dir if args.cache_dir else None,
         hp_tuning_splits_path=args.hp_tuning_splits_path,
     )
-
-    # 2a. Pre-warm dataset cache on CPU before the GPU trainer starts.
-    # setup() loads/builds the graph cache from disk (pure I/O). Doing it
-    # here keeps the GPU idle time to a minimum.
-    print("--- Pre-warming dataset cache (CPU I/O phase) ---")
-    _t0 = time.monotonic()
-    datamodule.setup("fit")
-    print(f"--- Cache warm in {time.monotonic() - _t0:.1f}s ---")
 
     # 3. Configure Encoder Kwargs
     encoder_kwargs = ENCODER_KWARGS_DEFAULTS.copy()
@@ -83,8 +81,9 @@ def main(args):
         pooling_type=args.pooling_type,
         encoder_kwargs=encoder_kwargs,
         lr=args.lr,
+        weight_decay=args.weight_decay,
         huber_delta=args.huber_delta,
-        scheduler_patience=args.scheduler_patience,  #
+        scheduler_patience=args.scheduler_patience,
     )
 
     # 5. Define Callbacks and Logger
@@ -113,10 +112,11 @@ def main(args):
         max_epochs=args.max_epochs,
         accelerator="auto",
         devices=1,
+        precision=_select_precision(),
         callbacks=[checkpoint_cb, early_stop_cb],
         logger=logger,
-        gradient_clip_val=args.gradient_clip_val,  #
-        check_val_every_n_epoch=args.check_val_every_n,  #
+        gradient_clip_val=args.gradient_clip_val,
+        check_val_every_n_epoch=args.check_val_every_n,
     )
 
     # 7. Run Training & Testing
@@ -135,6 +135,7 @@ if __name__ == "__main__":
     parser.add_argument("--encoder_name", type=str, default="gine")
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--weight_decay", type=float, default=1e-4)
     parser.add_argument("--huber_delta", type=float, default=1.0)
     parser.add_argument("--hidden_dim", type=int, default=128)
     parser.add_argument("--pe_type", type=str, default="none")
@@ -146,18 +147,16 @@ if __name__ == "__main__":
     parser.add_argument("--jk_mode", type=str, default="last")
 
     # Training Loop Parameters
-    parser.add_argument("--seed", type=int, default=42)  #
+    parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--max_epochs", type=int, default=100)
-    parser.add_argument("--patience", type=int, default=20)  #
-    parser.add_argument("--scheduler_patience", type=int, default=10)  #
-    parser.add_argument("--gradient_clip_val", type=float, default=1.0)  #
-    parser.add_argument("--check_val_every_n", type=int, default=1)  #
+    parser.add_argument("--patience", type=int, default=20)
+    parser.add_argument("--scheduler_patience", type=int, default=10)
+    parser.add_argument("--gradient_clip_val", type=float, default=1.0)
+    parser.add_argument("--check_val_every_n", type=int, default=1)
     parser.add_argument("--num_workers", type=int, default=4)
 
     # Algorithm & Data Arguments
     parser.add_argument("--heads", type=int, default=4, help="Attention heads (transformer_conv / graphgps only)")
-
-    # Algorithm & Data Arguments
     parser.add_argument("--algorithm", type=str, required=True)
     parser.add_argument("--csv_paths", nargs="+", required=True)
     parser.add_argument("--checkpoint_dir", type=str, default="./checkpoints")
