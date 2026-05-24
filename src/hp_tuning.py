@@ -553,7 +553,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--log_every_n_steps",
         type=int,
-        default=100,
+        default=1000,
         help="Trainer metric logging interval in steps (default: 100).",
     )
     parser.add_argument(
