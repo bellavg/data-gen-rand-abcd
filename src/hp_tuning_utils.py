@@ -1,3 +1,4 @@
+import ctypes
 import gc
 import logging
 import time
@@ -215,6 +216,7 @@ def _install_hp_guarded_dataloaders(
                     bucket_rules=bucket_rules,
                 )
             datamodule._val_batch_plan = None
+
             sampler = BalancedDynamicBatchSampler(
                 batch_size=datamodule.batch_size,
                 shuffle=False,
@@ -430,6 +432,13 @@ def _purge_trial_memory(
 
     gc.collect()
     gc.collect()
+    try:
+        libc = ctypes.CDLL(None)
+        trim = getattr(libc, "malloc_trim", None)
+        if callable(trim):
+            trim(0)
+    except Exception:
+        pass
     if torch.cuda.is_available():
         try:
             torch.cuda.empty_cache()

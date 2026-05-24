@@ -1,4 +1,5 @@
 import argparse
+import ctypes
 import gc
 import logging
 import os
@@ -6,9 +7,9 @@ import sqlite3
 import warnings
 
 import optuna
-from optuna.storages import RDBStorage
 import pytorch_lightning as pl
 import torch
+from optuna.storages import RDBStorage
 from pytorch_lightning.callbacks import EarlyStopping
 from pytorch_lightning.loggers import CSVLogger
 
@@ -41,7 +42,9 @@ class PyTorchLightningPruningCallback(pl.Callback):
         self._trial = trial
         self._monitor = monitor
 
-    def on_validation_epoch_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule) -> None:
+    def on_validation_epoch_end(
+        self, trainer: pl.Trainer, pl_module: pl.LightningModule
+    ) -> None:
         logs = trainer.callback_metrics
         if self._monitor not in logs:
             return
@@ -49,8 +52,80 @@ class PyTorchLightningPruningCallback(pl.Callback):
         step = trainer.current_epoch
         self._trial.report(value, step=step)
         if self._trial.should_prune():
-            raise optuna.TrialPruned(f"Trial pruned at epoch {step} ({self._monitor}={value:.6f})")
+            raise optuna.TrialPruned(
+                f"Trial pruned at epoch {step} ({self._monitor}={value:.6f})"
+            )
 
+
+class PeriodicMemoryReleaseCallback(pl.Callback):
+    """Periodically release reclaimable host/GPU memory during long trials."""
+
+    def __init__(
+        self,
+        *,
+        every_train_steps: int = 500,
+        every_val_batches: int = 50,
+    ) -> None:
+        super().__init__()
+        self.every_train_steps = max(0, int(every_train_steps))
+        self.every_val_batches = max(0, int(every_val_batches))
+
+    @staticmethod
+    def _release_memory() -> None:
+        gc.collect()
+        try:
+            libc = ctypes.CDLL(None)
+            trim = getattr(libc, "malloc_trim", None)
+            if callable(trim):
+                trim(0)
+        except Exception:
+            pass
+
+        if torch.cuda.is_available():
+            try:
+                torch.cuda.empty_cache()
+            except RuntimeError:
+                pass
+
+    def on_train_batch_end(
+        self,
+        trainer: pl.Trainer,
+        pl_module: pl.LightningModule,
+        outputs,
+        batch,
+        batch_idx: int,
+    ) -> None:
+        if self.every_train_steps <= 0:
+            return
+        if (
+            trainer.global_step > 0
+            and trainer.global_step % self.every_train_steps == 0
+        ):
+            self._release_memory()
+
+    def on_validation_start(
+        self, trainer: pl.Trainer, pl_module: pl.LightningModule
+    ) -> None:
+        self._release_memory()
+
+    def on_validation_batch_end(
+        self,
+        trainer: pl.Trainer,
+        pl_module: pl.LightningModule,
+        outputs,
+        batch,
+        batch_idx: int,
+        dataloader_idx: int = 0,
+    ) -> None:
+        if self.every_val_batches <= 0:
+            return
+        if (batch_idx + 1) % self.every_val_batches == 0:
+            self._release_memory()
+
+    def on_validation_end(
+        self, trainer: pl.Trainer, pl_module: pl.LightningModule
+    ) -> None:
+        self._release_memory()
 
 
 warnings.filterwarnings("ignore", category=UserWarning, module="torch_geometric")
@@ -159,6 +234,7 @@ def objective(trial: optuna.Trial, args):
     datamodule = None
     pruning_cb = None
     early_stop_cb = None
+    memory_release_cb = None
     risk_score = None
     if getattr(args, "hard_prune", False):
         risk_score = _estimate_trial_risk(
@@ -197,7 +273,7 @@ def objective(trial: optuna.Trial, args):
     # Threshold: >10 GiB allocated before trial start is unexpected; run an
     # extra purge pass and warn so the pattern is visible in logs.
     if torch.cuda.is_available():
-        _pre_alloc_gib = torch.cuda.memory_allocated() / (1024 ** 3)
+        _pre_alloc_gib = torch.cuda.memory_allocated() / (1024**3)
         if _pre_alloc_gib > 10.0:
             print(
                 f"\n[Trial {trial.number}] WARNING: {_pre_alloc_gib:.1f} GiB of GPU "
@@ -208,7 +284,7 @@ def objective(trial: optuna.Trial, args):
             gc.collect()
             torch.cuda.empty_cache()
             torch.cuda.synchronize()
-            _post_purge_gib = torch.cuda.memory_allocated() / (1024 ** 3)
+            _post_purge_gib = torch.cuda.memory_allocated() / (1024**3)
             print(
                 f"[Trial {trial.number}] Post-extra-purge: {_post_purge_gib:.1f} GiB allocated."
             )
@@ -270,6 +346,12 @@ def objective(trial: optuna.Trial, args):
 
         pruning_cb = PyTorchLightningPruningCallback(trial, monitor="val/mae_node")
         early_stop_cb = EarlyStopping(monitor="val/mae_node", patience=3, mode="min")
+        memory_release_cb = PeriodicMemoryReleaseCallback(
+            every_train_steps=int(getattr(args, "memory_release_interval_steps", 500)),
+            every_val_batches=int(
+                getattr(args, "memory_release_interval_val_batches", 50)
+            ),
+        )
 
         csv_logger = CSVLogger(
             save_dir=args.log_dir,
@@ -280,6 +362,9 @@ def objective(trial: optuna.Trial, args):
         _precision = _select_trainer_precision()
         log_every_n_steps = max(1, int(getattr(args, "log_every_n_steps", 100)))
         val_check_interval = int(getattr(args, "val_check_interval", 2000))
+        callbacks = [pruning_cb, early_stop_cb]
+        if memory_release_cb is not None:
+            callbacks.append(memory_release_cb)
 
         trainer = pl.Trainer(
             max_epochs=15,
@@ -290,7 +375,7 @@ def objective(trial: optuna.Trial, args):
             gradient_clip_val=1.0,
             log_every_n_steps=log_every_n_steps,
             val_check_interval=val_check_interval,
-            callbacks=[pruning_cb, early_stop_cb],
+            callbacks=callbacks,
             logger=csv_logger,
             enable_checkpointing=False,
             enable_model_summary=False,
@@ -410,7 +495,9 @@ def _seed_study_from_best(
         return
 
     if seed_mode == "enqueue":
-        print(f"[seed] Seeding Stage-2 study with top-{len(top_trials)} Stage-1 trials.")
+        print(
+            f"[seed] Seeding Stage-2 study with top-{len(top_trials)} Stage-1 trials."
+        )
     else:
         print(
             f"[seed] Importing top-{len(top_trials)} Stage-1 trials "
@@ -449,7 +536,12 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Optuna Hyperparameter Tuning for AIG Regression"
     )
-    parser.add_argument("--db_url", type=str, required=True, help="SQLite DB URL, e.g. sqlite:///path/to/study.db")
+    parser.add_argument(
+        "--db_url",
+        type=str,
+        required=True,
+        help="SQLite DB URL, e.g. sqlite:///path/to/study.db",
+    )
     parser.add_argument(
         "--study_name", type=str, required=True, help="Optuna study name"
     )
@@ -497,6 +589,24 @@ if __name__ == "__main__":
         type=float,
         default=3.5e8,
         help="Memory guard threshold in heuristic activation tokens.",
+    )
+    parser.add_argument(
+        "--memory_release_interval_steps",
+        type=int,
+        default=500,
+        help=(
+            "Trigger gc/malloc_trim during training every N global steps "
+            "(0 disables train-step release)."
+        ),
+    )
+    parser.add_argument(
+        "--memory_release_interval_val_batches",
+        type=int,
+        default=50,
+        help=(
+            "Trigger gc/malloc_trim during validation every N batches "
+            "(0 disables per-batch release)."
+        ),
     )
     parser.add_argument(
         "--hard_prune",
@@ -559,7 +669,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--val_check_interval",
         type=int,
-        default=20000,
+        default=10000,
         help=(
             "Run validation every N training steps (default: 7000). "
             "With dynamic batching at batch_size=1, one epoch can be 28k+ steps; "
@@ -612,7 +722,7 @@ if __name__ == "__main__":
     # deadlock each other. Must be done before creating the RDBStorage so the
     # PRAGMA takes effect on the same connection pool that Optuna will use.
     if args.db_url.startswith("sqlite:///"):
-        db_path = args.db_url[len("sqlite:///"):]
+        db_path = args.db_url[len("sqlite:///") :]
         _wal_con = sqlite3.connect(db_path)
         _wal_con.execute("PRAGMA journal_mode=WAL;")
         _wal_con.close()
@@ -627,7 +737,9 @@ if __name__ == "__main__":
         storage=storage,
         load_if_exists=True,
         direction="minimize",
-        sampler=optuna.samplers.TPESampler(multivariate=True, seed=args.sampler_seed, warn_independent_sampling=False),
+        sampler=optuna.samplers.TPESampler(
+            multivariate=True, seed=args.sampler_seed, warn_independent_sampling=False
+        ),
         pruner=optuna.pruners.MedianPruner(n_startup_trials=10, n_warmup_steps=5),
     )
 

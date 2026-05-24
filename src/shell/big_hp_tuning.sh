@@ -93,6 +93,8 @@ else
     DYNAMIC_BUCKET_RULES="${DYNAMIC_BUCKET_RULES:-}"
 fi
 HARD_PRUNE="${HARD_PRUNE:-true}"
+MEMORY_RELEASE_INTERVAL_STEPS="${MEMORY_RELEASE_INTERVAL_STEPS:-500}"
+MEMORY_RELEASE_INTERVAL_VAL_BATCHES="${MEMORY_RELEASE_INTERVAL_VAL_BATCHES:-50}"
 echo "Stage: $STAGE  train_samples=$TRAIN_SAMPLES  n_trials=$N_TRIALS  max_trial_hours=$MAX_TRIAL_HOURS"
 
 WORKSPACE="/scratch-shared/$USER/big_optuna_run_s${STAGE}_${TASK_ID}"
@@ -236,6 +238,7 @@ fi
 echo "DataLoader config: num_workers=$NUM_WORKERS pin_memory=$PIN_MEMORY persistent_workers=$PERSISTENT_WORKERS prefetch_factor=$PREFETCH_FACTOR dynamic_batching=$DYNAMIC_BATCHING"
 echo "Memory guard: max_tokens=$MEMORY_GUARD_MAX_TOKENS hard_prune=$HARD_PRUNE hard_prune_risk=$HARD_PRUNE_RISK"
 echo "Dynamic buckets: ${DYNAMIC_BUCKET_RULES:-(disabled)}"
+echo "Periodic release: train_every_steps=$MEMORY_RELEASE_INTERVAL_STEPS val_every_batches=$MEMORY_RELEASE_INTERVAL_VAL_BATCHES"
 echo "Restart policy: max_restarts_on_oom=$MAX_RESTARTS_ON_OOM restart_delay_sec=$RESTART_DELAY_SEC"
 
 echo "Starting Big Worker $TASK_ID on GPU 0 (stage=$STAGE sampler_seed=$SAMPLER_SEED, study=$STUDY_NAME)..."
@@ -315,6 +318,8 @@ while true; do
         ${EXTRA_FLAGS[@]+"${EXTRA_FLAGS[@]}"} \
         ${SEED_FLAGS[@]+"${SEED_FLAGS[@]}"} \
         --memory_guard_max_tokens "$MEMORY_GUARD_MAX_TOKENS" \
+        --memory_release_interval_steps "$MEMORY_RELEASE_INTERVAL_STEPS" \
+        --memory_release_interval_val_batches "$MEMORY_RELEASE_INTERVAL_VAL_BATCHES" \
         --dataset_seed 42 \
         --sampler_seed "$SAMPLER_SEED" \
         --train_samples "$TRAIN_SAMPLES" \
