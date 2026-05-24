@@ -17,7 +17,7 @@ set -euo pipefail
 # Array-task id, or 1 when run outside an array for local debugging.
 TASK_ID=${SLURM_ARRAY_TASK_ID:-1}
 
-SCRIPT_VERSION="2026-05-21 (48h Two-Stage Array Job: Stage 1 = explore, Stage 2 = seed+exploit)"
+SCRIPT_VERSION="2026-05-24 (48h Two-Stage Array Job: Stage 1 = explore, Stage 2 = seed+exploit)"
 
 echo "=========================================="
 echo "JOB: Big Optuna Hyperparameter Tuning (array_task=${TASK_ID} job=${SLURM_ARRAY_JOB_ID:-n/a})"
