@@ -799,3 +799,41 @@ class TestPeriodicMemoryReleaseCallback(unittest.TestCase):
 
         # train-end + val-start + val-batch(2nd) + val-end
         self.assertEqual(release_mock.call_count, 4)
+
+
+class TestPruningCallbackStepSemantics(unittest.TestCase):
+    def test_skips_sanity_and_deduplicates_same_step(self):
+        trial = MagicMock()
+        trial.should_prune.return_value = False
+        callback = hp_tuning.PyTorchLightningPruningCallback(
+            trial,
+            monitor="val/mae_node",
+        )
+
+        trainer = types.SimpleNamespace(
+            callback_metrics={"val/mae_node": torch.tensor(0.123)},
+            current_epoch=0,
+            global_step=10000,
+            sanity_checking=True,
+        )
+        pl_module = MagicMock()
+
+        # Sanity validation must not report to Optuna.
+        callback.on_validation_epoch_end(trainer, pl_module)
+        trial.report.assert_not_called()
+
+        # First real validation reports at aligned validation-check index 0.
+        trainer.sanity_checking = False
+        callback.on_validation_epoch_end(trainer, pl_module)
+        self.assertEqual(trial.report.call_count, 1)
+        self.assertEqual(trial.report.call_args.kwargs.get("step"), 0)
+
+        # Repeated callback at same step should be ignored.
+        callback.on_validation_epoch_end(trainer, pl_module)
+        self.assertEqual(trial.report.call_count, 1)
+
+        # Next distinct validation step increments the aligned index.
+        trainer.global_step = 12000
+        callback.on_validation_epoch_end(trainer, pl_module)
+        self.assertEqual(trial.report.call_count, 2)
+        self.assertEqual(trial.report.call_args.kwargs.get("step"), 1)

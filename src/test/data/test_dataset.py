@@ -166,6 +166,70 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
         self.assertIs(result, loaded_graph)
         self.assertNotIn("mmap", call_kwargs[0])
 
+    def test_candidate_sample_reader_uses_minimal_columns(self):
+        import data.dataset as dataset_module
+
+        dataset_module._CSV_SAMPLE_CACHE.clear()
+        observed_usecols: list[tuple[str, ...]] = []
+        original_read_csv = dataset_module.pd.read_csv
+
+        def _spy_read_csv(*args, **kwargs):
+            usecols = kwargs.get("usecols", ())
+            observed_usecols.append(tuple(usecols))
+            return original_read_csv(*args, **kwargs)
+
+        try:
+            with (
+                patch("data.dataset.pd.read_csv", side_effect=_spy_read_csv),
+                patch(
+                    "pandas.core.frame.DataFrame.to_dict",
+                    side_effect=AssertionError(
+                        "_read_candidate_samples should not call DataFrame.to_dict"
+                    ),
+                ),
+            ):
+                ds = self._make_ds()
+            self.assertEqual(len(ds), 10)
+            self.assertTrue(observed_usecols)
+            self.assertEqual(
+                set(observed_usecols[0]),
+                {"unoptimized_graph_path", "optimizability"},
+            )
+        finally:
+            dataset_module._CSV_SAMPLE_CACHE.clear()
+
+    def test_worker_memory_release_hook_triggers_with_workers(self):
+        ds = self._make_ds(num_workers=2)
+        ds._worker_call_count = 999
+
+        trim_mock = MagicMock()
+        fake_libc = MagicMock()
+        fake_libc.malloc_trim = trim_mock
+
+        with (
+            patch("data.dataset.gc.collect") as gc_mock,
+            patch("data.dataset.ctypes.CDLL", return_value=fake_libc),
+        ):
+            ds._maybe_release_worker_memory()
+
+        gc_mock.assert_called_once()
+        trim_mock.assert_called_once_with(0)
+        self.assertEqual(ds._worker_call_count, 1000)
+
+    def test_worker_memory_release_hook_disabled_without_workers(self):
+        ds = self._make_ds(num_workers=0)
+        ds._worker_call_count = 999
+
+        with (
+            patch("data.dataset.gc.collect") as gc_mock,
+            patch("data.dataset.ctypes.CDLL") as cdll_mock,
+        ):
+            ds._maybe_release_worker_memory()
+
+        gc_mock.assert_not_called()
+        cdll_mock.assert_not_called()
+        self.assertEqual(ds._worker_call_count, 999)
+
     # --- positional encoding ---
 
     def test_pos_enc_none_by_default(self):

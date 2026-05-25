@@ -27,6 +27,9 @@ class ExtractPrecomputedPE:
         # Grab the tensor from the Data object
         val = getattr(data, self.source_key, None)
         if val is not None:
+            # Release the original attribute early to reduce duplicate tensor
+            # lifetime when generating pos_enc on very large graphs.
+            delattr(data, self.source_key)
             if self.discrete:
                 val = val.long()
             else:

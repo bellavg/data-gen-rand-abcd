@@ -59,24 +59,22 @@ class AIGRegressionLightningModule(pl.LightningModule):
 
         if getattr(self, "_trainer", None) is not None:
             batch_size = getattr(batch, "num_graphs", 1)
+            loss_value = float(loss.item())
+            mae_value = float(mae_node_opt.item())
 
             self.log(
                 f"{prefix}/loss",
-                loss.detach(),
+                loss_value,
                 batch_size=batch_size,
                 sync_dist=False,
                 prog_bar=True,
             )
             self.log(
                 f"{prefix}/mae_node",
-                mae_node_opt.detach(),
+                mae_value,
                 batch_size=batch_size,
                 sync_dist=False,
             )
-
-        # Return the live loss only for training so the backward pass works.
-        # Returning a tensor from val/test causes PL to hold the entire
-        # computation graph in memory across the epoch for metric aggregation.
         return loss if prefix == "train" else None
 
     def training_step(self, batch, batch_idx):

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import ctypes
+import gc
 import hashlib
 import json
 import os
@@ -16,7 +18,7 @@ from torch_geometric.data import Dataset as PyGDataset
 from models.layers.positional_encodings import get_pe_transform
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class GraphSample:
     graph_path: str
     y_node_opt: float
@@ -127,6 +129,7 @@ class AIGGraphRegressionDataset(PyGDataset):
         )
         self._graph_cache_path_map: dict[str, Path] = {}
         self._node_sizes: list[int] | None = None
+        self._worker_call_count = 0
 
         # Initialize the PE transform factory
         self.pe_transform = get_pe_transform(
@@ -169,21 +172,34 @@ class AIGGraphRegressionDataset(PyGDataset):
         if cache_key in _CSV_SAMPLE_CACHE:
             return _CSV_SAMPLE_CACHE[cache_key]
 
-        df = pd.concat(
-            [pd.read_csv(p, dtype=str).fillna("") for p in self.csv_paths],
-            ignore_index=True,
-        )
-        df["optimizability"] = df["optimizability"].astype(float)
+        # Only parse the two columns needed for model targets/split bookkeeping.
+        required_cols = ["unoptimized_graph_path", "optimizability"]
+        frames = [
+            pd.read_csv(
+                p,
+                usecols=required_cols,
+                dtype={"unoptimized_graph_path": str, "optimizability": float},
+            )
+            for p in self.csv_paths
+        ]
+        df = pd.concat(frames, ignore_index=True)
 
         samples = [
             GraphSample(
-                graph_path=row["unoptimized_graph_path"].replace(
+                graph_path=str(graph_path).replace(
                     "/gpfs/scratch1/shared", "/scratch-shared"
                 ),
-                y_node_opt=float(row["optimizability"]),
+                y_node_opt=float(node_opt),
             )
-            for row in df.to_dict("records")
+            for graph_path, node_opt in zip(
+                df["unoptimized_graph_path"].fillna(""),
+                df["optimizability"],
+                strict=False,
+            )
         ]
+
+        del df
+        del frames
 
         _CSV_SAMPLE_CACHE[cache_key] = samples
         return samples
@@ -430,6 +446,8 @@ class AIGGraphRegressionDataset(PyGDataset):
         return len(self.samples)
 
     def get(self, idx: int):
+        self._maybe_release_worker_memory()
+
         sample = self.samples[idx]
         data_obj = self._load_graph_for_sample(sample)
 
@@ -445,6 +463,26 @@ class AIGGraphRegressionDataset(PyGDataset):
         # Keep targets on the Data object for graph-level regression.
         data_obj.y = torch.tensor([[sample.y_node_opt]], dtype=torch.float32)
         return data_obj
+
+    def _maybe_release_worker_memory(self) -> None:
+        # When DataLoader workers are enabled, each worker process owns its
+        # own dataset copy. This per-worker counter helps trim fragmented
+        # heap pages without affecting main-process hot path behavior.
+        if self.num_workers <= 0:
+            return
+
+        self._worker_call_count += 1
+        if self._worker_call_count % 1000 != 0:
+            return
+
+        gc.collect()
+        try:
+            libc = ctypes.CDLL(None)
+            trim = getattr(libc, "malloc_trim", None)
+            if callable(trim):
+                trim(0)
+        except Exception:
+            pass
 
     def get_num_nodes_list(self) -> list[int]:
         if self._node_sizes is not None:
