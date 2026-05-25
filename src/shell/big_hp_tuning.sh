@@ -191,13 +191,12 @@ fi
 # is identical across all workers (comparable evaluation).
 SAMPLER_SEED=$((40 + TASK_ID))   # workers 1/2/3 → seeds 41/42/43
 
-# Constrained multi-worker defaults for memory-limited nodes:
-# - Stage 2: 2 workers × prefetch_factor=1 => at most ~2 queued batches
-# - pin_memory defaults to false to avoid page-locked host buffers
-# - persistent_workers defaults to true to avoid repeated worker respawn churn
-# You can still override these with env vars at submit time.
+# Stage 2 default is in-process loading (num_workers=0): on this 35k-sample
+# heavy-tail graph mix, background workers have shown repeated host OOM exits
+# even with low prefetch and no pinned memory. Keep this conservative default
+# and override NUM_WORKERS explicitly when testing parallel loading.
 if [[ "$STAGE" == "2" ]]; then
-    NUM_WORKERS="${NUM_WORKERS:-2}"
+    NUM_WORKERS="${NUM_WORKERS:-0}"
 else
     NUM_WORKERS="${NUM_WORKERS:-2}"
 fi
@@ -206,7 +205,7 @@ export MALLOC_ARENA_MAX="${MALLOC_ARENA_MAX:-2}"
 
 # DataLoader tuning flags (can be overridden via env)
 PIN_MEMORY="${PIN_MEMORY:-false}"
-PERSISTENT_WORKERS="${PERSISTENT_WORKERS:-true}"
+PERSISTENT_WORKERS="${PERSISTENT_WORKERS:-false}"
 PREFETCH_FACTOR="${PREFETCH_FACTOR:-1}"
 DYNAMIC_BATCHING="${DYNAMIC_BATCHING:-true}"
 MAX_RESTARTS_ON_OOM="${MAX_RESTARTS_ON_OOM:-0}"

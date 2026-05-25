@@ -546,6 +546,38 @@ class TestAIGDataModule(unittest.TestCase):
         self.assertIsNotNone(dm.train_dataloader())
         self.assertIsNotNone(dm.val_dataloader())
 
+    def test_persistent_workers_train_only_kwargs(self):
+        from data.datamodule import AIGDataModule
+
+        dm = AIGDataModule(
+            self.csv_path,
+            batch_size=4,
+            num_workers=2,
+            persistent_workers=True,
+            prefetch_factor=1,
+        )
+
+        train_kwargs = dm._loader_kwargs(is_train=True)
+        val_kwargs = dm._loader_kwargs(is_train=False)
+
+        self.assertTrue(train_kwargs["persistent_workers"])
+        self.assertFalse(val_kwargs["persistent_workers"])
+
+    def test_persistent_workers_train_only_bucketed_dataloaders(self):
+        dm = self._make_dm(
+            num_workers=2,
+            persistent_workers=True,
+            prefetch_factor=1,
+            dynamic_batching=True,
+            dynamic_bucket_rules=[(30, 2)],
+        )
+
+        train_loader = dm.train_dataloader()
+        val_loader = dm.val_dataloader()
+
+        self.assertTrue(getattr(train_loader, "persistent_workers", False))
+        self.assertFalse(getattr(val_loader, "persistent_workers", False))
+
     def test_train_batch_shapes(self):
         dm = self._make_dm()
         batch = next(iter(dm.train_dataloader()))

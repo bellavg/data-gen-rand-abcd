@@ -74,7 +74,12 @@ class AIGDataModule(pl.LightningDataModule):
             bucket_rules=self.dynamic_bucket_rules,
         )
 
-    def _loader_kwargs(self, *, include_batch_size: bool = True) -> dict:
+    def _loader_kwargs(
+        self,
+        *,
+        include_batch_size: bool = True,
+        is_train: bool = False,
+    ) -> dict:
         kwargs = {
             "num_workers": self.num_workers,
             "pin_memory": self.pin_memory,
@@ -82,7 +87,7 @@ class AIGDataModule(pl.LightningDataModule):
         if include_batch_size:
             kwargs["batch_size"] = self.batch_size
         if self.num_workers > 0:
-            kwargs["persistent_workers"] = self.persistent_workers
+            kwargs["persistent_workers"] = self.persistent_workers if is_train else False
             kwargs["prefetch_factor"] = self.prefetch_factor
         return kwargs
 
@@ -116,6 +121,7 @@ class AIGDataModule(pl.LightningDataModule):
         plan: list[list[int]],
         *,
         shuffle: bool,
+        is_train: bool = False,
     ) -> DataLoader:
         sampler = BalancedDynamicBatchSampler(
             batch_size=self.batch_size,
@@ -124,7 +130,11 @@ class AIGDataModule(pl.LightningDataModule):
             bucket_rules=self.dynamic_bucket_rules,
             precomputed_batches=plan,
         )
-        return DataLoader(ds, batch_sampler=sampler, **self._loader_kwargs(include_batch_size=False))
+        return DataLoader(
+            ds,
+            batch_sampler=sampler,
+            **self._loader_kwargs(include_batch_size=False, is_train=is_train),
+        )
 
     def setup(self, stage: str | None = None) -> None:
         if stage in ("fit", None):
@@ -159,8 +169,17 @@ class AIGDataModule(pl.LightningDataModule):
                     cache_path=self._dynamic_batch_plan_cache_path(),
                 )
             self._train_batch_plan = None
-            return self._make_bucketed_dataloader(self.train_ds, plan, shuffle=True)
-        return DataLoader(self.train_ds, shuffle=True, **self._loader_kwargs())
+            return self._make_bucketed_dataloader(
+                self.train_ds,
+                plan,
+                shuffle=True,
+                is_train=True,
+            )
+        return DataLoader(
+            self.train_ds,
+            shuffle=True,
+            **self._loader_kwargs(is_train=True),
+        )
 
     def val_dataloader(self) -> DataLoader:
         if self.dynamic_batching and self.dynamic_bucket_rules:
@@ -172,14 +191,23 @@ class AIGDataModule(pl.LightningDataModule):
                     bucket_rules=self.dynamic_bucket_rules,
                 )
             self._val_batch_plan = None
-            return self._make_bucketed_dataloader(self.val_ds, precomputed, shuffle=False)
-        return DataLoader(self.val_ds, shuffle=False, **self._loader_kwargs())
+            return self._make_bucketed_dataloader(
+                self.val_ds,
+                precomputed,
+                shuffle=False,
+                is_train=False,
+            )
+        return DataLoader(
+            self.val_ds,
+            shuffle=False,
+            **self._loader_kwargs(is_train=False),
+        )
 
     def test_dataloader(self) -> DataLoader:
         return DataLoader(
             self.test_ds,
             shuffle=False,
-            **self._loader_kwargs(),
+            **self._loader_kwargs(is_train=False),
         )
 
 

@@ -195,14 +195,14 @@ def _install_hp_guarded_dataloaders(
                 datamodule.train_ds,
                 batch_sampler=sampler,
                 collate_fn=guarded_collate,
-                **datamodule._loader_kwargs(include_batch_size=False),
+                **datamodule._loader_kwargs(include_batch_size=False, is_train=True),
             )
 
         return DataLoader(
             datamodule.train_ds,
             shuffle=True,
             collate_fn=guarded_collate,
-            **datamodule._loader_kwargs(),
+            **datamodule._loader_kwargs(is_train=True),
         )
 
     def val_dataloader() -> DataLoader:
@@ -228,13 +228,13 @@ def _install_hp_guarded_dataloaders(
                 datamodule.val_ds,
                 batch_sampler=sampler,
                 collate_fn=guarded_collate,
-                **datamodule._loader_kwargs(include_batch_size=False),
+                **datamodule._loader_kwargs(include_batch_size=False, is_train=False),
             )
         return DataLoader(
             datamodule.val_ds,
             shuffle=False,
             collate_fn=guarded_collate,
-            **datamodule._loader_kwargs(),
+            **datamodule._loader_kwargs(is_train=False),
         )
 
     def test_dataloader() -> DataLoader:
@@ -242,7 +242,7 @@ def _install_hp_guarded_dataloaders(
             datamodule.test_ds,
             shuffle=False,
             collate_fn=guarded_collate,
-            **datamodule._loader_kwargs(),
+            **datamodule._loader_kwargs(is_train=False),
         )
 
     datamodule.train_dataloader = train_dataloader
