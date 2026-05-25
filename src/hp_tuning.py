@@ -41,20 +41,34 @@ class PyTorchLightningPruningCallback(pl.Callback):
         super().__init__()
         self._trial = trial
         self._monitor = monitor
+        self._last_reported_global_step: int | None = None
+        self._validation_check_idx = 0
 
     def on_validation_epoch_end(
         self, trainer: pl.Trainer, pl_module: pl.LightningModule
     ) -> None:
+        # Ignore Lightning's sanity-check validation pass. It runs before
+        # training and otherwise duplicates step-0 reports for Optuna.
+        if getattr(trainer, "sanity_checking", False):
+            return
+
         logs = trainer.callback_metrics
         if self._monitor not in logs:
             return
+
         value = float(logs[self._monitor])
-        step = trainer.current_epoch
+        global_step = int(getattr(trainer, "global_step", trainer.current_epoch))
+        if self._last_reported_global_step == global_step:
+            return
+
+        step = self._validation_check_idx
+        self._last_reported_global_step = global_step
         self._trial.report(value, step=step)
         if self._trial.should_prune():
             raise optuna.TrialPruned(
-                f"Trial pruned at epoch {step} ({self._monitor}={value:.6f})"
+                f"Trial pruned at validation check {step} ({self._monitor}={value:.6f})"
             )
+        self._validation_check_idx += 1
 
 
 class PeriodicMemoryReleaseCallback(pl.Callback):
@@ -240,7 +254,7 @@ def objective(trial: optuna.Trial, args):
         risk_score = _estimate_trial_risk(
             batch_size=batch_size,
             num_nodes=360_000,
-            num_edges=700_000,
+            num_edges=750_000,
             hidden_dim=hidden_dim,
             num_layers=encoder_kwargs["num_layers"],
             jk_mode=encoder_kwargs["jk_mode"],

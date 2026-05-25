@@ -3,6 +3,7 @@
 #SBATCH --time=48:00:00
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=16
+#SBATCH --mem=180G
 #SBATCH --partition=gpu_h100
 #SBATCH --gpus=1
 #SBATCH --array=1-3
@@ -23,6 +24,7 @@ echo "=========================================="
 echo "JOB: Big Optuna Hyperparameter Tuning (array_task=${TASK_ID} job=${SLURM_ARRAY_JOB_ID:-n/a})"
 echo "Running on: $(hostname)"
 echo "Start time: $(date)"
+echo "SLURM memory: mem_per_node=${SLURM_MEM_PER_NODE:-unset} mem_per_cpu=${SLURM_MEM_PER_CPU:-unset}"
 echo "Script version: $SCRIPT_VERSION"
 echo "=========================================="
 
@@ -189,14 +191,13 @@ fi
 # is identical across all workers (comparable evaluation).
 SAMPLER_SEED=$((40 + TASK_ID))   # workers 1/2/3 → seeds 41/42/43
 
-# Stage 2 uses num_workers=0: with 35k samples the DataLoader worker processes
-# consume enough CPU RAM to trigger SLURM's OOM killer.  Killed workers leave
-# CUDA tensors unreclaimable in GPU memory, snowballing until the GPU is full.
-# num_workers=0 (in-process loading) avoids the issue; the dataset is already
-# cached as individual .pt files so per-batch I/O overhead is minimal.
-# Stage 1 (15k samples) is safe with 2 workers.
+# Constrained multi-worker defaults for memory-limited nodes:
+# - Stage 2: 2 workers × prefetch_factor=1 => at most ~2 queued batches
+# - pin_memory defaults to false to avoid page-locked host buffers
+# - persistent_workers defaults to true to avoid repeated worker respawn churn
+# You can still override these with env vars at submit time.
 if [[ "$STAGE" == "2" ]]; then
-    NUM_WORKERS="${NUM_WORKERS:-0}"
+    NUM_WORKERS="${NUM_WORKERS:-2}"
 else
     NUM_WORKERS="${NUM_WORKERS:-2}"
 fi
@@ -205,7 +206,7 @@ export MALLOC_ARENA_MAX="${MALLOC_ARENA_MAX:-2}"
 
 # DataLoader tuning flags (can be overridden via env)
 PIN_MEMORY="${PIN_MEMORY:-false}"
-PERSISTENT_WORKERS="${PERSISTENT_WORKERS:-false}"
+PERSISTENT_WORKERS="${PERSISTENT_WORKERS:-true}"
 PREFETCH_FACTOR="${PREFETCH_FACTOR:-1}"
 DYNAMIC_BATCHING="${DYNAMIC_BATCHING:-true}"
 MAX_RESTARTS_ON_OOM="${MAX_RESTARTS_ON_OOM:-0}"

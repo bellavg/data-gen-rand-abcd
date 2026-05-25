@@ -24,6 +24,7 @@ def test_continuous_pe_log_scaling():
     # 4. Verify the results
     assert hasattr(data, "pos_enc"), "pos_enc attribute was not attached"
     assert data.pos_enc.dtype == torch.float32, "Continuous PE should be float"
+    assert not hasattr(data, "local_sp_sum"), "Source PE tensor should be removed"
 
     # Check the math (log1p(x) = ln(1 + x))
     expected_values = torch.log1p(fake_local_sp_sum.float())
@@ -51,6 +52,7 @@ def test_discrete_pe_no_scaling():
     # 4. Verify the results
     assert hasattr(data, "pos_enc"), "pos_enc attribute was not attached"
     assert data.pos_enc.dtype == torch.int64, "Discrete PE should be a Long tensor"
+    assert not hasattr(data, "level"), "Source PE tensor should be removed"
 
     # The values should remain exactly the same (no log scaling)
     assert torch.equal(data.pos_enc, fake_levels.long()), (
