@@ -450,6 +450,11 @@ def objective(trial: optuna.Trial, args):
 
         oom_kind, prune_reason, oom_like, msg = payload
         print(f"\n{msg}")
+        if oom_kind == "host" and int(getattr(args, "num_workers", 0)) > 0:
+            print(
+                "[oom_hint] DataLoader worker host-OOM detected while num_workers>0. "
+                "Use --num_workers 0 for Stage-2 stability on heavy-tail graphs."
+            )
         _mark_trial_outcome(
             trial,
             outcome="pruned",
@@ -547,6 +552,13 @@ def _seed_study_from_best(
 
 
 if __name__ == "__main__":
+    # Prefer filesystem-backed tensor sharing for large graph batches. This
+    # avoids file-descriptor pressure in long multi-worker DataLoader runs.
+    try:
+        torch.multiprocessing.set_sharing_strategy("file_system")
+    except (AttributeError, RuntimeError, ValueError) as exc:
+        print(f"[ipc] WARNING: failed to set sharing strategy to file_system: {exc}")
+
     parser = argparse.ArgumentParser(
         description="Optuna Hyperparameter Tuning for AIG Regression"
     )
