@@ -65,7 +65,7 @@ class AIGRegressionLightningModule(pl.LightningModule):
                 batch_size=b_size,
                 sync_dist=False,
                 prog_bar=True,
-                on_step=(prefix == "train"),
+                on_step=False,
                 on_epoch=True,
             )
             self.log(
@@ -73,7 +73,7 @@ class AIGRegressionLightningModule(pl.LightningModule):
                 float(mae_node_opt.detach().item()),
                 batch_size=b_size,
                 sync_dist=False,
-                on_step=(prefix == "train"),
+                on_step=False,
                 on_epoch=True,
             )
         return loss if prefix == "train" else None
@@ -85,9 +85,11 @@ class AIGRegressionLightningModule(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         self._compute_loss_and_metrics(batch, batch_idx, prefix="val")
+        return None
 
     def test_step(self, batch, batch_idx):
         self._compute_loss_and_metrics(batch, batch_idx, prefix="test")
+        return None
 
     def configure_optimizers(self):
         initial_lr = self.hparams.lr

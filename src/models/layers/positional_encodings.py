@@ -33,9 +33,10 @@ class ExtractPrecomputedPE:
             if self.discrete:
                 val = val.long()
             else:
-                # Handles 'pi_paths' and 'local_sp_sum' perfectly!
-                # log1p stabilizes wide-range feature distributions
-                val = torch.log1p(val.float())
+                # Handles 'pi_paths' and 'local_sp_sum' while avoiding an extra
+                # out-of-place log1p tensor allocation on very large graphs.
+                val = val.float()
+                val.log1p_()
 
             # Map it to the target attribute name expected by _get_pe
             setattr(data, self.attr_name, val)
