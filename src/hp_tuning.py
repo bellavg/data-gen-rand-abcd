@@ -101,7 +101,7 @@ class PeriodicMemoryReleaseCallback(pl.Callback):
             with open("/proc/self/status") as fh:
                 for line in fh:
                     if line.startswith("VmRSS:"):
-                        return int(line.split()[1]) / (1024 ** 2)
+                        return int(line.split()[1]) / (1024**2)
         except Exception:
             pass
         return float("nan")
@@ -131,6 +131,36 @@ class PeriodicMemoryReleaseCallback(pl.Callback):
             rss = PeriodicMemoryReleaseCallback._rss_gib()
             print(f"[mem] {label} host_rss={rss:.2f} GiB", flush=True)
 
+    @staticmethod
+    def _log_cpu_tensor_snapshot(step: int) -> None:
+        """Scan gc-tracked objects for live CPU tensors; print count and total MiB.
+
+        Run at two step checkpoints to distinguish Python reference accumulation
+        (count grows ~1/step) from allocator fragmentation (count flat, RSS grows).
+        """
+        gc.collect()
+        n, total_bytes = 0, 0
+        for obj in gc.get_objects():
+            try:
+                if torch.is_tensor(obj) and obj.device.type == "cpu":
+                    n += 1
+                    total_bytes += obj.element_size() * obj.nelement()
+                elif (
+                    hasattr(obj, "data")
+                    and torch.is_tensor(obj.data)
+                    and obj.data.device.type == "cpu"
+                ):
+                    n += 1
+                    total_bytes += obj.data.element_size() * obj.data.nelement()
+            except Exception:
+                pass
+        rss = PeriodicMemoryReleaseCallback._rss_gib()
+        print(
+            f"[tensor_snapshot] step={step} cpu_tensors={n} "
+            f"tensor_mib={total_bytes / (1024**2):.2f} host_rss={rss:.2f} GiB",
+            flush=True,
+        )
+
     def on_train_batch_end(
         self,
         trainer: pl.Trainer,
@@ -140,9 +170,14 @@ class PeriodicMemoryReleaseCallback(pl.Callback):
         batch_idx: int,
     ) -> None:
         self._drop_trainer_batch_refs(trainer)
+        if self.trial_number == 0 and trainer.global_step in (1000, 2000):
+            self._log_cpu_tensor_snapshot(trainer.global_step)
         if self.every_train_steps <= 0:
             return
-        if trainer.global_step > 0 and trainer.global_step % self.every_train_steps == 0:
+        if (
+            trainer.global_step > 0
+            and trainer.global_step % self.every_train_steps == 0
+        ):
             label = (
                 f"train_step={trainer.global_step}"
                 if self.trial_number == 0 and trainer.global_step % 1000 == 0
@@ -176,14 +211,18 @@ class PeriodicMemoryReleaseCallback(pl.Callback):
         self, trainer: pl.Trainer, pl_module: pl.LightningModule
     ) -> None:
         self._drop_trainer_batch_refs(trainer)
-        label = f"val_start step={trainer.global_step}" if self.trial_number == 0 else None
+        label = (
+            f"val_start step={trainer.global_step}" if self.trial_number == 0 else None
+        )
         self._release_memory(label)
 
     def on_validation_end(
         self, trainer: pl.Trainer, pl_module: pl.LightningModule
     ) -> None:
         self._drop_trainer_batch_refs(trainer)
-        label = f"val_end step={trainer.global_step}" if self.trial_number == 0 else None
+        label = (
+            f"val_end step={trainer.global_step}" if self.trial_number == 0 else None
+        )
         self._release_memory(label)
 
 
