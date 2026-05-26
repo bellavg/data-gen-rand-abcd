@@ -85,14 +85,21 @@ class PeriodicMemoryReleaseCallback(pl.Callback):
         self.every_val_batches = max(0, int(every_val_batches))
 
     @staticmethod
-    def _release_memory() -> None:
+    def _rss_gib() -> float:
+        try:
+            with open("/proc/self/status") as fh:
+                for line in fh:
+                    if line.startswith("VmRSS:"):
+                        return int(line.split()[1]) / (1024 ** 2)
+        except Exception:
+            pass
+        return float("nan")
+
+    @staticmethod
+    def _release_memory(label: str = "") -> None:
         gc.collect()
         try:
             libc = ctypes.CDLL(None)
-            # Prefer TCMalloc's ReleaseFreeMemory when TCMalloc is preloaded
-            # via LD_PRELOAD (e.g. libtcmalloc.so).  malloc_trim(0) is a
-            # glibc-specific call that is a complete no-op under TCMalloc and
-            # never returns page-heap memory to the OS.
             release_fn = getattr(libc, "MallocExtension_ReleaseFreeMemory", None)
             if callable(release_fn):
                 release_fn()
@@ -109,6 +116,9 @@ class PeriodicMemoryReleaseCallback(pl.Callback):
             except RuntimeError:
                 pass
 
+        rss = PeriodicMemoryReleaseCallback._rss_gib()
+        print(f"[mem] {label} host_rss={rss:.2f} GiB", flush=True)
+
     def on_train_batch_end(
         self,
         trainer: pl.Trainer,
@@ -123,12 +133,12 @@ class PeriodicMemoryReleaseCallback(pl.Callback):
             trainer.global_step > 0
             and trainer.global_step % self.every_train_steps == 0
         ):
-            self._release_memory()
+            self._release_memory(f"train_step={trainer.global_step}")
 
     def on_validation_start(
         self, trainer: pl.Trainer, pl_module: pl.LightningModule
     ) -> None:
-        self._release_memory()
+        self._release_memory(f"val_start step={trainer.global_step}")
 
     def on_validation_batch_end(
         self,
@@ -142,12 +152,12 @@ class PeriodicMemoryReleaseCallback(pl.Callback):
         if self.every_val_batches <= 0:
             return
         if (batch_idx + 1) % self.every_val_batches == 0:
-            self._release_memory()
+            self._release_memory(f"val_batch={batch_idx + 1}")
 
     def on_validation_end(
         self, trainer: pl.Trainer, pl_module: pl.LightningModule
     ) -> None:
-        self._release_memory()
+        self._release_memory(f"val_end step={trainer.global_step}")
 
 
 warnings.filterwarnings("ignore", category=UserWarning, module="torch_geometric")
