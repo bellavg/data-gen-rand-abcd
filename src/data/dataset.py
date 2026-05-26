@@ -478,9 +478,15 @@ class AIGGraphRegressionDataset(PyGDataset):
         gc.collect()
         try:
             libc = ctypes.CDLL(None)
-            trim = getattr(libc, "malloc_trim", None)
-            if callable(trim):
-                trim(0)
+            # Prefer TCMalloc's ReleaseFreeMemory (no-op under plain glibc);
+            # fall back to malloc_trim which is a no-op under TCMalloc.
+            release_fn = getattr(libc, "MallocExtension_ReleaseFreeMemory", None)
+            if callable(release_fn):
+                release_fn()
+            else:
+                trim = getattr(libc, "malloc_trim", None)
+                if callable(trim):
+                    trim(0)
         except Exception:
             pass
 

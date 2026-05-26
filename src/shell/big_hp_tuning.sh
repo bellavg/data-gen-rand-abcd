@@ -35,11 +35,17 @@ module load Python/3.13.1-GCCcore-14.2.0
 module load SciPy-bundle/2025.06-gfbf-2025a
 
 # --- Load gperftools TCMalloc to prevent glibc malloc fragmentation.
-# TCMalloc aggressively returns freed memory to the OS so that thousands of
-# sequential torch.load() calls over a long tuning run do not silently balloon
-# the process RSS until SLURM kills it.
+# TCMalloc reduces glibc arena fragmentation from thousands of sequential
+# torch.load() calls.  The default RELEASE_RATE=1 only returns ~1 page per
+# 1 MB of allocation churn, which is far too slow for our workload (each
+# training step allocates/frees 20-50 MB of graph tensors; at 10k+ steps/epoch
+# the page-heap balloons to the cgroup limit before TCMalloc drains it).
+# Set RELEASE_RATE=1000 so freed pages are returned aggressively.  The Python
+# callbacks also call MallocExtension_ReleaseFreeMemory() every N steps so the
+# two mechanisms complement each other.
 module load gperftools/2.16-GCCcore-14.2.0
 export LD_PRELOAD="${EBROOTGPERFTOOLS}/lib/libtcmalloc.so${LD_PRELOAD:+:${LD_PRELOAD}}"
+export TCMALLOC_RELEASE_RATE=1000
 echo "TCMalloc preloaded from: ${EBROOTGPERFTOOLS}/lib/libtcmalloc.so"
 # -------------------------------------------------------------------------
 
@@ -95,7 +101,7 @@ else
     DYNAMIC_BUCKET_RULES="${DYNAMIC_BUCKET_RULES:-}"
 fi
 HARD_PRUNE="${HARD_PRUNE:-true}"
-MEMORY_RELEASE_INTERVAL_STEPS="${MEMORY_RELEASE_INTERVAL_STEPS:-500}"
+MEMORY_RELEASE_INTERVAL_STEPS="${MEMORY_RELEASE_INTERVAL_STEPS:-200}"
 MEMORY_RELEASE_INTERVAL_VAL_BATCHES="${MEMORY_RELEASE_INTERVAL_VAL_BATCHES:-50}"
 echo "Stage: $STAGE  train_samples=$TRAIN_SAMPLES  n_trials=$N_TRIALS  max_trial_hours=$MAX_TRIAL_HOURS"
 

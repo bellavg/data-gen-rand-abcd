@@ -89,9 +89,17 @@ class PeriodicMemoryReleaseCallback(pl.Callback):
         gc.collect()
         try:
             libc = ctypes.CDLL(None)
-            trim = getattr(libc, "malloc_trim", None)
-            if callable(trim):
-                trim(0)
+            # Prefer TCMalloc's ReleaseFreeMemory when TCMalloc is preloaded
+            # via LD_PRELOAD (e.g. libtcmalloc.so).  malloc_trim(0) is a
+            # glibc-specific call that is a complete no-op under TCMalloc and
+            # never returns page-heap memory to the OS.
+            release_fn = getattr(libc, "MallocExtension_ReleaseFreeMemory", None)
+            if callable(release_fn):
+                release_fn()
+            else:
+                trim = getattr(libc, "malloc_trim", None)
+                if callable(trim):
+                    trim(0)
         except Exception:
             pass
 
