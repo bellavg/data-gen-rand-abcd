@@ -34,6 +34,16 @@ _CSV_SAMPLE_CACHE: dict[tuple[str, ...], list[GraphSample]] = {}
 _SPLITS_CACHE: dict[str, dict[str, list[str]]] = {}
 
 
+def clear_dataset_global_caches() -> None:
+    """Drop module-level sample/split caches.
+
+    These caches are useful within a trial but can accumulate across long
+    Optuna studies that instantiate many dataset objects in one process.
+    """
+    _CSV_SAMPLE_CACHE.clear()
+    _SPLITS_CACHE.clear()
+
+
 class AIGGraphRegressionDataset(PyGDataset):
     """
     Minimal graph-level regression dataset.
@@ -456,11 +466,15 @@ class AIGGraphRegressionDataset(PyGDataset):
         # all reference chains back to the pickle-deserialized object so the
         # original can be freed immediately by the GC.
         from torch_geometric.data import Data as _Data
+        x = raw_obj.x
+        edge_index = raw_obj.edge_index
+        edge_attr = raw_obj.edge_attr
+        pos_enc = raw_obj.pos_enc if hasattr(raw_obj, "pos_enc") else None
         data_obj = _Data(
-            x=raw_obj.x,
-            edge_index=raw_obj.edge_index,
-            edge_attr=raw_obj.edge_attr if hasattr(raw_obj, "edge_attr") else None,
-            pos_enc=raw_obj.pos_enc.clone() if hasattr(raw_obj, "pos_enc") else None,
+            x=x,
+            edge_index=edge_index,
+            edge_attr=edge_attr,
+            pos_enc=pos_enc,
             y=torch.tensor([[sample.y_node_opt]], dtype=torch.float32),
         )
         del raw_obj
@@ -517,5 +531,11 @@ class AIGGraphRegressionDataset(PyGDataset):
         """Drop the node-sizes list after batch planning; keep path map intact for get()."""
         self._node_sizes = None
 
+    def release_trial_caches(self) -> None:
+        """Drop dataset instance caches that are only useful within one trial."""
+        self._node_sizes = None
+        self._graph_cache_path_map.clear()
+        self._worker_call_count = 0
 
-__all__ = ["AIGGraphRegressionDataset", "GraphSample"]
+
+__all__ = ["AIGGraphRegressionDataset", "GraphSample", "clear_dataset_global_caches"]

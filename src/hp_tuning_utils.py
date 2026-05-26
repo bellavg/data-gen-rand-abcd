@@ -414,7 +414,24 @@ def _purge_trial_memory(
             datamodule.teardown("fit")
         except Exception:
             pass
+        for attr in ("_train_batch_plan", "_val_batch_plan"):
+            try:
+                setattr(datamodule, attr, None)
+            except Exception:
+                pass
         for attr in ("train_ds", "val_ds", "test_ds"):
+            ds = None
+            try:
+                ds = getattr(datamodule, attr, None)
+            except Exception:
+                ds = None
+            if ds is not None:
+                try:
+                    release_trial = getattr(ds, "release_trial_caches", None)
+                    if callable(release_trial):
+                        release_trial()
+                except Exception:
+                    pass
             try:
                 setattr(datamodule, attr, None)
             except Exception:
@@ -463,3 +480,11 @@ def _purge_trial_memory(
     # trial are not anchored in global memory for the remainder of the study.
     from data.sampler import _DYNAMIC_BATCH_PLAN_CACHE
     _DYNAMIC_BATCH_PLAN_CACHE.clear()
+
+    # Clear module-level dataset caches (CSV samples/splits) so long-running
+    # studies do not accumulate stale per-trial cache entries indefinitely.
+    try:
+        from data.dataset import clear_dataset_global_caches
+        clear_dataset_global_caches()
+    except Exception:
+        pass
