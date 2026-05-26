@@ -58,22 +58,23 @@ class AIGRegressionLightningModule(pl.LightningModule):
         mae_node_opt = F.l1_loss(preds.squeeze(-1), targets.squeeze(-1))
 
         if getattr(self, "_trainer", None) is not None:
-            batch_size = getattr(batch, "num_graphs", 1)
-            loss_value = float(loss.item())
-            mae_value = float(mae_node_opt.item())
-
+            b_size = int(getattr(batch, "num_graphs", 1))
             self.log(
                 f"{prefix}/loss",
-                loss_value,
-                batch_size=batch_size,
+                float(loss.detach().item()),
+                batch_size=b_size,
                 sync_dist=False,
                 prog_bar=True,
+                on_step=(prefix == "train"),
+                on_epoch=True,
             )
             self.log(
                 f"{prefix}/mae_node",
-                mae_value,
-                batch_size=batch_size,
+                float(mae_node_opt.detach().item()),
+                batch_size=b_size,
                 sync_dist=False,
+                on_step=(prefix == "train"),
+                on_epoch=True,
             )
         return loss if prefix == "train" else None
 
@@ -83,10 +84,10 @@ class AIGRegressionLightningModule(pl.LightningModule):
         return self._compute_loss_and_metrics(batch, batch_idx, prefix="train")
 
     def validation_step(self, batch, batch_idx):
-        return self._compute_loss_and_metrics(batch, batch_idx, prefix="val")
+        self._compute_loss_and_metrics(batch, batch_idx, prefix="val")
 
     def test_step(self, batch, batch_idx):
-        return self._compute_loss_and_metrics(batch, batch_idx, prefix="test")
+        self._compute_loss_and_metrics(batch, batch_idx, prefix="test")
 
     def configure_optimizers(self):
         initial_lr = self.hparams.lr

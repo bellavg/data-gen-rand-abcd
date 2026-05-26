@@ -58,7 +58,6 @@ class _FakeTrial:
 def _run_objective_for_test(trial_values: dict, best_model_score: float | None = 0.25):
     args = argparse.Namespace(
         csv_paths=["algo_a.csv", "algo_b.csv"],
-        checkpoint_dir="/tmp/ckpt",
         cache_dir="/tmp/hp_cache",
         num_workers=0,
         train_samples=25000,
@@ -368,7 +367,6 @@ class TestOOMTrialCleanup(unittest.TestCase):
     def test_cleanup_runs_before_third_trial_after_oom(self):
         args = argparse.Namespace(
             csv_paths=["algo_a.csv", "algo_b.csv"],
-            checkpoint_dir="/tmp/ckpt",
             cache_dir="/tmp/hp_cache",
             num_workers=0,
             train_samples=20000,
@@ -445,7 +443,6 @@ class TestHardPruneRiskScope(unittest.TestCase):
     def test_hard_prune_applies_to_large_batch_trials(self):
         args = argparse.Namespace(
             csv_paths=["algo_a.csv", "algo_b.csv"],
-            checkpoint_dir="/tmp/ckpt",
             cache_dir="/tmp/hp_cache",
             num_workers=0,
             train_samples=20000,
@@ -762,7 +759,6 @@ class TestPeriodicMemoryReleaseCallback(unittest.TestCase):
     def test_releases_memory_for_train_and_validation_hooks(self):
         callback = hp_tuning.PeriodicMemoryReleaseCallback(
             every_train_steps=500,
-            every_val_batches=2,
         )
         trainer = types.SimpleNamespace(global_step=1000)
         pl_module = MagicMock()
@@ -779,30 +775,14 @@ class TestPeriodicMemoryReleaseCallback(unittest.TestCase):
                 batch_idx=0,
             )
             callback.on_validation_start(trainer, pl_module)
-            callback.on_validation_batch_end(
-                trainer,
-                pl_module,
-                outputs=None,
-                batch=None,
-                batch_idx=0,
-                dataloader_idx=0,
-            )
-            callback.on_validation_batch_end(
-                trainer,
-                pl_module,
-                outputs=None,
-                batch=None,
-                batch_idx=1,
-                dataloader_idx=0,
-            )
             callback.on_validation_end(trainer, pl_module)
 
-        # train-end + val-start + val-batch(2nd) + val-end
-        self.assertEqual(release_mock.call_count, 4)
+        # train-end + val-start + val-end
+        self.assertEqual(release_mock.call_count, 3)
 
 
 class TestPruningCallbackStepSemantics(unittest.TestCase):
-    def test_skips_sanity_and_deduplicates_same_step(self):
+    def test_skips_sanity_and_reports_epoch_as_step(self):
         trial = MagicMock()
         trial.should_prune.return_value = False
         callback = hp_tuning.PyTorchLightningPruningCallback(
@@ -813,7 +793,6 @@ class TestPruningCallbackStepSemantics(unittest.TestCase):
         trainer = types.SimpleNamespace(
             callback_metrics={"val/mae_node": torch.tensor(0.123)},
             current_epoch=0,
-            global_step=10000,
             sanity_checking=True,
         )
         pl_module = MagicMock()
@@ -822,18 +801,14 @@ class TestPruningCallbackStepSemantics(unittest.TestCase):
         callback.on_validation_epoch_end(trainer, pl_module)
         trial.report.assert_not_called()
 
-        # First real validation reports at aligned validation-check index 0.
+        # Epoch 0 end reports at step=0.
         trainer.sanity_checking = False
         callback.on_validation_epoch_end(trainer, pl_module)
         self.assertEqual(trial.report.call_count, 1)
         self.assertEqual(trial.report.call_args.kwargs.get("step"), 0)
 
-        # Repeated callback at same step should be ignored.
-        callback.on_validation_epoch_end(trainer, pl_module)
-        self.assertEqual(trial.report.call_count, 1)
-
-        # Next distinct validation step increments the aligned index.
-        trainer.global_step = 12000
+        # Epoch 1 end reports at step=1.
+        trainer.current_epoch = 1
         callback.on_validation_epoch_end(trainer, pl_module)
         self.assertEqual(trial.report.call_count, 2)
         self.assertEqual(trial.report.call_args.kwargs.get("step"), 1)

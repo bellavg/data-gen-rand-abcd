@@ -419,6 +419,15 @@ def _purge_trial_memory(
                 setattr(datamodule, attr, None)
             except Exception:
                 pass
+        # Break closure cycles: monkey-patched dataloader methods capture
+        # `datamodule` by reference and are stored on `datamodule` itself.
+        # Zeroing them immediately (before gc.collect) avoids waiting for CPython's
+        # cyclic GC to detect and break the cycle on the next scheduled collection.
+        for attr in ("train_dataloader", "val_dataloader", "test_dataloader"):
+            try:
+                setattr(datamodule, attr, None)
+            except Exception:
+                pass
 
     # Zero-out optimizer grads before dropping references to reclaim memory faster.
     if optimizer is not None:
@@ -449,3 +458,8 @@ def _purge_trial_memory(
             torch.cuda.synchronize()
         except RuntimeError:
             pass
+
+    # Clear the module-level batch-plan cache so index lists from the just-finished
+    # trial are not anchored in global memory for the remainder of the study.
+    from data.sampler import _DYNAMIC_BATCH_PLAN_CACHE
+    _DYNAMIC_BATCH_PLAN_CACHE.clear()
