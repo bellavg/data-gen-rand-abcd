@@ -449,19 +449,21 @@ class AIGGraphRegressionDataset(PyGDataset):
         self._maybe_release_worker_memory()
 
         sample = self.samples[idx]
-        data_obj = self._load_graph_for_sample(sample)
+        raw_obj = self._load_graph_for_sample(sample)
+        raw_obj = self.pe_transform(raw_obj)
 
-        # Apply positional encoding transform (attaches to data_obj.pos_enc)
-        data_obj = self.pe_transform(data_obj)
-
-        # Keep only the normalized pos_enc tensor; raw PE sources are not used
-        # by the model and can dominate host/GPU memory on huge graphs.
-        for raw_pe_key in ("level", "pi_paths", "local_sp_sum"):
-            if hasattr(data_obj, raw_pe_key):
-                delattr(data_obj, raw_pe_key)
-
-        # Keep targets on the Data object for graph-level regression.
-        data_obj.y = torch.tensor([[sample.y_node_opt]], dtype=torch.float32)
+        # Re-instantiate with only the tensors the model needs.  This severs
+        # all reference chains back to the pickle-deserialized object so the
+        # original can be freed immediately by the GC.
+        from torch_geometric.data import Data as _Data
+        data_obj = _Data(
+            x=raw_obj.x,
+            edge_index=raw_obj.edge_index,
+            edge_attr=raw_obj.edge_attr if hasattr(raw_obj, "edge_attr") else None,
+            pos_enc=raw_obj.pos_enc.clone() if hasattr(raw_obj, "pos_enc") else None,
+            y=torch.tensor([[sample.y_node_opt]], dtype=torch.float32),
+        )
+        del raw_obj
         return data_obj
 
     def _maybe_release_worker_memory(self) -> None:

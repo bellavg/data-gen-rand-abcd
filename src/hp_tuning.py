@@ -41,14 +41,10 @@ class PyTorchLightningPruningCallback(pl.Callback):
         super().__init__()
         self._trial = trial
         self._monitor = monitor
-        self._last_reported_global_step: int | None = None
-        self._validation_check_idx = 0
 
     def on_validation_epoch_end(
         self, trainer: pl.Trainer, pl_module: pl.LightningModule
     ) -> None:
-        # Ignore Lightning's sanity-check validation pass. It runs before
-        # training and otherwise duplicates step-0 reports for Optuna.
         if getattr(trainer, "sanity_checking", False):
             return
 
@@ -56,33 +52,22 @@ class PyTorchLightningPruningCallback(pl.Callback):
         if self._monitor not in logs:
             return
 
+        epoch = int(trainer.current_epoch)
         value = float(logs[self._monitor])
-        global_step = int(getattr(trainer, "global_step", trainer.current_epoch))
-        if self._last_reported_global_step == global_step:
-            return
-
-        step = self._validation_check_idx
-        self._last_reported_global_step = global_step
-        self._trial.report(value, step=step)
+        self._trial.report(value, step=epoch)
         if self._trial.should_prune():
             raise optuna.TrialPruned(
-                f"Trial pruned at validation check {step} ({self._monitor}={value:.6f})"
+                f"Trial pruned at epoch {epoch} ({self._monitor}={value:.6f})"
             )
-        self._validation_check_idx += 1
 
 
 class PeriodicMemoryReleaseCallback(pl.Callback):
     """Periodically release reclaimable host/GPU memory during long trials."""
 
-    def __init__(
-        self,
-        *,
-        every_train_steps: int = 500,
-        every_val_batches: int = 50,
-    ) -> None:
+    def __init__(self, *, every_train_steps: int = 500, trial_number: int = -1) -> None:
         super().__init__()
         self.every_train_steps = max(0, int(every_train_steps))
-        self.every_val_batches = max(0, int(every_val_batches))
+        self.trial_number = int(trial_number)
 
     @staticmethod
     def _rss_gib() -> float:
@@ -96,7 +81,7 @@ class PeriodicMemoryReleaseCallback(pl.Callback):
         return float("nan")
 
     @staticmethod
-    def _release_memory(label: str = "") -> None:
+    def _release_memory(label: str | None = None) -> None:
         gc.collect()
         try:
             libc = ctypes.CDLL(None)
@@ -116,8 +101,9 @@ class PeriodicMemoryReleaseCallback(pl.Callback):
             except RuntimeError:
                 pass
 
-        rss = PeriodicMemoryReleaseCallback._rss_gib()
-        print(f"[mem] {label} host_rss={rss:.2f} GiB", flush=True)
+        if label is not None:
+            rss = PeriodicMemoryReleaseCallback._rss_gib()
+            print(f"[mem] {label} host_rss={rss:.2f} GiB", flush=True)
 
     def on_train_batch_end(
         self,
@@ -129,35 +115,25 @@ class PeriodicMemoryReleaseCallback(pl.Callback):
     ) -> None:
         if self.every_train_steps <= 0:
             return
-        if (
-            trainer.global_step > 0
-            and trainer.global_step % self.every_train_steps == 0
-        ):
-            self._release_memory(f"train_step={trainer.global_step}")
+        if trainer.global_step > 0 and trainer.global_step % self.every_train_steps == 0:
+            label = (
+                f"train_step={trainer.global_step}"
+                if self.trial_number == 0 and trainer.global_step % 1000 == 0
+                else None
+            )
+            self._release_memory(label)
 
     def on_validation_start(
         self, trainer: pl.Trainer, pl_module: pl.LightningModule
     ) -> None:
-        self._release_memory(f"val_start step={trainer.global_step}")
-
-    def on_validation_batch_end(
-        self,
-        trainer: pl.Trainer,
-        pl_module: pl.LightningModule,
-        outputs,
-        batch,
-        batch_idx: int,
-        dataloader_idx: int = 0,
-    ) -> None:
-        if self.every_val_batches <= 0:
-            return
-        if (batch_idx + 1) % self.every_val_batches == 0:
-            self._release_memory(f"val_batch={batch_idx + 1}")
+        label = f"val_start step={trainer.global_step}" if self.trial_number == 0 else None
+        self._release_memory(label)
 
     def on_validation_end(
         self, trainer: pl.Trainer, pl_module: pl.LightningModule
     ) -> None:
-        self._release_memory(f"val_end step={trainer.global_step}")
+        label = f"val_end step={trainer.global_step}" if self.trial_number == 0 else None
+        self._release_memory(label)
 
 
 warnings.filterwarnings("ignore", category=UserWarning, module="torch_geometric")
@@ -380,9 +356,7 @@ def objective(trial: optuna.Trial, args):
         early_stop_cb = EarlyStopping(monitor="val/mae_node", patience=3, mode="min")
         memory_release_cb = PeriodicMemoryReleaseCallback(
             every_train_steps=int(getattr(args, "memory_release_interval_steps", 500)),
-            every_val_batches=int(
-                getattr(args, "memory_release_interval_val_batches", 50)
-            ),
+            trial_number=trial.number,
         )
 
         csv_logger = CSVLogger(
@@ -393,10 +367,7 @@ def objective(trial: optuna.Trial, args):
 
         _precision = _select_trainer_precision()
         log_every_n_steps = max(1, int(getattr(args, "log_every_n_steps", 100)))
-        val_check_interval = int(getattr(args, "val_check_interval", 2000))
-        callbacks = [pruning_cb, early_stop_cb]
-        if memory_release_cb is not None:
-            callbacks.append(memory_release_cb)
+        callbacks = [pruning_cb, early_stop_cb, memory_release_cb]
 
         trainer = pl.Trainer(
             max_epochs=15,
@@ -406,7 +377,6 @@ def objective(trial: optuna.Trial, args):
             precision=_precision,
             gradient_clip_val=1.0,
             log_every_n_steps=log_every_n_steps,
-            val_check_interval=val_check_interval,
             callbacks=callbacks,
             logger=csv_logger,
             enable_checkpointing=False,
@@ -589,12 +559,6 @@ if __name__ == "__main__":
     parser.add_argument(
         "--study_name", type=str, required=True, help="Optuna study name"
     )
-    parser.add_argument(
-        "--checkpoint_dir",
-        type=str,
-        default=".",
-        help="Checkpoint directory (currently unused).",
-    )
     parser.add_argument("--csv_paths", nargs="+", required=True, help="Paths to CSVs")
     parser.add_argument("--num_workers", type=int, default=4, help="DataLoader workers")
     parser.add_argument(
@@ -641,15 +605,6 @@ if __name__ == "__main__":
         help=(
             "Trigger gc/malloc_trim during training every N global steps "
             "(0 disables train-step release)."
-        ),
-    )
-    parser.add_argument(
-        "--memory_release_interval_val_batches",
-        type=int,
-        default=50,
-        help=(
-            "Trigger gc/malloc_trim during validation every N batches "
-            "(0 disables per-batch release)."
         ),
     )
     parser.add_argument(
@@ -709,16 +664,6 @@ if __name__ == "__main__":
         type=int,
         default=1000,
         help="Trainer metric logging interval in steps (default: 100).",
-    )
-    parser.add_argument(
-        "--val_check_interval",
-        type=int,
-        default=10000,
-        help=(
-            "Run validation every N training steps (default: 7000). "
-            "With dynamic batching at batch_size=1, one epoch can be 28k+ steps; "
-            "without this, early stopping and pruning never fire within a trial."
-        ),
     )
     parser.add_argument(
         "--sampler_seed",

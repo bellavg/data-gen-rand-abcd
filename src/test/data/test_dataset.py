@@ -203,7 +203,7 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
         ds._worker_call_count = 999
 
         trim_mock = MagicMock()
-        fake_libc = MagicMock()
+        fake_libc = MagicMock(spec=[])  # spec=[] means no auto-attributes → getattr returns None
         fake_libc.malloc_trim = trim_mock
 
         with (
