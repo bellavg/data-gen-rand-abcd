@@ -8,9 +8,8 @@ from typing import Dict, List, Optional, Tuple, Union
 # aigverse.adapters is required to attach the .to_networkx() method to Aig objects
 import aigverse.adapters  # noqa: F401
 import torch
-from aigverse import (
-    read_aiger_into_aig,
-)
+from aigverse.io import read_aiger_into_aig
+from aigverse.networks import DepthAig
 from torch_geometric.data import Data
 
 
@@ -108,7 +107,7 @@ def _extract_topology(
     assert base_nodes == list(range(num_base_nodes)), (
         f"AIG node labels must be contiguous 0..n-1, got: {base_nodes}"
     )
-    num_nodes = num_base_nodes + aig.num_pos()
+    num_nodes = num_base_nodes + aig.num_pos
 
     node_to_idx = {n: i for i, n in enumerate(base_nodes)}
 
@@ -134,14 +133,14 @@ def _extract_topology(
 
         # Process incoming edges from fanins
         for f_sig in aig.fanins(n):
-            # Use the documented pyaigverse API: AigSignal exposes
-            # `get_index()` and `get_complement()` methods.
+            # Use the documented aigverse API: AigSignal exposes
+            # `index` and `complement` properties.
             try:
-                fanin_node = f_sig.get_index()
-                inv = 1.0 if f_sig.get_complement() else 0.0
+                fanin_node = f_sig.index
+                inv = 1.0 if f_sig.complement else 0.0
             except AttributeError:
                 raise AttributeError(
-                    f"Unexpected fanin signal object {type(f_sig)}; expected get_index()/get_complement()"
+                    f"Unexpected fanin signal object {type(f_sig)}; expected .index/.complement properties"
                 )
 
             u_idx = node_to_idx[fanin_node]
@@ -161,10 +160,10 @@ def _extract_topology(
         x_features.append(ntype)
 
         # PO depth is +1 to the node driving it
-        driver_idx = node_to_idx[po_sig.get_index()]
+        driver_idx = node_to_idx[po_sig.index]
         level_features.append([level_features[driver_idx][0] + 1.0])
 
-        inv = 1.0 if po_sig.get_complement() else 0.0
+        inv = 1.0 if po_sig.complement else 0.0
         e_type = [1.0 - inv, inv]
 
         edges.append((driver_idx, idx, e_type))
@@ -258,7 +257,7 @@ def aig_to_pytorch_geometric(
     aig = read_aiger_into_aig(path_str)
 
     # Use DepthAig view to calculate level (depth) properties efficiently.
-    depth_aig = aigverse.DepthAig(aig)
+    depth_aig = DepthAig(aig)
     # 1. Extract Topology from real Aig
     num_nodes, x_features, level_features, edges, successors = _extract_topology(
         aig, depth_aig
@@ -293,7 +292,7 @@ def aig_to_pytorch_geometric(
 
     data_obj.num_nodes = num_nodes
     data_obj.num_edges = edge_index.size(1)
-    data_obj.num_pis = aig.num_pis()
-    data_obj.num_pos = aig.num_pos()
+    data_obj.num_pis = aig.num_pis
+    data_obj.num_pos = aig.num_pos
 
     return data_obj

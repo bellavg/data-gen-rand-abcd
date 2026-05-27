@@ -322,7 +322,7 @@ class TestDatasetAigNodeLabelAudit(unittest.TestCase):
     )
     def test_dataset_networkx_node_labels_are_contiguous(self) -> None:
         import aigverse.adapters  # noqa: F401
-        from aigverse import read_aiger_into_aig
+        from aigverse.io import read_aiger_into_aig
 
         repo_root = Path(__file__).resolve().parents[2]
         designs_root = repo_root / "data" / "designs"
