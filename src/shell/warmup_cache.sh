@@ -32,11 +32,31 @@ echo "=========================================="
 
 module purge
 module load 2025
-module load Python/3.13.1-GCCcore-14.2.0
-module load SciPy-bundle/2025.06-gfbf-2025a
+USE_CONDA_ENV="${USE_CONDA_ENV:-false}"
+CONDA_MODULE="${CONDA_MODULE:-Anaconda3/2025.06-1}"
+if [[ "$USE_CONDA_ENV" == "true" ]]; then
+    module load "$CONDA_MODULE"
+else
+    module load Python/3.13.1-GCCcore-14.2.0
+    module load SciPy-bundle/2025.06-gfbf-2025a
+fi
 
-VENV_PATH="${VENV_PATH:-/scratch-shared/$USER/.venv}"
-source "$VENV_PATH/bin/activate"
+if [[ "$USE_CONDA_ENV" == "true" ]]; then
+    CONDA_ENV_PREFIX="${CONDA_ENV_PREFIX:-/scratch-shared/$USER/.conda/envs/data-gen-py312}"
+    echo "Activating conda environment at: $CONDA_ENV_PREFIX"
+    if command -v conda >/dev/null 2>&1; then
+        eval "$(conda shell.bash hook)"
+    elif [[ -n "${EBROOTANACONDA3:-}" && -f "${EBROOTANACONDA3}/etc/profile.d/conda.sh" ]]; then
+        source "${EBROOTANACONDA3}/etc/profile.d/conda.sh"
+    else
+        echo "ERROR: conda command not found after loading $CONDA_MODULE" >&2
+        exit 1
+    fi
+    conda activate "$CONDA_ENV_PREFIX"
+else
+    VENV_PATH="${VENV_PATH:-/scratch-shared/$USER/.venv}"
+    source "$VENV_PATH/bin/activate"
+fi
 
 BASE_DIR="${BASE_DIR:-$HOME/data-gen-rand-abcd}"
 unset PYTHONPATH
