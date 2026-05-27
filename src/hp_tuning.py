@@ -1,12 +1,15 @@
 import argparse
-import ctypes
 import gc
 import logging
 import os
 import sqlite3
 import warnings
 
-from mem_trace import MemoryTracer
+from mem_trace import (
+    MemoryTraceSession,
+    drop_trainer_batch_refs,
+    release_reclaimable_memory,
+)
 
 import optuna
 import pytorch_lightning as pl
@@ -81,147 +84,7 @@ class PeriodicMemoryReleaseCallback(pl.Callback):
             else max(0, int(every_val_batches))
         )
         self.trial_number = int(trial_number)
-        # Instantiated only for trial 0; other trials pay zero overhead.
-        self._mem_tracer: MemoryTracer | None = (
-            MemoryTracer() if trial_number == 0 else None
-        )
-
-    @staticmethod
-    def _drop_trainer_batch_refs(trainer: pl.Trainer) -> None:
-        """Defensively clear trainer-side batch references after a step.
-
-        Lightning normally clears these in the logger connector, but forcing
-        the drop here keeps retention bounded if any callback path exits early.
-        """
-        try:
-            results = getattr(trainer, "_results", None)
-            if results is not None:
-                results.batch = None
-                results.batch_size = None
-        except Exception:
-            pass
-
-    @staticmethod
-    def _rss_gib() -> float:
-        try:
-            with open("/proc/self/status") as fh:
-                for line in fh:
-                    if line.startswith("VmRSS:"):
-                        return int(line.split()[1]) / (1024**2)
-        except Exception:
-            pass
-        return float("nan")
-
-    _release_fn_checked: bool = False   # class-level flag to log once
-
-    @staticmethod
-    def _release_memory(label: str | None = None) -> None:
-        gc.collect()
-        try:
-            libc = ctypes.CDLL(None)
-            release_fn = getattr(libc, "MallocExtension_ReleaseFreeMemory", None)
-            if callable(release_fn):
-                if not PeriodicMemoryReleaseCallback._release_fn_checked:
-                    print("[release] MallocExtension_ReleaseFreeMemory resolved — TCMalloc active", flush=True)
-                    PeriodicMemoryReleaseCallback._release_fn_checked = True
-                release_fn()
-            else:
-                trim = getattr(libc, "malloc_trim", None)
-                if not PeriodicMemoryReleaseCallback._release_fn_checked:
-                    print(
-                        f"[release] MallocExtension_ReleaseFreeMemory NOT found; "
-                        f"malloc_trim callable={callable(trim)}",
-                        flush=True,
-                    )
-                    PeriodicMemoryReleaseCallback._release_fn_checked = True
-                if callable(trim):
-                    trim(0)
-        except Exception:
-            pass
-
-        if torch.cuda.is_available():
-            try:
-                torch.cuda.empty_cache()
-            except RuntimeError:
-                pass
-
-        if label is not None:
-            rss = PeriodicMemoryReleaseCallback._rss_gib()
-            print(f"[mem] {label} host_rss={rss:.2f} GiB", flush=True)
-
-    @staticmethod
-    def _log_cpu_tensor_snapshot(step: int) -> None:
-        """Scan gc-tracked objects for live CPU tensors; print count and total MiB.
-
-        Run at two step checkpoints to distinguish Python reference accumulation
-        (count grows ~1/step) from allocator fragmentation (count flat, RSS grows).
-        """
-        gc.collect()
-        n, total_bytes = 0, 0
-        for obj in gc.get_objects():
-            try:
-                if torch.is_tensor(obj) and obj.device.type == "cpu":
-                    n += 1
-                    total_bytes += obj.element_size() * obj.nelement()
-                elif (
-                    hasattr(obj, "data")
-                    and torch.is_tensor(obj.data)
-                    and obj.data.device.type == "cpu"
-                ):
-                    n += 1
-                    total_bytes += obj.data.element_size() * obj.data.nelement()
-            except Exception:
-                pass
-        rss = PeriodicMemoryReleaseCallback._rss_gib()
-        pinned_mib = float("nan")
-        if torch.cuda.is_available():
-            try:
-                stats = torch.cuda.memory_stats()
-                pinned_mib = stats.get("pinned_mem_allocated_bytes.current", 0) / (1024**2)
-            except Exception:
-                pass
-        print(
-            f"[tensor_snapshot] step={step} cpu_tensors={n} "
-            f"tensor_mib={total_bytes / (1024**2):.2f} "
-            f"pinned_mib={pinned_mib:.2f} host_rss={rss:.2f} GiB",
-            flush=True,
-        )
-
-    @staticmethod
-    def _smaps_rss_breakdown(step: int) -> None:
-        """Categorize host RSS from /proc/self/smaps into heap, file-mapped, and other.
-
-        Runs alongside _log_cpu_tensor_snapshot at step checkpoints.  Determines
-        whether the growing RSS is:
-          heap       - malloc fragmentation ([heap] region RSS)
-          file_mapped - file-backed mmap pages (e.g. torch.load, CUDA driver libs)
-          other_anon  - anonymous non-heap pages (CUDA UVM, anonymous mmap, stack)
-        """
-        try:
-            heap_kb = anon_kb = file_kb = 0
-            current_path = ""
-            with open("/proc/self/smaps") as fh:
-                for line in fh:
-                    # Region header lines start with a hex address.
-                    if line and line[0] in "0123456789abcdef":
-                        parts = line.split()
-                        current_path = parts[5] if len(parts) > 5 else ""
-                    elif line.startswith("Rss:"):
-                        kb = int(line.split()[1])
-                        if current_path == "[heap]":
-                            heap_kb += kb
-                        elif current_path and not current_path.startswith("["):
-                            file_kb += kb
-                        else:
-                            anon_kb += kb
-            print(
-                f"[smaps] step={step} heap={heap_kb // 1024} MiB "
-                f"file_mapped={file_kb // 1024} MiB "
-                f"other_anon={anon_kb // 1024} MiB",
-                flush=True,
-            )
-        except Exception:
-            pass
+        self._mem_trace = MemoryTraceSession.from_env() if trial_number == 0 else None
 
     def on_train_batch_end(
         self,
@@ -231,17 +94,10 @@ class PeriodicMemoryReleaseCallback(pl.Callback):
         batch,
         batch_idx: int,
     ) -> None:
-        self._drop_trainer_batch_refs(trainer)
+        drop_trainer_batch_refs(trainer)
         step = trainer.global_step
-        if self._mem_tracer is not None and step in (1000, 2000):
-            self._log_cpu_tensor_snapshot(step)
-            self._mem_tracer.snapshot(f"step_{step}")
-            if step == 1000:
-                self._mem_tracer.report_diff("baseline", "step_1000")
-                self._mem_tracer.report_top("step_1000")
-            else:
-                self._mem_tracer.report_diff("step_1000", "step_2000")
-                self._mem_tracer.report_top("step_2000")
+        if self._mem_trace is not None:
+            self._mem_trace.maybe_capture_step(step)
         if self.every_train_steps <= 0:
             return
         if (
@@ -253,7 +109,7 @@ class PeriodicMemoryReleaseCallback(pl.Callback):
                 if self.trial_number == 0 and trainer.global_step % 1000 == 0
                 else None
             )
-            self._release_memory(label)
+            release_reclaimable_memory(label)
 
     def on_validation_batch_end(
         self,
@@ -264,7 +120,7 @@ class PeriodicMemoryReleaseCallback(pl.Callback):
         batch_idx: int,
         dataloader_idx: int = 0,
     ) -> None:
-        self._drop_trainer_batch_refs(trainer)
+        drop_trainer_batch_refs(trainer)
         if self.every_val_batches <= 0:
             return
         if (batch_idx + 1) % self.every_val_batches != 0:
@@ -275,36 +131,36 @@ class PeriodicMemoryReleaseCallback(pl.Callback):
             if self.trial_number == 0 and (batch_idx + 1) % 1000 == 0
             else None
         )
-        self._release_memory(label)
+        release_reclaimable_memory(label)
 
     def on_fit_end(
         self, trainer: pl.Trainer, pl_module: pl.LightningModule
     ) -> None:
-        if self._mem_tracer is not None:
-            self._mem_tracer.clear()
-            self._mem_tracer = None
+        if self._mem_trace is not None:
+            self._mem_trace.clear()
+            self._mem_trace = None
 
     def on_validation_start(
         self, trainer: pl.Trainer, pl_module: pl.LightningModule
     ) -> None:
-        self._drop_trainer_batch_refs(trainer)
+        drop_trainer_batch_refs(trainer)
         label = (
             f"val_start step={trainer.global_step}" if self.trial_number == 0 else None
         )
-        self._release_memory(label)
+        release_reclaimable_memory(label)
 
     def on_validation_end(
         self, trainer: pl.Trainer, pl_module: pl.LightningModule
     ) -> None:
-        self._drop_trainer_batch_refs(trainer)
+        drop_trainer_batch_refs(trainer)
         label = (
             f"val_end step={trainer.global_step}" if self.trial_number == 0 else None
         )
-        self._release_memory(label)
+        release_reclaimable_memory(label)
         # Capture baseline snapshot once, right after the initial sanity-check
         # validation (step 0) and before any training steps begin.
-        if self._mem_tracer is not None and trainer.global_step == 0:
-            self._mem_tracer.snapshot("baseline")
+        if self._mem_trace is not None and trainer.global_step == 0:
+            self._mem_trace.capture_baseline(step=0)
 
 
 warnings.filterwarnings("ignore", category=UserWarning, module="torch_geometric")

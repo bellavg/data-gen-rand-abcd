@@ -32,8 +32,14 @@ echo "=========================================="
 # 1. Setup Environment & Modules
 module purge
 module load 2025
-module load Python/3.13.1-GCCcore-14.2.0
-module load SciPy-bundle/2025.06-gfbf-2025a
+USE_CONDA_ENV="${USE_CONDA_ENV:-false}"
+CONDA_MODULE="${CONDA_MODULE:-Anaconda3/2025.06-1}"
+if [[ "$USE_CONDA_ENV" == "true" ]]; then
+    module load "$CONDA_MODULE"
+else
+    module load Python/3.13.1-GCCcore-14.2.0
+    module load SciPy-bundle/2025.06-gfbf-2025a
+fi
 
 # --- Allocator selection (override via USE_TCMALLOC=false to use glibc).
 # smaps analysis showed TCMalloc holds pages as "in-use" across steps and
@@ -41,7 +47,7 @@ module load SciPy-bundle/2025.06-gfbf-2025a
 # constant at 6.5+ GiB even after release calls).  Testing without TCMalloc
 # lets glibc's allocator handle the workload, where malloc_trim(0) IS
 # effective at returning free pages to the OS.
-USE_TCMALLOC="${USE_TCMALLOC:-false}"
+USE_TCMALLOC="${USE_TCMALLOC:-true}"
 if [[ "$USE_TCMALLOC" == "true" ]]; then
     module load gperftools/2.16-GCCcore-14.2.0
     export LD_PRELOAD="${EBROOTGPERFTOOLS}/lib/libtcmalloc.so${LD_PRELOAD:+:${LD_PRELOAD}}"
@@ -60,10 +66,23 @@ USE_IN_MEMORY_STORAGE="${USE_IN_MEMORY_STORAGE:-true}"
 echo "In-memory storage: USE_IN_MEMORY_STORAGE=$USE_IN_MEMORY_STORAGE"
 # -------------------------------------------------------------------------
 
-VENV_PATH="${VENV_PATH:-/scratch-shared/$USER/.venv}"
-echo "Activating virtual environment at: $VENV_PATH"
-source "$VENV_PATH/bin/activate"
-# Skip pip installations since the venv is already set up!
+if [[ "$USE_CONDA_ENV" == "true" ]]; then
+    CONDA_ENV_PREFIX="${CONDA_ENV_PREFIX:-/scratch-shared/$USER/.conda/envs/data-gen-py312}"
+    echo "Activating conda environment at: $CONDA_ENV_PREFIX"
+    if command -v conda >/dev/null 2>&1; then
+        eval "$(conda shell.bash hook)"
+    elif [[ -n "${EBROOTANACONDA3:-}" && -f "${EBROOTANACONDA3}/etc/profile.d/conda.sh" ]]; then
+        source "${EBROOTANACONDA3}/etc/profile.d/conda.sh"
+    else
+        echo "ERROR: conda command not found after loading $CONDA_MODULE" >&2
+        exit 1
+    fi
+    conda activate "$CONDA_ENV_PREFIX"
+else
+    VENV_PATH="${VENV_PATH:-/scratch-shared/$USER/.venv}"
+    echo "Activating virtual environment at: $VENV_PATH"
+    source "$VENV_PATH/bin/activate"
+fi
 
 BASE_DIR="${BASE_DIR:-$HOME/data-gen-rand-abcd}"
 unset PYTHONPATH
@@ -113,7 +132,22 @@ else
 fi
 HARD_PRUNE="${HARD_PRUNE:-true}"
 MEMORY_RELEASE_INTERVAL_STEPS="${MEMORY_RELEASE_INTERVAL_STEPS:-200}"
+MEM_TRACE_MAX_STEP="${MEM_TRACE_MAX_STEP:-5000}"
+MEM_TRACE_STEP_INTERVAL="${MEM_TRACE_STEP_INTERVAL:-1000}"
+MEM_TRACE_TOP_TYPES="${MEM_TRACE_TOP_TYPES:-25}"
+MEM_TRACE_TOP_OBJECTS="${MEM_TRACE_TOP_OBJECTS:-10}"
+MEM_TRACE_TOP_REGIONS="${MEM_TRACE_TOP_REGIONS:-5}"
+MEM_TRACE_ENABLE_TRACEMALLOC="${MEM_TRACE_ENABLE_TRACEMALLOC:-0}"
+MEM_TRACE_TRACEMALLOC_FRAMES="${MEM_TRACE_TRACEMALLOC_FRAMES:-25}"
+export MEM_TRACE_MAX_STEP
+export MEM_TRACE_STEP_INTERVAL
+export MEM_TRACE_TOP_TYPES
+export MEM_TRACE_TOP_OBJECTS
+export MEM_TRACE_TOP_REGIONS
+export MEM_TRACE_ENABLE_TRACEMALLOC
+export MEM_TRACE_TRACEMALLOC_FRAMES
 echo "Stage: $STAGE  train_samples=$TRAIN_SAMPLES  n_trials=$N_TRIALS  max_trial_hours=$MAX_TRIAL_HOURS"
+echo "Mem trace: max_step=$MEM_TRACE_MAX_STEP step_interval=$MEM_TRACE_STEP_INTERVAL top_types=$MEM_TRACE_TOP_TYPES top_objects=$MEM_TRACE_TOP_OBJECTS top_regions=$MEM_TRACE_TOP_REGIONS tracemalloc=$MEM_TRACE_ENABLE_TRACEMALLOC frames=$MEM_TRACE_TRACEMALLOC_FRAMES"
 
 WORKSPACE="/scratch-shared/$USER/big_optuna_run_s${STAGE}_${TASK_ID}"
 LOG_DIR="$WORKSPACE/logs"
