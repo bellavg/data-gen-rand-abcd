@@ -1,8 +1,8 @@
 #!/bin/bash
 #SBATCH --job-name=refresh_scratch
-#SBATCH --time=01:00:00
+#SBATCH --time=00:59:59
 #SBATCH --nodes=1
-#SBATCH --cpus-per-task=4
+#SBATCH --cpus-per-task=16
 #SBATCH --partition=genoa
 #SBATCH --output=logs/refresh_scratch_%j.out
 
