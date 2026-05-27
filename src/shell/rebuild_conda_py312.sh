@@ -40,14 +40,19 @@ module purge
 module load 2025
 module load "$CONDA_MODULE"
 
+# set +u: Anaconda's activate.d/qt-main_activate.sh references $QT_XCB_GL_INTEGRATION
+# without a guard, which kills the script under set -u. Re-enable after activation.
+set +u
 if command -v conda >/dev/null 2>&1; then
     eval "$(conda shell.bash hook)"
 elif [[ -n "${EBROOTANACONDA3:-}" && -f "${EBROOTANACONDA3}/etc/profile.d/conda.sh" ]]; then
     source "${EBROOTANACONDA3}/etc/profile.d/conda.sh"
 else
+    set -u
     echo "ERROR: conda command not found after loading $CONDA_MODULE" >&2
     exit 1
 fi
+set -u
 
 if [[ "$RECREATE" == "true" && -d "$CONDA_ENV_PREFIX" ]]; then
     echo "Removing existing env..."
@@ -58,7 +63,9 @@ if [[ ! -d "$CONDA_ENV_PREFIX" ]]; then
     conda create -y -p "$CONDA_ENV_PREFIX" "python=${PYTHON_VERSION}" pip
 fi
 
+set +u
 conda activate "$CONDA_ENV_PREFIX"
+set -u
 python --version
 
 pip install --upgrade pip setuptools wheel
