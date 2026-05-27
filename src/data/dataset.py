@@ -320,8 +320,8 @@ class AIGGraphRegressionDataset(PyGDataset):
         return self._cache_graph_dir / self._stable_graph_cache_name(graph_path)
 
     def _torch_load_graph(self, graph_path: str | Path):
-        load_kwargs = {"map_location": "cpu", "weights_only": False}
-        return torch.load(graph_path, **load_kwargs)
+        with open(graph_path, "rb") as fh:
+            return torch.load(fh, map_location="cpu", weights_only=False)
 
     def _cache_single_graph(self, graph_path: str) -> tuple[str, int]:
         cache_path = self._cached_graph_path(graph_path)

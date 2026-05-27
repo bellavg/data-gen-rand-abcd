@@ -41,13 +41,8 @@ else
     module load SciPy-bundle/2025.06-gfbf-2025a
 fi
 
-# --- Allocator selection (override via USE_TCMALLOC=false to use glibc).
-# smaps analysis showed TCMalloc holds pages as "in-use" across steps and
-# MallocExtension_ReleaseFreeMemory does NOT return them (private_dirty stays
-# constant at 6.5+ GiB even after release calls).  Testing without TCMalloc
-# lets glibc's allocator handle the workload, where malloc_trim(0) IS
-# effective at returning free pages to the OS.
-USE_TCMALLOC="${USE_TCMALLOC:-true}"
+
+USE_TCMALLOC="${USE_TCMALLOC:-false}"
 if [[ "$USE_TCMALLOC" == "true" ]]; then
     module load gperftools/2.16-GCCcore-14.2.0
     export LD_PRELOAD="${EBROOTGPERFTOOLS}/lib/libtcmalloc.so${LD_PRELOAD:+:${LD_PRELOAD}}"
