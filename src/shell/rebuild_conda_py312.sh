@@ -54,6 +54,10 @@ else
 fi
 set -u
 
+# Accept ToS for default channels required by Anaconda3/2025.06+ in non-interactive mode.
+conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main
+conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r
+
 if [[ "$RECREATE" == "true" && -d "$CONDA_ENV_PREFIX" ]]; then
     echo "Removing existing env..."
     rm -rf "$CONDA_ENV_PREFIX"
