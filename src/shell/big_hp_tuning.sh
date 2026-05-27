@@ -7,11 +7,12 @@
 #SBATCH --partition=gpu_h100
 #SBATCH --gpus=1
 #SBATCH --array=1-3
-#SBATCH --output=logs/big_optuna_worker_%a_s2.out
+#SBATCH --output=logs/big_optuna_worker_%A_%a_s2.out
 # NOTE: SBATCH directives cannot reference shell variables, so override --output
-# at submit time to avoid overwriting previous stage logs:
-#   Stage 1: sbatch --output="logs/big_optuna_worker_%a_s1.out" src/shell/big_hp_tuning.sh
-#   Stage 2: STAGE=2 sbatch --output="logs/big_optuna_worker_%a_s2.out" src/shell/big_hp_tuning.sh
+# at submit time to avoid overwriting previous stage logs.  %A = array master job
+# ID, %a = array task ID — together they make each submission's .out unique.
+#   Stage 1: sbatch --output="logs/big_optuna_worker_%A_%a_s1.out" src/shell/big_hp_tuning.sh
+#   Stage 2: STAGE=2 sbatch --output="logs/big_optuna_worker_%A_%a_s2.out" src/shell/big_hp_tuning.sh
 
 set -euo pipefail
 

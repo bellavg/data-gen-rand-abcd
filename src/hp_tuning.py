@@ -6,6 +6,8 @@ import os
 import sqlite3
 import warnings
 
+from mem_trace import MemoryTracer
+
 import optuna
 import pytorch_lightning as pl
 import torch
@@ -79,6 +81,10 @@ class PeriodicMemoryReleaseCallback(pl.Callback):
             else max(0, int(every_val_batches))
         )
         self.trial_number = int(trial_number)
+        # Instantiated only for trial 0; other trials pay zero overhead.
+        self._mem_tracer: MemoryTracer | None = (
+            MemoryTracer() if trial_number == 0 else None
+        )
 
     @staticmethod
     def _drop_trainer_batch_refs(trainer: pl.Trainer) -> None:
@@ -161,6 +167,42 @@ class PeriodicMemoryReleaseCallback(pl.Callback):
             flush=True,
         )
 
+    @staticmethod
+    def _smaps_rss_breakdown(step: int) -> None:
+        """Categorize host RSS from /proc/self/smaps into heap, file-mapped, and other.
+
+        Runs alongside _log_cpu_tensor_snapshot at step checkpoints.  Determines
+        whether the growing RSS is:
+          heap       - malloc fragmentation ([heap] region RSS)
+          file_mapped - file-backed mmap pages (e.g. torch.load, CUDA driver libs)
+          other_anon  - anonymous non-heap pages (CUDA UVM, anonymous mmap, stack)
+        """
+        try:
+            heap_kb = anon_kb = file_kb = 0
+            current_path = ""
+            with open("/proc/self/smaps") as fh:
+                for line in fh:
+                    # Region header lines start with a hex address.
+                    if line and line[0] in "0123456789abcdef":
+                        parts = line.split()
+                        current_path = parts[5] if len(parts) > 5 else ""
+                    elif line.startswith("Rss:"):
+                        kb = int(line.split()[1])
+                        if current_path == "[heap]":
+                            heap_kb += kb
+                        elif current_path and not current_path.startswith("["):
+                            file_kb += kb
+                        else:
+                            anon_kb += kb
+            print(
+                f"[smaps] step={step} heap={heap_kb // 1024} MiB "
+                f"file_mapped={file_kb // 1024} MiB "
+                f"other_anon={anon_kb // 1024} MiB",
+                flush=True,
+            )
+        except Exception:
+            pass
+
     def on_train_batch_end(
         self,
         trainer: pl.Trainer,
@@ -170,8 +212,16 @@ class PeriodicMemoryReleaseCallback(pl.Callback):
         batch_idx: int,
     ) -> None:
         self._drop_trainer_batch_refs(trainer)
-        if self.trial_number == 0 and trainer.global_step in (1000, 2000):
-            self._log_cpu_tensor_snapshot(trainer.global_step)
+        step = trainer.global_step
+        if self._mem_tracer is not None and step in (1000, 2000):
+            self._log_cpu_tensor_snapshot(step)
+            self._mem_tracer.snapshot(f"step_{step}")
+            if step == 1000:
+                self._mem_tracer.report_diff("baseline", "step_1000")
+                self._mem_tracer.report_top("step_1000")
+            else:
+                self._mem_tracer.report_diff("step_1000", "step_2000")
+                self._mem_tracer.report_top("step_2000")
         if self.every_train_steps <= 0:
             return
         if (
@@ -207,6 +257,13 @@ class PeriodicMemoryReleaseCallback(pl.Callback):
         )
         self._release_memory(label)
 
+    def on_fit_end(
+        self, trainer: pl.Trainer, pl_module: pl.LightningModule
+    ) -> None:
+        if self._mem_tracer is not None:
+            self._mem_tracer.clear()
+            self._mem_tracer = None
+
     def on_validation_start(
         self, trainer: pl.Trainer, pl_module: pl.LightningModule
     ) -> None:
@@ -224,6 +281,10 @@ class PeriodicMemoryReleaseCallback(pl.Callback):
             f"val_end step={trainer.global_step}" if self.trial_number == 0 else None
         )
         self._release_memory(label)
+        # Capture baseline snapshot once, right after the initial sanity-check
+        # validation (step 0) and before any training steps begin.
+        if self._mem_tracer is not None and trainer.global_step == 0:
+            self._mem_tracer.snapshot("baseline")
 
 
 warnings.filterwarnings("ignore", category=UserWarning, module="torch_geometric")
