@@ -19,7 +19,7 @@ set -euo pipefail
 # Array-task id, or 1 when run outside an array for local debugging.
 TASK_ID=${SLURM_ARRAY_TASK_ID:-1}
 
-SCRIPT_VERSION="2026-05-24 (48h Two-Stage Array Job: Stage 1 = explore, Stage 2 = seed+exploit)"
+SCRIPT_VERSION="2026-05-27 (48h Two-Stage Array Job: Stage 1 = explore, Stage 2 = seed+exploit; glibc+InMemoryStorage test)"
 
 echo "=========================================="
 echo "JOB: Big Optuna Hyperparameter Tuning (array_task=${TASK_ID} job=${SLURM_ARRAY_JOB_ID:-n/a})"
@@ -41,7 +41,7 @@ module load SciPy-bundle/2025.06-gfbf-2025a
 # constant at 6.5+ GiB even after release calls).  Testing without TCMalloc
 # lets glibc's allocator handle the workload, where malloc_trim(0) IS
 # effective at returning free pages to the OS.
-USE_TCMALLOC="${USE_TCMALLOC:-true}"
+USE_TCMALLOC="${USE_TCMALLOC:-false}"
 if [[ "$USE_TCMALLOC" == "true" ]]; then
     module load gperftools/2.16-GCCcore-14.2.0
     export LD_PRELOAD="${EBROOTGPERFTOOLS}/lib/libtcmalloc.so${LD_PRELOAD:+:${LD_PRELOAD}}"
@@ -50,6 +50,14 @@ if [[ "$USE_TCMALLOC" == "true" ]]; then
 else
     echo "TCMalloc disabled (USE_TCMALLOC=false); using glibc allocator + malloc_trim"
 fi
+# -------------------------------------------------------------------------
+
+# --- Storage selection: InMemoryStorage eliminates SQLite WAL mmap growth.
+# Single-worker runs (Stage 2 per array task) don't need cross-process storage.
+# Override via USE_IN_MEMORY_STORAGE=false to keep SQLite (needed for multi-
+# worker shared-study coordination, which is not used in current setup).
+USE_IN_MEMORY_STORAGE="${USE_IN_MEMORY_STORAGE:-true}"
+echo "In-memory storage: USE_IN_MEMORY_STORAGE=$USE_IN_MEMORY_STORAGE"
 # -------------------------------------------------------------------------
 
 VENV_PATH="${VENV_PATH:-/scratch-shared/$USER/.venv}"
@@ -239,6 +247,9 @@ fi
 if [ "$DYNAMIC_BATCHING" = "true" ] && [ -n "$DYNAMIC_BUCKET_RULES" ]; then
     EXTRA_FLAGS+=(--dynamic_bucket_rules "$DYNAMIC_BUCKET_RULES")
 fi
+if [ "$USE_IN_MEMORY_STORAGE" = "true" ]; then
+    EXTRA_FLAGS+=(--in_memory_storage)
+fi
 if [ "$HARD_PRUNE" = "true" ]; then
     EXTRA_FLAGS+=(--hard_prune --hard_prune_risk "$HARD_PRUNE_RISK")
 fi
@@ -288,26 +299,27 @@ cleanup_sync_loop() {
 }
 trap cleanup_sync_loop EXIT INT TERM
 
-# Background sync loop: copy the node-local SQLite DB to scratch-shared every
-# hour so completed trials are preserved even if the job crashes.
+# Background sync loop: only needed when using SQLite storage.
 DB_SYNC_INTERVAL="${DB_SYNC_INTERVAL:-3600}"
-(
-    while true; do
-        sleep "$DB_SYNC_INTERVAL"
-        _sync_rc=0
-        sync_optuna_db "$LOCAL_SCRATCH/optuna_study.db" "$WORKSPACE/optuna_study.db.tmp" || _sync_rc=$?
-        if [ "$_sync_rc" -eq 0 ]; then
-            if mv "$WORKSPACE/optuna_study.db.tmp" "$WORKSPACE/optuna_study.db"; then
-                echo "[db_sync] $(date) synced DB to $WORKSPACE/optuna_study.db"
-            else
-                echo "[db_sync] $(date) WARNING: atomic rename failed" >&2
+if [[ "$USE_IN_MEMORY_STORAGE" != "true" ]]; then
+    (
+        while true; do
+            sleep "$DB_SYNC_INTERVAL"
+            _sync_rc=0
+            sync_optuna_db "$LOCAL_SCRATCH/optuna_study.db" "$WORKSPACE/optuna_study.db.tmp" || _sync_rc=$?
+            if [ "$_sync_rc" -eq 0 ]; then
+                if mv "$WORKSPACE/optuna_study.db.tmp" "$WORKSPACE/optuna_study.db"; then
+                    echo "[db_sync] $(date) synced DB to $WORKSPACE/optuna_study.db"
+                else
+                    echo "[db_sync] $(date) WARNING: atomic rename failed" >&2
+                fi
+            elif [ "$_sync_rc" -ne 2 ]; then
+                echo "[db_sync] $(date) WARNING: SQLite backup failed" >&2
             fi
-        elif [ "$_sync_rc" -ne 2 ]; then
-            echo "[db_sync] $(date) WARNING: SQLite backup failed" >&2
-        fi
-    done
-) &
-SYNC_PID=$!
+        done
+    ) &
+    SYNC_PID=$!
+fi
 
 EXIT_CODE=0
 ATTEMPT=0
@@ -354,15 +366,17 @@ done
 cleanup_sync_loop
 SYNC_PID=""
 
-# Final copy regardless of exit code
-echo "Final sync of SQLite DB to $WORKSPACE/optuna_study.db ..."
-_final_rc=0
-sync_optuna_db "$LOCAL_SCRATCH/optuna_study.db" "$WORKSPACE/optuna_study.db.tmp" || _final_rc=$?
-if [ "$_final_rc" -eq 0 ]; then
-    mv "$WORKSPACE/optuna_study.db.tmp" "$WORKSPACE/optuna_study.db" \
-        || echo "WARNING: final DB rename failed" >&2
-elif [ "$_final_rc" -ne 2 ]; then
-    echo "WARNING: final DB sync failed" >&2
+# Final copy only when using SQLite storage.
+if [[ "$USE_IN_MEMORY_STORAGE" != "true" ]]; then
+    echo "Final sync of SQLite DB to $WORKSPACE/optuna_study.db ..."
+    _final_rc=0
+    sync_optuna_db "$LOCAL_SCRATCH/optuna_study.db" "$WORKSPACE/optuna_study.db.tmp" || _final_rc=$?
+    if [ "$_final_rc" -eq 0 ]; then
+        mv "$WORKSPACE/optuna_study.db.tmp" "$WORKSPACE/optuna_study.db" \
+            || echo "WARNING: final DB rename failed" >&2
+    elif [ "$_final_rc" -ne 2 ]; then
+        echo "WARNING: final DB sync failed" >&2
+    fi
 fi
 
 if (( EXIT_CODE != 0 )); then

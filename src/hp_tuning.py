@@ -729,8 +729,17 @@ if __name__ == "__main__":
     parser.add_argument(
         "--db_url",
         type=str,
-        required=True,
-        help="SQLite DB URL, e.g. sqlite:///path/to/study.db",
+        default="",
+        help="SQLite DB URL, e.g. sqlite:///path/to/study.db (unused when --in_memory_storage is set)",
+    )
+    parser.add_argument(
+        "--in_memory_storage",
+        action="store_true",
+        help=(
+            "Use optuna.storages.InMemoryStorage instead of SQLite RDBStorage. "
+            "Eliminates WAL mmap growth. Suitable for single-worker runs where "
+            "cross-process study sharing is not needed."
+        ),
     )
     parser.add_argument(
         "--study_name", type=str, required=True, help="Optuna study name"
@@ -901,19 +910,21 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    # Enable WAL journal mode on SQLite so concurrent readers/writers don't
-    # deadlock each other. Must be done before creating the RDBStorage so the
-    # PRAGMA takes effect on the same connection pool that Optuna will use.
-    if args.db_url.startswith("sqlite:///"):
+    # SQLite WAL setup — only when using RDB storage.
+    if not args.in_memory_storage and args.db_url.startswith("sqlite:///"):
         db_path = args.db_url[len("sqlite:///") :]
         _wal_con = sqlite3.connect(db_path)
         _wal_con.execute("PRAGMA journal_mode=WAL;")
         _wal_con.close()
 
-    storage = RDBStorage(
-        url=args.db_url,
-        engine_kwargs={"connect_args": {"timeout": 60, "check_same_thread": False}},
-    )
+    if args.in_memory_storage:
+        storage = optuna.storages.InMemoryStorage()
+        print("[storage] Using InMemoryStorage (no SQLite WAL)", flush=True)
+    else:
+        storage = RDBStorage(
+            url=args.db_url,
+            engine_kwargs={"connect_args": {"timeout": 60, "check_same_thread": False}},
+        )
 
     study = optuna.create_study(
         study_name=args.study_name,
