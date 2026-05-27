@@ -35,19 +35,21 @@ module load 2025
 module load Python/3.13.1-GCCcore-14.2.0
 module load SciPy-bundle/2025.06-gfbf-2025a
 
-# --- Load gperftools TCMalloc to prevent glibc malloc fragmentation.
-# TCMalloc reduces glibc arena fragmentation from thousands of sequential
-# torch.load() calls.  The default RELEASE_RATE=1 only returns ~1 page per
-# 1 MB of allocation churn, which is far too slow for our workload (each
-# training step allocates/frees 20-50 MB of graph tensors; at 10k+ steps/epoch
-# the page-heap balloons to the cgroup limit before TCMalloc drains it).
-# Set RELEASE_RATE=1000 so freed pages are returned aggressively.  The Python
-# callbacks also call MallocExtension_ReleaseFreeMemory() every N steps so the
-# two mechanisms complement each other.
-module load gperftools/2.16-GCCcore-14.2.0
-export LD_PRELOAD="${EBROOTGPERFTOOLS}/lib/libtcmalloc.so${LD_PRELOAD:+:${LD_PRELOAD}}"
-export TCMALLOC_RELEASE_RATE=1000
-echo "TCMalloc preloaded from: ${EBROOTGPERFTOOLS}/lib/libtcmalloc.so"
+# --- Allocator selection (override via USE_TCMALLOC=false to use glibc).
+# smaps analysis showed TCMalloc holds pages as "in-use" across steps and
+# MallocExtension_ReleaseFreeMemory does NOT return them (private_dirty stays
+# constant at 6.5+ GiB even after release calls).  Testing without TCMalloc
+# lets glibc's allocator handle the workload, where malloc_trim(0) IS
+# effective at returning free pages to the OS.
+USE_TCMALLOC="${USE_TCMALLOC:-true}"
+if [[ "$USE_TCMALLOC" == "true" ]]; then
+    module load gperftools/2.16-GCCcore-14.2.0
+    export LD_PRELOAD="${EBROOTGPERFTOOLS}/lib/libtcmalloc.so${LD_PRELOAD:+:${LD_PRELOAD}}"
+    export TCMALLOC_RELEASE_RATE=1000
+    echo "TCMalloc preloaded from: ${EBROOTGPERFTOOLS}/lib/libtcmalloc.so"
+else
+    echo "TCMalloc disabled (USE_TCMALLOC=false); using glibc allocator + malloc_trim"
+fi
 # -------------------------------------------------------------------------
 
 VENV_PATH="${VENV_PATH:-/scratch-shared/$USER/.venv}"

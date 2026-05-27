@@ -112,6 +112,8 @@ class PeriodicMemoryReleaseCallback(pl.Callback):
             pass
         return float("nan")
 
+    _release_fn_checked: bool = False   # class-level flag to log once
+
     @staticmethod
     def _release_memory(label: str | None = None) -> None:
         gc.collect()
@@ -119,9 +121,19 @@ class PeriodicMemoryReleaseCallback(pl.Callback):
             libc = ctypes.CDLL(None)
             release_fn = getattr(libc, "MallocExtension_ReleaseFreeMemory", None)
             if callable(release_fn):
+                if not PeriodicMemoryReleaseCallback._release_fn_checked:
+                    print("[release] MallocExtension_ReleaseFreeMemory resolved — TCMalloc active", flush=True)
+                    PeriodicMemoryReleaseCallback._release_fn_checked = True
                 release_fn()
             else:
                 trim = getattr(libc, "malloc_trim", None)
+                if not PeriodicMemoryReleaseCallback._release_fn_checked:
+                    print(
+                        f"[release] MallocExtension_ReleaseFreeMemory NOT found; "
+                        f"malloc_trim callable={callable(trim)}",
+                        flush=True,
+                    )
+                    PeriodicMemoryReleaseCallback._release_fn_checked = True
                 if callable(trim):
                     trim(0)
         except Exception:
@@ -161,9 +173,17 @@ class PeriodicMemoryReleaseCallback(pl.Callback):
             except Exception:
                 pass
         rss = PeriodicMemoryReleaseCallback._rss_gib()
+        pinned_mib = float("nan")
+        if torch.cuda.is_available():
+            try:
+                stats = torch.cuda.memory_stats()
+                pinned_mib = stats.get("pinned_mem_allocated_bytes.current", 0) / (1024**2)
+            except Exception:
+                pass
         print(
             f"[tensor_snapshot] step={step} cpu_tensors={n} "
-            f"tensor_mib={total_bytes / (1024**2):.2f} host_rss={rss:.2f} GiB",
+            f"tensor_mib={total_bytes / (1024**2):.2f} "
+            f"pinned_mib={pinned_mib:.2f} host_rss={rss:.2f} GiB",
             flush=True,
         )
 
