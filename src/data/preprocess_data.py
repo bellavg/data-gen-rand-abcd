@@ -114,6 +114,7 @@ def discover_graph_tasks(
         "zip_aig": 0,
         "duplicates_ignored": 0,
         "zip_files_scanned": 0,
+        "design_mismatch_rejected": 0,
     }
     seen_ids = set()
 
@@ -122,6 +123,7 @@ def discover_graph_tasks(
         aig_path: str,
         archive_path: str = "",
         archive_member: str = "",
+        expected_design: str = "",
     ) -> None:
         nonlocal unmatched
 
@@ -131,6 +133,15 @@ def discover_graph_tasks(
             return
 
         tier_id, algorithm, design = parsed
+
+        # Guard against ABC mktemp-pollution: if the zip archive tells us which
+        # design directory this file came from, the parsed design must match
+        # exactly.  A mismatch means a junk token (e.g. tmp1a2b3c) was absorbed
+        # into the design group by the non-greedy regex — the file must be
+        # cleaned by cleanup_naming.py before preprocessing.
+        if expected_design and design != expected_design:
+            source_counts["design_mismatch_rejected"] += 1
+            return
         key = (tier_id, algorithm, design, filename)
         if key in seen_ids:
             source_counts["duplicates_ignored"] += 1
@@ -161,6 +172,16 @@ def discover_graph_tasks(
     # Keep deterministic ordering and avoid duplicate scan of the same archive path.
     zip_paths = sorted(set(zip_paths))
     for zip_path in zip_paths:
+        # Infer expected design name from the archive's directory layout:
+        #   {design}/tier0.zip          → zip_path.parent.name  = design
+        #   {design}/tier0/tier0.zip    → zip_path.parent.name  = "tier0" → grandparent
+        #   {design}/tier1/{algo}.zip   → zip_path.parent.name  = "tier1" → grandparent
+        _zp = zip_path
+        _expected_design = (
+            _zp.parent.parent.name
+            if _zp.parent.name in ("tier0", "tier1")
+            else _zp.parent.name
+        )
         source_counts["zip_files_scanned"] += 1
         try:
             with zipfile.ZipFile(zip_path, "r") as zf:
@@ -176,6 +197,7 @@ def discover_graph_tasks(
                         aig_path=f"{zip_path}::{member}",
                         archive_path=str(zip_path),
                         archive_member=member,
+                        expected_design=_expected_design,
                     )
         except zipfile.BadZipFile as exc:
             raise ValueError(f"invalid zip archive encountered: {zip_path}") from exc
@@ -418,9 +440,19 @@ def run_pipeline(args: argparse.Namespace) -> int:
     )
     discovered_total = len(tasks)
 
+    design_mismatch_rejected = source_counts.get("design_mismatch_rejected", 0)
+    if design_mismatch_rejected > 0:
+        print(
+            f"discovery: WARNING {design_mismatch_rejected} AIG file(s) rejected because "
+            "the parsed design name did not match the archive directory. "
+            "This indicates ABC mktemp-pollution junk tokens in zip member names. "
+            "Run cleanup_naming.py (or inspect_data.py + cleanup_naming.py) to fix "
+            "the zip archives before re-running preprocessing."
+        )
     print(
         "discovery: "
         f"matched={discovered_total} unmatched={unmatched} "
+        f"design_mismatch_rejected={design_mismatch_rejected} "
         f"filesystem_aig={source_counts.get('filesystem_aig', 0)} "
         f"zip_aig={source_counts.get('zip_aig', 0)} "
         f"zip_files_scanned={source_counts.get('zip_files_scanned', 0)} "
