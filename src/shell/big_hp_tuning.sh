@@ -69,15 +69,20 @@ echo "In-memory storage: USE_IN_MEMORY_STORAGE=$USE_IN_MEMORY_STORAGE"
 if [[ "$USE_CONDA_ENV" == "true" ]]; then
     CONDA_ENV_PREFIX="${CONDA_ENV_PREFIX:-/scratch-shared/$USER/.conda/envs/data-gen-py312}"
     echo "Activating conda environment at: $CONDA_ENV_PREFIX"
+    # set +u: Anaconda's activate.d/qt-main_activate.sh uses $QT_XCB_GL_INTEGRATION
+    # without a default, fatal under set -u.
+    set +u
     if command -v conda >/dev/null 2>&1; then
         eval "$(conda shell.bash hook)"
     elif [[ -n "${EBROOTANACONDA3:-}" && -f "${EBROOTANACONDA3}/etc/profile.d/conda.sh" ]]; then
         source "${EBROOTANACONDA3}/etc/profile.d/conda.sh"
     else
+        set -u
         echo "ERROR: conda command not found after loading $CONDA_MODULE" >&2
         exit 1
     fi
     conda activate "$CONDA_ENV_PREFIX"
+    set -u
 else
     VENV_PATH="${VENV_PATH:-/scratch-shared/$USER/.venv}"
     echo "Activating virtual environment at: $VENV_PATH"
