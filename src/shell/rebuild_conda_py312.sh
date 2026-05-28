@@ -72,15 +72,6 @@ conda activate "$CONDA_ENV_PREFIX"
 set -u
 python --version
 
-# On HPC clusters, module-loaded CUDA/NCCL libraries in LD_LIBRARY_PATH can
-# shadow the pip-installed nvidia wheels (e.g. causing missing symbol errors).
-# Prepend the nvidia wheel lib dirs so bundled versions always take priority.
-_SITE_PKG="$(python -c 'import site; print(site.getsitepackages()[0])')"
-for _lib_dir in "$_SITE_PKG"/nvidia/*/lib; do
-    [[ -d "$_lib_dir" ]] && export LD_LIBRARY_PATH="${_lib_dir}:${LD_LIBRARY_PATH:-}"
-done
-unset _lib_dir _SITE_PKG
-
 pip install --upgrade pip setuptools wheel
 
 # Install torch first so PyG extension wheels resolve against the target torch build.
@@ -91,6 +82,16 @@ pip install "torch-scatter>=2.1" --find-links "$PYG_WHEEL_INDEX"
 
 # Install project and dependencies from pyproject.toml
 pip install -e "$BASE_DIR" --find-links "$PYG_WHEEL_INDEX"
+
+# On HPC clusters, module-loaded CUDA/NCCL libraries in LD_LIBRARY_PATH can
+# shadow the pip-installed nvidia wheels (e.g. causing missing symbol errors).
+# Prepend the nvidia wheel lib dirs so bundled versions always take priority.
+# Must run AFTER pip installs so the nvidia/*/lib directories exist.
+_SITE_PKG="$(python -c 'import site; print(site.getsitepackages()[0])')"
+for _lib_dir in "$_SITE_PKG"/nvidia/*/lib; do
+    [[ -d "$_lib_dir" ]] && export LD_LIBRARY_PATH="${_lib_dir}:${LD_LIBRARY_PATH:-}"
+done
+unset _lib_dir _SITE_PKG
 
 python -c "
 import torch, torch_geometric, pytorch_lightning, optuna
