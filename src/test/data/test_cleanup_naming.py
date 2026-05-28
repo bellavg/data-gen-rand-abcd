@@ -8,7 +8,7 @@ import unittest
 import zipfile
 from pathlib import Path
 
-from src.data.cleanup_naming import (
+from data.cleanup_naming import (
     _rewrite_single_zip,
     apply_csv_rewrites,
     apply_pt_renames,

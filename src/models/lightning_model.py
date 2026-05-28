@@ -1,4 +1,4 @@
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import pytorch_lightning as pl
 import torch
@@ -11,6 +11,8 @@ from models.base_model import UnifiedGraphBaseModel
 
 
 class AIGRegressionLightningModule(pl.LightningModule):
+    """LightningModule for AIG Regression tasks."""
+
     def __init__(
         self,
         encoder_name: str,
@@ -25,7 +27,7 @@ class AIGRegressionLightningModule(pl.LightningModule):
         huber_delta: float = 1.0,
         lr: float = 1e-3,
         weight_decay: float = 1e-5,
-        scheduler_patience: int = 5,  # <-- NEW: Added scheduler patience
+        scheduler_patience: int = 5,
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -42,12 +44,13 @@ class AIGRegressionLightningModule(pl.LightningModule):
             encoder_kwargs=self.hparams.encoder_kwargs,
         )
 
-    def forward(self, batch):
+    def forward(self, batch: object) -> torch.Tensor:
         return self.model.forward_batch(batch)
 
     def _compute_loss_and_metrics(
-        self, batch, batch_idx, prefix: str
-    ) -> torch.Tensor | None:
+        self, batch: object, batch_idx: int, prefix: str
+    ) -> Optional[torch.Tensor]:
+        """Compute loss and metrics, and log them to the logger."""
         preds = self.forward(batch)
         targets = batch.y
 
@@ -57,11 +60,11 @@ class AIGRegressionLightningModule(pl.LightningModule):
         loss = F.huber_loss(preds, targets, delta=self.hparams.huber_delta)
         mae_node_opt = F.l1_loss(preds.squeeze(-1), targets.squeeze(-1))
 
-        if getattr(self, "_trainer", None) is not None:
-            b_size = int(getattr(batch, "num_graphs", 1))
+        if self.trainer is not None:
+            b_size = getattr(batch, "num_graphs", 1)
             self.log(
                 f"{prefix}/loss",
-                float(loss.detach().item()),
+                loss,
                 batch_size=b_size,
                 sync_dist=False,
                 prog_bar=True,
@@ -70,7 +73,7 @@ class AIGRegressionLightningModule(pl.LightningModule):
             )
             self.log(
                 f"{prefix}/mae_node",
-                float(mae_node_opt.detach().item()),
+                mae_node_opt,
                 batch_size=b_size,
                 sync_dist=False,
                 on_step=False,
@@ -78,20 +81,18 @@ class AIGRegressionLightningModule(pl.LightningModule):
             )
         return loss if prefix == "train" else None
 
-    def training_step(self, batch, batch_idx):
+    def training_step(self, batch: object, batch_idx: int) -> Optional[torch.Tensor]:
         if hasattr(self.model.encoder, "redraw_projection"):
             self.model.encoder.redraw_projection.redraw_projections()
         return self._compute_loss_and_metrics(batch, batch_idx, prefix="train")
 
-    def validation_step(self, batch, batch_idx):
+    def validation_step(self, batch: object, batch_idx: int) -> None:
         self._compute_loss_and_metrics(batch, batch_idx, prefix="val")
-        return None
 
-    def test_step(self, batch, batch_idx):
+    def test_step(self, batch: object, batch_idx: int) -> None:
         self._compute_loss_and_metrics(batch, batch_idx, prefix="test")
-        return None
 
-    def configure_optimizers(self):
+    def configure_optimizers(self) -> Dict[str, Any]:
         initial_lr = self.hparams.lr
         min_lr_value = initial_lr * 1e-3
 
@@ -99,12 +100,11 @@ class AIGRegressionLightningModule(pl.LightningModule):
             self.parameters(), lr=initial_lr, weight_decay=self.hparams.weight_decay
         )
 
-        # Use the scheduler_patience arg passed from train.py
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             optimizer,
             mode="min",
             factor=0.5,
-            patience=self.hparams.scheduler_patience,  # Linked to CLI arg
+            patience=self.hparams.scheduler_patience,
             min_lr=min_lr_value,
         )
 

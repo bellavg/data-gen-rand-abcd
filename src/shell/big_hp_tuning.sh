@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=big_optuna
-#SBATCH --time=00:59:00
+#SBATCH --time=48:00:00
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=180G
@@ -19,7 +19,7 @@ set -euo pipefail
 # Array-task id, or 1 when run outside an array for local debugging.
 TASK_ID=${SLURM_ARRAY_TASK_ID:-1}
 
-SCRIPT_VERSION="2026-05-27 (48h Two-Stage Array Job: Stage 1 = explore, Stage 2 = seed+exploit; glibc+InMemoryStorage test)"
+SCRIPT_VERSION="2026-05-27 (48h Two-Stage Array Job: Stage 1 = explore, Stage 2 = seed+exploit)"
 
 echo "=========================================="
 echo "JOB: Big Optuna Hyperparameter Tuning (array_task=${TASK_ID} job=${SLURM_ARRAY_JOB_ID:-n/a})"
@@ -40,18 +40,6 @@ else
     module load Python/3.13.1-GCCcore-14.2.0
     module load SciPy-bundle/2025.06-gfbf-2025a
 fi
-
-
-USE_TCMALLOC="${USE_TCMALLOC:-false}"
-if [[ "$USE_TCMALLOC" == "true" ]]; then
-    module load gperftools/2.16-GCCcore-14.2.0
-    export LD_PRELOAD="${EBROOTGPERFTOOLS}/lib/libtcmalloc.so${LD_PRELOAD:+:${LD_PRELOAD}}"
-    export TCMALLOC_RELEASE_RATE=1000
-    echo "TCMalloc preloaded from: ${EBROOTGPERFTOOLS}/lib/libtcmalloc.so"
-else
-    echo "TCMalloc disabled (USE_TCMALLOC=false); using glibc allocator + malloc_trim"
-fi
-# -------------------------------------------------------------------------
 
 # --- Storage selection: InMemoryStorage eliminates SQLite WAL mmap growth.
 # Single-worker runs (Stage 2 per array task) don't need cross-process storage.
@@ -131,7 +119,8 @@ else
     DYNAMIC_BUCKET_RULES="${DYNAMIC_BUCKET_RULES:-}"
 fi
 HARD_PRUNE="${HARD_PRUNE:-true}"
-MEMORY_RELEASE_INTERVAL_STEPS="${MEMORY_RELEASE_INTERVAL_STEPS:-200}"
+
+# Diagnostics / Memory Trace Configuration (mem_trace.py)
 MEM_TRACE_MAX_STEP="${MEM_TRACE_MAX_STEP:-5000}"
 MEM_TRACE_STEP_INTERVAL="${MEM_TRACE_STEP_INTERVAL:-1000}"
 MEM_TRACE_TOP_TYPES="${MEM_TRACE_TOP_TYPES:-25}"
@@ -146,6 +135,7 @@ export MEM_TRACE_TOP_OBJECTS
 export MEM_TRACE_TOP_REGIONS
 export MEM_TRACE_ENABLE_TRACEMALLOC
 export MEM_TRACE_TRACEMALLOC_FRAMES
+
 echo "Stage: $STAGE  train_samples=$TRAIN_SAMPLES  n_trials=$N_TRIALS  max_trial_hours=$MAX_TRIAL_HOURS"
 echo "Mem trace: max_step=$MEM_TRACE_MAX_STEP step_interval=$MEM_TRACE_STEP_INTERVAL top_types=$MEM_TRACE_TOP_TYPES top_objects=$MEM_TRACE_TOP_OBJECTS top_regions=$MEM_TRACE_TOP_REGIONS tracemalloc=$MEM_TRACE_ENABLE_TRACEMALLOC frames=$MEM_TRACE_TRACEMALLOC_FRAMES"
 
@@ -251,8 +241,6 @@ else
     NUM_WORKERS="${NUM_WORKERS:-2}"
 fi
 
-export MALLOC_ARENA_MAX="${MALLOC_ARENA_MAX:-2}"
-
 # DataLoader tuning flags (can be overridden via env)
 PIN_MEMORY="${PIN_MEMORY:-false}"
 PERSISTENT_WORKERS="${PERSISTENT_WORKERS:-false}"
@@ -291,7 +279,6 @@ fi
 echo "DataLoader config: num_workers=$NUM_WORKERS pin_memory=$PIN_MEMORY persistent_workers=$PERSISTENT_WORKERS prefetch_factor=$PREFETCH_FACTOR dynamic_batching=$DYNAMIC_BATCHING"
 echo "Memory guard: max_tokens=$MEMORY_GUARD_MAX_TOKENS hard_prune=$HARD_PRUNE hard_prune_risk=$HARD_PRUNE_RISK"
 echo "Dynamic buckets: ${DYNAMIC_BUCKET_RULES:-(disabled)}"
-echo "Periodic release: train_every_steps=$MEMORY_RELEASE_INTERVAL_STEPS"
 echo "Restart policy: max_restarts_on_oom=$MAX_RESTARTS_ON_OOM restart_delay_sec=$RESTART_DELAY_SEC"
 
 echo "Starting Big Worker $TASK_ID on GPU 0 (stage=$STAGE sampler_seed=$SAMPLER_SEED, study=$STUDY_NAME)..."
@@ -372,13 +359,11 @@ while true; do
         ${EXTRA_FLAGS[@]+"${EXTRA_FLAGS[@]}"} \
         ${SEED_FLAGS[@]+"${SEED_FLAGS[@]}"} \
         --memory_guard_max_tokens "$MEMORY_GUARD_MAX_TOKENS" \
-        --memory_release_interval_steps "$MEMORY_RELEASE_INTERVAL_STEPS" \
         --dataset_seed 42 \
         --sampler_seed "$SAMPLER_SEED" \
         --train_samples "$TRAIN_SAMPLES" \
         --max_trial_hours "$MAX_TRIAL_HOURS" \
-        --n_trials "$N_TRIALS" \
-        > "$LOG_DIR/worker_${TASK_ID}.log" 2>&1 || EXIT_CODE=$?
+        --n_trials "$N_TRIALS"  || EXIT_CODE=$?
 
     if (( EXIT_CODE == 0 )); then
         break
@@ -414,8 +399,7 @@ if [[ "$USE_IN_MEMORY_STORAGE" != "true" ]]; then
 fi
 
 if (( EXIT_CODE != 0 )); then
-    echo "Worker $TASK_ID failed after $ATTEMPT attempt(s) (exit $EXIT_CODE). Last 200 lines:"
-    tail -n 200 "$LOG_DIR/worker_${TASK_ID}.log" || true
+    echo "Worker $TASK_ID failed after $ATTEMPT attempt(s) (exit $EXIT_CODE). Check this SLURM .out file for details."
     exit "$EXIT_CODE"
 fi
 

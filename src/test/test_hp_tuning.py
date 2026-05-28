@@ -56,12 +56,27 @@ class _FakeTrial:
 
 
 def _run_objective_for_test(trial_values: dict, best_model_score: float | None = 0.25):
+    # Fully populated dummy namespace to mimic the real argparse output
     args = argparse.Namespace(
         csv_paths=["algo_a.csv", "algo_b.csv"],
         cache_dir="/tmp/hp_cache",
         num_workers=0,
         train_samples=25000,
         log_dir="/tmp",
+        hard_prune=False,
+        hard_prune_risk=0.0,
+        dynamic_bucket_rules="",
+        memory_guard_max_tokens=1e10,
+        dataset_seed=42,
+        pin_memory=False,
+        persistent_workers=False,
+        prefetch_factor=2,
+        dynamic_batching=False,
+        hp_tuning_splits_path=None,
+        # Runner / Trainer tuning knobs (mirrors real CLI defaults)
+        max_trial_hours=2.0,
+        log_every_n_steps=1000,
+        val_check_interval=10000,
     )
     trial = _FakeTrial(trial_values)
 
@@ -116,12 +131,7 @@ class TestHpTuningObjectiveWiring(unittest.TestCase):
         self.assertIsNone(out["datamodule_call"].kwargs["positional_encoding"])
 
     def test_hidden_dim_choices_are_fixed_across_encoders(self):
-        """hidden_dim must use the same choice set for all encoders.
-
-        Using different sets per encoder caused an Optuna RDB error:
-        'CategoricalDistribution does not support dynamic value space'.
-        This ensures the bug cannot regress.
-        """
+        """hidden_dim must use the same choice set for all encoders."""
         all_encoders = [
             "gine",
             "transformer_conv",
@@ -171,10 +181,7 @@ class TestHpTuningObjectiveWiring(unittest.TestCase):
         self.assertIn(512, seen_choices)
 
     def test_jk_mode_choices_are_fixed_across_encoders(self):
-        """jk_mode must include 'cat' for all encoders (same distribution set).
-
-        Previously attention encoders excluded 'cat', causing dynamic value space errors.
-        """
+        """jk_mode must include 'cat' for all encoders (same distribution set)."""
         all_encoders = [
             "gine",
             "transformer_conv",
@@ -239,7 +246,6 @@ class TestHpTuningObjectiveWiring(unittest.TestCase):
         self.assertIn(32, hid_choices)
         self.assertIn(128, hid_choices)
         self.assertIn(256, hid_choices)
-        # 512 must also be present (unified choice set)
         self.assertIn(512, hid_choices)
 
     def test_egin_mapping_correctly(self):
@@ -272,7 +278,7 @@ class TestHpTuningObjectiveWiring(unittest.TestCase):
 class TestTrialOptionModelInstantiation(unittest.TestCase):
     def test_all_combinations_instantiate(self):
         encoders = ["gine", "egin"]
-        pe_types = ["none", "pi_paths"]  # Test path-based PE
+        pe_types = ["none", "pi_paths"]
         projections = [True, False]
 
         for enc, pe, proj in itertools.product(encoders, pe_types, projections):
@@ -284,7 +290,6 @@ class TestTrialOptionModelInstantiation(unittest.TestCase):
                     "hid_dim": 64,
                     "jk_mode": "last",
                 }
-                # FIXED: Removed 'hid_dim' from direct args
                 model = AIGRegressionLightningModule(
                     encoder_name=enc,
                     hidden_dim=64,
@@ -317,7 +322,6 @@ class TestComprehensiveCombinations(unittest.TestCase):
                 if encoder in ["transformer_conv", "graphgps"]:
                     encoder_kwargs["heads"] = 4
 
-                # FIXED: Removed 'num_edge_types' and 'hid_dim'
                 lm = AIGRegressionLightningModule(
                     encoder_name=encoder,
                     hidden_dim=32,
@@ -365,13 +369,27 @@ class TestOOMTrialCleanup(unittest.TestCase):
         return trial
 
     def test_cleanup_runs_before_third_trial_after_oom(self):
+        # Fully populated dummy namespace
         args = argparse.Namespace(
             csv_paths=["algo_a.csv", "algo_b.csv"],
             cache_dir="/tmp/hp_cache",
             num_workers=0,
             train_samples=20000,
             log_dir="/tmp",
+            hard_prune=False,
             hard_prune_risk=999999.0,
+            dynamic_bucket_rules="",
+            memory_guard_max_tokens=1e10,
+            dataset_seed=42,
+            pin_memory=False,
+            persistent_workers=False,
+            prefetch_factor=2,
+            dynamic_batching=False,
+            hp_tuning_splits_path=None,
+            # Runner / Trainer tuning knobs (mirrors real CLI defaults)
+            max_trial_hours=2.0,
+            log_every_n_steps=1000,
+            val_check_interval=10000,
         )
 
         events: list[str] = []
@@ -441,6 +459,7 @@ class TestRuntimeOOMClassification(unittest.TestCase):
 
 class TestHardPruneRiskScope(unittest.TestCase):
     def test_hard_prune_applies_to_large_batch_trials(self):
+        # Fully populated dummy namespace
         args = argparse.Namespace(
             csv_paths=["algo_a.csv", "algo_b.csv"],
             cache_dir="/tmp/hp_cache",
@@ -449,6 +468,18 @@ class TestHardPruneRiskScope(unittest.TestCase):
             log_dir="/tmp",
             hard_prune=True,
             hard_prune_risk=1.0,
+            dynamic_bucket_rules="",
+            memory_guard_max_tokens=1e10,
+            dataset_seed=42,
+            pin_memory=False,
+            persistent_workers=False,
+            prefetch_factor=2,
+            dynamic_batching=False,
+            hp_tuning_splits_path=None,
+            # Runner / Trainer tuning knobs (mirrors real CLI defaults)
+            max_trial_hours=2.0,
+            log_every_n_steps=1000,
+            val_check_interval=10000,
         )
 
         trial = _FakeTrial(
@@ -500,8 +531,8 @@ class TestSeedStudyFromBest(unittest.TestCase):
 
         trials = [
             self._make_frozen_trial(0, 0.5, True, params_a),
-            self._make_frozen_trial(1, 0.3, True, params_b),  # best eligible
-            self._make_frozen_trial(2, 0.1, False, params_c),  # not eligible
+            self._make_frozen_trial(1, 0.3, True, params_b),
+            self._make_frozen_trial(2, 0.1, False, params_c),
             self._make_frozen_trial(3, 0.4, True, params_a),
         ]
 
@@ -529,10 +560,9 @@ class TestSeedStudyFromBest(unittest.TestCase):
                 seed_mode="enqueue",
             )
 
-        # Only eligible trials, sorted by value asc, top 2
         self.assertEqual(len(enqueued), 2)
-        self.assertEqual(enqueued[0][0], params_b)  # value=0.3 (best eligible)
-        self.assertEqual(enqueued[1][0], params_a)  # value=0.4 (next best; trial 3)
+        self.assertEqual(enqueued[0][0], params_b)
+        self.assertEqual(enqueued[1][0], params_a)
         self.assertTrue(enqueued[0][1]["skip_if_exists"])
         self.assertEqual(enqueued[0][1]["user_attrs"]["seed_mode"], "enqueue")
 
@@ -615,9 +645,8 @@ class TestSeedStudyFromBest(unittest.TestCase):
         dest_study.add_trial.assert_not_called()
 
     def test_enqueue_error_is_raised(self):
-        """A broken param set should propagate instead of being swallowed."""
         params_good = {"lr": 1e-3}
-        params_bad = {"lr": 999}  # will raise when enqueued
+        params_bad = {"lr": 999}
         trials = [
             self._make_frozen_trial(0, 0.1, True, params_bad),
             self._make_frozen_trial(1, 0.2, True, params_good),
@@ -711,8 +740,6 @@ class TestMemoryGuardBatchAccumulation(unittest.TestCase):
             }
         )
 
-        # Each graph is 80 tokens (40 nodes + 40 edges) so each one is safe alone,
-        # but the two-graph batch totals 160 and must be pruned.
         graphs = [self._make_graph(40, 40), self._make_graph(40, 40)]
         with self.assertRaises(hp_tuning_utils.HPMemoryGuardError) as caught:
             guarded_collate(graphs)
@@ -736,7 +763,6 @@ class TestMemoryGuardBatchAccumulation(unittest.TestCase):
         self.assertEqual(batch.num_graphs, 2)
 
     def test_error_message_contains_total_batch_tokens(self):
-        """Regression: error message must name total_batch_tokens, not total_tokens."""
         guarded_collate = hp_tuning_utils._build_guarded_collate(
             {
                 "max_tokens": 50.0,
@@ -753,32 +779,6 @@ class TestMemoryGuardBatchAccumulation(unittest.TestCase):
         msg = str(ctx.exception)
         self.assertIn("batch_tokens=", msg)
         self.assertNotIn("total_tokens=", msg)
-
-
-class TestPeriodicMemoryReleaseCallback(unittest.TestCase):
-    def test_releases_memory_for_train_and_validation_hooks(self):
-        callback = hp_tuning.PeriodicMemoryReleaseCallback(
-            every_train_steps=500,
-        )
-        trainer = types.SimpleNamespace(global_step=1000)
-        pl_module = MagicMock()
-
-        with patch.object(
-            hp_tuning.PeriodicMemoryReleaseCallback,
-            "_release_memory",
-        ) as release_mock:
-            callback.on_train_batch_end(
-                trainer,
-                pl_module,
-                outputs=None,
-                batch=None,
-                batch_idx=0,
-            )
-            callback.on_validation_start(trainer, pl_module)
-            callback.on_validation_end(trainer, pl_module)
-
-        # train-end + val-start + val-end
-        self.assertEqual(release_mock.call_count, 3)
 
 
 class TestPruningCallbackStepSemantics(unittest.TestCase):
@@ -812,3 +812,7 @@ class TestPruningCallbackStepSemantics(unittest.TestCase):
         callback.on_validation_epoch_end(trainer, pl_module)
         self.assertEqual(trial.report.call_count, 2)
         self.assertEqual(trial.report.call_args.kwargs.get("step"), 1)
+
+
+if __name__ == "__main__":
+    unittest.main()

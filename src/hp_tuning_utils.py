@@ -1,3 +1,20 @@
+"""Utilities shared by the Optuna HP-tuning objective.
+
+Root-cause of the previous memory leak (Python Unpickler memo accumulation
+across multiprocessing workers) is fully resolved in ``src/data/dataset.py``
+via ``weights_only=True`` + ``add_safe_globals``.
+
+Module layout (trial lifecycle order)
+--------------------------------------
+1. Constants
+2. Trial attribute helpers        -- bookkeeping at trial boundaries
+3. Pre-allocation risk / prune    -- decide whether to start the trial
+4. Memory-guard collate           -- arm the dataloader once trial starts
+5. OOM classification             -- handle failures during training
+6. Trainer helpers                -- misc training setup
+7. Inter-trial cleanup            -- tear down after trial ends
+"""
+
 import ctypes
 import gc
 import logging
@@ -13,26 +30,38 @@ from torch_geometric.loader import DataLoader
 from data.datamodule import AIGDataModule
 from data.sampler import BalancedDynamicBatchSampler, load_or_build_batch_plan
 
+# ---------------------------------------------------------------------------
+# 1. Constants
+# ---------------------------------------------------------------------------
 
 ATTENTION_ENCODERS = {"transformer_conv", "graphgps"}
+
+
+# ---------------------------------------------------------------------------
+# 2. Trial attribute helpers
+# ---------------------------------------------------------------------------
 
 
 def _set_trial_user_attr(
     trial: optuna.Trial, key: str, value: str | int | float | bool
 ) -> None:
+    """Set a trial user attribute, retrying on transient SQLite lock errors.
+
+    Args:
+        trial: Active Optuna trial.
+        key: Attribute name.
+        value: Attribute value (must be JSON-serialisable).
+    """
     setter = getattr(trial, "set_user_attr", None)
     if not callable(setter):
         return
 
-    # Some storages (SQLite) can intermittently raise locking/commit errors
-    # under contention. Retry a few times with a short backoff and swallow
-    # failures to avoid crashing the worker for a transient DB lock.
     max_attempts = 3
     for attempt in range(1, max_attempts + 1):
         try:
             setter(key, value)
             return
-        except Exception as exc:  # pragma: no cover - regression protection
+        except Exception as exc:  # pragma: no cover
             if attempt >= max_attempts:
                 logging.warning(
                     "Failed to set trial user attr %s=%s for trial %s after %d attempts: %s",
@@ -43,7 +72,6 @@ def _set_trial_user_attr(
                     exc,
                 )
                 return
-            # backoff and retry
             time.sleep(0.5 * attempt)
 
 
@@ -57,6 +85,18 @@ def _mark_trial_outcome(
     score: float | None = None,
     risk_score: float | None = None,
 ) -> None:
+    """Write outcome metadata to trial user attributes.
+
+    Args:
+        trial: Active Optuna trial.
+        outcome: One of ``"running"``, ``"completed"``, ``"pruned"``.
+        oom_like: Whether the outcome was caused by an OOM-like error.
+        oom_kind: ``"cuda"``, ``"host"``, ``"guard"``, ``"predicted"``, or
+            ``None``.
+        prune_reason: Short string describing why the trial was pruned.
+        score: Best validation score (completed trials only).
+        risk_score: Pre-allocation risk estimate (if computed).
+    """
     _set_trial_user_attr(trial, "trial_outcome", outcome)
     _set_trial_user_attr(trial, "oom_like", bool(oom_like))
     _set_trial_user_attr(trial, "selection_eligible", outcome == "completed")
@@ -70,8 +110,51 @@ def _mark_trial_outcome(
         _set_trial_user_attr(trial, "risk_score", float(risk_score))
 
 
-class HPMemoryGuardError(RuntimeError):
-    """Raised when an HP trial batch is estimated to exceed the memory budget."""
+# ---------------------------------------------------------------------------
+# 3. Pre-allocation risk / hard-prune
+# ---------------------------------------------------------------------------
+
+
+def _estimate_trial_risk(
+    *,
+    batch_size: int,
+    num_nodes: int,
+    num_edges: int,
+    hidden_dim: int,
+    num_layers: int,
+    jk_mode: str,
+    encoder_name: str,
+    heads: int,
+    pe_type: str,
+    pos_enc_dim: int,
+) -> float:
+    """Estimate a dimensionless risk score for a trial configuration.
+
+    Used by the optional ``--hard_prune`` gate to prune extreme configurations
+    before any GPU memory is allocated.
+
+    Args:
+        batch_size: DataLoader batch size.
+        num_nodes: Representative node count for the risk graph.
+        num_edges: Representative edge count for the risk graph.
+        hidden_dim: Model hidden dimension.
+        num_layers: Number of message-passing layers.
+        jk_mode: JumpingKnowledge mode.
+        encoder_name: GNN encoder identifier.
+        heads: Number of attention heads.
+        pe_type: Positional encoding type (``"none"`` disables the PE term).
+        pos_enc_dim: Positional encoding dimension.
+
+    Returns:
+        Risk score (higher means more likely to OOM).
+    """
+    jk_multiplier = (num_layers + 1) if jk_mode == "cat" else 1
+    attn_multiplier = heads if encoder_name in ATTENTION_ENCODERS else 1
+    gps_multiplier = 1.5 if encoder_name == "graphgps" else 1.0
+    pe_multiplier = 1.0 + (float(pos_enc_dim) / 128.0 if pe_type != "none" else 0.0)
+    node_term = num_nodes * hidden_dim * num_layers * jk_multiplier * pe_multiplier
+    edge_term = num_edges * hidden_dim * attn_multiplier
+    return float(batch_size * (node_term + edge_term) * gps_multiplier)
 
 
 def _estimate_memory_tokens(
@@ -85,13 +168,30 @@ def _estimate_memory_tokens(
     heads: int,
     expansion_factor: float,
 ) -> float:
+    """Heuristic token count for a single graph forward pass.
+
+    Shared primitive used by both :func:`_estimate_trial_risk` and the
+    guarded collate function.
+
+    Args:
+        num_nodes: Number of nodes in the graph.
+        num_edges: Number of edges in the graph.
+        hidden_dim: Model hidden dimension.
+        num_layers: Number of message-passing layers.
+        jk_mode: JumpingKnowledge aggregation mode (``"cat"`` multiplies by
+            ``num_layers + 1``).
+        encoder_name: GNN encoder identifier.
+        heads: Number of attention heads (attention encoders only).
+        expansion_factor: Safety multiplier applied to the total token count.
+
+    Returns:
+        Estimated token count (dimensionless heuristic).
+    """
     jk_multiplier = (num_layers + 1) if jk_mode == "cat" else 1
     attn_multiplier = heads if encoder_name in ATTENTION_ENCODERS else 1
-    # GPS runs both a local MPNN pass and a global Performer pass per layer;
-    # apply an extra 1.5x over plain TransformerConv to reflect dual-path cost.
+    # GPS runs both a local MPNN pass and a global Performer pass per layer.
     gps_multiplier = 1.5 if encoder_name == "graphgps" else 1.0
     layer_multiplier = max(1, num_layers)
-
     node_term = num_nodes * hidden_dim * layer_multiplier * jk_multiplier
     edge_term = num_edges * hidden_dim * attn_multiplier
     return (node_term + edge_term) * expansion_factor * gps_multiplier
@@ -102,21 +202,49 @@ def _parse_dynamic_bucket_rules(
 ) -> list[tuple[int, int]]:
     """Parse dynamic bucket rules from CLI text.
 
-    Format: "min_nodes:batch_size,min_nodes:batch_size,...".
-    Example: "300000:1,180000:2,90000:4".
+    Format: ``"min_nodes:batch_size,min_nodes:batch_size,..."``.
+    Example: ``"300000:1,180000:2,90000:4"``.
+
+    Args:
+        rule_text: Raw CLI string, or ``None`` / empty to return an empty list.
+
+    Returns:
+        List of ``(min_nodes, batch_size)`` tuples as provided.
     """
     if not rule_text:
         return []
-
     parsed: list[tuple[int, int]] = []
     for chunk in (r.strip() for r in rule_text.split(",") if r.strip()):
         min_nodes, target = chunk.split(":", 1)
         parsed.append((int(min_nodes), int(target)))
-
     return parsed
 
 
+# ---------------------------------------------------------------------------
+# 4. Memory-guard collate (pre-allocation OOM prevention)
+# ---------------------------------------------------------------------------
+
+
+class HPMemoryGuardError(RuntimeError):
+    """Raised when a batch is estimated to exceed the memory budget.
+
+    Kept as a distinct subclass so the ``except HPMemoryGuardError`` branch
+    in ``objective`` fires before the generic ``except RuntimeError`` OOM
+    handler, making dispatch explicit rather than relying on string matching.
+    """
+
+
 def _build_guarded_collate(memory_guard: dict) -> Callable[[list], Batch]:
+    """Return a collate function that raises before over-budget batches are built.
+
+    Args:
+        memory_guard: Dict with keys ``max_tokens``, ``hidden_dim``,
+            ``num_layers``, ``jk_mode``, ``encoder_name``, ``heads``,
+            ``expansion_factor``.
+
+    Returns:
+        A collate callable compatible with ``DataLoader(collate_fn=...)``.
+    """
     max_tokens = float(memory_guard.get("max_tokens", float("inf")))
     hidden_dim = int(memory_guard.get("hidden_dim", 32))
     num_layers = int(memory_guard.get("num_layers", 2))
@@ -161,18 +289,25 @@ def _install_hp_guarded_dataloaders(
     *,
     dynamic_batching: bool,
 ) -> None:
+    """Monkey-patch datamodule dataloader methods with the guarded collate.
+
+    Uses a ``weakref`` to ``datamodule`` so the closures do not form a strong
+    reference cycle (datamodule → method → closure → datamodule).
+
+    Dataset references (``train_ds`` / ``val_ds`` / ``test_ds``) are accessed
+    lazily at call time because Lightning's ``setup()`` has not yet run when
+    this function is called.
+
+    Args:
+        datamodule: The ``AIGDataModule`` instance to patch.
+        memory_guard: Dict passed to :func:`_build_guarded_collate`.
+        dynamic_batching: Whether to use bucket-based dynamic batching.
+    """
     guarded_collate = _build_guarded_collate(memory_guard)
     seed = int(getattr(datamodule, "seed", 42))
     bucket_rules = list(datamodule.dynamic_bucket_rules)
     use_buckets = dynamic_batching and bool(bucket_rules)
 
-    # Scalars and loader-kwargs dicts are safe to capture eagerly (stable
-    # constructor attrs, no setup() dependency).
-    # dataset refs (train_ds/val_ds/test_ds) and cache_path are NOT available
-    # until Lightning calls setup() inside trainer.fit() — after this function
-    # returns.  Access them lazily via _dm_ref() at call time.
-    # Using weakref breaks the strong cycle:
-    #   datamodule -> train_dataloader attr -> closure -> datamodule
     batch_size = datamodule.batch_size
     train_kw = datamodule._loader_kwargs(is_train=True)
     train_kw_no_bs = datamodule._loader_kwargs(include_batch_size=False, is_train=True)
@@ -183,14 +318,15 @@ def _install_hp_guarded_dataloaders(
     if use_buckets:
         rules_text = ", ".join(f"{nodes}:{size}" for nodes, size in bucket_rules)
         print(
-            "[memory_guard] "
-            f"dynamic bucket rules (min_nodes:batch_size): {rules_text}"
+            f"[memory_guard] dynamic bucket rules (min_nodes:batch_size): {rules_text}"
         )
 
     def train_dataloader() -> DataLoader:
         dm = _dm_ref()
         if use_buckets:
-            precomputed_batches = getattr(dm, "_train_batch_plan", None) if dm is not None else None
+            precomputed_batches = (
+                getattr(dm, "_train_batch_plan", None) if dm is not None else None
+            )
             if precomputed_batches is None:
                 sizes = dm.train_ds.get_num_nodes_list()
                 precomputed_batches = load_or_build_batch_plan(
@@ -214,7 +350,9 @@ def _install_hp_guarded_dataloaders(
                 collate_fn=guarded_collate,
                 **train_kw_no_bs,
             )
-        return DataLoader(dm.train_ds, shuffle=True, collate_fn=guarded_collate, **train_kw)
+        return DataLoader(
+            dm.train_ds, shuffle=True, collate_fn=guarded_collate, **train_kw
+        )
 
     def val_dataloader() -> DataLoader:
         dm = _dm_ref()
@@ -242,42 +380,56 @@ def _install_hp_guarded_dataloaders(
                 collate_fn=guarded_collate,
                 **val_kw_no_bs,
             )
-        return DataLoader(dm.val_ds, shuffle=False, collate_fn=guarded_collate, **val_kw)
+        return DataLoader(
+            dm.val_ds, shuffle=False, collate_fn=guarded_collate, **val_kw
+        )
 
     def test_dataloader() -> DataLoader:
         dm = _dm_ref()
-        return DataLoader(dm.test_ds, shuffle=False, collate_fn=guarded_collate, **val_kw)
+        return DataLoader(
+            dm.test_ds, shuffle=False, collate_fn=guarded_collate, **val_kw
+        )
 
     datamodule.train_dataloader = train_dataloader
     datamodule.val_dataloader = val_dataloader
     datamodule.test_dataloader = test_dataloader
 
 
+# ---------------------------------------------------------------------------
+# 5. OOM classification
+# ---------------------------------------------------------------------------
+
+
 def _classify_oom_runtime_error(exc: RuntimeError) -> str | None:
-    """Classify OOM-like RuntimeError as 'host' or 'cuda'."""
+    """Classify an OOM-like ``RuntimeError`` as ``'guard'``, ``'host'``, or
+    ``'cuda'``.
+
+    Args:
+        exc: The caught ``RuntimeError``.
+
+    Returns:
+        ``"guard"`` / ``"host"`` / ``"cuda"`` on a match, ``None`` otherwise.
+    """
     text = str(exc).lower()
 
     if "memory guard" in text:
         return "guard"
-
-    # Host-memory and mmap allocation failures (CPU RAM / VMA pressure).
     if "unable to mmap" in text or "cannot allocate memory" in text:
         return "host"
     if "dataloader worker" in text and "killed by signal" in text:
         return "host"
     if "dataloader worker" in text and "exited unexpectedly" in text:
         return "host"
-
-    # CUDA allocator/device failures.
     if "cuda out of memory" in text:
         return "cuda"
-    if "cuda error" in text or "illegal memory access" in text or "acceleratorerror" in text:
+    if (
+        "cuda error" in text
+        or "illegal memory access" in text
+        or "acceleratorerror" in text
+    ):
         return "cuda"
-
-    # Fallback for generic OOM wording.
     if "out of memory" in text or "oom" in text:
         return "cuda" if "cuda" in text else "host"
-
     return None
 
 
@@ -286,11 +438,18 @@ def _runtime_oom_prune_payload(
     *,
     trial_number: int,
 ) -> tuple[str, str, bool, str] | None:
-    """Build (oom_kind, prune_reason, oom_like, message) for OOM-like errors."""
+    """Build ``(oom_kind, prune_reason, oom_like, message)`` for OOM-like errors.
+
+    Args:
+        exc: The caught ``RuntimeError``.
+        trial_number: Optuna trial number (used in the log message).
+
+    Returns:
+        A four-tuple on match, ``None`` if the error is not OOM-like.
+    """
     oom_kind = _classify_oom_runtime_error(exc)
     if oom_kind is None:
         return None
-
     if oom_kind == "cuda":
         return (
             "cuda",
@@ -313,35 +472,23 @@ def _runtime_oom_prune_payload(
     )
 
 
-def _estimate_trial_risk(
-    *,
-    batch_size: int,
-    num_nodes: int,
-    num_edges: int,
-    hidden_dim: int,
-    num_layers: int,
-    jk_mode: str,
-    encoder_name: str,
-    heads: int,
-    pe_type: str,
-    pos_enc_dim: int,
-) -> float:
-    jk_multiplier = (num_layers + 1) if jk_mode == "cat" else 1
-    attn_multiplier = heads if encoder_name in ATTENTION_ENCODERS else 1
-    gps_multiplier = 1.5 if encoder_name == "graphgps" else 1.0
-    pe_multiplier = 1.0 + (float(pos_enc_dim) / 128.0 if pe_type != "none" else 0.0)
-    node_term = num_nodes * hidden_dim * num_layers * jk_multiplier * pe_multiplier
-    edge_term = num_edges * hidden_dim * attn_multiplier
-    return float(batch_size * (node_term + edge_term) * gps_multiplier)
+# ---------------------------------------------------------------------------
+# 6. Trainer helpers
+# ---------------------------------------------------------------------------
 
 
 def _select_trainer_precision() -> str:
-    """Prefer BF16 mixed precision where available, else FP32."""
+    """Return ``"bf16-mixed"`` when BF16 is supported, otherwise ``"32-true"``."""
     try:
         use_bf16 = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
     except (AssertionError, RuntimeError):
         use_bf16 = False
     return "bf16-mixed" if use_bf16 else "32-true"
+
+
+# ---------------------------------------------------------------------------
+# 7. Inter-trial cleanup
+# ---------------------------------------------------------------------------
 
 
 def _purge_trial_memory(
@@ -351,8 +498,19 @@ def _purge_trial_memory(
     pruning_cb,
     early_stop_cb,
 ) -> None:
-    # Sever callback-to-trainer back-references first so PL cannot keep the
-    # trainer alive through a callback's self.trainer reference.
+    """Release resources held by a completed or pruned trial.
+
+    Handles normal inter-trial cleanup: optimizer grad tensors, Lightning loop
+    and connector objects, dataset PE tensors, and batch-plan caches.  This is
+    not a leak workaround — the leak is fixed at the deserialisation layer.
+
+    Args:
+        trainer: The ``pl.Trainer`` instance, or ``None``.
+        datamodule: The ``AIGDataModule`` instance, or ``None``.
+        pruning_cb: Pruning callback whose trainer back-reference is severed.
+        early_stop_cb: Early-stop callback whose trainer back-reference is severed.
+    """
+    # Sever callback → trainer back-references first.
     if pruning_cb is not None:
         pruning_cb.trainer = None
     if early_stop_cb is not None:
@@ -363,41 +521,29 @@ def _purge_trial_memory(
         optimizers = getattr(trainer, "optimizers", None)
         if optimizers:
             optimizer = optimizers[0]
-        try:
-            trainer._teardown()
-        except Exception:
-            pass
-        try:
-            if hasattr(trainer, "strategy") and trainer.strategy is not None:
-                trainer.strategy.teardown()
-        except Exception:
-            pass
-        try:
-            if hasattr(trainer, "_accelerator_connector"):
-                del trainer._accelerator_connector
-        except Exception:
-            pass
-        try:
-            trainer.fit_loop = None
-        except Exception:
-            pass
-        try:
-            trainer.validate_loop = None
-        except Exception:
-            pass
-        try:
-            trainer.test_loop = None
-        except Exception:
-            pass
-        try:
-            trainer.predict_loop = None
-        except Exception:
-            pass
-        try:
-            if hasattr(trainer, "_data_connector"):
-                del trainer._data_connector
-        except Exception:
-            pass
+        for teardown in (
+            lambda: trainer._teardown(),
+            lambda: (
+                trainer.strategy.teardown() if trainer.strategy is not None else None
+            ),
+        ):
+            try:
+                teardown()
+            except Exception:
+                pass
+        for attr in (
+            "_accelerator_connector",
+            "fit_loop",
+            "validate_loop",
+            "test_loop",
+            "predict_loop",
+            "_data_connector",
+            "lightning_module",
+        ):
+            try:
+                setattr(trainer, attr, None)
+            except Exception:
+                pass
         for lg in list(getattr(trainer, "loggers", []) or []):
             try:
                 lg.finalize("failed")
@@ -405,51 +551,32 @@ def _purge_trial_memory(
                 pass
         trainer.callbacks = []
         trainer.loggers = []
-        try:
-            trainer.lightning_module = None
-        except Exception:
-            pass
 
-    # Tear down DataModule and drop datasets so large PE tensors can be released
-    # before the next trial starts.
     if datamodule is not None:
         try:
             datamodule.teardown("fit")
         except Exception:
             pass
-        for attr in ("_train_batch_plan", "_val_batch_plan"):
+        # Clear batch-plan refs and dataset refs so PE tensors are released.
+        for attr in (
+            "_train_batch_plan",
+            "_val_batch_plan",
+            "train_ds",
+            "val_ds",
+            "test_ds",
+        ):
             try:
                 setattr(datamodule, attr, None)
             except Exception:
                 pass
-        for attr in ("train_ds", "val_ds", "test_ds"):
-            ds = None
-            try:
-                ds = getattr(datamodule, attr, None)
-            except Exception:
-                ds = None
-            if ds is not None:
-                try:
-                    release_trial = getattr(ds, "release_trial_caches", None)
-                    if callable(release_trial):
-                        release_trial()
-                except Exception:
-                    pass
-            try:
-                setattr(datamodule, attr, None)
-            except Exception:
-                pass
-        # Break closure cycles: monkey-patched dataloader methods capture
-        # `datamodule` by reference and are stored on `datamodule` itself.
-        # Zeroing them immediately (before gc.collect) avoids waiting for CPython's
-        # cyclic GC to detect and break the cycle on the next scheduled collection.
+        # Break closure cycles introduced by _install_hp_guarded_dataloaders.
         for attr in ("train_dataloader", "val_dataloader", "test_dataloader"):
             try:
                 setattr(datamodule, attr, None)
             except Exception:
                 pass
 
-    # Zero-out optimizer grads before dropping references to reclaim memory faster.
+    # Zero optimizer grads before dropping references.
     if optimizer is not None:
         try:
             for group in optimizer.param_groups:
@@ -461,6 +588,8 @@ def _purge_trial_memory(
 
     gc.collect()
     gc.collect()
+
+    # Return glibc/tcmalloc pages to the OS.
     try:
         libc = ctypes.CDLL(None)
         release_fn = getattr(libc, "MallocExtension_ReleaseFreeMemory", None)
@@ -472,6 +601,7 @@ def _purge_trial_memory(
                 trim(0)
     except Exception:
         pass
+
     if torch.cuda.is_available():
         try:
             torch.cuda.empty_cache()
@@ -479,15 +609,14 @@ def _purge_trial_memory(
         except RuntimeError:
             pass
 
-    # Clear the module-level batch-plan cache so index lists from the just-finished
-    # trial are not anchored in global memory for the remainder of the study.
-    from data.sampler import _DYNAMIC_BATCH_PLAN_CACHE
+    # Clear module-level caches so index lists don't accumulate across trials.
+    from data.sampler import _DYNAMIC_BATCH_PLAN_CACHE  # noqa: PLC0415
+
     _DYNAMIC_BATCH_PLAN_CACHE.clear()
 
-    # Clear module-level dataset caches (CSV samples/splits) so long-running
-    # studies do not accumulate stale per-trial cache entries indefinitely.
     try:
-        from data.dataset import clear_dataset_global_caches
+        from data.dataset import clear_dataset_global_caches  # noqa: PLC0415
+
         clear_dataset_global_caches()
     except Exception:
         pass

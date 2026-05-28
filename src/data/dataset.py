@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import ctypes
-import gc
 import hashlib
 import json
 import os
@@ -14,8 +12,8 @@ from pathlib import Path
 import pandas as pd
 import torch
 import torch.serialization
-from torch_geometric.data import Dataset as PyGDataset
 from torch_geometric.data import Data as _PyGData
+from torch_geometric.data import Dataset as PyGDataset
 from torch_geometric.data import storage as _pyg_storage
 
 from models.layers.positional_encodings import get_pe_transform
@@ -29,6 +27,7 @@ _pyg_safe_globals: list = [_PyGData, _pyg_storage.GlobalStorage]
 for _name in ("DataTensorAttr", "DataEdgeAttr"):
     try:
         import torch_geometric.data.data as _pyg_data_mod
+
         _cls = getattr(_pyg_data_mod, _name, None)
         if _cls is not None:
             _pyg_safe_globals.append(_cls)
@@ -40,13 +39,15 @@ del _pyg_safe_globals, _pyg_data_mod, _name, _cls
 
 @dataclass(frozen=True, slots=True)
 class GraphSample:
+    """Dataclass holding metadata for a single graph sample."""
+
     graph_path: str
     y_node_opt: float
 
 
 # Module-level cache for raw CSV samples. The CSVs do not change during a run,
-# so re-reading and re-parsing them on every trial (2× per trial for train+val)
-# is pure waste.  Key: tuple of resolved CSV path strings.
+# so re-reading and re-parsing them on every trial (2x per trial for train+val)
+# is pure waste. Key: tuple of resolved CSV path strings.
 _CSV_SAMPLE_CACHE: dict[tuple[str, ...], list[GraphSample]] = {}
 
 # Module-level cache for splits JSON (keyed by resolved cache_file path string).
@@ -65,8 +66,7 @@ def clear_dataset_global_caches() -> None:
 
 
 class AIGGraphRegressionDataset(PyGDataset):
-    """
-    Minimal graph-level regression dataset.
+    """Minimal graph-level regression dataset.
 
     Targets:
     - y[0] = node optimizability
@@ -79,41 +79,30 @@ class AIGGraphRegressionDataset(PyGDataset):
 
     @property
     def raw_dir(self) -> str:
-        # Keep PyG's raw_dir inside cache_dir when available so it never
-        # escapes to an uncontrolled location.
         if self._cache_meta_dir is not None:
             return str(self._cache_meta_dir / "raw")
         return super().raw_dir
 
     @property
     def processed_dir(self) -> str:
-        # Redirect PyG's processed_dir into cache_dir/metadata/processed so that
-        # pre_transform.pt / pre_filter.pt are written there, not in ???/processed.
         if self._cache_meta_dir is not None:
             return str(self._cache_meta_dir / "processed")
         return super().processed_dir
 
     @property
     def raw_file_names(self) -> list[str]:
-        # This dataset reads existing .pt paths from CSV and has no raw download step.
         return []
 
     @property
     def processed_file_names(self) -> list[str]:
-        # Processing is handled by custom cache manifests, not PyG's processed_dir files.
         return []
 
     @property
     def has_process(self) -> bool:
-        # Only allow PyG's _process() machinery (which calls makedirs) when we
-        # actually have a cache_dir.  Without one there is nothing to persist and
-        # the MISSING/"???" sentinel root must not materialise on disk.
         return self._cache_meta_dir is not None
 
     @property
     def has_download(self) -> bool:
-        # Same rationale as has_process: suppress PyG's _download() makedirs
-        # when there is no cache_dir to avoid the "???" sentinel directory.
         return False
 
     def download(self) -> None:
@@ -145,6 +134,7 @@ class AIGGraphRegressionDataset(PyGDataset):
         self.num_samples = num_samples
         self.num_workers = num_workers
         self.hp_tuning_splits_path = hp_tuning_splits_path
+
         self._cache_graph_dir = (
             self.cache_dir / "processed_graphs" if self.cache_dir is not None else None
         )
@@ -159,9 +149,7 @@ class AIGGraphRegressionDataset(PyGDataset):
         )
         self._graph_cache_path_map: dict[str, Path] = {}
         self._node_sizes: list[int] | None = None
-        self._worker_call_count = 0
 
-        # Initialize the PE transform factory
         self.pe_transform = get_pe_transform(
             pe_type=self.positional_encoding, attr_name="pos_enc"
         )
@@ -171,6 +159,7 @@ class AIGGraphRegressionDataset(PyGDataset):
             str(self._cache_meta_dir) if self._cache_meta_dir is not None else None
         )
         super().__init__(root=pyg_root, log=False)
+
         if self.cache_dir is not None:
             self.process()
 
@@ -182,7 +171,6 @@ class AIGGraphRegressionDataset(PyGDataset):
         hasher.update("|".join(map(str, self.split_ratios)).encode())
 
         for csv_path in sorted(self.csv_paths):
-            # Stop resolving symlinks here too
             st = csv_path.stat()
             hasher.update(str(csv_path.absolute()).encode())
             hasher.update(str(st.st_size).encode())
@@ -202,7 +190,6 @@ class AIGGraphRegressionDataset(PyGDataset):
         if cache_key in _CSV_SAMPLE_CACHE:
             return _CSV_SAMPLE_CACHE[cache_key]
 
-        # Only parse the two columns needed for model targets/split bookkeeping.
         required_cols = ["unoptimized_graph_path", "optimizability"]
         frames = [
             pd.read_csv(
@@ -228,9 +215,7 @@ class AIGGraphRegressionDataset(PyGDataset):
             )
         ]
 
-        del df
-        del frames
-
+        del df, frames
         _CSV_SAMPLE_CACHE[cache_key] = samples
         return samples
 
@@ -240,8 +225,6 @@ class AIGGraphRegressionDataset(PyGDataset):
 
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         algo_tag = "_".join(p.stem for p in self.csv_paths)
-
-        # Include num_samples in the cache filename so it doesn't collide with full datasets
         sample_tag = f"_{self.num_samples}" if self.num_samples is not None else "_all"
         cache_file = self.cache_dir / f"{algo_tag}{sample_tag}_splits.json"
         cache_key = str(cache_file)
@@ -271,7 +254,6 @@ class AIGGraphRegressionDataset(PyGDataset):
         rng = random.Random(self.seed)
         rng.shuffle(keys)
 
-        # APPLY THE TOTAL LIMIT HERE, BEFORE SPLITTING
         if self.num_samples is not None:
             keys = keys[: self.num_samples]
 
@@ -303,7 +285,6 @@ class AIGGraphRegressionDataset(PyGDataset):
 
         if self.split is None:
             if self.num_samples is not None:
-                # Shuffle and truncate consistently to match what _create_split_keys does
                 all_keys = [s.graph_path for s in samples]
                 rng = random.Random(self.seed)
                 rng.shuffle(all_keys)
@@ -319,18 +300,14 @@ class AIGGraphRegressionDataset(PyGDataset):
     def _build_samples(self) -> list[GraphSample]:
         samples = self._read_candidate_samples()
         samples = self._apply_split(samples)
-        # Skip per-file existence check when manifest already exists — manifest
-        # is proof the files were valid and cached at warmup time.
         if self._manifest_path is not None and self._manifest_path.is_file():
             return samples
         return [s for s in samples if Path(s.graph_path).is_file()]
 
     def _stable_graph_cache_name(self, graph_path: str) -> str:
         source = Path(graph_path)
-        # Stop resolving symlinks to avoid compute node mount issues
         st = source.stat()
         token = f"{source.absolute()}|{st.st_size}|{st.st_mtime_ns}"
-
         digest = hashlib.sha1(token.encode()).hexdigest()
         return f"{digest}.pt"
 
@@ -339,7 +316,7 @@ class AIGGraphRegressionDataset(PyGDataset):
             return Path(graph_path)
         return self._cache_graph_dir / self._stable_graph_cache_name(graph_path)
 
-    def _torch_load_graph(self, graph_path: str | Path):
+    def _torch_load_graph(self, graph_path: str | Path) -> _PyGData:
         with open(graph_path, "rb") as fh:
             return torch.load(fh, map_location="cpu", weights_only=True)
 
@@ -350,7 +327,6 @@ class AIGGraphRegressionDataset(PyGDataset):
         if cache_path.is_file():
             if meta_path.is_file():
                 return str(cache_path), int(meta_path.read_text())
-            # .pt exists but sidecar missing — load cached copy to recover num_nodes.
             obj = self._torch_load_graph(cache_path)
         else:
             obj = self._torch_load_graph(Path(graph_path))
@@ -360,7 +336,6 @@ class AIGGraphRegressionDataset(PyGDataset):
             tmp.replace(cache_path)
 
         num_nodes = int(obj.x.shape[0])
-        del obj
         meta_path.write_text(str(num_nodes))
         return str(cache_path), num_nodes
 
@@ -372,7 +347,9 @@ class AIGGraphRegressionDataset(PyGDataset):
                 manifest = json.load(fh)
         except (json.JSONDecodeError, OSError):
             return None
-        if not isinstance(manifest, dict) or not isinstance(manifest.get("entries"), list):
+        if not isinstance(manifest, dict) or not isinstance(
+            manifest.get("entries"), list
+        ):
             return None
         return manifest
 
@@ -404,22 +381,22 @@ class AIGGraphRegressionDataset(PyGDataset):
             cached_path, num_nodes = self._cache_single_graph(graph_path)
             return graph_path, cached_path, num_nodes
 
-        # Bounded chunks prevent executor.map() from buffering all futures at once
-        # (OOM risk on large algos with hundreds of thousands of graphs).
         CHUNK_SIZE = max(n_threads * 4, 256)
         completed = 0
         total = len(unique_paths)
         with ThreadPoolExecutor(max_workers=n_threads) as executor:
             for chunk_start in range(0, total, CHUNK_SIZE):
                 chunk = unique_paths[chunk_start : chunk_start + CHUNK_SIZE]
-                for graph_path, cached_path, num_nodes in executor.map(_process_one, chunk):
+                for graph_path, cached_path, num_nodes in executor.map(
+                    _process_one, chunk
+                ):
                     path_map[graph_path] = cached_path
                     num_nodes_map[graph_path] = num_nodes
                     completed += 1
                     if completed % 1000 == 0 or completed == total:
                         print(f"[cache] {completed}/{total} graphs cached", flush=True)
 
-        entries: list[dict] = [
+        entries = [
             {
                 "graph_path": sample.graph_path,
                 "cache_name": Path(path_map[sample.graph_path]).name,
@@ -444,8 +421,11 @@ class AIGGraphRegressionDataset(PyGDataset):
         self._node_sizes = [int(e["num_nodes"]) for e in manifest["entries"]]
 
     def process(self) -> bool:
-        """Load or build the graph cache manifest.  Returns True if the manifest
-        was freshly rebuilt (first run), False if loaded from disk cache."""
+        """Load or build the graph cache manifest.
+
+        Returns:
+            True if the manifest was freshly rebuilt, False if loaded from disk.
+        """
         self._cache_meta_dir.mkdir(parents=True, exist_ok=True)
 
         manifest = self._load_manifest()
@@ -460,12 +440,11 @@ class AIGGraphRegressionDataset(PyGDataset):
         self._apply_manifest(manifest)
         return False
 
-    def _load_graph_for_sample(self, sample: GraphSample):
+    def _load_graph_for_sample(self, sample: GraphSample) -> _PyGData:
         graph_path = sample.graph_path
         if self.cache_dir is not None:
             cached_path = self._graph_cache_path_map.get(graph_path)
             if cached_path is None:
-                # Fallback for old manifests without cache_name.
                 rebuilt, _ = self._cache_single_graph(graph_path)
                 cached_path = Path(rebuilt)
                 self._graph_cache_path_map[graph_path] = cached_path
@@ -475,68 +454,23 @@ class AIGGraphRegressionDataset(PyGDataset):
     def len(self) -> int:
         return len(self.samples)
 
-    def get(self, idx: int):
-        self._maybe_release_worker_memory()
-
+    def get(self, idx: int) -> _PyGData:
         sample = self.samples[idx]
-        raw_obj = self._load_graph_for_sample(sample)
-        raw_obj = self.pe_transform(raw_obj)
-
-        # Re-instantiate with only the tensors the model needs.  This severs
-        # all reference chains back to the pickle-deserialized object so the
-        # original can be freed immediately by the GC.
-        from torch_geometric.data import Data as _Data
-        x = raw_obj.x
-        edge_index = raw_obj.edge_index
-        edge_attr = raw_obj.edge_attr
-        pos_enc = raw_obj.pos_enc if hasattr(raw_obj, "pos_enc") else None
-        data_obj = _Data(
-            x=x,
-            edge_index=edge_index,
-            edge_attr=edge_attr,
-            pos_enc=pos_enc,
-            y=torch.tensor([[sample.y_node_opt]], dtype=torch.float32),
-        )
-        del raw_obj
+        data_obj = self._load_graph_for_sample(sample)
+        data_obj = self.pe_transform(data_obj)
+        data_obj.y = torch.tensor([[sample.y_node_opt]], dtype=torch.float32)
         return data_obj
-
-    def _maybe_release_worker_memory(self) -> None:
-        # When DataLoader workers are enabled, each worker process owns its
-        # own dataset copy. This per-worker counter helps trim fragmented
-        # heap pages without affecting main-process hot path behavior.
-        if self.num_workers <= 0:
-            return
-
-        self._worker_call_count += 1
-        if self._worker_call_count % 1000 != 0:
-            return
-
-        gc.collect()
-        try:
-            libc = ctypes.CDLL(None)
-            # Prefer TCMalloc's ReleaseFreeMemory (no-op under plain glibc);
-            # fall back to malloc_trim which is a no-op under TCMalloc.
-            release_fn = getattr(libc, "MallocExtension_ReleaseFreeMemory", None)
-            if callable(release_fn):
-                release_fn()
-            else:
-                trim = getattr(libc, "malloc_trim", None)
-                if callable(trim):
-                    trim(0)
-        except Exception:
-            pass
 
     def get_num_nodes_list(self) -> list[int]:
         if self._node_sizes is not None:
             return self._node_sizes
-        # _node_sizes was cleared (release_runtime_caches) but the manifest
-        # already has every node count — recover from it before touching disk.
+
         if self._manifest_path is not None:
             manifest = self._load_manifest()
             if manifest is not None:
                 self._node_sizes = [int(e["num_nodes"]) for e in manifest["entries"]]
                 return self._node_sizes
-        # Last resort: no manifest, load each unique graph once from disk.
+
         seen: dict[str, int] = {}
         sizes = []
         for s in self.samples:
@@ -550,12 +484,6 @@ class AIGGraphRegressionDataset(PyGDataset):
     def release_runtime_caches(self) -> None:
         """Drop the node-sizes list after batch planning; keep path map intact for get()."""
         self._node_sizes = None
-
-    def release_trial_caches(self) -> None:
-        """Drop dataset instance caches that are only useful within one trial."""
-        self._node_sizes = None
-        self._graph_cache_path_map.clear()
-        self._worker_call_count = 0
 
 
 __all__ = ["AIGGraphRegressionDataset", "GraphSample", "clear_dataset_global_caches"]
