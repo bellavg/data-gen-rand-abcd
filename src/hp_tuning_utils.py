@@ -166,15 +166,18 @@ def _install_hp_guarded_dataloaders(
     bucket_rules = list(datamodule.dynamic_bucket_rules)
     use_buckets = dynamic_batching and bool(bucket_rules)
 
-    train_ds = datamodule.train_ds
-    val_ds = datamodule.val_ds
-    test_ds = datamodule.test_ds
+    # Scalars and loader-kwargs dicts are safe to capture eagerly (stable
+    # constructor attrs, no setup() dependency).
+    # dataset refs (train_ds/val_ds/test_ds) and cache_path are NOT available
+    # until Lightning calls setup() inside trainer.fit() — after this function
+    # returns.  Access them lazily via _dm_ref() at call time.
+    # Using weakref breaks the strong cycle:
+    #   datamodule -> train_dataloader attr -> closure -> datamodule
     batch_size = datamodule.batch_size
     train_kw = datamodule._loader_kwargs(is_train=True)
     train_kw_no_bs = datamodule._loader_kwargs(include_batch_size=False, is_train=True)
     val_kw = datamodule._loader_kwargs(is_train=False)
     val_kw_no_bs = datamodule._loader_kwargs(include_batch_size=False, is_train=False)
-    cache_path = datamodule._dynamic_batch_plan_cache_path()
     _dm_ref = weakref.ref(datamodule)
 
     if use_buckets:
@@ -185,16 +188,16 @@ def _install_hp_guarded_dataloaders(
         )
 
     def train_dataloader() -> DataLoader:
+        dm = _dm_ref()
         if use_buckets:
-            dm = _dm_ref()
             precomputed_batches = getattr(dm, "_train_batch_plan", None) if dm is not None else None
             if precomputed_batches is None:
-                sizes = train_ds.get_num_nodes_list()
+                sizes = dm.train_ds.get_num_nodes_list()
                 precomputed_batches = load_or_build_batch_plan(
                     sizes,
                     batch_size=batch_size,
                     bucket_rules=bucket_rules,
-                    cache_path=cache_path,
+                    cache_path=dm._dynamic_batch_plan_cache_path(),
                 )
             sampler = BalancedDynamicBatchSampler(
                 batch_size=batch_size,
@@ -206,20 +209,19 @@ def _install_hp_guarded_dataloaders(
             if dm is not None:
                 dm._train_batch_plan = None
             return DataLoader(
-                train_ds,
+                dm.train_ds,
                 batch_sampler=sampler,
                 collate_fn=guarded_collate,
                 **train_kw_no_bs,
             )
-
-        return DataLoader(train_ds, shuffle=True, collate_fn=guarded_collate, **train_kw)
+        return DataLoader(dm.train_ds, shuffle=True, collate_fn=guarded_collate, **train_kw)
 
     def val_dataloader() -> DataLoader:
+        dm = _dm_ref()
         if use_buckets:
-            dm = _dm_ref()
             val_plan = getattr(dm, "_val_batch_plan", None) if dm is not None else None
             if val_plan is None:
-                val_sizes = val_ds.get_num_nodes_list()
+                val_sizes = dm.val_ds.get_num_nodes_list()
                 val_plan = BalancedDynamicBatchSampler.build_batch_plan(
                     val_sizes,
                     batch_size=batch_size,
@@ -235,15 +237,16 @@ def _install_hp_guarded_dataloaders(
                 precomputed_batches=val_plan,
             )
             return DataLoader(
-                val_ds,
+                dm.val_ds,
                 batch_sampler=sampler,
                 collate_fn=guarded_collate,
                 **val_kw_no_bs,
             )
-        return DataLoader(val_ds, shuffle=False, collate_fn=guarded_collate, **val_kw)
+        return DataLoader(dm.val_ds, shuffle=False, collate_fn=guarded_collate, **val_kw)
 
     def test_dataloader() -> DataLoader:
-        return DataLoader(test_ds, shuffle=False, collate_fn=guarded_collate, **val_kw)
+        dm = _dm_ref()
+        return DataLoader(dm.test_ds, shuffle=False, collate_fn=guarded_collate, **val_kw)
 
     datamodule.train_dataloader = train_dataloader
     datamodule.val_dataloader = val_dataloader
