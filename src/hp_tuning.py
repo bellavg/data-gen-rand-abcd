@@ -345,7 +345,7 @@ def objective(trial: optuna.Trial, args: argparse.Namespace) -> float:
             precision=_select_trainer_precision(),
             gradient_clip_val=1.0,
             log_every_n_steps=max(1, args.log_every_n_steps),
-            val_check_interval=max(1, args.val_check_interval),
+            # val_check_interval=max(1, args.val_check_interval),
             callbacks=callbacks,
             logger=csv_logger,
             enable_checkpointing=False,
@@ -631,15 +631,15 @@ if __name__ == "__main__":
         default=1000,
         help="Trainer metric logging interval in steps (default: 1000).",
     )
-    parser.add_argument(
-        "--val_check_interval",
-        type=int,
-        default=1.0,
-        help=(
-            "Run validation every N train steps so pruning/early-stop decisions "
-            "happen before epoch end on long epochs."
-        ),
-    )
+    # parser.add_argument(
+    #     "--val_check_interval",
+    #     type=int,
+    #     default=1.0,
+    #     help=(
+    #         "Run validation every N train steps so pruning/early-stop decisions "
+    #         "happen before epoch end on long epochs."
+    #     ),
+    # )
     parser.add_argument(
         "--sampler_seed",
         type=int,

@@ -22,6 +22,7 @@ import os
 import tracemalloc
 from dataclasses import dataclass, field
 from typing import Any, Optional
+import warnings
 
 _SMAPS_PATH = "/proc/self/smaps"
 _SMAPS_ROLLUP_PATH = "/proc/self/smaps_rollup"
@@ -399,6 +400,11 @@ def _rss_gib() -> float:
 
 _release_fn_checked: bool = False
 
+# Suppress specific PyTorch and Lightning deprecation warnings that clutter logs
+warnings.filterwarnings("ignore", category=FutureWarning, message=".*reduce_op is deprecated.*")
+warnings.filterwarnings(r"ignore", message=r".*isinstance\(treespec, LeafSpec\) is deprecated.*")
+warnings.filterwarnings(r"ignore", message=r".*'torch_geometric.contrib' contains experimental code.*")
+
 
 def release_reclaimable_memory(label: str | None = None) -> None:
     """Best-effort host/GPU cache release using the active allocator hooks.
@@ -470,6 +476,7 @@ class MemoryTraceConfig:
     top_regions: int = 5
     enable_tracemalloc: bool = False
     tracemalloc_frames: int = 25
+    verbose: bool = False
 
     @staticmethod
     def _env_int(name: str, default: int, minimum: int = 0) -> int:
@@ -495,6 +502,7 @@ class MemoryTraceConfig:
             tracemalloc_frames=cls._env_int(
                 "MEM_TRACE_TRACEMALLOC_FRAMES", 25, minimum=1
             ),
+            verbose=_env_flag("MEM_TRACE_VERBOSE", False),
         )
 
 
@@ -510,10 +518,13 @@ class MemoryTracer:
         enable_tracemalloc: Optional[bool] = None,
         tracemalloc_frames: int = 25,
         top_types: int = 20,
+        verbose: bool = False,
     ) -> None:
         self._snapshots: dict[str, Snapshot] = {}
         self._last_proc_stat: Optional[_ProcStat] = None
         self._top_types = max(1, int(top_types))
+        self.verbose = bool(verbose)
+        self._last_tensor_stats: dict[str, float] = {}
 
         if enable_tracemalloc is None:
             enable_tracemalloc = (
@@ -529,13 +540,17 @@ class MemoryTracer:
                     tracemalloc.start(max(1, int(tracemalloc_frames)))
                     self._owns_tracemalloc = True
                 self._tracemalloc_enabled = True
-                print(
-                    f"[mem_diag] tracemalloc=on nframe={max(1, int(tracemalloc_frames))}",
-                    flush=True,
+                self._print(
+                    f"[mem_diag] tracemalloc=on nframe={max(1, int(tracemalloc_frames))}"
                 )
             except Exception:
                 self._tracemalloc_enabled = False
                 self._owns_tracemalloc = False
+
+    def _print(self, msg: str) -> None:
+        """Helper to hide spam unless MEM_TRACE_VERBOSE=1"""
+        if self.verbose:
+            print(msg, flush=True)
 
     @staticmethod
     def _region_archetype(r: _Region) -> tuple[str, str, str]:
@@ -579,7 +594,7 @@ class MemoryTracer:
         summ = snap.summary()
         pd = snap.private_dirty_summary()
         counts = snap.category_counts()
-        print(
+        self._print(
             f"[mem_trace] snap={label!r}"
             f"  heap={summ['heap'] // 1024}MiB"
             f"  anon={summ['anon'] // 1024}MiB"
@@ -590,8 +605,7 @@ class MemoryTracer:
             f"  VmHWM={status.get('VmHWM', 0) // 1024}MiB"
             f"  private_dirty={pd['total'] // 1024}MiB"
             f"  regions={len(snap.regions)}"
-            f"  anon_regions={counts.get('anon', 0)}",
-            flush=True,
+            f"  anon_regions={counts.get('anon', 0)}"
         )
         return snap
 
@@ -604,7 +618,7 @@ class MemoryTracer:
         proc_stat = _read_proc_stat()
         fd_count = _count_open_fds()
 
-        print(
+        self._print(
             f"[mem_diag]{step_tag} label={label!r}"
             f" VmRSS={_mib_from_kb(status.get('VmRSS'))}"
             f" VmHWM={_mib_from_kb(status.get('VmHWM'))}"
@@ -615,14 +629,13 @@ class MemoryTracer:
             f" RssFile={_mib_from_kb(status.get('RssFile'))}"
             f" threads={status.get('Threads', -1)}"
             f" fd_size={status.get('FDSize', -1)}"
-            f" open_fds={fd_count if fd_count is not None else 'n/a'}",
-            flush=True,
+            f" open_fds={fd_count if fd_count is not None else 'n/a'}"
         )
 
         if rollup:
             private_kb = rollup.get("Private_Clean", 0) + rollup.get("Private_Dirty", 0)
             shared_kb = rollup.get("Shared_Clean", 0) + rollup.get("Shared_Dirty", 0)
-            print(
+            self._print(
                 f"[mem_rollup]{step_tag} label={label!r}"
                 f" Rss={_mib_from_kb(rollup.get('Rss'))}"
                 f" Pss={_mib_from_kb(rollup.get('Pss'))}"
@@ -631,8 +644,7 @@ class MemoryTracer:
                 f" Shared={_mib_from_kb(shared_kb)}"
                 f" Swap={_mib_from_kb(rollup.get('Swap'))}"
                 f" AnonHugePages={_mib_from_kb(rollup.get('AnonHugePages'))}"
-                f" Referenced={_mib_from_kb(rollup.get('Referenced'))}",
-                flush=True,
+                f" Referenced={_mib_from_kb(rollup.get('Referenced'))}"
             )
 
         if cgroup:
@@ -644,7 +656,7 @@ class MemoryTracer:
             if isinstance(current, int) and isinstance(limit, int) and limit > 0:
                 usage_pct = f"{(100.0 * current / limit):.1f}%"
 
-            print(
+            self._print(
                 f"[mem_cgroup]{step_tag} label={label!r}"
                 f" controller={cgroup.get('controller', 'n/a')}"
                 f" current={_mib_from_bytes(current if isinstance(current, int) else None)}"
@@ -653,8 +665,7 @@ class MemoryTracer:
                 f" usage={usage_pct}"
                 f" oom={cgroup.get('oom', 'n/a')}"
                 f" oom_kill={cgroup.get('oom_kill', 'n/a')}"
-                f" failcnt={cgroup.get('failcnt', 'n/a')}",
-                flush=True,
+                f" failcnt={cgroup.get('failcnt', 'n/a')}"
             )
 
         if proc_stat is not None:
@@ -673,27 +684,25 @@ class MemoryTracer:
 
             rss_pages_mib = (proc_stat.rss_pages * page_size) // (1024**2)
             vsize_mib = proc_stat.vsize_bytes // (1024**2)
-            print(
+            self._print(
                 f"[mem_faults]{step_tag} label={label!r}"
                 f" minflt={proc_stat.minflt} (d{delta_minflt:+d})"
                 f" majflt={proc_stat.majflt} (d{delta_majflt:+d})"
                 f" rss_pages={proc_stat.rss_pages} (~{rss_pages_mib}MiB)"
                 f" vsize={vsize_mib}MiB"
-                f" threads={proc_stat.num_threads}",
-                flush=True,
+                f" threads={proc_stat.num_threads}"
             )
 
         try:
             gc_counts = gc.get_count()
             gc_stats = gc.get_stats()
             gen2 = gc_stats[2] if len(gc_stats) > 2 else {}
-            print(
+            self._print(
                 f"[gc_diag]{step_tag} label={label!r}"
                 f" counts={gc_counts}"
                 f" gen2_collections={gen2.get('collections', 0)}"
                 f" gen2_collected={gen2.get('collected', 0)}"
-                f" gen2_uncollectable={gen2.get('uncollectable', 0)}",
-                flush=True,
+                f" gen2_uncollectable={gen2.get('uncollectable', 0)}"
             )
         except Exception:
             pass
@@ -849,34 +858,42 @@ class MemoryTracer:
             except Exception:
                 pass
 
-        print(
+        # Cache last observed tensor stats (MiB) for compact reporting
+        try:
+            self._last_tensor_stats = {
+                "cuda_mib": float(tensor_cuda_bytes) / (1024**2),
+                "cpu_mib": float(tensor_cpu_bytes) / (1024**2),
+            }
+        except Exception:
+            self._last_tensor_stats = {"cuda_mib": 0.0, "cpu_mib": 0.0}
+
+        self._print(
             f"[tensor_snapshot] step={step}"
             f" cpu_tensors={n_tensor_cpu} tensor_mib={tensor_cpu_bytes / (1024**2):.2f}"
             f" cuda_tensors={n_tensor_cuda} cuda_tensor_mib={tensor_cuda_bytes / (1024**2):.2f}"
             f" pinned_mib={pinned_mib:.2f}"
             f" numpy_arrays={n_np_root} numpy_mib={np_root_bytes / (1024**2):.2f}"
             f" pyg_data={n_pyg} pyg_attr_mib={pyg_attr_bytes / (1024**2):.2f}"
-            f" host_rss={rss_gib:.2f} GiB",
-            flush=True,
+            f" host_rss={rss_gib:.2f} GiB"
         )
 
         type_parts = [f"{name}={cnt}" for name, cnt in type_counts.most_common(top_types)]
-        print(f"[obj_types] step={step} " + " | ".join(type_parts), flush=True)
+        self._print(f"[obj_types] step={step} " + " | ".join(type_parts))
 
         mod_parts = [f"{name}={cnt}" for name, cnt in module_counts.most_common(12)]
-        print(f"[obj_modules] step={step} " + " | ".join(mod_parts), flush=True)
+        self._print(f"[obj_modules] step={step} " + " | ".join(mod_parts))
 
         tensor_top = self._format_top_bytes(largest_tensors, n=top_objects)
         if tensor_top:
-            print(f"[tensor_top] step={step} {tensor_top}", flush=True)
+            self._print(f"[tensor_top] step={step} {tensor_top}")
 
         numpy_top = self._format_top_bytes(largest_arrays, n=top_objects)
         if numpy_top:
-            print(f"[numpy_top] step={step} {numpy_top}", flush=True)
+            self._print(f"[numpy_top] step={step} {numpy_top}")
 
         pyg_top = self._format_top_bytes(largest_pyg_attrs, n=top_objects)
         if pyg_top:
-            print(f"[pyg_attr_top] step={step} {pyg_top}", flush=True)
+            self._print(f"[pyg_attr_top] step={step} {pyg_top}")
 
         if self._tracemalloc_enabled:
             self._report_tracemalloc(step=step)
@@ -893,20 +910,18 @@ class MemoryTracer:
             return
 
         step_tag = f" step={step}" if step is not None else ""
-        print(f"[tracemalloc]{step_tag} top={len(top)}", flush=True)
+        self._print(f"[tracemalloc]{step_tag} top={len(top)}")
         for stat in top:
             frame = stat.traceback[0]
-            print(
+            self._print(
                 f"  {stat.size / (1024**2):7.2f}MiB blocks={stat.count:7d}"
-                f"  {frame.filename}:{frame.lineno}",
-                flush=True,
+                f"  {frame.filename}:{frame.lineno}"
             )
 
     def report_diff(self, label_a: str, label_b: str, top_n: int = 20) -> None:
         if label_a not in self._snapshots or label_b not in self._snapshots:
-            print(
-                f"[mem_trace] diff: missing snapshot(s) - have {list(self._snapshots.keys())}",
-                flush=True,
+            self._print(
+                f"[mem_trace] diff: missing snapshot(s) - have {list(self._snapshots.keys())}"
             )
             return
 
@@ -926,12 +941,11 @@ class MemoryTracer:
         new_regions = sum(1 for start in map_b if start not in map_a)
         removed_regions = sum(1 for start in map_a if start not in map_b)
 
-        print(
+        self._print(
             f"\n[mem_trace] diff {label_a!r} -> {label_b!r}"
             f"  dtotal={delta_total // 1024:+d}MiB"
             f"  dprivate_dirty={delta_pd // 1024:+d}MiB"
-            f"  region_churn new={new_regions} removed={removed_regions}",
-            flush=True,
+            f"  region_churn new={new_regions} removed={removed_regions}"
         )
 
         for cat in (
@@ -944,10 +958,9 @@ class MemoryTracer:
         ):
             delta_cat = summ_b.get(cat, 0) - summ_a.get(cat, 0)
             if abs(delta_cat) >= 1024:
-                print(
+                self._print(
                     f"  d{cat}={delta_cat // 1024:+d}MiB"
-                    f"  ({summ_a.get(cat, 0) // 1024}->{summ_b.get(cat, 0) // 1024}MiB)",
-                    flush=True,
+                    f"  ({summ_a.get(cat, 0) // 1024}->{summ_b.get(cat, 0) // 1024}MiB)"
                 )
 
         agg_a: collections.Counter[tuple[str, str, str]] = collections.Counter()
@@ -965,15 +978,9 @@ class MemoryTracer:
         agg_deltas.sort(key=lambda x: x[0], reverse=True)
 
         if agg_deltas:
-            print(
-                f"[mem_trace] top {min(8, len(agg_deltas))} archetype deltas:",
-                flush=True,
-            )
+            self._print(f"[mem_trace] top {min(8, len(agg_deltas))} archetype deltas:")
             for dkb, (cat, perms, name) in agg_deltas[:8]:
-                print(
-                    f"  {dkb // 1024:+6d}MiB  [{perms}] [{cat}]  {name}",
-                    flush=True,
-                )
+                self._print(f"  {dkb // 1024:+6d}MiB  [{perms}] [{cat}]  {name}")
 
         deltas: list[tuple[int, _Region, int, int]] = []
         for start in set(map_a) | set(map_b):
@@ -993,46 +1000,77 @@ class MemoryTracer:
         shrinking = [d for d in deltas if d[0] < 0]
 
         if growing:
-            print(
-                f"[mem_trace] top {min(top_n, len(growing))} growing regions:",
-                flush=True,
-            )
+            self._print(f"[mem_trace] top {min(top_n, len(growing))} growing regions:")
             for delta_kb, region, rss_a, rss_b in growing[:top_n]:
                 name = region.pathname or f"<anon @{region.start:#x}>"
                 cat = Snapshot._category(region)
-                print(
+                self._print(
                     f"  {delta_kb // 1024:+6d}MiB  [{region.perms}] [{cat}]  {name}"
                     f"  ({rss_a // 1024}->{rss_b // 1024}MiB)"
-                    f"  pdirty={region.private_dirty_kb // 1024}MiB",
-                    flush=True,
+                    f"  pdirty={region.private_dirty_kb // 1024}MiB"
                 )
 
         if shrinking:
             n_show = min(5, len(shrinking))
-            print(f"[mem_trace] top {n_show} shrinking regions:", flush=True)
+            self._print(f"[mem_trace] top {n_show} shrinking regions:")
             for delta_kb, region, _, _ in shrinking[-n_show:]:
                 name = region.pathname or f"<anon @{region.start:#x}>"
-                print(
-                    f"  {delta_kb // 1024:+6d}MiB  [{region.perms}]  {name}",
-                    flush=True,
-                )
+                self._print(f"  {delta_kb // 1024:+6d}MiB  [{region.perms}]  {name}")
 
-        print("", flush=True)
+        self._print("")
 
     def report_top(self, label: str, n: int = 20) -> None:
         if label not in self._snapshots:
             return
         snap = self._snapshots[label]
-        print(f"[mem_trace] top {n} RSS regions at {label!r}:", flush=True)
+        self._print(f"[mem_trace] top {n} RSS regions at {label!r}:")
         for r in snap.top_regions(n=n):
             name = r.pathname or f"<anon @{r.start:#x}>"
             cat = Snapshot._category(r)
-            print(
+            self._print(
                 f"  {r.rss_kb // 1024:6d}MiB  [{r.perms}] [{cat}]  {name}"
-                f"  pdirty={r.private_dirty_kb // 1024}MiB",
-                flush=True,
+                f"  pdirty={r.private_dirty_kb // 1024}MiB"
             )
-        print("", flush=True)
+        self._print("")
+
+    def report_compact_summary(self, label: str, prev_label: Optional[str] = None) -> None:
+        """Prints a single, compact telemetry line for a snapshot label.
+
+        This is intended to be user-facing and always emits a single-line summary
+        regardless of the verbose setting.
+        """
+        snap = self._snapshots.get(label)
+        if not snap:
+            return
+
+        status = _read_proc_status()
+        summ = snap.summary()
+        cgroup = _read_cgroup_memory()
+
+        vm_rss = status.get("VmRSS", 0) // 1024
+        vm_hwm = status.get("VmHWM", 0) // 1024
+        heap = summ.get("heap", 0) // 1024
+        anon = summ.get("anon", 0) // 1024
+        gpu_mib = float(self._last_tensor_stats.get("cuda_mib", 0.0))
+
+        cgroup_str = ""
+        if cgroup:
+            curr, limit = cgroup.get("current_bytes"), cgroup.get("limit_bytes")
+            if isinstance(curr, int) and isinstance(limit, int) and limit > 0:
+                cgroup_str = f" (CGroup: {(100.0 * curr / limit):.1f}%)"
+
+        diff_str = ""
+        if prev_label and prev_label in self._snapshots:
+            prev_summ = self._snapshots[prev_label].summary()
+            diff_rss = (summ.get("total", 0) - prev_summ.get("total", 0)) // 1024
+            diff_heap = (summ.get("heap", 0) - prev_summ.get("heap", 0)) // 1024
+            diff_str = f" | Δ RSS: {diff_rss:+d}MiB | Δ Heap: {diff_heap:+d}MiB"
+
+        print(
+            f"📊 [MemTrace] {label} | RSS: {vm_rss}MiB{cgroup_str} (Peak: {vm_hwm}MiB) | "
+            f"GPU Tensors: {gpu_mib:.1f}MiB | Heap: {heap}MiB | Anon: {anon}MiB{diff_str}",
+            flush=True,
+        )
 
     def clear(self) -> None:
         self._snapshots.clear()
@@ -1060,6 +1098,7 @@ class MemoryTraceSession:
             enable_tracemalloc=config.enable_tracemalloc,
             tracemalloc_frames=config.tracemalloc_frames,
             top_types=config.top_types,
+            verbose=config.verbose,
         )
         return cls(tracer=tracer, config=config)
 
@@ -1088,6 +1127,11 @@ class MemoryTraceSession:
         )
         self.tracer.report_diff(prev_label, snap_label)
         self.tracer.report_top(snap_label, n=cfg.top_regions)
+        # Emit compact one-line telemetry for easy log scanning
+        try:
+            self.tracer.report_compact_summary(snap_label, prev_label)
+        except Exception:
+            pass
 
     def capture_baseline(self, *, step: int = 0) -> None:
         self.tracer.report_process_snapshot("baseline", step=step)
