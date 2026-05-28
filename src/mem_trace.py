@@ -404,6 +404,7 @@ _release_fn_checked: bool = False
 warnings.filterwarnings("ignore", category=FutureWarning, message=".*reduce_op is deprecated.*")
 warnings.filterwarnings(r"ignore", message=r".*isinstance\(treespec, LeafSpec\) is deprecated.*")
 warnings.filterwarnings(r"ignore", message=r".*'torch_geometric.contrib' contains experimental code.*")
+warnings.filterwarnings(r"ignore", message=r".*memory_guard.*dynamic bucket rules.*")
 
 
 def release_reclaimable_memory(label: str | None = None) -> None:
