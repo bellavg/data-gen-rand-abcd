@@ -18,6 +18,9 @@ def test_continuous_pe_log_scaling():
     # 2. Get the transform for local_sp_sum
     transform = get_pe_transform("local_sp_sum", attr_name="pos_enc")
 
+    # Precompute expected values BEFORE the transform mutates the source tensor in-place
+    expected_values = torch.log1p(fake_local_sp_sum.clone().float())
+
     # 3. Apply the transform
     data = transform(data)
 
@@ -27,7 +30,6 @@ def test_continuous_pe_log_scaling():
     assert not hasattr(data, "local_sp_sum"), "Source PE tensor should be removed"
 
     # Check the math (log1p(x) = ln(1 + x))
-    expected_values = torch.log1p(fake_local_sp_sum.float())
 
     # 50,000 should be squished down to ~10.8
     assert torch.allclose(data.pos_enc, expected_values), "Log scaling math failed!"

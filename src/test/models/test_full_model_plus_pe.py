@@ -12,6 +12,7 @@ from models.base_model import UnifiedGraphBaseModel
 from models.layers.positional_encodings import get_pe_transform
 from models.lightning_model import AIGRegressionLightningModule
 from models.model_utils import get_batch_positional_encoding
+from unittest.mock import MagicMock
 
 # ---------------------------------------------------------------------------
 # Shared constants & dummy data generators for AIGs
@@ -333,6 +334,8 @@ class TestPositionalEncodingCompatibility(unittest.TestCase):
             lr=1e-3,
         )
 
+        # Attach a mock trainer for isolated training_step invocation
+        lm.trainer = MagicMock()
         loss = lm.training_step(batch, 0)
         self.assertIsInstance(loss, torch.Tensor)
 

@@ -2,6 +2,7 @@ import pytest
 import pytorch_lightning as pl
 import torch
 from torch_geometric.data import Batch, Data
+from unittest.mock import MagicMock
 from torch_geometric.loader import DataLoader as PyGDataLoader
 
 # Adjust imports based on your project structure
@@ -33,7 +34,7 @@ def basic_model():
         "norm_type": "batch",
         "jk_mode": "last",
     }
-    return AIGRegressionLightningModule(
+    model = AIGRegressionLightningModule(
         encoder_name="gine",
         hidden_dim=32,
         node_input_dim=4,
@@ -41,6 +42,10 @@ def basic_model():
         task_out_dim=1,
         encoder_kwargs=encoder_kwargs,
     )
+    # Attach a mock Trainer for unit tests that call training_step() directly.
+    model.trainer = MagicMock()
+    return model
+
 
 
 # ==========================================================
@@ -304,6 +309,9 @@ def test_large_graph_forward_backward_no_crash(encoder_name, extra_kwargs):
         pooling_type="mean",
         encoder_kwargs=encoder_kwargs,
     )
+
+    # Attach a mock Trainer for isolated training_step invocation in unit test
+    model.trainer = MagicMock()
 
     model.train()
     loss = model.training_step(batch, batch_idx=0)

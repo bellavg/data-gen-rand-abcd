@@ -464,7 +464,7 @@ def drop_trainer_batch_refs(trainer: Any) -> None:
 @dataclass
 class MemoryTraceConfig:
     step_interval: int = 1000
-    max_step: int = 5000
+    max_step: int = 3000
     top_types: int = 25
     top_objects: int = 10
     top_regions: int = 5
@@ -484,7 +484,7 @@ class MemoryTraceConfig:
     @classmethod
     def from_env(cls) -> "MemoryTraceConfig":
         step_interval = cls._env_int("MEM_TRACE_STEP_INTERVAL", 1000, minimum=1)
-        max_step = cls._env_int("MEM_TRACE_MAX_STEP", 5000, minimum=step_interval)
+        max_step = cls._env_int("MEM_TRACE_MAX_STEP", 3000, minimum=step_interval)
         return cls(
             step_interval=step_interval,
             max_step=max_step,

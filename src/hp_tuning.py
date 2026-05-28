@@ -1,15 +1,8 @@
 import argparse
-import gc
 import logging
 import os
 import sqlite3
 import warnings
-
-from mem_trace import (
-    MemoryTraceSession,
-    drop_trainer_batch_refs,
-    release_reclaimable_memory,
-)
 
 import optuna
 import pytorch_lightning as pl
@@ -33,11 +26,15 @@ from hp_tuning_utils import (
 )
 from models.lightning_model import AIGRegressionLightningModule
 
+# ---------------------------------------------------------------------------
+# Callbacks
+# ---------------------------------------------------------------------------
+
 
 class PyTorchLightningPruningCallback(pl.Callback):
-    """Minimal Optuna pruning callback for pytorch_lightning.
+    """Minimal Optuna pruning callback for ``pytorch_lightning``.
 
-    Replaces ``optuna.integration.PyTorchLightningPruningCallback`` which
+    Replaces ``optuna.integration.PyTorchLightningPruningCallback``, which
     requires the unified ``lightning`` package.  This version depends only on
     ``pytorch_lightning`` (standalone) and ``optuna``.
     """
@@ -52,11 +49,9 @@ class PyTorchLightningPruningCallback(pl.Callback):
     ) -> None:
         if getattr(trainer, "sanity_checking", False):
             return
-
         logs = trainer.callback_metrics
         if self._monitor not in logs:
             return
-
         epoch = int(trainer.current_epoch)
         value = float(logs[self._monitor])
         self._trial.report(value, step=epoch)
@@ -66,25 +61,26 @@ class PyTorchLightningPruningCallback(pl.Callback):
             )
 
 
-class PeriodicMemoryReleaseCallback(pl.Callback):
-    """Periodically release reclaimable host/GPU memory during long trials."""
+class _MemSnapshotCallback(pl.Callback):
+    """Emit ``MemoryTraceSession`` snapshots at steps 0/1000/2000/3000.
 
-    def __init__(
-        self,
-        *,
-        every_train_steps: int = 500,
-        every_val_batches: int | None = None,
-        trial_number: int = -1,
-    ) -> None:
+    Active only when ``SLURM_ARRAY_TASK_ID == 1`` and ``trial_number == 0``.
+    All other calls return after a single boolean check — effectively free.
+
+    Args:
+        session: A ``MemoryTraceSession`` instance (already constructed).
+    """
+
+    def __init__(self, session) -> None:
         super().__init__()
-        self.every_train_steps = max(0, int(every_train_steps))
-        self.every_val_batches = (
-            self.every_train_steps
-            if every_val_batches is None
-            else max(0, int(every_val_batches))
-        )
-        self.trial_number = int(trial_number)
-        self._mem_trace = MemoryTraceSession.from_env() if trial_number == 0 else None
+        self._session = session
+
+    def on_validation_end(
+        self, trainer: pl.Trainer, pl_module: pl.LightningModule
+    ) -> None:
+        # Capture step-0 baseline after the initial sanity-check validation.
+        if trainer.global_step == 0:
+            self._session.capture_baseline(step=0)
 
     def on_train_batch_end(
         self,
@@ -94,74 +90,15 @@ class PeriodicMemoryReleaseCallback(pl.Callback):
         batch,
         batch_idx: int,
     ) -> None:
-        drop_trainer_batch_refs(trainer)
-        step = trainer.global_step
-        if self._mem_trace is not None:
-            self._mem_trace.maybe_capture_step(step)
-        if self.every_train_steps <= 0:
-            return
-        if (
-            trainer.global_step > 0
-            and trainer.global_step % self.every_train_steps == 0
-        ):
-            label = (
-                f"train_step={trainer.global_step}"
-                if self.trial_number == 0 and trainer.global_step % 1000 == 0
-                else None
-            )
-            release_reclaimable_memory(label)
+        self._session.maybe_capture_step(trainer.global_step)
 
-    def on_validation_batch_end(
-        self,
-        trainer: pl.Trainer,
-        pl_module: pl.LightningModule,
-        outputs,
-        batch,
-        batch_idx: int,
-        dataloader_idx: int = 0,
-    ) -> None:
-        drop_trainer_batch_refs(trainer)
-        if self.every_val_batches <= 0:
-            return
-        if (batch_idx + 1) % self.every_val_batches != 0:
-            return
+    def on_fit_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule) -> None:
+        self._session.clear()
 
-        label = (
-            f"val_batch={batch_idx + 1} step={trainer.global_step}"
-            if self.trial_number == 0 and (batch_idx + 1) % 1000 == 0
-            else None
-        )
-        release_reclaimable_memory(label)
 
-    def on_fit_end(
-        self, trainer: pl.Trainer, pl_module: pl.LightningModule
-    ) -> None:
-        if self._mem_trace is not None:
-            self._mem_trace.clear()
-            self._mem_trace = None
-
-    def on_validation_start(
-        self, trainer: pl.Trainer, pl_module: pl.LightningModule
-    ) -> None:
-        drop_trainer_batch_refs(trainer)
-        label = (
-            f"val_start step={trainer.global_step}" if self.trial_number == 0 else None
-        )
-        release_reclaimable_memory(label)
-
-    def on_validation_end(
-        self, trainer: pl.Trainer, pl_module: pl.LightningModule
-    ) -> None:
-        drop_trainer_batch_refs(trainer)
-        label = (
-            f"val_end step={trainer.global_step}" if self.trial_number == 0 else None
-        )
-        release_reclaimable_memory(label)
-        # Capture baseline snapshot once, right after the initial sanity-check
-        # validation (step 0) and before any training steps begin.
-        if self._mem_trace is not None and trainer.global_step == 0:
-            self._mem_trace.capture_baseline(step=0)
-
+# ---------------------------------------------------------------------------
+# Module-level configuration
+# ---------------------------------------------------------------------------
 
 warnings.filterwarnings("ignore", category=UserWarning, module="torch_geometric")
 warnings.filterwarnings("ignore", category=UserWarning, module="pytorch_lightning")
@@ -180,6 +117,11 @@ if hasattr(torch.backends, "cudnn"):
 BATCH_SIZE_CHOICES = [4, 8, 16, 32]
 
 
+# ---------------------------------------------------------------------------
+# Study callbacks
+# ---------------------------------------------------------------------------
+
+
 def _trial_outcome_callback(study: optuna.Study, frozen_trial) -> None:
     outcome = str(
         frozen_trial.user_attrs.get("trial_outcome", frozen_trial.state.name.lower())
@@ -189,11 +131,9 @@ def _trial_outcome_callback(study: optuna.Study, frozen_trial) -> None:
     selection_eligible = bool(frozen_trial.user_attrs.get("selection_eligible", False))
     reason = str(frozen_trial.user_attrs.get("prune_reason", ""))
 
-    if frozen_trial.value is None:
-        value_text = "n/a"
-    else:
-        value_text = f"{float(frozen_trial.value):.6f}"
-
+    value_text = (
+        "n/a" if frozen_trial.value is None else f"{float(frozen_trial.value):.6f}"
+    )
     reason_text = f" reason={reason}" if reason else ""
     print(
         "[selection] "
@@ -208,7 +148,25 @@ def _trial_outcome_callback(study: optuna.Study, frozen_trial) -> None:
     )
 
 
-def objective(trial: optuna.Trial, args):
+# ---------------------------------------------------------------------------
+# Objective
+# ---------------------------------------------------------------------------
+
+
+def objective(trial: optuna.Trial, args: argparse.Namespace) -> float:
+    """Optuna objective: sample a config, train, return best val MAE.
+
+    Args:
+        trial: Active Optuna trial.
+        args: Parsed CLI arguments.
+
+    Returns:
+        Best validation MAE (lower is better).
+
+    Raises:
+        optuna.TrialPruned: On OOM-like errors or pre-allocation risk exceeded.
+        RuntimeError: On non-OOM runtime errors (re-raised as-is).
+    """
     _mark_trial_outcome(trial, outcome="running", oom_like=False, oom_kind="none")
 
     batch_size = trial.suggest_categorical("batch_size", BATCH_SIZE_CHOICES)
@@ -220,7 +178,6 @@ def objective(trial: optuna.Trial, args):
         "encoder_name",
         ["gine", "transformer_conv", "graphgps", "egin", "gcn", "vanilla_mpnn"],
     )
-
     hidden_dim = trial.suggest_categorical("hidden_dim", [32, 64, 128, 256, 512])
 
     pe_type = trial.suggest_categorical(
@@ -269,9 +226,11 @@ def objective(trial: optuna.Trial, args):
     datamodule = None
     pruning_cb = None
     early_stop_cb = None
-    memory_release_cb = None
     risk_score = None
-    if getattr(args, "hard_prune", False):
+
+    # Optional pre-allocation prune for clearly oversized configs.
+    # Pure Python arithmetic — runs once before any GPU memory is touched.
+    if args.hard_prune:
         risk_score = _estimate_trial_risk(
             batch_size=batch_size,
             num_nodes=360_000,
@@ -284,13 +243,12 @@ def objective(trial: optuna.Trial, args):
             pe_type=pe_type,
             pos_enc_dim=pos_enc_dim,
         )
-        hard_prune_risk = float(getattr(args, "hard_prune_risk", 1e10))
         _set_trial_user_attr(trial, "risk_score", float(risk_score))
-        if risk_score > hard_prune_risk:
+        if risk_score > args.hard_prune_risk:
             msg = (
                 f"Pre-allocation prune for high-risk trial. "
                 f"batch_size={batch_size} "
-                f"estimated_risk={risk_score:.2e} threshold={hard_prune_risk:.2e}"
+                f"estimated_risk={risk_score:.2e} threshold={args.hard_prune_risk:.2e}"
             )
             print(f"\n{msg}")
             _mark_trial_outcome(
@@ -303,37 +261,18 @@ def objective(trial: optuna.Trial, args):
             )
             raise optuna.TrialPruned(msg)
 
-    # Pre-trial GPU memory check: if previous trials leaked memory the GPU can
-    # be nearly full before any allocation, causing every trial to OOM.
-    # Threshold: >10 GiB allocated before trial start is unexpected; run an
-    # extra purge pass and warn so the pattern is visible in logs.
+    # Warn if residual GPU memory is unexpectedly high before this trial starts.
     if torch.cuda.is_available():
-        _pre_alloc_gib = torch.cuda.memory_allocated() / (1024**3)
-        if _pre_alloc_gib > 10.0:
+        pre_alloc_gib = torch.cuda.memory_allocated() / (1024**3)
+        if pre_alloc_gib > 10.0:
             print(
-                f"\n[Trial {trial.number}] WARNING: {_pre_alloc_gib:.1f} GiB of GPU "
-                f"memory already allocated before trial start (expected ~0). "
-                f"Residual from previous trial cleanup. Attempting extra purge."
-            )
-            gc.collect()
-            gc.collect()
-            torch.cuda.empty_cache()
-            torch.cuda.synchronize()
-            _post_purge_gib = torch.cuda.memory_allocated() / (1024**3)
-            print(
-                f"[Trial {trial.number}] Post-extra-purge: {_post_purge_gib:.1f} GiB allocated."
+                f"[Trial {trial.number}] WARNING: {pre_alloc_gib:.1f} GiB GPU memory "
+                f"already allocated before trial start — possible residual from "
+                f"previous trial cleanup."
             )
 
     try:
-        workers = getattr(args, "num_workers", 2)
-        persistent = getattr(args, "persistent_workers", False)
-        pin_memory = getattr(args, "pin_memory", False)
-        prefetch_factor = int(getattr(args, "prefetch_factor", 1))
-        dynamic_batching = getattr(args, "dynamic_batching", False)
-        dataset_seed = int(getattr(args, "dataset_seed", 42))
-        dynamic_bucket_rules = _parse_dynamic_bucket_rules(
-            getattr(args, "dynamic_bucket_rules", ""),
-        )
+        dynamic_bucket_rules = _parse_dynamic_bucket_rules(args.dynamic_bucket_rules)
 
         guard_expansion = 3.0 if encoder_name in ATTENTION_ENCODERS else 2.0
         memory_guard = {
@@ -343,7 +282,7 @@ def objective(trial: optuna.Trial, args):
             "encoder_name": encoder_name,
             "heads": int(encoder_kwargs.get("heads", 1)),
             "expansion_factor": guard_expansion,
-            "max_tokens": float(getattr(args, "memory_guard_max_tokens", 3.5e8)),
+            "max_tokens": float(args.memory_guard_max_tokens),
         }
 
         datamodule = AIGDataModule(
@@ -351,20 +290,20 @@ def objective(trial: optuna.Trial, args):
             positional_encoding=pe_type if pe_type != "none" else None,
             batch_size=batch_size,
             split_ratios=(0.8, 0.2, 0.0),
-            seed=dataset_seed,
+            seed=args.dataset_seed,
             cache_dir=args.cache_dir,
             train_num_samples=args.train_samples,
-            num_workers=workers,
-            persistent_workers=persistent,
-            pin_memory=pin_memory,
-            prefetch_factor=prefetch_factor,
-            dynamic_batching=dynamic_batching,
+            num_workers=args.num_workers,
+            persistent_workers=args.persistent_workers,
+            pin_memory=args.pin_memory,
+            prefetch_factor=args.prefetch_factor,
+            dynamic_batching=args.dynamic_batching,
             dynamic_bucket_rules=dynamic_bucket_rules,
         )
         _install_hp_guarded_dataloaders(
             datamodule,
             memory_guard,
-            dynamic_batching=dynamic_batching,
+            dynamic_batching=args.dynamic_batching,
         )
 
         model = AIGRegressionLightningModule(
@@ -381,13 +320,16 @@ def objective(trial: optuna.Trial, args):
 
         pruning_cb = PyTorchLightningPruningCallback(trial, monitor="val/mae_node")
         early_stop_cb = EarlyStopping(monitor="val/mae_node", patience=3, mode="min")
-        memory_release_cb = PeriodicMemoryReleaseCallback(
-            every_train_steps=int(getattr(args, "memory_release_interval_steps", 200)),
-            every_val_batches=int(
-                getattr(args, "memory_release_interval_val_batches", 200)
-            ),
-            trial_number=trial.number,
-        )
+        callbacks = [pruning_cb, early_stop_cb]
+
+        # Lightweight post-fix sanity snapshots: job 1, trial 0 only.
+        # MemoryTraceSession respects MEM_TRACE_STEP_INTERVAL / MEM_TRACE_MAX_STEP
+        # env vars; defaults fire at steps 1000, 2000, 3000 with a baseline at 0.
+        array_job_id = int(os.environ.get("SLURM_ARRAY_TASK_ID", "1"))
+        if trial.number == 0 and array_job_id == 1:
+            from mem_trace import MemoryTraceSession  # noqa: PLC0415
+
+            callbacks.append(_MemSnapshotCallback(MemoryTraceSession.from_env()))
 
         csv_logger = CSVLogger(
             save_dir=args.log_dir,
@@ -395,20 +337,15 @@ def objective(trial: optuna.Trial, args):
             version=f"trial_{trial.number}",
         )
 
-        _precision = _select_trainer_precision()
-        log_every_n_steps = max(1, int(getattr(args, "log_every_n_steps", 100)))
-        val_check_interval = max(1, int(getattr(args, "val_check_interval", 2000)))
-        callbacks = [pruning_cb, early_stop_cb, memory_release_cb]
-
         trainer = pl.Trainer(
             max_epochs=15,
-            max_time={"hours": float(getattr(args, "max_trial_hours", 2.0))},
+            max_time={"hours": args.max_trial_hours},
             accelerator="auto",
             devices=1,
-            precision=_precision,
+            precision=_select_trainer_precision(),
             gradient_clip_val=1.0,
-            log_every_n_steps=log_every_n_steps,
-            val_check_interval=val_check_interval,
+            log_every_n_steps=max(1, args.log_every_n_steps),
+            val_check_interval=max(1, args.val_check_interval),
             callbacks=callbacks,
             logger=csv_logger,
             enable_checkpointing=False,
@@ -448,9 +385,6 @@ def objective(trial: optuna.Trial, args):
         raise optuna.TrialPruned(msg) from None
 
     except (ConnectionResetError, BrokenPipeError) as e:
-        # DataLoader worker was killed by the OS/SLURM OOM killer while
-        # transferring a tensor over IPC.  Not a RuntimeError, but the
-        # root cause is the same as a worker-OOM kill: treat as prunable.
         msg = f"OOM-like IPC failure (worker killed). [Trial {trial.number}] Error: {e}"
         print(f"\n{msg}")
         _mark_trial_outcome(
@@ -470,7 +404,7 @@ def objective(trial: optuna.Trial, args):
 
         oom_kind, prune_reason, oom_like, msg = payload
         print(f"\n{msg}")
-        if oom_kind == "host" and int(getattr(args, "num_workers", 0)) > 0:
+        if oom_kind == "host" and args.num_workers > 0:
             print(
                 "[oom_hint] DataLoader worker host-OOM detected while num_workers>0. "
                 "Use --num_workers 0 for Stage-2 stability on heavy-tail graphs."
@@ -494,6 +428,11 @@ def objective(trial: optuna.Trial, args):
         )
 
 
+# ---------------------------------------------------------------------------
+# Stage-2 seeding from Stage-1 results
+# ---------------------------------------------------------------------------
+
+
 def _seed_study_from_best(
     study: optuna.Study,
     *,
@@ -502,14 +441,19 @@ def _seed_study_from_best(
     top_n: int,
     seed_mode: str = "import",
 ) -> None:
-    """Seed Stage-2 from top-N Stage-1 completed trials.
+    """Seed a Stage-2 study from the top-N completed trials of a Stage-1 study.
 
-    seed_mode:
-      - "enqueue": add the configs to the waiting queue so they are re-run first.
-      - "import": add them as already-completed observations (no re-run).
+    Args:
+        study: Target Stage-2 Optuna study.
+        source_db_url: SQLite URL for the Stage-1 database.
+        source_study_name: Study name inside ``source_db_url``.
+        top_n: Number of top trials to seed from.
+        seed_mode: ``"enqueue"`` re-runs the configs; ``"import"`` adds them
+            as already-completed observations without re-running.
     """
     if top_n <= 0:
         return
+
     source_storage = RDBStorage(
         url=source_db_url,
         engine_kwargs={"connect_args": {"timeout": 60, "check_same_thread": False}},
@@ -533,15 +477,9 @@ def _seed_study_from_best(
         print("[seed] No eligible Stage-1 trials found to seed from.")
         return
 
-    if seed_mode == "enqueue":
-        print(
-            f"[seed] Seeding Stage-2 study with top-{len(top_trials)} Stage-1 trials."
-        )
-    else:
-        print(
-            f"[seed] Importing top-{len(top_trials)} Stage-1 trials "
-            "as prior observations (no re-run)."
-        )
+    action = "Seeding" if seed_mode == "enqueue" else "Importing"
+    verb = "enqueued" if seed_mode == "enqueue" else "imported"
+    print(f"[seed] {action} Stage-2 study with top-{len(top_trials)} Stage-1 trials.")
 
     for t in top_trials:
         seed_attrs = {
@@ -550,30 +488,28 @@ def _seed_study_from_best(
             "seed_source_trial_number": int(t.number),
             "seed_mode": seed_mode,
         }
-
         if seed_mode == "enqueue":
-            study.enqueue_trial(
-                t.params,
-                user_attrs=seed_attrs,
-                skip_if_exists=True,
+            study.enqueue_trial(t.params, user_attrs=seed_attrs, skip_if_exists=True)
+        else:
+            study.add_trial(
+                optuna.trial.create_trial(
+                    params=t.params,
+                    distributions=t.distributions,
+                    value=t.value,
+                    user_attrs=seed_attrs,
+                )
             )
-            print(f"[seed]   enqueued trial #{t.number} value={t.value:.6f}")
-            continue
+        print(f"[seed]   {verb} trial #{t.number} value={t.value:.6f}")
 
-        study.add_trial(
-            optuna.trial.create_trial(
-                params=t.params,
-                distributions=t.distributions,
-                value=t.value,
-                user_attrs=seed_attrs,
-            )
-        )
-        print(f"[seed]   imported trial #{t.number} value={t.value:.6f}")
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
 
 
 if __name__ == "__main__":
-    # Prefer filesystem-backed tensor sharing for large graph batches. This
-    # avoids file-descriptor pressure in long multi-worker DataLoader runs.
+    # Prefer filesystem-backed tensor sharing for large graph batches to avoid
+    # file-descriptor pressure in long multi-worker DataLoader runs.
     try:
         torch.multiprocessing.set_sharing_strategy("file_system")
     except (AttributeError, RuntimeError, ValueError) as exc:
@@ -640,24 +576,6 @@ if __name__ == "__main__":
         help="Memory guard threshold in heuristic activation tokens.",
     )
     parser.add_argument(
-        "--memory_release_interval_steps",
-        type=int,
-        default=200,
-        help=(
-            "Trigger gc/malloc_trim during training every N global steps "
-            "(0 disables train-step release)."
-        ),
-    )
-    parser.add_argument(
-        "--memory_release_interval_val_batches",
-        type=int,
-        default=200,
-        help=(
-            "Trigger gc/malloc_trim during validation every N batches "
-            "(0 disables in-loop val release)."
-        ),
-    )
-    parser.add_argument(
         "--hard_prune",
         action="store_true",
         help="Enable pre-allocation pruning of high-risk trials (default: off).",
@@ -668,8 +586,7 @@ if __name__ == "__main__":
         default=1e10,
         help=(
             "Risk threshold used when --hard_prune is set. Evaluated against a "
-            "360K-node graph at each sampled trial batch_size. "
-            "Accounts for nodes, edges, hidden_dim, layers, jk_mode, encoder, and PE."
+            "360K-node graph at each sampled trial batch_size."
         ),
     )
     parser.add_argument(
@@ -705,8 +622,7 @@ if __name__ == "__main__":
         default=2.0,
         help=(
             "Per-trial wall-time cap passed to the Lightning Trainer. "
-            "Set lower for Stage-1 exploration (e.g. 1.0) to avoid long trials "
-            "consuming the budget that could run two shorter ones."
+            "Set lower for Stage-1 exploration (e.g. 1.0)."
         ),
     )
     parser.add_argument(
@@ -718,10 +634,10 @@ if __name__ == "__main__":
     parser.add_argument(
         "--val_check_interval",
         type=int,
-        default=10000,
+        default=1.0,
         help=(
             "Run validation every N train steps so pruning/early-stop decisions "
-            "and val-loop cleanup happen before epoch end on long epochs."
+            "happen before epoch end on long epochs."
         ),
     )
     parser.add_argument(
@@ -760,8 +676,8 @@ if __name__ == "__main__":
         choices=["enqueue", "import"],
         default="import",
         help=(
-            "How to apply Stage-1 seeds in Stage-2: 'enqueue' re-runs seeded configs first; "
-            "'import' adds them as completed observations without re-running."
+            "How to apply Stage-1 seeds in Stage-2: 'enqueue' re-runs seeded configs "
+            "first; 'import' adds them as completed observations without re-running."
         ),
     )
     args = parser.parse_args()
