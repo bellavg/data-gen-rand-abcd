@@ -13,9 +13,29 @@ from pathlib import Path
 
 import pandas as pd
 import torch
+import torch.serialization
 from torch_geometric.data import Dataset as PyGDataset
+from torch_geometric.data import Data as _PyGData
+from torch_geometric.data import storage as _pyg_storage
 
 from models.layers.positional_encodings import get_pe_transform
+
+# Register PyG classes in the secure deserialization allowlist so torch.load
+# can use weights_only=True (C++ deserializer) on cached .pt graph files.
+# This bypasses the Python Unpickler entirely, eliminating the Unpickler memo
+# dict leak that causes TypedStorage, UntypedStorage, cell, FileIO, and
+# BufferedReader objects to accumulate linearly across training steps.
+_pyg_safe_globals: list = [_PyGData, _pyg_storage.GlobalStorage]
+for _name in ("DataTensorAttr", "DataEdgeAttr"):
+    try:
+        import torch_geometric.data.data as _pyg_data_mod
+        _cls = getattr(_pyg_data_mod, _name, None)
+        if _cls is not None:
+            _pyg_safe_globals.append(_cls)
+    except Exception:
+        pass
+torch.serialization.add_safe_globals(_pyg_safe_globals)
+del _pyg_safe_globals, _pyg_data_mod, _name, _cls
 
 
 @dataclass(frozen=True, slots=True)
@@ -321,7 +341,7 @@ class AIGGraphRegressionDataset(PyGDataset):
 
     def _torch_load_graph(self, graph_path: str | Path):
         with open(graph_path, "rb") as fh:
-            return torch.load(fh, map_location="cpu", weights_only=False)
+            return torch.load(fh, map_location="cpu", weights_only=True)
 
     def _cache_single_graph(self, graph_path: str) -> tuple[str, int]:
         cache_path = self._cached_graph_path(graph_path)

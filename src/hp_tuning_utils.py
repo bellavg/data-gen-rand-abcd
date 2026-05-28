@@ -2,6 +2,7 @@ import ctypes
 import gc
 import logging
 import time
+import weakref
 from collections.abc import Callable
 
 import optuna
@@ -165,6 +166,17 @@ def _install_hp_guarded_dataloaders(
     bucket_rules = list(datamodule.dynamic_bucket_rules)
     use_buckets = dynamic_batching and bool(bucket_rules)
 
+    train_ds = datamodule.train_ds
+    val_ds = datamodule.val_ds
+    test_ds = datamodule.test_ds
+    batch_size = datamodule.batch_size
+    train_kw = datamodule._loader_kwargs(is_train=True)
+    train_kw_no_bs = datamodule._loader_kwargs(include_batch_size=False, is_train=True)
+    val_kw = datamodule._loader_kwargs(is_train=False)
+    val_kw_no_bs = datamodule._loader_kwargs(include_batch_size=False, is_train=False)
+    cache_path = datamodule._dynamic_batch_plan_cache_path()
+    _dm_ref = weakref.ref(datamodule)
+
     if use_buckets:
         rules_text = ", ".join(f"{nodes}:{size}" for nodes, size in bucket_rules)
         print(
@@ -174,76 +186,64 @@ def _install_hp_guarded_dataloaders(
 
     def train_dataloader() -> DataLoader:
         if use_buckets:
-            precomputed_batches = getattr(datamodule, "_train_batch_plan", None)
+            dm = _dm_ref()
+            precomputed_batches = getattr(dm, "_train_batch_plan", None) if dm is not None else None
             if precomputed_batches is None:
-                sizes = datamodule.train_ds.get_num_nodes_list()
+                sizes = train_ds.get_num_nodes_list()
                 precomputed_batches = load_or_build_batch_plan(
                     sizes,
-                    batch_size=datamodule.batch_size,
+                    batch_size=batch_size,
                     bucket_rules=bucket_rules,
-                    cache_path=datamodule._dynamic_batch_plan_cache_path(),
+                    cache_path=cache_path,
                 )
             sampler = BalancedDynamicBatchSampler(
-                batch_size=datamodule.batch_size,
+                batch_size=batch_size,
                 shuffle=True,
                 seed=seed,
                 bucket_rules=bucket_rules,
                 precomputed_batches=precomputed_batches,
             )
-            datamodule._train_batch_plan = None
+            if dm is not None:
+                dm._train_batch_plan = None
             return DataLoader(
-                datamodule.train_ds,
+                train_ds,
                 batch_sampler=sampler,
                 collate_fn=guarded_collate,
-                **datamodule._loader_kwargs(include_batch_size=False, is_train=True),
+                **train_kw_no_bs,
             )
 
-        return DataLoader(
-            datamodule.train_ds,
-            shuffle=True,
-            collate_fn=guarded_collate,
-            **datamodule._loader_kwargs(is_train=True),
-        )
+        return DataLoader(train_ds, shuffle=True, collate_fn=guarded_collate, **train_kw)
 
     def val_dataloader() -> DataLoader:
         if use_buckets:
-            val_plan = getattr(datamodule, "_val_batch_plan", None)
+            dm = _dm_ref()
+            val_plan = getattr(dm, "_val_batch_plan", None) if dm is not None else None
             if val_plan is None:
-                val_sizes = datamodule.val_ds.get_num_nodes_list()
+                val_sizes = val_ds.get_num_nodes_list()
                 val_plan = BalancedDynamicBatchSampler.build_batch_plan(
                     val_sizes,
-                    batch_size=datamodule.batch_size,
+                    batch_size=batch_size,
                     bucket_rules=bucket_rules,
                 )
-            datamodule._val_batch_plan = None
-
+            if dm is not None:
+                dm._val_batch_plan = None
             sampler = BalancedDynamicBatchSampler(
-                batch_size=datamodule.batch_size,
+                batch_size=batch_size,
                 shuffle=False,
                 seed=seed,
                 bucket_rules=bucket_rules,
                 precomputed_batches=val_plan,
             )
             return DataLoader(
-                datamodule.val_ds,
+                val_ds,
                 batch_sampler=sampler,
                 collate_fn=guarded_collate,
-                **datamodule._loader_kwargs(include_batch_size=False, is_train=False),
+                **val_kw_no_bs,
             )
-        return DataLoader(
-            datamodule.val_ds,
-            shuffle=False,
-            collate_fn=guarded_collate,
-            **datamodule._loader_kwargs(is_train=False),
-        )
+        return DataLoader(val_ds, shuffle=False, collate_fn=guarded_collate, **val_kw)
 
     def test_dataloader() -> DataLoader:
-        return DataLoader(
-            datamodule.test_ds,
-            shuffle=False,
-            collate_fn=guarded_collate,
-            **datamodule._loader_kwargs(is_train=False),
-        )
+        return DataLoader(test_ds, shuffle=False, collate_fn=guarded_collate, **val_kw)
 
     datamodule.train_dataloader = train_dataloader
     datamodule.val_dataloader = val_dataloader
