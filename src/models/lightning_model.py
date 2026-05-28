@@ -62,13 +62,16 @@ class AIGRegressionLightningModule(pl.LightningModule):
 
         if self.trainer is not None:
             b_size = getattr(batch, "num_graphs", 1)
+            # Log on_step only for training, keep validation/test on_epoch-only
+            is_train = (prefix == "train")
+
             self.log(
                 f"{prefix}/loss",
                 loss,
                 batch_size=b_size,
                 sync_dist=False,
                 prog_bar=True,
-                on_step=False,
+                on_step=is_train,
                 on_epoch=True,
             )
             self.log(
@@ -76,7 +79,7 @@ class AIGRegressionLightningModule(pl.LightningModule):
                 mae_node_opt,
                 batch_size=b_size,
                 sync_dist=False,
-                on_step=False,
+                on_step=is_train,
                 on_epoch=True,
             )
         return loss if prefix == "train" else None
