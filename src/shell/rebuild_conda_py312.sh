@@ -70,30 +70,44 @@ fi
 set +u
 conda activate "$CONDA_ENV_PREFIX"
 set -u
+
+# Keep user-site packages out of this fresh env build to avoid dependency bleed
+# from ~/.local and make resolver output deterministic.
+unset PYTHONPATH
+unset PYTHONHOME
+export PYTHONNOUSERSITE=1
+
 python --version
 
-pip install --upgrade pip setuptools wheel
+python -m pip install --upgrade pip setuptools wheel
 
 # Install torch first so PyG extension wheels resolve against the target torch build.
-pip install "torch==${TORCH_VERSION}"
+python -m pip install "torch==${TORCH_VERSION}"
 
 # Install torch-scatter from the PyG index before project install.
-pip install "torch-scatter>=2.1" --find-links "$PYG_WHEEL_INDEX"
+python -m pip install "torch-scatter>=2.1" --find-links "$PYG_WHEEL_INDEX"
 
 # Install project and dependencies from pyproject.toml
-pip install -e "$BASE_DIR" --find-links "$PYG_WHEEL_INDEX"
+python -m pip install -e "$BASE_DIR" --find-links "$PYG_WHEEL_INDEX"
 
 # On HPC clusters, module-loaded CUDA/NCCL libraries in LD_LIBRARY_PATH can
 # shadow the pip-installed nvidia wheels (e.g. causing missing symbol errors).
 # Prepend the nvidia wheel lib dirs so bundled versions always take priority.
 # Must run AFTER pip installs so the nvidia/*/lib directories exist.
 _SITE_PKG="$(python -c 'import site; print(site.getsitepackages()[0])')"
+_NCCL_LIB_DIR="${_SITE_PKG}/nvidia/nccl/lib"
+if [[ -d "$_NCCL_LIB_DIR" ]]; then
+    export LD_LIBRARY_PATH="${_NCCL_LIB_DIR}:${LD_LIBRARY_PATH:-}"
+fi
 for _lib_dir in "$_SITE_PKG"/nvidia/*/lib; do
-    [[ -d "$_lib_dir" ]] && export LD_LIBRARY_PATH="${_lib_dir}:${LD_LIBRARY_PATH:-}"
+    [[ -d "$_lib_dir" && "$_lib_dir" != "$_NCCL_LIB_DIR" ]] && export LD_LIBRARY_PATH="${_lib_dir}:${LD_LIBRARY_PATH:-}"
 done
-unset _lib_dir _SITE_PKG
+unset _lib_dir _NCCL_LIB_DIR _SITE_PKG
 
 python -c "
+import ctypes, site
+site_pkg = site.getsitepackages()[0]
+ctypes.CDLL(f'{site_pkg}/nvidia/nccl/lib/libnccl.so.2', mode=ctypes.RTLD_GLOBAL)
 import torch, torch_geometric, pytorch_lightning, optuna
 print(f'torch={torch.__version__}')
 print(f'torch_geometric={torch_geometric.__version__}')
