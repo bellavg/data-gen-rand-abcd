@@ -3,19 +3,28 @@ import os
 
 import pytorch_lightning as pl
 import torch
-from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
+from pytorch_lightning.callbacks import (
+    EarlyStopping,
+    LearningRateMonitor,
+    ModelCheckpoint,
+)
 from pytorch_lightning.loggers import WandbLogger
 
-from constants import ENCODER_KWARGS_DEFAULTS, VALID_ALGORITHMS
-
-# Project Imports
+import config
 from data.datamodule import AIGDataModule
 from models.lightning_model import AIGRegressionLightningModule
+from train_utils import HardwareProfilerCallback
+
+ENCODER_KWARGS_DEFAULTS = config.ENCODER_KWARGS_DEFAULTS
 
 
 def _select_precision() -> str:
     try:
-        return "bf16-mixed" if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else "32-true"
+        return (
+            "bf16-mixed"
+            if torch.cuda.is_available() and torch.cuda.is_bf16_supported()
+            else "32-true"
+        )
     except (AssertionError, RuntimeError):
         return "32-true"
 
@@ -26,9 +35,9 @@ def main(args):
         torch.backends.cudnn.allow_tf32 = True
 
     # 1. Validate Algorithm
-    if args.algorithm not in VALID_ALGORITHMS:
+    if args.algorithm not in config.VALID_ALGORITHMS:
         raise ValueError(
-            f"Algorithm '{args.algorithm}' must be one of {VALID_ALGORITHMS}"
+            f"Algorithm '{args.algorithm}' must be one of {config.VALID_ALGORITHMS}"
         )
 
     # Set seed for reproducibility
@@ -37,14 +46,33 @@ def main(args):
     print(f"--- Starting Final Training for Algorithm: {args.algorithm} ---")
 
     # 2. Setup DataModule
+    # Parse dynamic_bucket_rules string into list of (int, int) tuples
+    parsed_rules = []
+    if getattr(args, "dynamic_bucket_rules", None):
+        try:
+            parsed_rules = [
+                tuple(map(int, item.split(":")))
+                for item in args.dynamic_bucket_rules.split(",")
+                if item.strip()
+            ]
+        except Exception as e:
+            raise ValueError(
+                f"Failed to parse dynamic_bucket_rules: {args.dynamic_bucket_rules}"
+            ) from e
+
     datamodule = AIGDataModule(
         csv_paths=args.csv_paths,
         positional_encoding=args.pe_type if args.pe_type != "none" else None,
         batch_size=args.batch_size,
         split_ratios=(0.8, 0.1, 0.1),
         num_workers=args.num_workers,
+        pin_memory=True,
+        persistent_workers=True,
+        prefetch_factor=args.prefetch_factor,
         cache_dir=args.cache_dir if args.cache_dir else None,
         hp_tuning_splits_path=args.hp_tuning_splits_path,
+        dynamic_batching=getattr(args, "dynamic_batching", False),
+        dynamic_bucket_rules=parsed_rules,
     )
 
     # 3. Configure Encoder Kwargs
@@ -61,17 +89,7 @@ def main(args):
 
     if args.encoder_name in ["transformer_conv", "graphgps"]:
         encoder_kwargs["heads"] = args.heads
-
-    if args.encoder_name == "egin":
-        encoder_kwargs["egin_kwargs"].update(
-            {
-                "num_mlp_layers": 2,
-                "dot_update": False,
-                "edge_mlp": True,
-                "edge_hidden_dim": args.hidden_dim,
-            }
-        )
-
+    
     # 4. Initialize the Lightning Module
     model = AIGRegressionLightningModule(
         encoder_name=args.encoder_name,
@@ -92,10 +110,11 @@ def main(args):
 
     checkpoint_cb = ModelCheckpoint(
         dirpath=algo_checkpoint_dir,
-        filename=f"{args.algorithm}-{{epoch:02d}}-loss={{val/loss:.4f}}-mae={{val/mae_node:.4f}}",
+        save_top_k=3,
+        save_last=True,
         monitor="val/loss",
         mode="min",
-        save_top_k=1,
+        filename="{epoch:02d}-val_loss={val/loss:.4f}", 
     )
 
     early_stop_cb = EarlyStopping(
@@ -104,7 +123,10 @@ def main(args):
 
     # Use WandbLogger
     logger = WandbLogger(
-        project="aig_regression", name=f"train_{args.algorithm}", save_dir=args.log_dir
+        project="AIG-SUMMARIZE",
+        entity="isabella-v-gardner-university-of-amsterdam",
+        name=f"train_{args.algorithm}",
+        save_dir=args.log_dir,
     )
 
     # 6. Initialize Trainer with Improvements
@@ -113,7 +135,12 @@ def main(args):
         accelerator="auto",
         devices=1,
         precision=_select_precision(),
-        callbacks=[checkpoint_cb, early_stop_cb],
+        callbacks=[
+            checkpoint_cb,
+            early_stop_cb,
+            LearningRateMonitor(logging_interval="epoch"),
+            HardwareProfilerCallback(),
+        ],
         logger=logger,
         gradient_clip_val=args.gradient_clip_val,
         check_val_every_n_epoch=args.check_val_every_n,
@@ -132,19 +159,27 @@ if __name__ == "__main__":
     )
 
     # Hyperparameters
-    parser.add_argument("--encoder_name", type=str, default="gine")
-    parser.add_argument("--batch_size", type=int, default=32)
-    parser.add_argument("--lr", type=float, default=1e-3)
-    parser.add_argument("--weight_decay", type=float, default=1e-4)
-    parser.add_argument("--huber_delta", type=float, default=1.0)
-    parser.add_argument("--hidden_dim", type=int, default=128)
-    parser.add_argument("--pe_type", type=str, default="none")
-    parser.add_argument("--pos_enc_dim", type=int, default=16)
-    parser.add_argument("--pooling_type", type=str, default="mean")
-    parser.add_argument("--num_layers", type=int, default=4)
-    parser.add_argument("--dropout", type=float, default=0.1)
-    parser.add_argument("--norm_type", type=str, default="batch")
-    parser.add_argument("--jk_mode", type=str, default="last")
+    parser.add_argument("--encoder_name", type=str, default=config.ENCODER_NAME)
+    parser.add_argument("--batch_size", type=int, default=config.BATCH_SIZE)
+    parser.add_argument("--lr", type=float, default=config.LR)
+    parser.add_argument("--weight_decay", type=float, default=config.WEIGHT_DECAY)
+    parser.add_argument("--huber_delta", type=float, default=config.HUBER_DELTA)
+    parser.add_argument("--hidden_dim", type=int, default=config.HIDDEN_DIM)
+    parser.add_argument("--pe_type", type=str, default=config.PE_TYPE)
+    parser.add_argument("--pos_enc_dim", type=int, default=config.POS_ENC_DIM)
+    parser.add_argument("--pooling_type", type=str, default=config.POOLING_TYPE)
+    parser.add_argument("--num_layers", type=int, default=config.NUM_LAYERS)
+    parser.add_argument("--dropout", type=float, default=config.DROPOUT)
+    parser.add_argument("--norm_type", type=str, default=config.NORM_TYPE)
+    parser.add_argument("--jk_mode", type=str, default=config.JK_MODE)
+    parser.add_argument(
+        "--dynamic_batching",
+        type=lambda x: str(x).lower() in ("true", "1", "yes"),
+        default=config.DYNAMIC_BATCHING,
+    )
+    parser.add_argument(
+        "--dynamic_bucket_rules", type=str, default=config.DYNAMIC_BUCKET_RULES
+    )
 
     # Training Loop Parameters
     parser.add_argument("--seed", type=int, default=42)
@@ -154,9 +189,15 @@ if __name__ == "__main__":
     parser.add_argument("--gradient_clip_val", type=float, default=1.0)
     parser.add_argument("--check_val_every_n", type=int, default=1)
     parser.add_argument("--num_workers", type=int, default=4)
+    parser.add_argument("--prefetch_factor", type=int, default=4)
 
     # Algorithm & Data Arguments
-    parser.add_argument("--heads", type=int, default=4, help="Attention heads (transformer_conv / graphgps only)")
+    parser.add_argument(
+        "--heads",
+        type=int,
+        default=config.HEADS,
+        help="Attention heads (transformer_conv / graphgps only)",
+    )
     parser.add_argument("--algorithm", type=str, required=True)
     parser.add_argument("--csv_paths", nargs="+", required=True)
     parser.add_argument("--checkpoint_dir", type=str, default="./checkpoints")

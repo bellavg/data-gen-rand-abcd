@@ -40,6 +40,14 @@ VENV_PATH="${VENV_PATH:-/scratch-shared/$USER/.venv}"
 echo "Activating virtual environment at: $VENV_PATH"
 source "$VENV_PATH/bin/activate"
 
+# Verify WandB Authentication (Fail-fast check to prevent SLURM hangs)
+echo "Checking Weights & Biases authentication..."
+if ! python -c "import wandb; exit(0) if wandb.login(anonymous='never') else exit(1)" 2>/dev/null; then
+    echo "CRITICAL ERROR: WandB is not authenticated! Run 'wandb login' in an active terminal before submitting this job." >&2
+    exit 1
+fi
+echo "WandB authentication successful."
+
 # Setup Paths
 BASE_DIR="${BASE_DIR:-$HOME/data-gen-rand-abcd}"
 unset PYTHONPATH
@@ -49,6 +57,7 @@ export PYTHONPATH="$BASE_DIR/src"
 export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
 
 cd "$BASE_DIR"
+
 
 # =========================================================
 # 2. ARRAY MAPPING (Algorithm & Data)
@@ -96,45 +105,16 @@ if [ ! -f "$HP_TUNING_SPLITS" ]; then
 fi
 
 # =========================================================
-# 4. USER CONFIGURATION (Model Hyperparameters)
-# **** FILL THESE IN AFTER HP TUNING COMPLETES ****
+# 4. Runtime settings
 # =========================================================
-
-# --- Architecture (set from best Optuna trial) ---
-ENCODER_NAME="gine"         # TODO: replace with best trial value
-BATCH_SIZE=32               # TODO: replace with best trial value
-HIDDEN_DIM=128              # TODO: replace with best trial value
-NUM_LAYERS=4                # TODO: replace with best trial value
-DROPOUT=0.1                 # TODO: replace with best trial value
-NORM_TYPE="batch"           # TODO: replace with best trial value
-JK_MODE="last"              # TODO: replace with best trial value
-HEADS=4                     # TODO: replace with best trial value (only used by transformer_conv / graphgps)
-
-# --- Regularisation ---
-WEIGHT_DECAY=1e-4           # TODO: replace with best trial value
-
-# --- Positional encoding ---
-PE_TYPE="none"              # TODO: replace with best trial value ("none", "level", "pi_paths", ...)
-POS_ENC_DIM=16              # ignored when PE_TYPE="none"
-
-# --- Pooling & loss ---
-POOLING_TYPE="mean"         # TODO: replace with best trial value
-HUBER_DELTA=1.0             # TODO: replace with best trial value
-
-# --- Optimiser ---
-LR=1e-3                     # TODO: replace with best trial value
-
-# --- Training loop ---
-MAX_EPOCHS=100
-GRADIENT_CLIP_VAL=1.0
-NUM_WORKERS=16              # should match --cpus-per-task
+# Number of data-loader workers (default: SLURM_CPUS_PER_TASK or 16)
+NUM_WORKERS="${NUM_WORKERS:-${SLURM_CPUS_PER_TASK:-8}}"
 
 # =========================================================
 # 5. EXECUTE TRAINING
 # =========================================================
 
 echo "Starting Final Training for $ALGORITHM on GPU 0..."
-echo "  encoder=$ENCODER_NAME  batch=$BATCH_SIZE  hid=$HIDDEN_DIM  layers=$NUM_LAYERS"
 
 python -u -m train \
     --algorithm         "$ALGORITHM" \
@@ -143,26 +123,8 @@ python -u -m train \
     --log_dir           "$LOG_DIR" \
     --cache_dir         "$CACHE_DIR" \
     --hp_tuning_splits_path "$HP_TUNING_SPLITS" \
-    --encoder_name      "$ENCODER_NAME" \
-    --batch_size        "$BATCH_SIZE" \
-    --hidden_dim        "$HIDDEN_DIM" \
-    --num_layers        "$NUM_LAYERS" \
-    --dropout           "$DROPOUT" \
-    --norm_type         "$NORM_TYPE" \
-    --jk_mode           "$JK_MODE" \
-    --heads             "$HEADS" \
-    --pe_type           "$PE_TYPE" \
-    --pos_enc_dim       "$POS_ENC_DIM" \
-    --pooling_type      "$POOLING_TYPE" \
-    --huber_delta       "$HUBER_DELTA" \
-    --weight_decay      "$WEIGHT_DECAY" \
-    --lr                "$LR" \
-    --max_epochs        "$MAX_EPOCHS" \
-    --gradient_clip_val "$GRADIENT_CLIP_VAL" \
     --num_workers       "$NUM_WORKERS" \
-    --check_val_every_n 3 \
-    --patience          10 \
-    --scheduler_patience 4
+    --patience          10
 
 echo "=========================================="
 echo "Task $SLURM_ARRAY_TASK_ID for $ALGORITHM complete."

@@ -156,20 +156,31 @@ warm_algorithm() {
     python -u - <<PYEOF
 import sys, time
 sys.path.insert(0, "$BASE_DIR/src")
+import config
 from data.datamodule import AIGDataModule
 
 t0 = time.monotonic()
 
+# Parse dynamic bucket rules from config
+parsed_rules = []
+if getattr(config, "DYNAMIC_BUCKET_RULES", None):
+    parsed_rules = [
+        tuple(map(int, s.split(':')))
+        for s in config.DYNAMIC_BUCKET_RULES.split(',')
+        if s.strip()
+    ]
+
 dm = AIGDataModule(
     csv_paths=["$csv_path"],
-    batch_size=4,
+    batch_size=config.BATCH_SIZE,
     split_ratios=(0.8, 0.1, 0.1),
     seed=42,
     cache_dir="$cache_dir",
     num_workers=$N_IO_WORKERS,
     hp_tuning_splits_path=$splits_arg,
     # Precompute node-sizes so dynamic_batching=True is instant at training time.
-    dynamic_batching=True,
+    dynamic_batching=config.DYNAMIC_BATCHING,
+    dynamic_bucket_rules=parsed_rules,
 )
 
 # Warm train + val
