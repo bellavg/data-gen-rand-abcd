@@ -322,11 +322,7 @@ class AIGGraphRegressionDataset(PyGDataset):
 
     def _cache_single_graph(self, graph_path: str) -> tuple[str, int]:
         cache_path = self._cached_graph_path(graph_path)
-        meta_path = cache_path.with_suffix(".n")
-
         if cache_path.is_file():
-            if meta_path.is_file():
-                return str(cache_path), int(meta_path.read_text())
             obj = self._torch_load_graph(cache_path)
         else:
             obj = self._torch_load_graph(Path(graph_path))
@@ -336,7 +332,6 @@ class AIGGraphRegressionDataset(PyGDataset):
             tmp.replace(cache_path)
 
         num_nodes = int(obj.x.shape[0])
-        meta_path.write_text(str(num_nodes))
         return str(cache_path), num_nodes
 
     def _load_manifest(self) -> dict | None:
@@ -395,6 +390,16 @@ class AIGGraphRegressionDataset(PyGDataset):
                     completed += 1
                     if completed % 1000 == 0 or completed == total:
                         print(f"[cache] {completed}/{total} graphs cached", flush=True)
+
+        # Dump consolidated node sizes to a single JSON file to avoid per-graph .n files
+        processed_dir_path = Path(self.processed_dir)
+        processed_dir_path.mkdir(parents=True, exist_ok=True)
+        node_sizes_path = processed_dir_path / "node_sizes.json"
+        tmp_ns = node_sizes_path.with_suffix(f".tmp_{uuid.uuid4().hex[:8]}")
+        tmp_ns.write_text(
+            json.dumps(num_nodes_map, indent=2, sort_keys=True), encoding="utf-8"
+        )
+        os.replace(tmp_ns, node_sizes_path)
 
         entries = [
             {
