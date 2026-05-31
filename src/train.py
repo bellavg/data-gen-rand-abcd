@@ -34,6 +34,8 @@ def main(args):
     if hasattr(torch.backends, "cudnn"):
         torch.backends.cudnn.allow_tf32 = True
 
+    torch.multiprocessing.set_sharing_strategy('file_system')
+    
     # 1. Validate Algorithm
     if args.algorithm not in config.VALID_ALGORITHMS:
         raise ValueError(
