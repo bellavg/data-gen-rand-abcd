@@ -35,7 +35,7 @@ def main(args):
         torch.backends.cudnn.allow_tf32 = True
 
     torch.multiprocessing.set_sharing_strategy('file_system')
-    
+
     # 1. Validate Algorithm
     if args.algorithm not in config.VALID_ALGORITHMS:
         raise ValueError(
@@ -149,10 +149,11 @@ def main(args):
     )
 
     # 7. Run Training & Testing
+    print(f"--- Running Training for {args.algorithm} ---")
     trainer.fit(model, datamodule=datamodule)
 
-    print(f"--- Running Test Set for {args.algorithm} ---")
-    trainer.test(model, datamodule=datamodule, ckpt_path="best")
+    # print(f"--- Running Test Set for {args.algorithm} ---")
+    # trainer.test(model, datamodule=datamodule, ckpt_path="best")
 
 
 if __name__ == "__main__":
