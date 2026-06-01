@@ -385,6 +385,128 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
         json_files = list(self.root.rglob("*.json"))
         self.assertEqual(len(json_files), 0)
 
+    def test_tier0_graphs_routed_to_tier0_cache_dir(self):
+        """Tier-0 graphs (path contains /tier0/) must be cached in tier0_cache_dir,
+        not in cache_dir/processed_graphs."""
+        from data.dataset import AIGGraphRegressionDataset
+
+        # Create graph files under a path that contains /tier0/
+        tier0_dir = self.root / "designs" / "i2c" / "tier0"
+        tier0_pts = _make_graph_pts(tier0_dir, 5)
+        csv = self.root / "tier0_routing.csv"
+        _write_csv(csv, _make_rows(tier0_pts))
+
+        cache_dir = self.root / "algo_cache"
+        tier0_cache_dir = self.root / "shared_tier0_cache"
+
+        AIGGraphRegressionDataset(
+            csv,
+            split="train",
+            cache_dir=cache_dir,
+            tier0_cache_dir=tier0_cache_dir,
+            seed=0,
+        )
+
+        # Tier-0 .pt files must appear in tier0_cache_dir
+        shared_pts = list(tier0_cache_dir.rglob("*.pt"))
+        self.assertGreater(len(shared_pts), 0, "No .pt files written to tier0_cache_dir")
+
+        # No .pt files should appear under cache_dir/processed_graphs
+        algo_pts = list((cache_dir / "processed_graphs").rglob("*.pt"))
+        self.assertEqual(
+            len(algo_pts),
+            0,
+            "Tier-0 .pt files were incorrectly written to algo cache_dir",
+        )
+
+    def test_tier0_cache_shared_across_two_algorithms(self):
+        """Two datasets with different cache_dirs but the same tier0_cache_dir
+        produce exactly one copy of each tier-0 graph."""
+        from data.dataset import AIGGraphRegressionDataset
+
+        tier0_dir = self.root / "designs" / "aes" / "tier0"
+        tier0_pts = _make_graph_pts(tier0_dir, 4)
+        csv = self.root / "shared_tier0.csv"
+        _write_csv(csv, _make_rows(tier0_pts))
+
+        tier0_cache_dir = self.root / "shared_tier0"
+
+        AIGGraphRegressionDataset(
+            csv, split="train", cache_dir=self.root / "algo_a", tier0_cache_dir=tier0_cache_dir, seed=0
+        )
+        AIGGraphRegressionDataset(
+            csv, split="train", cache_dir=self.root / "algo_b", tier0_cache_dir=tier0_cache_dir, seed=0
+        )
+
+        # Shared cache has exactly as many unique .pt files as unique source graphs
+        unique_source_hashes = {
+            p.name for p in (self.root / "shared_tier0").rglob("*.pt")
+        }
+        self.assertGreater(len(unique_source_hashes), 0)
+        # Both algorithm cache dirs should have NO .pt files
+        self.assertEqual(len(list((self.root / "algo_a" / "processed_graphs").rglob("*.pt"))), 0)
+        self.assertEqual(len(list((self.root / "algo_b" / "processed_graphs").rglob("*.pt"))), 0)
+
+    def test_manifest_stores_cache_path(self):
+        """New manifests store absolute cache_path per entry (not cache_name)."""
+        import json as _json
+
+        from data.dataset import AIGGraphRegressionDataset
+
+        tier0_dir = self.root / "designs" / "fir" / "tier0"
+        tier0_pts = _make_graph_pts(tier0_dir, 3)
+        csv = self.root / "manifest_path.csv"
+        _write_csv(csv, _make_rows(tier0_pts))
+
+        cache_dir = self.root / "manifest_cache"
+        tier0_cache_dir = self.root / "manifest_tier0"
+
+        AIGGraphRegressionDataset(
+            csv, split="train", cache_dir=cache_dir, tier0_cache_dir=tier0_cache_dir, seed=0
+        )
+
+        manifest_files = list((cache_dir / "metadata").glob("*_manifest.json"))
+        self.assertEqual(len(manifest_files), 1)
+        manifest = _json.loads(manifest_files[0].read_text())
+        for entry in manifest["entries"]:
+            self.assertIn("cache_path", entry, "entry missing 'cache_path'")
+            # cache_path should be inside tier0_cache_dir
+            self.assertTrue(
+                entry["cache_path"].startswith(str(tier0_cache_dir)),
+                f"cache_path {entry['cache_path']!r} not under tier0_cache_dir",
+            )
+
+    def test_apply_manifest_backward_compat_cache_name(self):
+        """_apply_manifest falls back to cache_dir/processed_graphs when entry
+        has legacy 'cache_name' instead of 'cache_path'."""
+        from data.dataset import AIGGraphRegressionDataset
+
+        pts = _make_graph_pts(self.root / "compat_graphs", 3)
+        csv = self.root / "compat.csv"
+        _write_csv(csv, _make_rows(pts))
+        cache_dir = self.root / "compat_cache"
+
+        ds = AIGGraphRegressionDataset(csv, split="train", cache_dir=cache_dir, seed=0)
+
+        # Simulate a v1 manifest entry with cache_name only
+        fake_manifest = {
+            "version": 1,
+            "num_samples": len(ds.samples),
+            "entries": [
+                {
+                    "graph_path": s.graph_path,
+                    "cache_name": "deadbeef.pt",
+                    "num_nodes": 10,
+                }
+                for s in ds.samples
+            ],
+        }
+        ds._apply_manifest(fake_manifest)
+        # All paths should resolve under _cache_graph_dir
+        for path in ds._graph_cache_path_map.values():
+            self.assertEqual(path.parent, ds._cache_graph_dir)
+            self.assertEqual(path.name, "deadbeef.pt")
+
     def test_pos_enc_continuous_is_float(self):
         """Test that continuous features like 'pi_paths' are converted to floats."""
         ds = self._make_ds(positional_encoding="pi_paths")

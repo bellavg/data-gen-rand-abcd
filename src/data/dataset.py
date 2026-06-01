@@ -115,6 +115,7 @@ class AIGGraphRegressionDataset(PyGDataset):
         positional_encoding: str | None = None,
         split: str | None = None,
         cache_dir: str | Path | None = None,
+        tier0_cache_dir: str | Path | None = None,
         split_ratios: tuple[float, float, float] = (0.8, 0.1, 0.1),
         seed: int = 42,
         num_samples: int | None = None,
@@ -129,6 +130,7 @@ class AIGGraphRegressionDataset(PyGDataset):
         self.positional_encoding = positional_encoding
         self.split = split
         self.cache_dir = Path(cache_dir) if cache_dir is not None else None
+        self._tier0_cache_dir = Path(tier0_cache_dir) if tier0_cache_dir is not None else None
         self.split_ratios = split_ratios
         self.seed = seed
         self.num_samples = num_samples
@@ -314,6 +316,8 @@ class AIGGraphRegressionDataset(PyGDataset):
     def _cached_graph_path(self, graph_path: str) -> Path:
         if self._cache_graph_dir is None:
             return Path(graph_path)
+        if self._tier0_cache_dir is not None and "/tier0/" in graph_path:
+            return self._tier0_cache_dir / self._stable_graph_cache_name(graph_path)
         return self._cache_graph_dir / self._stable_graph_cache_name(graph_path)
 
     def _torch_load_graph(self, graph_path: str | Path) -> _PyGData:
@@ -404,7 +408,7 @@ class AIGGraphRegressionDataset(PyGDataset):
         entries = [
             {
                 "graph_path": sample.graph_path,
-                "cache_name": Path(path_map[sample.graph_path]).name,
+                "cache_path": path_map[sample.graph_path],
                 "num_nodes": num_nodes_map[sample.graph_path],
             }
             for sample in self.samples
@@ -419,7 +423,12 @@ class AIGGraphRegressionDataset(PyGDataset):
     def _apply_manifest(self, manifest: dict) -> None:
         self._graph_cache_path_map.clear()
         for entry in manifest["entries"]:
-            if "cache_name" in entry and self._cache_graph_dir is not None:
+            if "cache_path" in entry:
+                self._graph_cache_path_map[str(entry["graph_path"])] = Path(
+                    entry["cache_path"]
+                )
+            elif "cache_name" in entry and self._cache_graph_dir is not None:
+                # backward compat with v1 manifests
                 self._graph_cache_path_map[str(entry["graph_path"])] = (
                     self._cache_graph_dir / entry["cache_name"]
                 )

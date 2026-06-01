@@ -71,6 +71,11 @@ echo "Task ${TASK_ID} assigned to ALGORITHM: ${ALGO}"
 
 # Must match the HP_TUNING_SPLITS path used in train.sh.
 HP_TUNING_WORKSPACE="/scratch-shared/$USER/big_optuna_run"
+
+# Shared cache for tier-0 (base) graphs — all 4 algorithms read from here
+# so we store exactly one copy of each base graph instead of four.
+TIER0_CACHE_DIR="/scratch-shared/$USER/aig_train_run/shared_tier0_cache"
+mkdir -p "$TIER0_CACHE_DIR"
 # All 50K graphs used across both HP tuning stages (15K Stage-1 + 35K Stage-2).
 # Using this file ensures zero HP tuning leakage into final train/val/test splits.
 HP_TUNING_SPLITS="$HP_TUNING_WORKSPACE/shared_dataset_cache/algo_Orchestrate_ml_algo_Deepsyn_ml_algo_Syn4_ml_algo_C2RS_ml_50000_splits.json"
@@ -154,7 +159,8 @@ warm_algorithm() {
     fi
 
     python -u - <<PYEOF
-import sys, time
+import sys, time, json
+from pathlib import Path
 sys.path.insert(0, "$BASE_DIR/src")
 import config
 from data.datamodule import AIGDataModule
@@ -176,6 +182,7 @@ dm = AIGDataModule(
     split_ratios=(0.8, 0.1, 0.1),
     seed=42,
     cache_dir="$cache_dir",
+    tier0_cache_dir="$TIER0_CACHE_DIR",
     num_workers=$N_IO_WORKERS,
     hp_tuning_splits_path=$splits_arg,
     # Precompute node-sizes so dynamic_batching=True is instant at training time.
@@ -183,15 +190,19 @@ dm = AIGDataModule(
     dynamic_bucket_rules=parsed_rules,
 )
 
-# Warm train + val
+# Warm train + val only; test does not need to be preloaded.
 dm.setup("fit")
 n_train = len(dm.train_ds)
 n_val   = len(dm.val_ds)
 n_sizes = len(dm.train_ds.get_num_nodes_list()) if getattr(dm, "train_ds", None) is not None else 0
 
-# Warm test
-dm.setup("test")
-n_test = len(dm.test_ds)
+# Log test split membership without building the graph cache for it.
+n_test = 0
+split_files = sorted(Path("$cache_dir").glob("*_splits.json"))
+if split_files:
+    test_splits = json.loads(split_files[0].read_text(encoding="utf-8"))
+    n_test = len(test_splits.get("test", []))
+    print(f"[warmup:${algo}] test split: {n_test} samples logged (not warmed up)", flush=True)
 
 elapsed = time.monotonic() - t0
 print(

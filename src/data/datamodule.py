@@ -30,6 +30,7 @@ class AIGDataModule(pl.LightningDataModule):
         train_num_samples: int | None = None,
         test_num_samples: int | None = None,
         hp_tuning_splits_path: str | Path | None = None,
+        tier0_cache_dir: str | Path | None = None,
     ) -> None:
         super().__init__()
         self.csv_paths = csv_paths
@@ -50,6 +51,7 @@ class AIGDataModule(pl.LightningDataModule):
         self.train_num_samples = train_num_samples
         self.test_num_samples = test_num_samples
         self.hp_tuning_splits_path = hp_tuning_splits_path
+        self.tier0_cache_dir = tier0_cache_dir
 
         if self.num_workers > 0 and self.prefetch_factor < 1:
             raise ValueError(
@@ -97,6 +99,7 @@ class AIGDataModule(pl.LightningDataModule):
             positional_encoding=self.positional_encoding,
             split=split,
             cache_dir=self.cache_dir,
+            tier0_cache_dir=self.tier0_cache_dir,
             split_ratios=self.split_ratios,
             seed=self.seed,
             num_samples=num_samples,
