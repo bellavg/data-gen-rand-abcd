@@ -385,6 +385,74 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
         json_files = list(self.root.rglob("*.json"))
         self.assertEqual(len(json_files), 0)
 
+    def test_global_num_nodes_written_to_cache_dirs(self):
+        """_num_nodes_global.json is created in cache_graph_dir and tier0_cache_dir."""
+        from data.dataset import AIGGraphRegressionDataset
+
+        tier0_dir = self.root / "designs" / "i2c" / "tier0"
+        tier0_pts = _make_graph_pts(tier0_dir, 4)
+        regular_pts = _make_graph_pts(self.root / "graphs_regular", 4)
+        csv = self.root / "global_nn_written.csv"
+        _write_csv(csv, _make_rows(tier0_pts) + _make_rows(regular_pts, opt_start=0.5))
+
+        cache_dir = self.root / "gnn_cache"
+        tier0_cache_dir = self.root / "gnn_tier0"
+
+        AIGGraphRegressionDataset(
+            csv, split="train", cache_dir=cache_dir, tier0_cache_dir=tier0_cache_dir, seed=0
+        )
+
+        self.assertTrue(
+            (cache_dir / "processed_graphs" / "_num_nodes_global.json").is_file(),
+            "_num_nodes_global.json not written to cache_graph_dir",
+        )
+        self.assertTrue(
+            (tier0_cache_dir / "_num_nodes_global.json").is_file(),
+            "_num_nodes_global.json not written to tier0_cache_dir",
+        )
+
+    def test_global_num_nodes_skip_load_on_rerun(self):
+        """After global map is saved, a manifest rebuild must not call _torch_load_graph."""
+        from unittest.mock import patch
+
+        from data.dataset import AIGGraphRegressionDataset
+
+        tier0_dir = self.root / "designs" / "sin" / "tier0"
+        tier0_pts = _make_graph_pts(tier0_dir, 5)
+        csv = self.root / "rerun_skip.csv"
+        _write_csv(csv, _make_rows(tier0_pts))
+
+        cache_dir = self.root / "rerun_cache"
+        tier0_cache_dir = self.root / "rerun_tier0"
+
+        # First run: builds .pt files + global map
+        AIGGraphRegressionDataset(
+            csv, split="train", cache_dir=cache_dir, tier0_cache_dir=tier0_cache_dir, seed=0
+        )
+
+        # Simulate SLURM kill: delete the train manifest so it must be rebuilt
+        for mf in (cache_dir / "metadata").glob("*_manifest.json"):
+            mf.unlink()
+
+        # Second run: all .pt files exist + global map has all num_nodes → no loads
+        load_calls: list = []
+        _orig_load = AIGGraphRegressionDataset._torch_load_graph
+
+        def _counting_load(self_inner, graph_path):
+            load_calls.append(graph_path)
+            return _orig_load(self_inner, graph_path)
+
+        with patch.object(AIGGraphRegressionDataset, "_torch_load_graph", _counting_load):
+            AIGGraphRegressionDataset(
+                csv, split="train", cache_dir=cache_dir, tier0_cache_dir=tier0_cache_dir, seed=0
+            )
+
+        self.assertEqual(
+            len(load_calls),
+            0,
+            f"Expected 0 graph loads on rerun (all in global map), got {len(load_calls)}",
+        )
+
     def test_tier0_graphs_routed_to_tier0_cache_dir(self):
         """Tier-0 graphs (path contains /tier0/) must be cached in tier0_cache_dir,
         not in cache_dir/processed_graphs."""

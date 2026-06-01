@@ -338,6 +338,13 @@ class AIGGraphRegressionDataset(PyGDataset):
         num_nodes = int(obj.x.shape[0])
         return str(cache_path), num_nodes
 
+    def _save_global_nn(self, path: Path, data: dict[str, int]) -> None:
+        """Atomically persist the global num_nodes lookup for a cache directory."""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(f".tmp_{uuid.uuid4().hex[:8]}")
+        tmp.write_text(json.dumps(data, sort_keys=True), encoding="utf-8")
+        os.replace(tmp, path)
+
     def _load_manifest(self) -> dict | None:
         if not self._manifest_path.is_file():
             return None
@@ -373,13 +380,48 @@ class AIGGraphRegressionDataset(PyGDataset):
             flush=True,
         )
 
+        # ── Global num_nodes maps ────────────────────────────────────────────
+        # Stored one file per unique cache-directory so that:
+        #   1) Reruns skip torch.load for .pt files whose num_nodes is already known.
+        #   2) All 4 algorithm tasks sharing tier0_cache_dir skip redundant tier0 loads.
+        _global_nn_path = (
+            self._cache_graph_dir / "_num_nodes_global.json"
+            if self._cache_graph_dir is not None
+            else None
+        )
+        _global_tier0_nn_path = (
+            self._tier0_cache_dir / "_num_nodes_global.json"
+            if self._tier0_cache_dir is not None
+            else None
+        )
+        global_nn: dict[str, int] = {}
+        global_tier0_nn: dict[str, int] = {}
+        for gpath, gstore in (
+            (_global_nn_path, global_nn),
+            (_global_tier0_nn_path, global_tier0_nn),
+        ):
+            if gpath is not None and gpath.is_file():
+                try:
+                    gstore.update(json.loads(gpath.read_text(encoding="utf-8")))
+                except (json.JSONDecodeError, OSError):
+                    pass
+
         path_map: dict[str, str] = {}
         num_nodes_map: dict[str, int] = {}
 
         def _process_one(graph_path: str) -> tuple[str, str, int]:
+            is_t0 = self._tier0_cache_dir is not None and "/tier0/" in graph_path
+            gmap = global_tier0_nn if is_t0 else global_nn
+            cache_path = self._cached_graph_path(graph_path)
+            if cache_path.is_file() and graph_path in gmap:
+                return graph_path, str(cache_path), gmap[graph_path]
             cached_path, num_nodes = self._cache_single_graph(graph_path)
             return graph_path, cached_path, num_nodes
 
+        _SAVE_NN_EVERY = 10_000
+        _last_saved = 0
+        _nn_dirty = False
+        _tier0_nn_dirty = False
         CHUNK_SIZE = max(n_threads * 4, 256)
         completed = 0
         total = len(unique_paths)
@@ -392,8 +434,28 @@ class AIGGraphRegressionDataset(PyGDataset):
                     path_map[graph_path] = cached_path
                     num_nodes_map[graph_path] = num_nodes
                     completed += 1
+                    is_t0 = (
+                        self._tier0_cache_dir is not None and "/tier0/" in graph_path
+                    )
+                    if is_t0:
+                        if graph_path not in global_tier0_nn:
+                            global_tier0_nn[graph_path] = num_nodes
+                            _tier0_nn_dirty = True
+                    else:
+                        if graph_path not in global_nn:
+                            global_nn[graph_path] = num_nodes
+                            _nn_dirty = True
                     if completed % 1000 == 0 or completed == total:
                         print(f"[cache] {completed}/{total} graphs cached", flush=True)
+                # Persist global maps periodically so reruns can skip re-loading.
+                if completed - _last_saved >= _SAVE_NN_EVERY or completed == total:
+                    if _nn_dirty and _global_nn_path is not None:
+                        self._save_global_nn(_global_nn_path, global_nn)
+                        _nn_dirty = False
+                    if _tier0_nn_dirty and _global_tier0_nn_path is not None:
+                        self._save_global_nn(_global_tier0_nn_path, global_tier0_nn)
+                        _tier0_nn_dirty = False
+                    _last_saved = completed
 
         # Dump consolidated node sizes to a single JSON file to avoid per-graph .n files
         processed_dir_path = Path(self.processed_dir)
