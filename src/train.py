@@ -148,7 +148,7 @@ def main(args):
         ],
         logger=logger,
         gradient_clip_val=args.gradient_clip_val,
-        check_val_every_n_epoch=args.check_val_every_n,
+        val_check_interval=args.val_check_interval,
         log_every_n_steps=args.log_steps,
     )
 
@@ -195,6 +195,15 @@ if __name__ == "__main__":
     parser.add_argument("--scheduler_patience", type=int, default=10)
     parser.add_argument("--gradient_clip_val", type=float, default=1.0)
     parser.add_argument("--check_val_every_n", type=float, default=0.5)
+    parser.add_argument(
+        "--val_check_interval",
+        type=float,
+        default=0.2,
+        help=(
+            "Validation frequency: if <1.0, fraction of training epoch; "
+            "if >=1.0, number of training batches between validations."
+        ),
+    )
     parser.add_argument("--num_workers", type=int, default=4)
     parser.add_argument("--prefetch_factor", type=int, default=2)
     parser.add_argument(
