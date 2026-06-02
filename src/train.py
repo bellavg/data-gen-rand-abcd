@@ -34,7 +34,9 @@ def main(args):
     if hasattr(torch.backends, "cudnn"):
         torch.backends.cudnn.allow_tf32 = True
 
-    torch.multiprocessing.set_sharing_strategy('file_system')
+    torch.set_float32_matmul_precision("high")
+
+    torch.multiprocessing.set_sharing_strategy("file_system")
 
     # 1. Validate Algorithm
     if args.algorithm not in config.VALID_ALGORITHMS:
@@ -43,7 +45,7 @@ def main(args):
         )
 
     # Set seed for reproducibility
-    pl.seed_everything(args.seed, workers=True)
+    pl.seed_everything(args.seed)
 
     print(f"--- Starting Final Training for Algorithm: {args.algorithm} ---")
 
@@ -68,8 +70,8 @@ def main(args):
         batch_size=args.batch_size,
         split_ratios=(0.8, 0.1, 0.1),
         num_workers=args.num_workers,
-        pin_memory=True,
-        persistent_workers=True,
+        pin_memory=args.pin_memory,
+        persistent_workers=args.persistent_workers,
         prefetch_factor=args.prefetch_factor,
         cache_dir=args.cache_dir if args.cache_dir else None,
         hp_tuning_splits_path=args.hp_tuning_splits_path,
@@ -91,7 +93,7 @@ def main(args):
 
     if args.encoder_name in ["transformer_conv", "graphgps"]:
         encoder_kwargs["heads"] = args.heads
-    
+
     # 4. Initialize the Lightning Module
     model = AIGRegressionLightningModule(
         encoder_name=args.encoder_name,
@@ -116,7 +118,7 @@ def main(args):
         save_last=True,
         monitor="val/loss",
         mode="min",
-        filename="{epoch:02d}-val_loss={val/loss:.4f}", 
+        filename="{epoch:02d}-val_loss={val/loss:.4f}",
     )
 
     early_stop_cb = EarlyStopping(
@@ -146,6 +148,7 @@ def main(args):
         logger=logger,
         gradient_clip_val=args.gradient_clip_val,
         check_val_every_n_epoch=args.check_val_every_n,
+        log_every_n_steps=args.log_steps,
     )
 
     # 7. Run Training & Testing
@@ -192,7 +195,10 @@ if __name__ == "__main__":
     parser.add_argument("--gradient_clip_val", type=float, default=1.0)
     parser.add_argument("--check_val_every_n", type=int, default=1)
     parser.add_argument("--num_workers", type=int, default=4)
-    parser.add_argument("--prefetch_factor", type=int, default=4)
+    parser.add_argument("--prefetch_factor", type=int, default=2)
+    parser.add_argument("--pin_memory", type=lambda x: str(x).lower() in ("true", "1", "yes"), default=config.PIN_MEMORY)
+    parser.add_argument("--persistent_workers", type=lambda x: str(x).lower() in ("true", "1", "yes"), default=config.PERSISTENT_WORKERS)
+    parser.add_argument("--log_steps", type=int, default=config.LOG_EVERY_N_STEPS)
 
     # Algorithm & Data Arguments
     parser.add_argument(
