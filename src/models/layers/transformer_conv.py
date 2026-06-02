@@ -7,13 +7,7 @@ from torch_geometric.nn import TransformerConv
 from torch_geometric.typing import Adj
 
 # Project Imports
-try:
-    from model_utils import apply_norm, get_norm_layer
-except ImportError:
-    try:
-        from models.model_utils import apply_norm, get_norm_layer
-    except ImportError:
-        from src.models.model_utils import apply_norm, get_norm_layer
+from models.model_utils import apply_norm, get_norm_layer
 
 
 class TransformerConvLayer(nn.Module):
@@ -31,7 +25,7 @@ class TransformerConvLayer(nn.Module):
         concat: bool = False,
         attn_dropout: float = 0.0,
         dropout: float = 0.0,
-        norm_type: str = "batch",
+        norm_type: str = "layer",
         beta: bool = False,
         root_weight: bool = True,
     ):
@@ -46,6 +40,14 @@ class TransformerConvLayer(nn.Module):
         else:
             conv_out_channels = hid_dim
 
+        # 1. Residual Projection
+        # Ensures the residual highway flows even if input dim != hidden dim
+        if dim_in != hid_dim:
+            self.res_proj = gnn.Linear(dim_in, hid_dim)
+        else:
+            self.res_proj = nn.Identity()
+
+        self.norm_attn = get_norm_layer(norm_type, dim_in)
         self.conv = TransformerConv(
             in_channels=dim_in,
             out_channels=conv_out_channels,
@@ -56,17 +58,14 @@ class TransformerConvLayer(nn.Module):
             edge_dim=edge_dim,
             root_weight=root_weight,
         )
-
-        self.norm_node = get_norm_layer(norm_type, hid_dim)
         self.act = nn.LeakyReLU()  # Robust for [-1, 1] range
         self.drop = nn.Dropout(dropout)
 
         # 1. Swap to gnn.Linear for GNN-specific weight initialization.
-        self.norm1_local = get_norm_layer(norm_type, hid_dim)
+        self.norm_ffn = get_norm_layer(norm_type, hid_dim)
         self.ff_linear1 = gnn.Linear(hid_dim, hid_dim * 2)
         self.ff_linear2 = gnn.Linear(hid_dim * 2, hid_dim)
         self.ff_act = nn.LeakyReLU()
-        self.norm2 = get_norm_layer(norm_type, hid_dim)
 
     def _ff_block(self, x: Tensor) -> Tensor:
         """Feed Forward block with graph-aware dropout."""
@@ -84,23 +83,25 @@ class TransformerConvLayer(nn.Module):
     ) -> Tensor:
         x_in = x
 
-        # 1. Message Passing (Attention Mechanism)
-        x = self.conv(x=x, edge_index=edge_index, edge_attr=edge_attr)
+        # 1. Pre-Norm: Normalize a copy of the state before attention
+        x_norm_attn = apply_norm(self.norm_attn, x, batch)
 
-        # 2. Graph-aware normalization
-        x = apply_norm(self.norm_node, x, batch)
-        x = self.act(x)
-        x = self.drop(x)
+        # 2. Sublayer: Attention Mechanism
+        attn_out = self.conv(x=x_norm_attn, edge_index=edge_index, edge_attr=edge_attr)
+        attn_out = self.act(attn_out)
+        attn_out = self.drop(attn_out)
 
-        # 3. Residual Connection
-        if x.shape == x_in.shape:
-            x = x + x_in
+        # 3. Residual Connection (Clean Highway)
+        x = self.res_proj(x_in) + attn_out
 
-        # 4. FFN Block - Ensures each graph is normalized individually.
-        x = apply_norm(self.norm1_local, x, batch)
-        x = x + self._ff_block(x)
-        x = apply_norm(self.norm2, x, batch)
+        # 4. Pre-Norm: Normalize a copy of the updated state before FFN
+        x_norm_ffn = apply_norm(self.norm_ffn, x, batch)
 
+        # 5. Sublayer: FFN Block
+        ffn_out = self._ff_block(x_norm_ffn)
+
+        # 6. Residual Connection (Clean Highway)
+        x = x + ffn_out
         return x
 
 
@@ -121,7 +122,7 @@ class TransformerConvEncoder(nn.Module):
         concat: bool = False,
         attn_dropout: float = 0.0,
         dropout: float = 0.0,
-        norm_type: str = "batch",
+        norm_type: str = "layer",
         beta: bool = False,
         root_weight: bool = True,
         **kwargs,
@@ -156,6 +157,10 @@ class TransformerConvEncoder(nn.Module):
                     root_weight=root_weight,
                 )
             )
+        # 3. Final Output Projection
+        # Reconciles the Jumping Knowledge dimension with the required output_dim
+        jk_out_dim = hid_dim * (num_layers + 1) if self.jk_mode == "cat" else hid_dim
+        self.final_proj = gnn.Linear(jk_out_dim, output_dim)
 
     def forward(
         self,
@@ -175,23 +180,27 @@ class TransformerConvEncoder(nn.Module):
             for layer in self.layers:
                 x = layer(x, edge_index=edge_index, edge_attr=edge_attr, batch=batch)
                 h_list.append(x)
-            return torch.cat(h_list, dim=1)
+            res = torch.cat(h_list, dim=1)
 
         elif self.jk_mode == "max":
             res = x_jk
             for layer in self.layers:
                 x = layer(x, edge_index=edge_index, edge_attr=edge_attr, batch=batch)
                 res = torch.max(res, x)
-            return res
 
         elif self.jk_mode == "sum":
             res = x_jk
             for layer in self.layers:
                 x = layer(x, edge_index=edge_index, edge_attr=edge_attr, batch=batch)
                 res = res + x
-            return res
 
         elif self.jk_mode == "last":
             for layer in self.layers:
                 x = layer(x, edge_index=edge_index, edge_attr=edge_attr, batch=batch)
-            return x
+            res = x
+
+        else:
+            raise ValueError(f"Unknown jk_mode: {self.jk_mode}")
+
+        # Final mapping from the aggregated JK tensor down to the required output_dim
+        return self.final_proj(res)

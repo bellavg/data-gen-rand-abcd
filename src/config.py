@@ -1,4 +1,4 @@
-BATCH_SIZE = 8
+BATCH_SIZE = 32
 WEIGHT_DECAY = 0.004
 ENCODER_NAME = "transformer_conv"
 NUM_LAYERS = 8
@@ -12,7 +12,11 @@ DROPOUT = 0.28
 POS_ENC_DIM = 32
 NORM_TYPE = "layer"
 DYNAMIC_BATCHING = True
-DYNAMIC_BUCKET_RULES = "250000:1,125000:2,75000:4"
+DYNAMIC_BUCKET_RULES = "250000:1,150000:4,100000:8,75000:16,50000:32"
+PIN_MEMORY = True
+PERSISTENT_WORKERS = True
+MIN_LR = 1e-6
+LOG_EVERY_N_STEPS = 1000
 
 # Default Huber delta for training
 HUBER_DELTA = 0.95
@@ -34,27 +38,24 @@ OUTPUT_DIM = HIDDEN_DIM
 
 
 ENCODER_KWARGS_DEFAULTS = {
-	"node_input_dim": NODE_INPUT_DIM,
-	"edge_attr_dim": EDGE_ATTR_DIM,
-	"hid_dim": HIDDEN_DIM,
-	"num_layers": NUM_LAYERS,
-	"dropout": DROPOUT,
-	"jk_mode": JK_MODE,
-	"norm_type": NORM_TYPE,
-	# EGIN-specific
-	"egin_kwargs": {
-		"num_mlp_layers": None,
-		"dot_update": None,
-		"edge_mlp": None,
-		"edge_hidden_dim": HIDDEN_DIM,
-	},
-	# Attention/Transformer/GPS specific
-	"heads": HEADS,
-	"concat": None,
-	"performer_redraw_interval": None,
-	"beta": None,
-	"root_weight": None,
+    "node_input_dim": NODE_INPUT_DIM,
+    "edge_attr_dim": EDGE_ATTR_DIM,
+    "hid_dim": HIDDEN_DIM,
+    "num_layers": NUM_LAYERS,
+    "dropout": DROPOUT,
+    "jk_mode": JK_MODE,
+    "norm_type": NORM_TYPE,
+    # EGIN-specific
+    "egin_kwargs": {
+        "num_mlp_layers": None,
+        "dot_update": None,
+        "edge_mlp": None,
+        "edge_hidden_dim": HIDDEN_DIM,
+    },
+    # Attention/Transformer/GPS specific
+    "heads": HEADS,
+    "concat": None,
+    "performer_redraw_interval": None,
+    "beta": None,
+    "root_weight": None,
 }
-
-
-

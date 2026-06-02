@@ -7,8 +7,11 @@ import pytorch_lightning as pl
 from torch_geometric.loader import DataLoader
 
 from data.dataset import AIGGraphRegressionDataset
-from data.sampler import BalancedDynamicBatchSampler, batch_plan_cache_path, load_or_build_batch_plan
-
+from data.sampler import (
+    BalancedDynamicBatchSampler,
+    batch_plan_cache_path,
+    load_or_build_batch_plan,
+)
 
 
 class AIGDataModule(pl.LightningDataModule):
@@ -89,11 +92,13 @@ class AIGDataModule(pl.LightningDataModule):
         if include_batch_size:
             kwargs["batch_size"] = self.batch_size
         if self.num_workers > 0:
-            kwargs["persistent_workers"] = self.persistent_workers if is_train else False
+            kwargs["persistent_workers"] = self.persistent_workers
             kwargs["prefetch_factor"] = self.prefetch_factor
         return kwargs
 
-    def _make_dataset(self, split: str, num_samples: int | None = None) -> AIGGraphRegressionDataset:
+    def _make_dataset(
+        self, split: str, num_samples: int | None = None
+    ) -> AIGGraphRegressionDataset:
         return AIGGraphRegressionDataset(
             self.csv_paths,
             positional_encoding=self.positional_encoding,
@@ -111,10 +116,12 @@ class AIGDataModule(pl.LightningDataModule):
         if not (self.dynamic_batching and self.dynamic_bucket_rules):
             return
         val_sizes = self.val_ds.get_num_nodes_list()
-        self._val_batch_plan: list[list[int]] = BalancedDynamicBatchSampler.build_batch_plan(
-            val_sizes,
-            batch_size=self.batch_size,
-            bucket_rules=self.dynamic_bucket_rules,
+        self._val_batch_plan: list[list[int]] = (
+            BalancedDynamicBatchSampler.build_batch_plan(
+                val_sizes,
+                batch_size=self.batch_size,
+                bucket_rules=self.dynamic_bucket_rules,
+            )
         )
         self.val_ds.release_runtime_caches()
 
@@ -193,7 +200,7 @@ class AIGDataModule(pl.LightningDataModule):
                     batch_size=self.batch_size,
                     bucket_rules=self.dynamic_bucket_rules,
                 )
-            self._val_batch_plan = None
+                self._val_batch_plan = precomputed
             return self._make_bucketed_dataloader(
                 self.val_ds,
                 precomputed,

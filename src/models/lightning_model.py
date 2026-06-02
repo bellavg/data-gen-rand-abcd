@@ -4,6 +4,7 @@ import pytorch_lightning as pl
 import torch
 import torch.nn.functional as F
 
+from config import MIN_LR
 from constants import EDGE_ATTR_DIM, NODE_INPUT_DIM, TASK_OUT_DIM
 
 # Import your unified base model (adjust the path as needed)
@@ -43,6 +44,7 @@ class AIGRegressionLightningModule(pl.LightningModule):
             pooling_type=self.hparams.pooling_type,
             encoder_kwargs=self.hparams.encoder_kwargs,
         )
+        self.model = torch.compile(self.model, dynamic=True)
 
     def forward(self, batch: object) -> torch.Tensor:
         return self.model.forward_batch(batch)
@@ -63,7 +65,7 @@ class AIGRegressionLightningModule(pl.LightningModule):
         if self.trainer is not None:
             b_size = getattr(batch, "num_graphs", 1)
             # Log on_step only for training, keep validation/test on_epoch-only
-            is_train = (prefix == "train")
+            is_train = prefix == "train"
 
             self.log(
                 f"{prefix}/loss",
@@ -85,8 +87,8 @@ class AIGRegressionLightningModule(pl.LightningModule):
         return loss if prefix == "train" else None
 
     def training_step(self, batch: object, batch_idx: int) -> Optional[torch.Tensor]:
-        if hasattr(self.model.encoder, "redraw_projection"):
-            self.model.encoder.redraw_projection.redraw_projections()
+        # if hasattr(self.model.encoder, "redraw_projection"):
+        #     self.model.encoder.redraw_projection.redraw_projections()
         return self._compute_loss_and_metrics(batch, batch_idx, prefix="train")
 
     def validation_step(self, batch: object, batch_idx: int) -> None:
@@ -97,10 +99,13 @@ class AIGRegressionLightningModule(pl.LightningModule):
 
     def configure_optimizers(self) -> Dict[str, Any]:
         initial_lr = self.hparams.lr
-        min_lr_value = initial_lr * 1e-3
+        min_lr_value = MIN_LR
 
-        optimizer = torch.optim.Adam(
-            self.parameters(), lr=initial_lr, weight_decay=self.hparams.weight_decay
+        optimizer = torch.optim.AdamW(
+            self.parameters(),
+            lr=initial_lr,
+            weight_decay=self.hparams.weight_decay,
+            fused=True,
         )
 
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(

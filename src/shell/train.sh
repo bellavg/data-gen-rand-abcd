@@ -40,6 +40,7 @@ VENV_PATH="${VENV_PATH:-/scratch-shared/$USER/.venv}"
 echo "Activating virtual environment at: $VENV_PATH"
 source "$VENV_PATH/bin/activate"
 
+
 # Verify WandB Authentication (Fail-fast check to prevent SLURM hangs)
 echo "Checking Weights & Biases authentication..."
 if ! python -c "import wandb; exit(0) if wandb.login(anonymous='never') else exit(1)" 2>/dev/null; then

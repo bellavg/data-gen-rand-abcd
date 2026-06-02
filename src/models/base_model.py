@@ -86,7 +86,7 @@ class UnifiedGraphBaseModel(nn.Module):
 
         # 6. Encoder and Head
         self.encoder = ENCODER_REGISTRY[self.encoder_name](**self.kwargs)
-        self.head = nn.LazyLinear(int(task_out_dim))
+        self.head = nn.Linear(self.kwargs["output_dim"], int(task_out_dim))
 
     def _integrate_positional_encoding(
         self, x: torch.Tensor, pos_enc: Optional[torch.Tensor]
