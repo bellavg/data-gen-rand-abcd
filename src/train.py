@@ -137,6 +137,7 @@ def main(args):
     trainer = pl.Trainer(
         max_epochs=args.max_epochs,
         accelerator="auto",
+        max_steps=500,
         devices=1,
         precision=_select_precision(),
         callbacks=[
@@ -197,8 +198,16 @@ if __name__ == "__main__":
     parser.add_argument("--check_val_every_n", type=int, default=1)
     parser.add_argument("--num_workers", type=int, default=4)
     parser.add_argument("--prefetch_factor", type=int, default=2)
-    parser.add_argument("--pin_memory", type=lambda x: str(x).lower() in ("true", "1", "yes"), default=config.PIN_MEMORY)
-    parser.add_argument("--persistent_workers", type=lambda x: str(x).lower() in ("true", "1", "yes"), default=config.PERSISTENT_WORKERS)
+    parser.add_argument(
+        "--pin_memory",
+        type=lambda x: str(x).lower() in ("true", "1", "yes"),
+        default=config.PIN_MEMORY,
+    )
+    parser.add_argument(
+        "--persistent_workers",
+        type=lambda x: str(x).lower() in ("true", "1", "yes"),
+        default=config.PERSISTENT_WORKERS,
+    )
     parser.add_argument("--log_steps", type=int, default=config.LOG_EVERY_N_STEPS)
 
     # Algorithm & Data Arguments
