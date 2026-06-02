@@ -5,6 +5,7 @@ import json
 import os
 import random
 import uuid
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -42,6 +43,7 @@ class GraphSample:
     """Dataclass holding metadata for a single graph sample."""
 
     graph_path: str
+    design_key: str
     y_node_opt: float
 
 
@@ -52,7 +54,8 @@ _CSV_SAMPLE_CACHE: dict[tuple[str, ...], list[GraphSample]] = {}
 
 # Module-level cache for splits JSON (keyed by resolved cache_file path string).
 # The splits file for a given algo+num_samples tag never changes once written.
-_SPLITS_CACHE: dict[str, dict[str, list[str]]] = {}
+_SPLITS_CACHE: dict[str, dict[str, object]] = {}
+_SPLIT_CACHE_VERSION = 2
 
 
 def clear_dataset_global_caches() -> None:
@@ -167,6 +170,8 @@ class AIGGraphRegressionDataset(PyGDataset):
 
     def _build_cache_signature(self) -> str:
         hasher = hashlib.sha1()
+        hasher.update(f"split_cache_v{_SPLIT_CACHE_VERSION}".encode())
+        hasher.update(b"split_by=design")
         hasher.update(str(self.seed).encode())
         hasher.update(str(self.split).encode())
         hasher.update(str(self.num_samples).encode())
@@ -187,6 +192,71 @@ class AIGGraphRegressionDataset(PyGDataset):
 
         return hasher.hexdigest()[:16]
 
+    def _normalize_graph_path(self, graph_path: str) -> str:
+        return str(graph_path).replace("/gpfs/scratch1/shared", "/scratch-shared")
+
+    def _infer_design_key(self, graph_path: str) -> str:
+        parts = Path(graph_path).parts
+        for marker, offset in (("designs", 1), ("tier0", 1), ("tier1", 2), ("tier2", 2)):
+            try:
+                marker_idx = parts.index(marker)
+            except ValueError:
+                continue
+            design_idx = marker_idx + offset
+            if design_idx < len(parts) and parts[design_idx]:
+                return parts[design_idx]
+        return graph_path
+
+    def _sample_rows(self, samples: list[GraphSample]) -> list[GraphSample]:
+        if self.num_samples is None or self.num_samples >= len(samples):
+            return samples
+        rng = random.Random(self.seed)
+        selected_idx = set(rng.sample(range(len(samples)), k=self.num_samples))
+        return [sample for idx, sample in enumerate(samples) if idx in selected_idx]
+
+    def _split_cache_meta(self) -> dict[str, object]:
+        csv_files = []
+        for csv_path in sorted(self.csv_paths):
+            st = csv_path.stat()
+            csv_files.append(
+                {
+                    "path": str(csv_path.absolute()),
+                    "size": st.st_size,
+                    "mtime_ns": st.st_mtime_ns,
+                }
+            )
+
+        hp_splits_file = None
+        if self.hp_tuning_splits_path is not None:
+            hp_path = Path(self.hp_tuning_splits_path)
+            hp_st = hp_path.stat()
+            hp_splits_file = {
+                "path": str(hp_path.absolute()),
+                "size": hp_st.st_size,
+                "mtime_ns": hp_st.st_mtime_ns,
+            }
+
+        return {
+            "version": _SPLIT_CACHE_VERSION,
+            "split_by": "design",
+            "seed": self.seed,
+            "split_ratios": list(self.split_ratios),
+            "num_samples": self.num_samples,
+            "csv_files": csv_files,
+            "hp_tuning_splits_file": hp_splits_file,
+        }
+
+    def _is_compatible_split_payload(self, payload: object) -> bool:
+        if not isinstance(payload, dict):
+            return False
+        for split_name in ("train", "val", "test"):
+            split_values = payload.get(split_name)
+            if not isinstance(split_values, list) or not all(
+                isinstance(value, str) for value in split_values
+            ):
+                return False
+        return payload.get("__meta__") == self._split_cache_meta()
+
     def _read_candidate_samples(self) -> list[GraphSample]:
         cache_key = tuple(str(p) for p in self.csv_paths)
         if cache_key in _CSV_SAMPLE_CACHE:
@@ -205,8 +275,9 @@ class AIGGraphRegressionDataset(PyGDataset):
 
         samples = [
             GraphSample(
-                graph_path=str(graph_path).replace(
-                    "/gpfs/scratch1/shared", "/scratch-shared"
+                graph_path=self._normalize_graph_path(str(graph_path)),
+                design_key=self._infer_design_key(
+                    self._normalize_graph_path(str(graph_path))
                 ),
                 y_node_opt=float(node_opt),
             )
@@ -221,9 +292,11 @@ class AIGGraphRegressionDataset(PyGDataset):
         _CSV_SAMPLE_CACHE[cache_key] = samples
         return samples
 
-    def _load_or_create_split_keys(self, all_keys: list[str]) -> dict[str, list[str]]:
+    def _load_or_create_split_keys(
+        self, samples: list[GraphSample]
+    ) -> dict[str, list[str] | dict[str, object]]:
         if self.cache_dir is None or self.split is None:
-            return self._create_split_keys(all_keys)
+            return self._create_split_keys(samples)
 
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         algo_tag = "_".join(p.stem for p in self.csv_paths)
@@ -231,18 +304,21 @@ class AIGGraphRegressionDataset(PyGDataset):
         cache_file = self.cache_dir / f"{algo_tag}{sample_tag}_splits.json"
         cache_key = str(cache_file)
 
-        if cache_key in _SPLITS_CACHE:
-            return _SPLITS_CACHE[cache_key]
+        cached_payload = _SPLITS_CACHE.get(cache_key)
+        if self._is_compatible_split_payload(cached_payload):
+            return cached_payload
+        _SPLITS_CACHE.pop(cache_key, None)
 
         try:
             with open(cache_file, encoding="utf-8") as fh:
                 splits = json.load(fh)
-            _SPLITS_CACHE[cache_key] = splits
-            return splits
+            if self._is_compatible_split_payload(splits):
+                _SPLITS_CACHE[cache_key] = splits
+                return splits
         except (json.JSONDecodeError, OSError):
             pass
 
-        split_keys = self._create_split_keys(all_keys)
+        split_keys = self._create_split_keys(samples)
         temp_file = cache_file.with_suffix(f".tmp_{uuid.uuid4().hex[:8]}")
         temp_file.write_text(
             json.dumps(split_keys, indent=2, sort_keys=True), encoding="utf-8"
@@ -251,27 +327,49 @@ class AIGGraphRegressionDataset(PyGDataset):
         _SPLITS_CACHE[cache_key] = split_keys
         return split_keys
 
-    def _create_split_keys(self, all_keys: list[str]) -> dict[str, list[str]]:
-        keys = list(all_keys)
+    def _create_split_keys(
+        self, samples: list[GraphSample]
+    ) -> dict[str, list[str] | dict[str, object]]:
+        samples = self._sample_rows(samples)
+        design_keys = list(dict.fromkeys(sample.design_key for sample in samples))
         rng = random.Random(self.seed)
-        rng.shuffle(keys)
-
-        if self.num_samples is not None:
-            keys = keys[: self.num_samples]
+        rng.shuffle(design_keys)
 
         total = sum(self.split_ratios)
         train_f = self.split_ratios[0] / total
         val_f = self.split_ratios[1] / total
 
-        n = len(keys)
+        n = len(design_keys)
         n_train = int(n * train_f)
         n_val = int(n * val_f)
+        if n > 0 and train_f > 0.0 and n_train == 0:
+            n_train = 1
+        n_val = min(n_val, n - n_train)
 
-        return {
-            "train": keys[:n_train],
-            "val": keys[n_train : n_train + n_val],
-            "test": keys[n_train + n_val :],
+        design_to_split = {
+            design_key: "train" for design_key in design_keys[:n_train]
         }
+        design_to_split.update(
+            {
+                design_key: "val"
+                for design_key in design_keys[n_train : n_train + n_val]
+            }
+        )
+        design_to_split.update(
+            {design_key: "test" for design_key in design_keys[n_train + n_val :]}
+        )
+
+        split_keys: dict[str, list[str] | dict[str, object]] = {
+            "train": [],
+            "val": [],
+            "test": [],
+        }
+        for sample in samples:
+            split_name = design_to_split[sample.design_key]
+            split_keys[split_name].append(sample.graph_path)
+        split_keys["__meta__"] = self._split_cache_meta()
+
+        return split_keys
 
     def _apply_split(self, samples: list[GraphSample]) -> list[GraphSample]:
         if self.hp_tuning_splits_path is not None:
@@ -286,18 +384,17 @@ class AIGGraphRegressionDataset(PyGDataset):
             samples = [s for s in samples if s.graph_path not in hp_keys]
 
         if self.split is None:
-            if self.num_samples is not None:
-                all_keys = [s.graph_path for s in samples]
-                rng = random.Random(self.seed)
-                rng.shuffle(all_keys)
-                selected = set(all_keys[: self.num_samples])
-                return [s for s in samples if s.graph_path in selected]
-            return samples
+            return self._sample_rows(samples)
 
-        all_keys = [s.graph_path for s in samples]
-        split_keys = self._load_or_create_split_keys(all_keys)
-        selected = set(split_keys[self.split])
-        return [s for s in samples if s.graph_path in selected]
+        split_keys = self._load_or_create_split_keys(samples)
+        remaining = Counter(split_keys[self.split])
+        selected_samples = []
+        for sample in samples:
+            if remaining[sample.graph_path] < 1:
+                continue
+            selected_samples.append(sample)
+            remaining[sample.graph_path] -= 1
+        return selected_samples
 
     def _build_samples(self) -> list[GraphSample]:
         samples = self._read_candidate_samples()
@@ -356,6 +453,10 @@ class AIGGraphRegressionDataset(PyGDataset):
         if not isinstance(manifest, dict) or not isinstance(
             manifest.get("entries"), list
         ):
+            return None
+        manifest_paths = [str(entry.get("graph_path", "")) for entry in manifest["entries"]]
+        sample_paths = [sample.graph_path for sample in self.samples]
+        if Counter(manifest_paths) != Counter(sample_paths):
             return None
         return manifest
 

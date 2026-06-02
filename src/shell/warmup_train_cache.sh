@@ -82,6 +82,7 @@ HP_TUNING_SPLITS="$HP_TUNING_WORKSPACE/shared_dataset_cache/algo_Orchestrate_ml_
 
 # Number of parallel I/O workers.  Default: all SLURM-allocated CPUs.
 N_IO_WORKERS="${N_IO_WORKERS:-$(nproc)}"
+SPLIT_CACHE_VERSION="${SPLIT_CACHE_VERSION:-2}"
 
 S1_SPLITS="$HP_TUNING_WORKSPACE/shared_dataset_cache/algo_Orchestrate_ml_algo_Deepsyn_ml_algo_Syn4_ml_algo_C2RS_ml_15000_splits.json"
 S2_SPLITS="$HP_TUNING_WORKSPACE/shared_dataset_cache/algo_Orchestrate_ml_algo_Deepsyn_ml_algo_Syn4_ml_algo_C2RS_ml_35000_splits.json"
@@ -139,8 +140,35 @@ warm_algorithm() {
     mkdir -p "$cache_dir"
 
     if [[ -f "$sentinel" ]]; then
-        echo "[warmup:${algo}] Cache already warm (sentinel exists). Skipping."
-        return 0
+        if python - "$cache_dir" "$SPLIT_CACHE_VERSION" <<'PYEOF'
+import json
+import sys
+from pathlib import Path
+
+cache_dir = Path(sys.argv[1])
+expected_version = int(sys.argv[2])
+split_files = sorted(cache_dir.glob("*_splits.json"))
+if not split_files:
+    raise SystemExit(1)
+
+payload = json.loads(split_files[0].read_text(encoding="utf-8"))
+meta = payload.get("__meta__")
+if not isinstance(meta, dict):
+    raise SystemExit(1)
+
+raise SystemExit(
+    0
+    if meta.get("version") == expected_version and meta.get("split_by") == "design"
+    else 1
+)
+PYEOF
+        then
+            echo "[warmup:${algo}] Cache already warm with current split metadata. Skipping."
+            return 0
+        fi
+
+        echo "[warmup:${algo}] Sentinel exists, but split cache metadata is stale. Rebuilding."
+        rm -f "$sentinel"
     fi
 
     if [[ ! -f "$csv_path" ]]; then
