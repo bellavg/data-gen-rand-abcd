@@ -105,7 +105,6 @@ class AIGRegressionLightningModule(pl.LightningModule):
             self.parameters(),
             lr=initial_lr,
             weight_decay=self.hparams.weight_decay,
-            fused=True,
         )
 
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
