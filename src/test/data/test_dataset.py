@@ -66,6 +66,32 @@ def _make_rows(pt_paths: list[Path], *, opt_start: float = 0.1) -> list[dict]:
     ]
 
 
+def _make_design_rows(
+    root: Path, design_names: list[str], *, graphs_per_design: int, opt_start: float = 0.1
+) -> list[dict]:
+    """Create rows whose graph paths encode the design in the folder structure."""
+    data = aig_to_pytorch_geometric(_AIG_PATH)
+    rows: list[dict] = []
+    opt_value = opt_start
+    for design in design_names:
+        design_dir = root / "designs" / design / "tier0"
+        design_dir.mkdir(parents=True, exist_ok=True)
+        for idx in range(graphs_per_design):
+            graph_path = design_dir / f"{design}_{idx:04d}.pt"
+            torch.save(data, graph_path)
+            rows.append(
+                {
+                    "unoptimized_graph_path": str(graph_path),
+                    "design": design,
+                    "algorithm": "Orchestrate",
+                    "tier_id": "1",
+                    "optimizability": str(round(opt_value, 4)),
+                }
+            )
+            opt_value += 0.01
+    return rows
+
+
 # ---------------------------------------------------------------------------
 # Dataset tests
 # ---------------------------------------------------------------------------
@@ -295,6 +321,68 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
         self.assertGreaterEqual(len(val_ds), 5)
         self.assertGreaterEqual(len(test_ds), 5)
 
+    def test_split_keeps_designs_together_when_path_encodes_design(self):
+        from data.dataset import AIGGraphRegressionDataset
+
+        csv = self.root / "design_grouped.csv"
+        design_names = [f"design_{i:02d}" for i in range(10)]
+        _write_csv(
+            csv,
+            _make_design_rows(
+                self.root,
+                design_names,
+                graphs_per_design=3,
+            ),
+        )
+
+        train_ds = AIGGraphRegressionDataset(csv, split="train", seed=11)
+        val_ds = AIGGraphRegressionDataset(csv, split="val", seed=11)
+        test_ds = AIGGraphRegressionDataset(csv, split="test", seed=11)
+
+        train_designs = {sample.design_key for sample in train_ds.samples}
+        val_designs = {sample.design_key for sample in val_ds.samples}
+        test_designs = {sample.design_key for sample in test_ds.samples}
+
+        self.assertFalse(train_designs & val_designs, "train and val share designs")
+        self.assertFalse(train_designs & test_designs, "train and test share designs")
+        self.assertFalse(val_designs & test_designs, "val and test share designs")
+        self.assertEqual(train_designs | val_designs | test_designs, set(design_names))
+        self.assertEqual(len(train_ds) + len(val_ds) + len(test_ds), 30)
+
+    def test_multi_csv_duplicate_graph_paths_do_not_cross_splits(self):
+        from data.dataset import AIGGraphRegressionDataset
+
+        rows_a = _make_design_rows(
+            self.root,
+            [f"design_{i:02d}" for i in range(10)],
+            graphs_per_design=2,
+        )
+        rows_b = [
+            {
+                **row,
+                "algorithm": "Deepsyn",
+                "optimizability": str(round(float(row["optimizability"]) + 0.5, 4)),
+            }
+            for row in rows_a
+        ]
+        csv_a = self.root / "algo_a.csv"
+        csv_b = self.root / "algo_b.csv"
+        _write_csv(csv_a, rows_a)
+        _write_csv(csv_b, rows_b)
+
+        train_ds = AIGGraphRegressionDataset([csv_a, csv_b], split="train", seed=5)
+        val_ds = AIGGraphRegressionDataset([csv_a, csv_b], split="val", seed=5)
+        test_ds = AIGGraphRegressionDataset([csv_a, csv_b], split="test", seed=5)
+
+        train_paths = {sample.graph_path for sample in train_ds.samples}
+        val_paths = {sample.graph_path for sample in val_ds.samples}
+        test_paths = {sample.graph_path for sample in test_ds.samples}
+
+        self.assertFalse(train_paths & val_paths, "train and val share graph paths")
+        self.assertFalse(train_paths & test_paths, "train and test share graph paths")
+        self.assertFalse(val_paths & test_paths, "val and test share graph paths")
+        self.assertEqual(len(train_ds) + len(val_ds) + len(test_ds), 40)
+
     # --- HP tuning split exclusion testing ---
 
     def test_hp_tuning_splits_path_excludes_samples(self):
@@ -354,6 +442,8 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
         self.assertIn("train", splits)
         self.assertIn("val", splits)
         self.assertIn("test", splits)
+        self.assertIn("__meta__", splits)
+        self.assertEqual(splits["__meta__"]["split_by"], "design")
 
     def test_cache_loaded_on_second_call(self):
         from data.dataset import AIGGraphRegressionDataset
@@ -574,6 +664,48 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
         for path in ds._graph_cache_path_map.values():
             self.assertEqual(path.parent, ds._cache_graph_dir)
             self.assertEqual(path.name, "deadbeef.pt")
+
+    def test_stale_manifest_is_ignored_when_sample_set_changes(self):
+        """A manifest whose graph_path entries no longer match the current split
+        must be rebuilt instead of reusing stale node sizes/path maps."""
+        from data.dataset import AIGGraphRegressionDataset
+
+        csv = self.root / "manifest_stale.csv"
+        _write_csv(
+            csv,
+            _make_design_rows(
+                self.root,
+                [f"design_{i:02d}" for i in range(10)],
+                graphs_per_design=2,
+            ),
+        )
+        cache_dir = self.root / "manifest_stale_cache"
+
+        ds = AIGGraphRegressionDataset(csv, split="train", cache_dir=cache_dir, seed=0)
+        manifest_file = next((cache_dir / "metadata").glob("*_manifest.json"))
+        manifest = json.loads(manifest_file.read_text())
+
+        stale_path = str(self.root / "graphs" / "old_graph.pt")
+        manifest["entries"] = [
+            {
+                "graph_path": stale_path,
+                "cache_path": str(cache_dir / "processed_graphs" / "old_graph.pt"),
+                "num_nodes": 123,
+            }
+        ]
+        manifest["num_samples"] = 1
+        manifest_file.write_text(json.dumps(manifest, indent=2, sort_keys=True))
+
+        ds_reloaded = AIGGraphRegressionDataset(
+            csv,
+            split="train",
+            cache_dir=cache_dir,
+            seed=0,
+        )
+
+        self.assertEqual(len(ds_reloaded.samples), len(ds.samples))
+        self.assertNotIn(stale_path, ds_reloaded._graph_cache_path_map)
+        self.assertEqual(len(ds_reloaded.get_num_nodes_list()), len(ds_reloaded.samples))
 
     def test_pos_enc_continuous_is_float(self):
         """Test that continuous features like 'pi_paths' are converted to floats."""
