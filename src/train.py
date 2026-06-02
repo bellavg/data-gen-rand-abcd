@@ -141,8 +141,8 @@ def main(args):
         devices=1,
         precision=_select_precision(),
         callbacks=[
-            checkpoint_cb,
-            early_stop_cb,
+            # checkpoint_cb,
+            # early_stop_cb,
             LearningRateMonitor(logging_interval="epoch"),
             HardwareProfilerCallback(),
         ],
