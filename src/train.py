@@ -149,6 +149,7 @@ def main(args):
         gradient_clip_val=args.gradient_clip_val,
         check_val_every_n_epoch=args.check_val_every_n,
         log_every_n_steps=args.log_steps,
+        profiler="simple",
     )
 
     # 7. Run Training & Testing
