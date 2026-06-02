@@ -137,12 +137,12 @@ def main(args):
     trainer = pl.Trainer(
         max_epochs=args.max_epochs,
         accelerator="auto",
-        max_steps=500,
+        enable_progress_bar=False,
         devices=1,
         precision=_select_precision(),
         callbacks=[
-            # checkpoint_cb,
-            # early_stop_cb,
+            checkpoint_cb,
+            early_stop_cb,
             LearningRateMonitor(logging_interval="epoch"),
             HardwareProfilerCallback(),
         ],
@@ -150,7 +150,6 @@ def main(args):
         gradient_clip_val=args.gradient_clip_val,
         check_val_every_n_epoch=args.check_val_every_n,
         log_every_n_steps=args.log_steps,
-        profiler="simple",
     )
 
     # 7. Run Training & Testing
@@ -195,7 +194,7 @@ if __name__ == "__main__":
     parser.add_argument("--patience", type=int, default=20)
     parser.add_argument("--scheduler_patience", type=int, default=10)
     parser.add_argument("--gradient_clip_val", type=float, default=1.0)
-    parser.add_argument("--check_val_every_n", type=int, default=1)
+    parser.add_argument("--check_val_every_n", type=float, default=0.5)
     parser.add_argument("--num_workers", type=int, default=4)
     parser.add_argument("--prefetch_factor", type=int, default=2)
     parser.add_argument(
