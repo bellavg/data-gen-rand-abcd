@@ -122,13 +122,7 @@ def get_pe_transform(pe_type: str, attr_name: str = "pos_enc", **kwargs):
     # Strip 'learned_' prefix if present so we can just grab the raw data key
     source_key = pe_type.replace("learned_", "")
 
-    if source_key in ["level"]:
-        # Discrete pre-computed features (must be cast to long for Embeddings)
-        return ExtractPrecomputedPE(
-            source_key=source_key, attr_name=attr_name, discrete=True
-        )
-
-    elif source_key in ["pi_paths", "local_sp_sum"]:
+    if source_key in ["pi_paths", "local_sp_sum", "level"]:
         # Continuous pre-computed features (must be cast to float for Linear layers)
         return ExtractPrecomputedPE(
             source_key=source_key, attr_name=attr_name, discrete=False
@@ -155,14 +149,13 @@ def get_pos_enc_layer(
 
     pe_type = pe_type.lower()
 
-    if pe_type in ["learned_level", "level"]:
-        return LearnedDepthEmbedding(max_depth=max_depth, embed_dim=pos_enc_dim)
-
-    elif pe_type in [
+    if pe_type in [
         "learned_pi_paths",
         "pi_paths",
         "learned_local_sp_sum",
         "local_sp_sum",
+        "level",
+        "learned_level",
     ]:
         # Refactored to Sequential to support LeakyReLU
         return nn.Sequential(gnn.Linear(1, pos_enc_dim), nn.LeakyReLU())

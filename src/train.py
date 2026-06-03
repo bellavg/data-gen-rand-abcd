@@ -198,7 +198,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--val_check_interval",
         type=float,
-        default=0.2,
+        default=0.1,
         help=(
             "Validation frequency: if <1.0, fraction of training epoch; "
             "if >=1.0, number of training batches between validations."
