@@ -4,10 +4,14 @@ from typing import Dict, Optional, Tuple
 
 import torch
 import torch.nn as nn
-from torch_geometric.nn import global_add_pool, global_max_pool, global_mean_pool
+from torch_geometric.nn import (
+    GraphNorm,
+    global_max_pool,
+)
 
-from constants import ENCODER_REGISTRY, MAX_DEPTH, get_output_dim_for_encoder
+from constants import MAX_DEPTH
 from models.layers.positional_encodings import get_pos_enc_layer
+from models.layers.transformer_conv import TransformerConvEncoder
 from models.model_utils import get_batch_positional_encoding
 
 
@@ -27,10 +31,8 @@ class UnifiedGraphBaseModel(nn.Module):
         node_input_dim: int = 4,
         edge_attr_dim: int = 2,
         task_out_dim: int = 1,
-        pooling_type: str = "mean",
+        pooling_type: str = "max",
         max_depth: int = MAX_DEPTH,
-        embed_node_input: bool = True,
-        embed_edge_input: bool = True,
     ):
         super().__init__()
 
@@ -39,36 +41,28 @@ class UnifiedGraphBaseModel(nn.Module):
         self.encoder_name = encoder_name
         self.hidden_dim = hidden_dim
         self.pe_type = pe_type
-        self.embed_node_input = embed_node_input
-        self.embed_edge_input = embed_edge_input
 
         self.pooling_type = pooling_type
 
         # 2. Positional Encoding Setup
-        self.pos_enc_dim = pos_enc_dim if self.pe_type != "none" else 0
-
+        self.pos_enc_dim = pos_enc_dim
         # 3. Latent Dimensions
-        base_node_dim = hidden_dim if embed_node_input else node_input_dim
+        base_node_dim = hidden_dim
 
         # This is what gets passed to the first layer of the Encoders!
-        concat_dim = (
-            base_node_dim + self.pos_enc_dim
-            if (self.pe_type != "none" and self.pos_enc_dim > 0)
-            else base_node_dim
-        )
+        concat_dim = base_node_dim + self.pos_enc_dim
 
         # Standardize kwargs for the GNN Encoder
         self.kwargs["hid_dim"] = hidden_dim  # Subsequent layers use this
         self.kwargs["node_input_dim"] = concat_dim  # First layer uses this!
-        self.kwargs["edge_attr_dim"] = hidden_dim if embed_edge_input else edge_attr_dim
+        self.kwargs["edge_attr_dim"] = hidden_dim
 
         # 4. Feature Projections (Keep these to lift raw 4D/2D inputs to hidden_dim)
-        if self.embed_node_input:
-            self.node_embed = nn.Linear(node_input_dim, hidden_dim)
 
-        if self.embed_edge_input:
-            self.edge_attr_proj = nn.Linear(edge_attr_dim, hidden_dim)
+        self.node_embed = nn.Linear(node_input_dim, hidden_dim)
+        self.input_node_norm = GraphNorm(concat_dim)
 
+        self.edge_attr_proj = nn.Linear(edge_attr_dim, hidden_dim)
         # 5. Positional Encoding Layer
         if self.pe_type != "none":
             self.pe_encoder = get_pos_enc_layer(
@@ -80,20 +74,15 @@ class UnifiedGraphBaseModel(nn.Module):
             self.pe_encoder = nn.Identity()
 
         # Update output_dim for Jumping Knowledge/Pooling based on hid_dim
-        self.kwargs["output_dim"] = get_output_dim_for_encoder(
-            self.encoder_name, self.kwargs
-        )
+        self.kwargs["output_dim"] = hidden_dim
 
         # 6. Encoder and Head
-        self.encoder = ENCODER_REGISTRY[self.encoder_name](**self.kwargs)
+        self.encoder = TransformerConvEncoder(**self.kwargs)
         self.head = nn.Linear(self.kwargs["output_dim"], int(task_out_dim))
 
     def _integrate_positional_encoding(
         self, x: torch.Tensor, pos_enc: Optional[torch.Tensor]
     ):
-        if pos_enc is None or getattr(self, "pos_enc_dim", 0) == 0:
-            return x
-
         pos_enc = pos_enc.unsqueeze(-1) if pos_enc.dim() == 1 else pos_enc
         pos_enc = self.pe_encoder(pos_enc)
         pos_enc = (
@@ -110,25 +99,17 @@ class UnifiedGraphBaseModel(nn.Module):
         x: torch.Tensor,
         edge_index: torch.Tensor,
         edge_attr: torch.Tensor,
+        batch: torch.Tensor,
         pos_enc: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         # Project nodes to latent hidden_dim
-        x = self.node_embed(x.float()) if self.embed_node_input else x.float()
+        x = self.node_embed(x.float())
 
-        # Project edges to latent hidden_dim.
-        # edge_attr is always required: AIG graphs are validated at load time.
-        if edge_attr is None:
-            raise ValueError(
-                "edge_attr is None inside encode_and_integrate — "
-                "all AIG graphs must carry edge attributes."
-            )
-        edge_attr = (
-            self.edge_attr_proj(edge_attr.float())
-            if self.embed_edge_input
-            else edge_attr.float()
-        )
+        edge_attr = self.edge_attr_proj(edge_attr.float())
 
         x = self._integrate_positional_encoding(x, pos_enc)
+        x = self.input_node_norm(x, batch)
+
         return x, edge_attr
 
     def _encode(self, x, edge_index, edge_attr, batch):
@@ -140,12 +121,8 @@ class UnifiedGraphBaseModel(nn.Module):
         )
 
     def _pool_graph_embeddings(self, emb: torch.Tensor, batch: torch.Tensor):
-        if self.pooling_type == "mean":
-            return global_mean_pool(emb, batch)
         if self.pooling_type == "max":
             return global_max_pool(emb, batch)
-        if self.pooling_type == "sum":
-            return global_add_pool(emb, batch)
         raise ValueError(f"Unknown pooling type: {self.pooling_type}")
 
     def forward(
@@ -156,21 +133,20 @@ class UnifiedGraphBaseModel(nn.Module):
         batch: torch.Tensor | None = None,
         pos_enc: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        x, edge_attr = self.encode_and_integrate(x, edge_index, edge_attr, pos_enc)
+        x, edge_attr = self.encode_and_integrate(
+            x, edge_index, edge_attr, batch, pos_enc
+        )
 
         enc_out = self._encode(x, edge_index, edge_attr, batch)
 
-        if self.encoder_name == "egin":
-            return enc_out
-        else:
-            if batch is None:
-                batch = torch.zeros(
-                    enc_out.size(0), dtype=torch.long, device=enc_out.device
-                )
+        if batch is None:
+            batch = torch.zeros(
+                enc_out.size(0), dtype=torch.long, device=enc_out.device
+            )
 
-            graph_emb = self._pool_graph_embeddings(enc_out, batch)
+        graph_emb = self._pool_graph_embeddings(enc_out, batch)
 
-            return self.head(graph_emb)
+        return self.head(graph_emb)
 
     def forward_batch(self, batch) -> torch.Tensor:
         pos_enc = get_batch_positional_encoding(batch)

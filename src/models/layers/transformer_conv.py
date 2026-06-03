@@ -1,4 +1,3 @@
-import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch_geometric.nn as gnn  # Standard alias for PyG layers
@@ -132,13 +131,13 @@ class TransformerConvEncoder(nn.Module):
             raise ValueError("num_layers must be >= 1")
 
         self.num_layers = num_layers
-        self.jk_mode = kwargs.get("jk_mode", "cat")
+        self.jk_mode = kwargs.get("jk_mode", "last")
 
         # 5. Use gnn.Linear for initial projection to hidden dimension.
-        if node_input_dim != hid_dim:
-            self.jk_proj = gnn.Linear(node_input_dim, hid_dim)
-        else:
-            self.jk_proj = nn.Identity()
+        # if node_input_dim != hid_dim:
+        #     self.jk_proj = gnn.Linear(node_input_dim, hid_dim)
+        # else:
+        #     self.jk_proj = nn.Identity()
 
         self.layers = nn.ModuleList()
         for i in range(num_layers):
@@ -159,7 +158,7 @@ class TransformerConvEncoder(nn.Module):
             )
         # 3. Final Output Projection
         # Reconciles the Jumping Knowledge dimension with the required output_dim
-        jk_out_dim = hid_dim * (num_layers + 1) if self.jk_mode == "cat" else hid_dim
+        jk_out_dim = hid_dim
         self.final_proj = gnn.Linear(jk_out_dim, output_dim)
 
     def forward(
@@ -173,28 +172,28 @@ class TransformerConvEncoder(nn.Module):
         Supports Jumping Knowledge (JK) by passing the batch tensor
         through each layer for proper normalization.
         """
-        x_jk = self.jk_proj(x)
+        # x_jk = self.jk_proj(x)
 
-        if self.jk_mode == "cat":
-            h_list = [x_jk]
-            for layer in self.layers:
-                x = layer(x, edge_index=edge_index, edge_attr=edge_attr, batch=batch)
-                h_list.append(x)
-            res = torch.cat(h_list, dim=1)
+        # if self.jk_mode == "cat":
+        #     h_list = [x_jk]
+        #     for layer in self.layers:
+        #         x = layer(x, edge_index=edge_index, edge_attr=edge_attr, batch=batch)
+        #         h_list.append(x)
+        #     res = torch.cat(h_list, dim=1)
 
-        elif self.jk_mode == "max":
-            res = x_jk
-            for layer in self.layers:
-                x = layer(x, edge_index=edge_index, edge_attr=edge_attr, batch=batch)
-                res = torch.max(res, x)
+        # elif self.jk_mode == "max":
+        #     res = x_jk
+        #     for layer in self.layers:
+        #         x = layer(x, edge_index=edge_index, edge_attr=edge_attr, batch=batch)
+        #         res = torch.max(res, x)
 
-        elif self.jk_mode == "sum":
-            res = x_jk
-            for layer in self.layers:
-                x = layer(x, edge_index=edge_index, edge_attr=edge_attr, batch=batch)
-                res = res + x
+        # elif self.jk_mode == "sum":
+        #     res = x_jk
+        #     for layer in self.layers:
+        #         x = layer(x, edge_index=edge_index, edge_attr=edge_attr, batch=batch)
+        #         res = res + x
 
-        elif self.jk_mode == "last":
+        if self.jk_mode == "last":
             for layer in self.layers:
                 x = layer(x, edge_index=edge_index, edge_attr=edge_attr, batch=batch)
             res = x

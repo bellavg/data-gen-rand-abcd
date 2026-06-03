@@ -28,9 +28,12 @@ class _LazyEncoderRegistry(dict):
     def __getitem__(self, key: str):
         if key not in _ENCODER_CACHE:
             if key not in _ENCODER_MODULE_MAP:
-                raise KeyError(f"Unknown encoder: {key!r}. Valid: {sorted(_ENCODER_MODULE_MAP)}")
+                raise KeyError(
+                    f"Unknown encoder: {key!r}. Valid: {sorted(_ENCODER_MODULE_MAP)}"
+                )
             module_path, class_name = _ENCODER_MODULE_MAP[key]
             import importlib
+
             mod = importlib.import_module(module_path)
             _ENCODER_CACHE[key] = getattr(mod, class_name)
         return _ENCODER_CACHE[key]
@@ -43,34 +46,6 @@ ENCODER_REGISTRY = _LazyEncoderRegistry()
 
 
 VALID_ALGORITHMS = {"Orchestrate", "Deepsyn", "Syn4", "C2RS"}
-
-ENCODER_KWARGS_DEFAULTS = {
-    # Unified encoder kwargs (set to None so the same dict can be passed
-    # to any encoder and left unspecified fields will be handled by the
-    # encoder's own defaults).
-    # Use base-model naming: `node_input_dim` / `edge_attr_dim` instead of
-    # `in_dim` / `edge_dim` so a single dict can be passed into UnifiedGraphBaseModel.
-    "node_input_dim": NODE_INPUT_DIM,
-    "edge_attr_dim": EDGE_ATTR_DIM,
-    "hid_dim": None,
-    "num_layers": None,
-    "dropout": None,
-    "jk_mode": None,
-    "norm_type": None,
-    # EGIN-specific
-    "egin_kwargs": {
-        "num_mlp_layers": None,
-        "dot_update": None,
-        "edge_mlp": None,
-        "edge_hidden_dim": None,
-    },
-    # Attention/Transformer/GPS specific
-    "heads": None,
-    "concat": None,
-    "performer_redraw_interval": None,
-    "beta": None,
-    "root_weight": None,
-}
 
 
 def get_output_dim_for_encoder(encoder_name, encoder_kwargs):

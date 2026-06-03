@@ -1,13 +1,13 @@
 BATCH_SIZE = 32
 WEIGHT_DECAY = 0.004
 ENCODER_NAME = "transformer_conv"
-NUM_LAYERS = 8
+NUM_LAYERS = 4
 HIDDEN_DIM = 128
 JK_MODE = "last"
 POOLING_TYPE = "max"
 PE_TYPE = "level"
 HEADS = 4
-LR = 0.0005
+LR = 0.0007
 DROPOUT = 0.28
 POS_ENC_DIM = 32
 NORM_TYPE = "layer"
@@ -59,3 +59,23 @@ ENCODER_KWARGS_DEFAULTS = {
     "beta": None,
     "root_weight": None,
 }
+
+
+def get_output_dim_for_encoder(encoder_name, encoder_kwargs):
+    """
+    Calculates the output dimension of the encoder based on its architecture
+    and Jumping Knowledge (JK) strategy.
+    """
+    if encoder_name == "egin":
+        return TASK_OUT_DIM
+
+    hid_dim = int(encoder_kwargs["hid_dim"])
+    jk_mode = encoder_kwargs.get("jk_mode", "cat")  # Default to 'cat' if not specified
+
+    if jk_mode == "cat":
+        # Concatenation stacks all layer outputs + initial embedding
+        num_layers = int(encoder_kwargs["num_layers"])
+        return hid_dim * (num_layers + 1)
+    else:
+        # 'mean', 'max', 'sum', or 'last' all result in the same hid_dim
+        return hid_dim
