@@ -85,10 +85,14 @@ WORKSPACE="/scratch-shared/$USER/aig_train_run/${ALGORITHM}"
 CHECKPOINT_DIR="$WORKSPACE/checkpoints"
 LOG_DIR="$WORKSPACE/logs"
 CACHE_DIR="$WORKSPACE/cache"
+TIER0_CACHE_DIR="/scratch-shared/$USER/aig_train_run/shared_tier0_cache"
+TIER1_CACHE_DIR="/scratch-shared/$USER/aig_train_run/shared_tier1_cache"
 
 mkdir -p "$CHECKPOINT_DIR"
 mkdir -p "$LOG_DIR"
 mkdir -p "$CACHE_DIR"
+mkdir -p "$TIER0_CACHE_DIR"
+mkdir -p "$TIER1_CACHE_DIR"
 
 # Path to the hyperparameter tuning splits JSON file
 # *************************************************************************
@@ -123,6 +127,8 @@ python -u -m train \
     --checkpoint_dir    "$CHECKPOINT_DIR" \
     --log_dir           "$LOG_DIR" \
     --cache_dir         "$CACHE_DIR" \
+    --tier0_cache_dir   "$TIER0_CACHE_DIR" \
+    --tier1_cache_dir   "$TIER1_CACHE_DIR" \
     --hp_tuning_splits_path "$HP_TUNING_SPLITS" \
     --num_workers       "$NUM_WORKERS" \
     --patience          10
