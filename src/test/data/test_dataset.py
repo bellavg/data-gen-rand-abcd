@@ -605,6 +605,68 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
         self.assertEqual(len(list((self.root / "algo_a" / "processed_graphs").rglob("*.pt"))), 0)
         self.assertEqual(len(list((self.root / "algo_b" / "processed_graphs").rglob("*.pt"))), 0)
 
+    def test_tier1_graphs_routed_to_tier1_cache_dir(self):
+        """Tier-1 graphs must be cached in tier1_cache_dir, not per-algorithm processed_graphs."""
+        from data.dataset import AIGGraphRegressionDataset
+
+        tier1_dir = self.root / "graphs" / "tier1" / "Orchestrate" / "i2c"
+        tier1_pts = _make_graph_pts(tier1_dir, 5)
+        csv = self.root / "tier1_routing.csv"
+        _write_csv(csv, _make_rows(tier1_pts))
+
+        cache_dir = self.root / "algo_cache"
+        tier1_cache_dir = self.root / "shared_tier1_cache"
+
+        AIGGraphRegressionDataset(
+            csv,
+            split="train",
+            cache_dir=cache_dir,
+            tier1_cache_dir=tier1_cache_dir,
+            seed=0,
+        )
+
+        shared_pts = list(tier1_cache_dir.rglob("*.pt"))
+        self.assertGreater(len(shared_pts), 0, "No .pt files written to tier1_cache_dir")
+
+        algo_pts = list((cache_dir / "processed_graphs").rglob("*.pt"))
+        self.assertEqual(
+            len(algo_pts),
+            0,
+            "Tier-1 .pt files were incorrectly written to algo cache_dir",
+        )
+
+    def test_tier1_cache_shared_across_two_algorithms(self):
+        """Two datasets with different cache_dirs but the same tier1_cache_dir
+        produce exactly one copy of each tier-1 graph."""
+        from data.dataset import AIGGraphRegressionDataset
+
+        tier1_dir = self.root / "graphs" / "tier1" / "Deepsyn" / "aes"
+        tier1_pts = _make_graph_pts(tier1_dir, 4)
+        csv = self.root / "shared_tier1.csv"
+        _write_csv(csv, _make_rows(tier1_pts))
+
+        tier1_cache_dir = self.root / "shared_tier1"
+
+        AIGGraphRegressionDataset(
+            csv,
+            split="train",
+            cache_dir=self.root / "algo_a",
+            tier1_cache_dir=tier1_cache_dir,
+            seed=0,
+        )
+        AIGGraphRegressionDataset(
+            csv,
+            split="train",
+            cache_dir=self.root / "algo_b",
+            tier1_cache_dir=tier1_cache_dir,
+            seed=0,
+        )
+
+        unique_source_hashes = {p.name for p in tier1_cache_dir.rglob("*.pt")}
+        self.assertGreater(len(unique_source_hashes), 0)
+        self.assertEqual(len(list((self.root / "algo_a" / "processed_graphs").rglob("*.pt"))), 0)
+        self.assertEqual(len(list((self.root / "algo_b" / "processed_graphs").rglob("*.pt"))), 0)
+
     def test_manifest_stores_cache_path(self):
         """New manifests store absolute cache_path per entry (not cache_name)."""
         import json as _json

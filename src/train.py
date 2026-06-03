@@ -75,6 +75,8 @@ def main(args):
         prefetch_factor=args.prefetch_factor,
         cache_dir=args.cache_dir if args.cache_dir else None,
         hp_tuning_splits_path=args.hp_tuning_splits_path,
+        tier0_cache_dir=args.tier0_cache_dir,
+        tier1_cache_dir=args.tier1_cache_dir,
         dynamic_batching=getattr(args, "dynamic_batching", False),
         dynamic_bucket_rules=parsed_rules,
     )
@@ -230,6 +232,8 @@ if __name__ == "__main__":
     parser.add_argument("--checkpoint_dir", type=str, default="./checkpoints")
     parser.add_argument("--log_dir", type=str, default="./logs")
     parser.add_argument("--cache_dir", type=str, default="./cache")
+    parser.add_argument("--tier0_cache_dir", type=str, default=None)
+    parser.add_argument("--tier1_cache_dir", type=str, default=None)
     parser.add_argument("--hp_tuning_splits_path", type=str, default=None)
 
     args = parser.parse_args()

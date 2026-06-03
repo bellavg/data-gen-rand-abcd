@@ -76,6 +76,10 @@ HP_TUNING_WORKSPACE="/scratch-shared/$USER/big_optuna_run"
 # so we store exactly one copy of each base graph instead of four.
 TIER0_CACHE_DIR="/scratch-shared/$USER/aig_train_run/shared_tier0_cache"
 mkdir -p "$TIER0_CACHE_DIR"
+# Shared cache for tier-1 graphs — tier-2 training rows across target
+# algorithms reuse the same tier-1 input graphs, so cache them once.
+TIER1_CACHE_DIR="/scratch-shared/$USER/aig_train_run/shared_tier1_cache"
+mkdir -p "$TIER1_CACHE_DIR"
 # All 50K graphs used across both HP tuning stages (15K Stage-1 + 35K Stage-2).
 # Using this file ensures zero HP tuning leakage into final train/val/test splits.
 HP_TUNING_SPLITS="$HP_TUNING_WORKSPACE/shared_dataset_cache/algo_Orchestrate_ml_algo_Deepsyn_ml_algo_Syn4_ml_algo_C2RS_ml_50000_splits.json"
@@ -83,6 +87,7 @@ HP_TUNING_SPLITS="$HP_TUNING_WORKSPACE/shared_dataset_cache/algo_Orchestrate_ml_
 # Number of parallel I/O workers.  Default: all SLURM-allocated CPUs.
 N_IO_WORKERS="${N_IO_WORKERS:-$(nproc)}"
 SPLIT_CACHE_VERSION="${SPLIT_CACHE_VERSION:-2}"
+CACHE_LAYOUT_VERSION="${CACHE_LAYOUT_VERSION:-2}"
 
 S1_SPLITS="$HP_TUNING_WORKSPACE/shared_dataset_cache/algo_Orchestrate_ml_algo_Deepsyn_ml_algo_Syn4_ml_algo_C2RS_ml_15000_splits.json"
 S2_SPLITS="$HP_TUNING_WORKSPACE/shared_dataset_cache/algo_Orchestrate_ml_algo_Deepsyn_ml_algo_Syn4_ml_algo_C2RS_ml_35000_splits.json"
@@ -136,17 +141,19 @@ warm_algorithm() {
     local workspace="/scratch-shared/$USER/aig_train_run/${algo}"
     local cache_dir="$workspace/cache"
     local sentinel="$cache_dir/train_cache_ready.sentinel"
+    local layout_version_file="$cache_dir/cache_layout_version.txt"
 
     mkdir -p "$cache_dir"
 
     if [[ -f "$sentinel" ]]; then
-        if python - "$cache_dir" "$SPLIT_CACHE_VERSION" <<'PYEOF'
+        if python - "$cache_dir" "$SPLIT_CACHE_VERSION" "$CACHE_LAYOUT_VERSION" <<'PYEOF'
 import json
 import sys
 from pathlib import Path
 
 cache_dir = Path(sys.argv[1])
 expected_version = int(sys.argv[2])
+expected_layout_version = int(sys.argv[3])
 split_files = sorted(cache_dir.glob("*_splits.json"))
 if not split_files:
     raise SystemExit(1)
@@ -156,9 +163,20 @@ meta = payload.get("__meta__")
 if not isinstance(meta, dict):
     raise SystemExit(1)
 
+layout_file = cache_dir / "cache_layout_version.txt"
+if not layout_file.is_file():
+    raise SystemExit(1)
+
+try:
+    layout_version = int(layout_file.read_text(encoding="utf-8").strip())
+except ValueError:
+    raise SystemExit(1)
+
 raise SystemExit(
     0
-    if meta.get("version") == expected_version and meta.get("split_by") == "design"
+    if meta.get("version") == expected_version
+    and meta.get("split_by") == "design"
+    and layout_version == expected_layout_version
     else 1
 )
 PYEOF
@@ -211,6 +229,7 @@ dm = AIGDataModule(
     seed=42,
     cache_dir="$cache_dir",
     tier0_cache_dir="$TIER0_CACHE_DIR",
+    tier1_cache_dir="$TIER1_CACHE_DIR",
     num_workers=$N_IO_WORKERS,
     hp_tuning_splits_path=$splits_arg,
     # Precompute node-sizes so dynamic_batching=True is instant at training time.
@@ -239,6 +258,8 @@ print(
     flush=True,
 )
 PYEOF
+
+    printf '%s\n' "$CACHE_LAYOUT_VERSION" > "$layout_version_file"
 
     touch "$sentinel"
     echo "[warmup:${algo}] Sentinel written: $sentinel"
