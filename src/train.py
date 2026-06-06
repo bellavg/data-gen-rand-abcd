@@ -224,7 +224,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--heads",
         type=int,
-        default=config.HEADS,
+        default=getattr(config, "HEADS", 4),
         help="Attention heads (transformer_conv / graphgps only)",
     )
     parser.add_argument("--algorithm", type=str, required=True)
