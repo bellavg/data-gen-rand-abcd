@@ -6,12 +6,14 @@ import torch
 import torch.nn as nn
 from torch_geometric.nn import (
     GraphNorm,
+    global_add_pool,
+    global_mean_pool,
     global_max_pool,
 )
 
+from constants import ENCODER_REGISTRY
 from constants import MAX_DEPTH
 from models.layers.positional_encodings import get_pos_enc_layer
-from models.layers.transformer_conv import TransformerConvEncoder
 from models.model_utils import get_batch_positional_encoding
 
 
@@ -77,7 +79,13 @@ class UnifiedGraphBaseModel(nn.Module):
         self.kwargs["output_dim"] = hidden_dim
 
         # 6. Encoder and Head
-        self.encoder = TransformerConvEncoder(**self.kwargs)
+        if self.encoder_name not in ENCODER_REGISTRY:
+            raise ValueError(
+                f"Unknown encoder_name '{self.encoder_name}'. "
+                f"Valid options: {sorted(ENCODER_REGISTRY.keys())}"
+            )
+        encoder_cls = ENCODER_REGISTRY[self.encoder_name]
+        self.encoder = encoder_cls(**self.kwargs)
         self.head = nn.Linear(self.kwargs["output_dim"], int(task_out_dim))
 
     def _integrate_positional_encoding(
@@ -121,6 +129,10 @@ class UnifiedGraphBaseModel(nn.Module):
         )
 
     def _pool_graph_embeddings(self, emb: torch.Tensor, batch: torch.Tensor):
+        if self.pooling_type == "mean":
+            return global_mean_pool(emb, batch)
+        if self.pooling_type == "sum":
+            return global_add_pool(emb, batch)
         if self.pooling_type == "max":
             return global_max_pool(emb, batch)
         raise ValueError(f"Unknown pooling type: {self.pooling_type}")

@@ -40,6 +40,26 @@ class GradientVerificationCallback(pl.Callback):
         )
 
 
+def test_final_gcn_config_values():
+    """Pins the finalized GCN config so accidental drift is caught by CI."""
+    assert config.BATCH_SIZE == 32
+    assert config.LR == pytest.approx(0.000516)
+    assert config.WEIGHT_DECAY == pytest.approx(0.00396)
+    assert config.HUBER_DELTA == pytest.approx(0.704)
+
+    assert config.ENCODER_NAME == "gcn"
+    assert config.NUM_LAYERS == 5
+    assert config.HIDDEN_DIM == 128
+    assert config.JK_MODE == "sum"
+
+    assert config.POOLING_TYPE == "mean"
+    assert config.DROPOUT == pytest.approx(0.2)
+    assert config.NORM_TYPE == "layer"
+
+    assert config.PE_TYPE == "level"
+    assert config.POS_ENC_DIM == 32
+
+
 def _mock_dataset(tmp_path: Path, algorithm: str) -> Path:
     """Clones adder.aig 10 times with injected feature noise."""
     aig_path = Path("src/test/data/adder.aig")

@@ -1,14 +1,14 @@
 BATCH_SIZE = 32
-WEIGHT_DECAY = 0.004
-ENCODER_NAME = "transformer_conv"
-NUM_LAYERS = 4
+WEIGHT_DECAY = 0.00396
+ENCODER_NAME = "gcn"
+NUM_LAYERS = 5
 HIDDEN_DIM = 128
-JK_MODE = "last"
-POOLING_TYPE = "max"
+JK_MODE = "sum"
+POOLING_TYPE = "mean"
 PE_TYPE = "level"
 HEADS = 4
-LR = 0.0007
-DROPOUT = 0.28
+LR = 0.000516
+DROPOUT = 0.2
 POS_ENC_DIM = 32
 NORM_TYPE = "layer"
 DYNAMIC_BATCHING = True
@@ -19,7 +19,7 @@ MIN_LR = 1e-6
 LOG_EVERY_N_STEPS = 1000
 
 # Default Huber delta for training
-HUBER_DELTA = 0.95
+HUBER_DELTA = 0.704
 
 # Static dataset/task constants
 MAX_DEPTH = 24972
