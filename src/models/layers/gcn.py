@@ -27,7 +27,6 @@ class GCNConvWithEdges(MessagePassing):
         super().__init__(aggr="add")
         # 2. Use gnn.Linear for GNN-optimized weight initialization
         self.lin = gnn.Linear(in_channels, out_channels, bias=False)
-        # Edge encoder is always created; edge_attr is mandatory.
         self.edge_encoder = gnn.Linear(edge_dim, out_channels, bias=False)
         self.bias_param = nn.Parameter(torch.zeros(out_channels)) if bias else None
 
@@ -44,13 +43,15 @@ class GCNConvWithEdges(MessagePassing):
         x: Tensor,
         edge_index: Adj,
         edge_attr: Tensor,
+        edge_weight: Tensor | None = None,
     ) -> Tensor:
-        # Calculate GCN normalization weights (1 / sqrt(deg(i) * deg(j)))
-        row, col = edge_index
-        deg = degree(col, x.size(0), dtype=x.dtype)
-        deg_inv_sqrt = deg.pow(-0.5)
-        deg_inv_sqrt[deg_inv_sqrt == float("inf")] = 0
-        edge_weight = deg_inv_sqrt[row] * deg_inv_sqrt[col]
+        if edge_weight is None:
+            # Calculate GCN normalization weights (1 / sqrt(deg(i) * deg(j)))
+            row, col = edge_index
+            deg = degree(col, x.size(0), dtype=x.dtype)
+            deg_inv_sqrt = deg.pow(-0.5)
+            deg_inv_sqrt[deg_inv_sqrt == float("inf")] = 0
+            edge_weight = deg_inv_sqrt[row] * deg_inv_sqrt[col]
 
         x = self.lin(x)
         # Pass edge_attr through propagate so message() receives it as a named
@@ -98,12 +99,17 @@ class GCNConvLayer(nn.Module):
         return F.dropout(x, p=self.dropout, training=self.training)
 
     def forward(
-        self, x: Tensor, edge_index: Adj, edge_attr: Tensor, batch: Tensor | None = None
+        self,
+        x: Tensor,
+        edge_index: Adj,
+        edge_attr: Tensor,
+        batch: Tensor | None = None,
+        edge_weight: Tensor | None = None,
     ) -> Tensor:
         x_in = x
 
         # 1. Message Passing
-        x = self.model(x, edge_index=edge_index, edge_attr=edge_attr)
+        x = self.model(x, edge_index=edge_index, edge_attr=edge_attr, edge_weight=edge_weight)
 
         # 2. Graph-Aware Normalization
         x = apply_norm(self.norm_node, x, batch)
@@ -161,31 +167,55 @@ class GCNEncoder(nn.Module):
                 )
             )
 
-    def forward(self, x, edge_index, edge_attr, batch=None):
+    def forward(self, x, edge_index, edge_attr, batch=None, edge_weight=None):
         x_jk = self.jk_proj(x)
 
         if self.jk_mode == "cat":
             h_list = [x_jk]
             for layer in self.layers:
-                x = layer(x, edge_index=edge_index, edge_attr=edge_attr, batch=batch)
+                x = layer(
+                    x,
+                    edge_index=edge_index,
+                    edge_attr=edge_attr,
+                    batch=batch,
+                    edge_weight=edge_weight,
+                )
                 h_list.append(x)
             return torch.cat(h_list, dim=1)
 
         elif self.jk_mode == "max":
             res = x_jk
             for layer in self.layers:
-                x = layer(x, edge_index=edge_index, edge_attr=edge_attr, batch=batch)
+                x = layer(
+                    x,
+                    edge_index=edge_index,
+                    edge_attr=edge_attr,
+                    batch=batch,
+                    edge_weight=edge_weight,
+                )
                 res = torch.max(res, x)
             return res
 
         elif self.jk_mode == "sum":
             res = x_jk
             for layer in self.layers:
-                x = layer(x, edge_index=edge_index, edge_attr=edge_attr, batch=batch)
+                x = layer(
+                    x,
+                    edge_index=edge_index,
+                    edge_attr=edge_attr,
+                    batch=batch,
+                    edge_weight=edge_weight,
+                )
                 res = res + x
             return res
 
         elif self.jk_mode == "last":
             for layer in self.layers:
-                x = layer(x, edge_index=edge_index, edge_attr=edge_attr, batch=batch)
+                x = layer(
+                    x,
+                    edge_index=edge_index,
+                    edge_attr=edge_attr,
+                    batch=batch,
+                    edge_weight=edge_weight,
+                )
             return x

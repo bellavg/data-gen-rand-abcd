@@ -57,14 +57,18 @@ class UnifiedGraphBaseModel(nn.Module):
         # Standardize kwargs for the GNN Encoder
         self.kwargs["hid_dim"] = hidden_dim  # Subsequent layers use this
         self.kwargs["node_input_dim"] = concat_dim  # First layer uses this!
-        self.kwargs["edge_attr_dim"] = hidden_dim
+        if self.encoder_name == "gcn":
+            self.kwargs["edge_attr_dim"] = edge_attr_dim
+            self.edge_attr_proj = nn.Identity()
+        else:
+            self.kwargs["edge_attr_dim"] = hidden_dim
+            self.edge_attr_proj = nn.Linear(edge_attr_dim, hidden_dim)
 
         # 4. Feature Projections (Keep these to lift raw 4D/2D inputs to hidden_dim)
 
         self.node_embed = nn.Linear(node_input_dim, hidden_dim)
         self.input_node_norm = GraphNorm(concat_dim)
 
-        self.edge_attr_proj = nn.Linear(edge_attr_dim, hidden_dim)
         # 5. Positional Encoding Layer
         if self.pe_type != "none":
             self.pe_encoder = get_pos_enc_layer(
@@ -120,13 +124,16 @@ class UnifiedGraphBaseModel(nn.Module):
 
         return x, edge_attr
 
-    def _encode(self, x, edge_index, edge_attr, batch):
-        return self.encoder(
-            x=x,
-            edge_index=edge_index,
-            edge_attr=edge_attr,
-            batch=batch,
-        )
+    def _encode(self, x, edge_index, edge_attr, batch, edge_weight=None):
+        encoder_kwargs = {
+            "x": x,
+            "edge_index": edge_index,
+            "edge_attr": edge_attr,
+            "batch": batch,
+        }
+        if self.encoder_name == "gcn" and edge_weight is not None:
+            encoder_kwargs["edge_weight"] = edge_weight
+        return self.encoder(**encoder_kwargs)
 
     def _pool_graph_embeddings(self, emb: torch.Tensor, batch: torch.Tensor):
         if self.pooling_type == "mean":
@@ -144,12 +151,13 @@ class UnifiedGraphBaseModel(nn.Module):
         edge_attr: torch.Tensor,
         batch: torch.Tensor | None = None,
         pos_enc: Optional[torch.Tensor] = None,
+        edge_weight: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         x, edge_attr = self.encode_and_integrate(
             x, edge_index, edge_attr, batch, pos_enc
         )
 
-        enc_out = self._encode(x, edge_index, edge_attr, batch)
+        enc_out = self._encode(x, edge_index, edge_attr, batch, edge_weight=edge_weight)
 
         if batch is None:
             batch = torch.zeros(
@@ -162,6 +170,7 @@ class UnifiedGraphBaseModel(nn.Module):
 
     def forward_batch(self, batch) -> torch.Tensor:
         pos_enc = get_batch_positional_encoding(batch)
+        edge_weight = getattr(batch, "edge_weight", None)
 
         return self.forward(
             x=batch.x,
@@ -169,4 +178,5 @@ class UnifiedGraphBaseModel(nn.Module):
             edge_attr=batch.edge_attr,
             batch=batch.batch,
             pos_enc=pos_enc,
+            edge_weight=edge_weight,
         )
