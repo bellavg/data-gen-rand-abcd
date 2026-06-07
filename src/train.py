@@ -118,13 +118,18 @@ def main(args):
         dirpath=algo_checkpoint_dir,
         save_top_k=3,
         save_last=True,
-        monitor="val/loss",
+        monitor="val_loss_epoch",
         mode="min",
-        filename="{epoch:02d}-val_loss={val/loss:.4f}",
+        filename="{epoch:02d}-val_loss={val_loss_epoch:.4f}",
+        save_on_train_epoch_end=True,
     )
 
     early_stop_cb = EarlyStopping(
-        monitor="val/loss", patience=args.patience, mode="min", verbose=True
+        monitor="val_loss_epoch",
+        patience=args.patience,
+        mode="min",
+        verbose=True,
+        check_on_train_epoch_end=True,
     )
 
     # Use WandbLogger

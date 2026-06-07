@@ -32,6 +32,7 @@ class AIGRegressionLightningModule(pl.LightningModule):
     ):
         super().__init__()
         self.save_hyperparameters()
+        self._reset_val_epoch_metrics()
 
         self.model = UnifiedGraphBaseModel(
             encoder_name=self.hparams.encoder_name,
@@ -49,6 +50,11 @@ class AIGRegressionLightningModule(pl.LightningModule):
     def forward(self, batch: object) -> torch.Tensor:
         return self.model.forward_batch(batch)
 
+    def _reset_val_epoch_metrics(self) -> None:
+        self._val_epoch_loss_sum: Optional[torch.Tensor] = None
+        self._val_epoch_mae_sum: Optional[torch.Tensor] = None
+        self._val_epoch_weight = 0
+
     def _compute_loss_and_metrics(
         self, batch: object, batch_idx: int, prefix: str
     ) -> Optional[torch.Tensor]:
@@ -64,11 +70,12 @@ class AIGRegressionLightningModule(pl.LightningModule):
 
         if self.trainer is not None:
             b_size = getattr(batch, "num_graphs", 1)
+            metric_prefix = prefix.replace("/", "_")
             # Log on_step only for training, keep validation/test on_epoch-only
             is_train = prefix == "train"
 
             self.log(
-                f"{prefix}/loss",
+                f"{metric_prefix}_loss",
                 loss,
                 batch_size=b_size,
                 sync_dist=False,
@@ -77,14 +84,56 @@ class AIGRegressionLightningModule(pl.LightningModule):
                 on_epoch=True,
             )
             self.log(
-                f"{prefix}/mae_node",
+                f"{metric_prefix}_mae_node",
                 mae_node_opt,
                 batch_size=b_size,
                 sync_dist=False,
                 on_step=is_train,
                 on_epoch=True,
             )
+
+            if prefix == "val" and not getattr(self.trainer, "sanity_checking", False):
+                weighted_loss = loss.detach() * b_size
+                weighted_mae = mae_node_opt.detach() * b_size
+                self._val_epoch_loss_sum = (
+                    weighted_loss
+                    if self._val_epoch_loss_sum is None
+                    else self._val_epoch_loss_sum + weighted_loss
+                )
+                self._val_epoch_mae_sum = (
+                    weighted_mae
+                    if self._val_epoch_mae_sum is None
+                    else self._val_epoch_mae_sum + weighted_mae
+                )
+                self._val_epoch_weight += b_size
+
         return loss if prefix == "train" else None
+
+    def on_train_epoch_start(self) -> None:
+        self._reset_val_epoch_metrics()
+
+    def on_train_epoch_end(self) -> None:
+        if self._val_epoch_weight == 0:
+            return
+
+        val_loss_epoch = self._val_epoch_loss_sum / self._val_epoch_weight
+        val_mae_node_epoch = self._val_epoch_mae_sum / self._val_epoch_weight
+
+        self.log(
+            "val_loss_epoch",
+            val_loss_epoch,
+            sync_dist=False,
+            prog_bar=True,
+            on_step=False,
+            on_epoch=True,
+        )
+        self.log(
+            "val_mae_node_epoch",
+            val_mae_node_epoch,
+            sync_dist=False,
+            on_step=False,
+            on_epoch=True,
+        )
 
     def training_step(self, batch: object, batch_idx: int) -> Optional[torch.Tensor]:
         # if hasattr(self.model.encoder, "redraw_projection"):
@@ -119,7 +168,7 @@ class AIGRegressionLightningModule(pl.LightningModule):
             "optimizer": optimizer,
             "lr_scheduler": {
                 "scheduler": scheduler,
-                "monitor": "val/loss",
+                "monitor": "val_loss_epoch",
                 "frequency": 1,
                 "interval": "epoch",
             },
