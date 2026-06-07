@@ -57,6 +57,7 @@ _CSV_SAMPLE_CACHE: dict[tuple[str, ...], list[GraphSample]] = {}
 # The splits file for a given algo+num_samples tag never changes once written.
 _SPLITS_CACHE: dict[str, dict[str, object]] = {}
 _SPLIT_CACHE_VERSION = 2
+_GRAPH_CACHE_CONTENT_VERSION = 2
 
 
 def clear_dataset_global_caches() -> None:
@@ -79,7 +80,7 @@ class AIGGraphRegressionDataset(PyGDataset):
     - x, edge_index, edge_attr, level, pi_paths, local_sp_sum
     """
 
-    _MANIFEST_VERSION = 1
+    _MANIFEST_VERSION = 2
 
     @property
     def raw_dir(self) -> str:
@@ -142,6 +143,11 @@ class AIGGraphRegressionDataset(PyGDataset):
         self.num_samples = num_samples
         self.num_workers = num_workers
         self.hp_tuning_splits_path = hp_tuning_splits_path
+        self._cache_precomputed_level_pe = (
+            str(self.positional_encoding).lower() == "level"
+            if self.positional_encoding is not None
+            else False
+        )
 
         self._cache_graph_dir = (
             self.cache_dir / "processed_graphs" if self.cache_dir is not None else None
@@ -174,6 +180,7 @@ class AIGGraphRegressionDataset(PyGDataset):
     def _build_cache_signature(self) -> str:
         hasher = hashlib.sha1()
         hasher.update(f"split_cache_v{_SPLIT_CACHE_VERSION}".encode())
+        hasher.update(f"graph_cache_v{_GRAPH_CACHE_CONTENT_VERSION}".encode())
         hasher.update(b"split_by=design")
         hasher.update(str(self.seed).encode())
         hasher.update(str(self.split).encode())
@@ -181,6 +188,7 @@ class AIGGraphRegressionDataset(PyGDataset):
         hasher.update("|".join(map(str, self.split_ratios)).encode())
         hasher.update(str(self._tier0_cache_dir).encode())
         hasher.update(str(self._tier1_cache_dir).encode())
+        hasher.update(str(self.positional_encoding).encode())
 
         for csv_path in sorted(self.csv_paths):
             st = csv_path.stat()
@@ -411,7 +419,10 @@ class AIGGraphRegressionDataset(PyGDataset):
     def _stable_graph_cache_name(self, graph_path: str) -> str:
         source = Path(graph_path)
         st = source.stat()
-        token = f"{source.absolute()}|{st.st_size}|{st.st_mtime_ns}"
+        token = (
+            f"v{_GRAPH_CACHE_CONTENT_VERSION}|pe={self.positional_encoding}|"
+            f"{source.absolute()}|{st.st_size}|{st.st_mtime_ns}"
+        )
         digest = hashlib.sha1(token.encode()).hexdigest()
         return f"{digest}.pt"
 
@@ -435,12 +446,45 @@ class AIGGraphRegressionDataset(PyGDataset):
         with open(graph_path, "rb") as fh:
             return torch.load(fh, map_location="cpu", weights_only=True)
 
+    def _prepare_cached_graph(self, data_obj: _PyGData) -> _PyGData:
+        if (
+            getattr(data_obj, "edge_weight", None) is None
+            and getattr(data_obj, "edge_index", None) is not None
+        ):
+            edge_index = data_obj.edge_index
+            if edge_index.numel() > 0:
+                row, col = edge_index
+                deg = degree(col, data_obj.num_nodes, dtype=data_obj.x.dtype)
+                deg_inv_sqrt = deg.pow(-0.5)
+                deg_inv_sqrt[deg_inv_sqrt == float("inf")] = 0
+                data_obj.edge_weight = deg_inv_sqrt[row] * deg_inv_sqrt[col]
+            else:
+                data_obj.edge_weight = torch.empty((0,), dtype=data_obj.x.dtype)
+
+        if self._cache_precomputed_level_pe and getattr(data_obj, "pos_enc", None) is None:
+            data_obj = self.pe_transform(data_obj)
+
+        return data_obj
+
     def _cache_single_graph(self, graph_path: str) -> tuple[str, int]:
         cache_path = self._cached_graph_path(graph_path)
         if cache_path.is_file():
             obj = self._torch_load_graph(cache_path)
+            needs_refresh = (
+                getattr(obj, "edge_weight", None) is None
+                or (
+                    self._cache_precomputed_level_pe
+                    and getattr(obj, "pos_enc", None) is None
+                )
+            )
+            if needs_refresh:
+                obj = self._prepare_cached_graph(obj)
+                tmp = cache_path.with_suffix(f".tmp_{uuid.uuid4().hex[:8]}")
+                torch.save(obj, tmp)
+                tmp.replace(cache_path)
         else:
             obj = self._torch_load_graph(Path(graph_path))
+            obj = self._prepare_cached_graph(obj)
             cache_path.parent.mkdir(parents=True, exist_ok=True)
             tmp = cache_path.with_suffix(f".tmp_{uuid.uuid4().hex[:8]}")
             torch.save(obj, tmp)
@@ -653,7 +697,11 @@ class AIGGraphRegressionDataset(PyGDataset):
                 data_obj.edge_weight = deg_inv_sqrt[row] * deg_inv_sqrt[col]
             else:
                 data_obj.edge_weight = torch.empty((0,), dtype=data_obj.x.dtype)
-        data_obj = self.pe_transform(data_obj)
+        if not (
+            self._cache_precomputed_level_pe
+            and getattr(data_obj, "pos_enc", None) is not None
+        ):
+            data_obj = self.pe_transform(data_obj)
         data_obj.y = torch.tensor([[sample.y_node_opt]], dtype=torch.float32)
         return data_obj
 

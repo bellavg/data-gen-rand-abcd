@@ -141,18 +141,21 @@ def main(args):
     )
 
     # 6. Initialize Trainer with Improvements
+    callbacks = [
+        checkpoint_cb,
+        early_stop_cb,
+        LearningRateMonitor(logging_interval="epoch"),
+    ]
+    if args.enable_hardware_profiler:
+        callbacks.append(HardwareProfilerCallback())
+
     trainer = pl.Trainer(
         max_epochs=args.max_epochs,
         accelerator="auto",
         enable_progress_bar=False,
         devices=1,
         precision=_select_precision(),
-        callbacks=[
-            checkpoint_cb,
-            early_stop_cb,
-            LearningRateMonitor(logging_interval="epoch"),
-            HardwareProfilerCallback(),
-        ],
+        callbacks=callbacks,
         logger=logger,
         gradient_clip_val=args.gradient_clip_val,
         val_check_interval=args.val_check_interval,
@@ -213,6 +216,11 @@ if __name__ == "__main__":
     )
     parser.add_argument("--num_workers", type=int, default=4)
     parser.add_argument("--prefetch_factor", type=int, default=2)
+    parser.add_argument(
+        "--enable_hardware_profiler",
+        action="store_true",
+        help="Log epoch wall time and peak VRAM. Keep disabled for long production runs.",
+    )
     parser.add_argument(
         "--pin_memory",
         type=lambda x: str(x).lower() in ("true", "1", "yes"),
