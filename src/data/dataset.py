@@ -16,6 +16,7 @@ import torch.serialization
 from torch_geometric.data import Data as _PyGData
 from torch_geometric.data import Dataset as PyGDataset
 from torch_geometric.data import storage as _pyg_storage
+from torch_geometric.utils import degree
 
 from models.layers.positional_encodings import get_pe_transform
 
@@ -639,6 +640,19 @@ class AIGGraphRegressionDataset(PyGDataset):
     def get(self, idx: int) -> _PyGData:
         sample = self.samples[idx]
         data_obj = self._load_graph_for_sample(sample)
+        if (
+            getattr(data_obj, "edge_weight", None) is None
+            and getattr(data_obj, "edge_index", None) is not None
+        ):
+            edge_index = data_obj.edge_index
+            if edge_index.numel() > 0:
+                row, col = edge_index
+                deg = degree(col, data_obj.num_nodes, dtype=data_obj.x.dtype)
+                deg_inv_sqrt = deg.pow(-0.5)
+                deg_inv_sqrt[deg_inv_sqrt == float("inf")] = 0
+                data_obj.edge_weight = deg_inv_sqrt[row] * deg_inv_sqrt[col]
+            else:
+                data_obj.edge_weight = torch.empty((0,), dtype=data_obj.x.dtype)
         data_obj = self.pe_transform(data_obj)
         data_obj.y = torch.tensor([[sample.y_node_opt]], dtype=torch.float32)
         return data_obj

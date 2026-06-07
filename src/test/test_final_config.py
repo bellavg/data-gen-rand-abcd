@@ -50,10 +50,10 @@ def test_final_gcn_config_values():
     assert config.ENCODER_NAME == "gcn"
     assert config.NUM_LAYERS == 5
     assert config.HIDDEN_DIM == 128
-    assert config.JK_MODE == "sum"
+    assert config.JK_MODE == "last"
 
     assert config.POOLING_TYPE == "mean"
-    assert config.DROPOUT == pytest.approx(0.2)
+    assert config.DROPOUT == pytest.approx(0.3)
     assert config.NORM_TYPE == "layer"
 
     assert config.PE_TYPE == "level"
