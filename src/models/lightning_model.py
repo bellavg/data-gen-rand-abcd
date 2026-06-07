@@ -79,7 +79,7 @@ class AIGRegressionLightningModule(pl.LightningModule):
                 loss,
                 batch_size=b_size,
                 sync_dist=False,
-                prog_bar=True,
+                prog_bar=False,
                 on_step=is_train,
                 on_epoch=True,
             )
@@ -123,7 +123,7 @@ class AIGRegressionLightningModule(pl.LightningModule):
             "val_loss_epoch",
             val_loss_epoch,
             sync_dist=False,
-            prog_bar=True,
+            prog_bar=False,
             on_step=False,
             on_epoch=True,
         )
@@ -131,6 +131,7 @@ class AIGRegressionLightningModule(pl.LightningModule):
             "val_mae_node_epoch",
             val_mae_node_epoch,
             sync_dist=False,
+            prog_bar=False,
             on_step=False,
             on_epoch=True,
         )
