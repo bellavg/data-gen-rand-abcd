@@ -121,7 +121,7 @@ NUM_WORKERS="${NUM_WORKERS:-${SLURM_CPUS_PER_TASK:-8}}"
 
 echo "Starting Final Training for $ALGORITHM on GPU 0..."
 
-python -u -m train \
+srun python -u -m train \
     --algorithm         "$ALGORITHM" \
     --csv_paths         "$CSV_PATH" \
     --checkpoint_dir    "$CHECKPOINT_DIR" \

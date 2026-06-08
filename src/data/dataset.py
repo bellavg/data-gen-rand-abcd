@@ -191,17 +191,11 @@ class AIGGraphRegressionDataset(PyGDataset):
         hasher.update(str(self.positional_encoding).encode())
 
         for csv_path in sorted(self.csv_paths):
-            st = csv_path.stat()
             hasher.update(str(csv_path.absolute()).encode())
-            hasher.update(str(st.st_size).encode())
-            hasher.update(str(st.st_mtime_ns).encode())
 
         if self.hp_tuning_splits_path is not None:
             hp_path = Path(self.hp_tuning_splits_path)
-            hp_st = hp_path.stat()
-            hasher.update(str(hp_path).encode())
-            hasher.update(str(hp_st.st_size).encode())
-            hasher.update(str(hp_st.st_mtime_ns).encode())
+            hasher.update(str(hp_path.absolute()).encode())
 
         return hasher.hexdigest()[:16]
 
@@ -412,8 +406,6 @@ class AIGGraphRegressionDataset(PyGDataset):
     def _build_samples(self) -> list[GraphSample]:
         samples = self._read_candidate_samples()
         samples = self._apply_split(samples)
-        if self._manifest_path is not None and self._manifest_path.is_file():
-            return samples
         return [s for s in samples if Path(s.graph_path).is_file()]
 
     def _stable_graph_cache_name(self, graph_path: str) -> str:
