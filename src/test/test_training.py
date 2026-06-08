@@ -7,6 +7,7 @@ from torch_geometric.loader import DataLoader as PyGDataLoader
 
 # Adjust imports based on your project structure
 from models.lightning_model import AIGRegressionLightningModule
+from train_utils import TrainingStartupCallback
 
 
 @pytest.fixture
@@ -262,6 +263,21 @@ def test_fast_dev_run(basic_model):
 
     trainer.fit(basic_model, train_dataloaders=loader, val_dataloaders=loader)
     trainer.test(basic_model, dataloaders=loader)
+
+
+def test_training_startup_callback_logs_transitions(capsys):
+    callback = TrainingStartupCallback()
+    trainer = MagicMock()
+    module = MagicMock()
+
+    callback.on_fit_start(trainer, module)
+    callback.on_train_start(trainer, module)
+    callback.on_train_batch_start(trainer, module, batch=None, batch_idx=0)
+
+    output = capsys.readouterr().out
+    assert "Fit entered" in output
+    assert "Training loop started" in output
+    assert "First training batch started" in output
 
 
 @pytest.mark.parametrize(
