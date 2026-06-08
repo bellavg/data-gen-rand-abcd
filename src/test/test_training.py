@@ -1,8 +1,9 @@
+from unittest.mock import MagicMock, patch
+
 import pytest
 import pytorch_lightning as pl
 import torch
 from torch_geometric.data import Batch, Data
-from unittest.mock import MagicMock
 from torch_geometric.loader import DataLoader as PyGDataLoader
 
 # Adjust imports based on your project structure
@@ -46,7 +47,6 @@ def basic_model():
     # Attach a mock Trainer for unit tests that call training_step() directly.
     model.trainer = MagicMock()
     return model
-
 
 
 # ==========================================================
@@ -280,6 +280,18 @@ def test_training_startup_callback_logs_transitions(capsys):
     assert "First training batch started" in output
 
 
+def test_training_startup_callback_logs_epoch_time():
+    callback = TrainingStartupCallback()
+    trainer = MagicMock()
+    module = MagicMock()
+
+    with patch("train_utils.time.monotonic", side_effect=[10.0, 13.5]):
+        callback.on_train_epoch_start(trainer, module)
+        callback.on_train_epoch_end(trainer, module)
+
+    module.log.assert_called_once_with("epoch_time_seconds", 3.5)
+
+
 @pytest.mark.parametrize(
     "encoder_name,extra_kwargs",
     [
@@ -335,9 +347,7 @@ def test_large_graph_forward_backward_no_crash(encoder_name, extra_kwargs):
 
     loss.backward()
     grads = [
-        p.grad
-        for p in model.parameters()
-        if p.requires_grad and p.grad is not None
+        p.grad for p in model.parameters() if p.requires_grad and p.grad is not None
     ]
     assert grads, "Expected at least one non-null gradient tensor"
 
