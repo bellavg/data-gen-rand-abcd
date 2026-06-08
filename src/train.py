@@ -14,7 +14,7 @@ from pytorch_lightning.loggers import WandbLogger
 import config
 from data.datamodule import AIGDataModule
 from models.lightning_model import AIGRegressionLightningModule
-from train_utils import HardwareProfilerCallback, TrainingStartupCallback
+from train_utils import TrainingStartupCallback
 
 ENCODER_KWARGS_DEFAULTS = config.ENCODER_KWARGS_DEFAULTS
 
@@ -31,6 +31,13 @@ def _select_precision() -> str:
 
 
 def main(args):
+    if getattr(args, "enable_hardware_profiler", False):
+        print(
+            "[train] --enable_hardware_profiler is deprecated and ignored; "
+            "epoch timing is logged automatically and WandB captures hardware telemetry.",
+            flush=True,
+        )
+
     torch.backends.cuda.matmul.allow_tf32 = True
     if hasattr(torch.backends, "cudnn"):
         torch.backends.cudnn.allow_tf32 = True
@@ -148,8 +155,6 @@ def main(args):
         LearningRateMonitor(logging_interval="epoch"),
         TrainingStartupCallback(),
     ]
-    if args.enable_hardware_profiler:
-        callbacks.append(HardwareProfilerCallback())
 
     trainer = pl.Trainer(
         max_epochs=args.max_epochs,
@@ -233,7 +238,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--enable_hardware_profiler",
         action="store_true",
-        help="Log epoch wall time and peak VRAM. Keep disabled for long production runs.",
+        help="Deprecated no-op kept for CLI compatibility; WandB already captures hardware telemetry.",
     )
     parser.add_argument(
         "--pin_memory",
