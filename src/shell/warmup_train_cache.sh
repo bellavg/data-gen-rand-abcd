@@ -87,7 +87,7 @@ HP_TUNING_SPLITS="$HP_TUNING_WORKSPACE/shared_dataset_cache/algo_Orchestrate_ml_
 # Number of parallel I/O workers.  Default: all SLURM-allocated CPUs.
 N_IO_WORKERS="${N_IO_WORKERS:-$(nproc)}"
 SPLIT_CACHE_VERSION="${SPLIT_CACHE_VERSION:-2}"
-CACHE_LAYOUT_VERSION="${CACHE_LAYOUT_VERSION:-2}"
+CACHE_LAYOUT_VERSION="${CACHE_LAYOUT_VERSION:-3}"
 
 S1_SPLITS="$HP_TUNING_WORKSPACE/shared_dataset_cache/algo_Orchestrate_ml_algo_Deepsyn_ml_algo_Syn4_ml_algo_C2RS_ml_15000_splits.json"
 S2_SPLITS="$HP_TUNING_WORKSPACE/shared_dataset_cache/algo_Orchestrate_ml_algo_Deepsyn_ml_algo_Syn4_ml_algo_C2RS_ml_35000_splits.json"
@@ -185,7 +185,7 @@ PYEOF
             return 0
         fi
 
-        echo "[warmup:${algo}] Sentinel exists, but split cache metadata is stale. Rebuilding."
+        echo "[warmup:${algo}] Sentinel exists, but cache metadata/layout is stale. Rebuilding."
         rm -f "$sentinel"
     fi
 
@@ -224,6 +224,7 @@ if getattr(config, "DYNAMIC_BUCKET_RULES", None):
 
 dm = AIGDataModule(
     csv_paths=["$csv_path"],
+    positional_encoding=config.PE_TYPE if config.PE_TYPE != "none" else None,
     batch_size=config.BATCH_SIZE,
     split_ratios=(0.8, 0.1, 0.1),
     seed=42,

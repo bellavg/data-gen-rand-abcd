@@ -1,5 +1,6 @@
 import argparse
 import os
+import time
 
 import pytorch_lightning as pl
 import torch
@@ -13,7 +14,7 @@ from pytorch_lightning.loggers import WandbLogger
 import config
 from data.datamodule import AIGDataModule
 from models.lightning_model import AIGRegressionLightningModule
-from train_utils import HardwareProfilerCallback
+from train_utils import HardwareProfilerCallback, TrainingStartupCallback
 
 ENCODER_KWARGS_DEFAULTS = config.ENCODER_KWARGS_DEFAULTS
 
@@ -145,6 +146,7 @@ def main(args):
         checkpoint_cb,
         early_stop_cb,
         LearningRateMonitor(logging_interval="epoch"),
+        TrainingStartupCallback(),
     ]
     if args.enable_hardware_profiler:
         callbacks.append(HardwareProfilerCallback())
@@ -159,12 +161,18 @@ def main(args):
         logger=logger,
         gradient_clip_val=args.gradient_clip_val,
         val_check_interval=args.val_check_interval,
+        num_sanity_val_steps=args.num_sanity_val_steps,
         log_every_n_steps=args.log_steps,
     )
 
     # 7. Run Training & Testing
     print(f"--- Running Training for {args.algorithm} ---")
+    fit_start = time.monotonic()
     trainer.fit(model, datamodule=datamodule)
+    print(
+        f"--- trainer.fit completed for {args.algorithm} in {time.monotonic() - fit_start:.1f}s ---",
+        flush=True,
+    )
 
     # print(f"--- Running Test Set for {args.algorithm} ---")
     # trainer.test(model, datamodule=datamodule, ckpt_path="best")
@@ -213,6 +221,12 @@ if __name__ == "__main__":
             "Validation frequency: if <1.0, fraction of training epoch; "
             "if >=1.0, number of training batches between validations."
         ),
+    )
+    parser.add_argument(
+        "--num_sanity_val_steps",
+        type=int,
+        default=0,
+        help="Lightning sanity-validation batches before training. Default 0 for final-train startup.",
     )
     parser.add_argument("--num_workers", type=int, default=4)
     parser.add_argument("--prefetch_factor", type=int, default=2)
