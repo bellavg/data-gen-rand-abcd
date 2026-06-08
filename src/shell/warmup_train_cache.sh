@@ -108,6 +108,11 @@ elif [[ ! -f "$S1_SPLITS" || ! -f "$S2_SPLITS" ]]; then
     exit 1
 else
     echo "[exclusion] Building 50K exclusion file from Stage-1 + Stage-2 splits..."
+    tmp_exclusion="${HP_TUNING_SPLITS}.tmp.${SLURM_JOB_ID:-$$}.${SLURM_ARRAY_TASK_ID:-0}.$$"
+    cleanup_exclusion_tmp() {
+        rm -f "$tmp_exclusion"
+    }
+    trap cleanup_exclusion_tmp EXIT
     python -u - <<PYEOF
 import json
 from pathlib import Path
@@ -120,13 +125,20 @@ all_keys = list(dict.fromkeys(
     s2.get("train", []) + s2.get("val", []) + s2.get("test", [])
 ))
 
-out = Path("$HP_TUNING_SPLITS")
-out.write_text(
+tmp_out = Path("$tmp_exclusion")
+tmp_out.write_text(
     json.dumps({"train": all_keys, "val": [], "test": []}, indent=2, sort_keys=True),
     encoding="utf-8",
 )
-print(f"[exclusion] Written {len(all_keys)} paths → {out.name}", flush=True)
+print(f"[exclusion] Prepared {len(all_keys)} paths → {tmp_out.name}", flush=True)
 PYEOF
+    if mv -n "$tmp_exclusion" "$HP_TUNING_SPLITS" 2>/dev/null; then
+        echo "[exclusion] Published 50K exclusion file."
+    else
+        echo "[exclusion] Another worker published the exclusion file first. Keeping existing file."
+        rm -f "$tmp_exclusion"
+    fi
+    trap - EXIT
     echo "[exclusion] Done."
 fi
 
