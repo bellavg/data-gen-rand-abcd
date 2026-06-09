@@ -92,7 +92,7 @@ class AIGDataModule(pl.LightningDataModule):
         if include_batch_size:
             kwargs["batch_size"] = self.batch_size
         if self.num_workers > 0:
-            kwargs["persistent_workers"] = self.persistent_workers if is_train else False
+            kwargs["persistent_workers"] = self.persistent_workers
             kwargs["prefetch_factor"] = self.prefetch_factor
         return kwargs
 
