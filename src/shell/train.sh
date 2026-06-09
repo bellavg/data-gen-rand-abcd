@@ -130,7 +130,8 @@ srun python -u -m train \
     --tier0_cache_dir   "$TIER0_CACHE_DIR" \
     --tier1_cache_dir   "$TIER1_CACHE_DIR" \
     --hp_tuning_splits_path "$HP_TUNING_SPLITS" \
-    --num_workers       "$NUM_WORKERS" \
+    --prefetch_factor    4 \
+    --num_workers       8 \
     --patience          10
 
 echo "=========================================="
