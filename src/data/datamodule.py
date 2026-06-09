@@ -75,7 +75,6 @@ class AIGDataModule(pl.LightningDataModule):
         return batch_plan_cache_path(
             sig,
             cache_dir=self.cache_dir,
-            batch_size=self.batch_size,
             max_total_nodes=self.max_total_nodes,
         )
 
@@ -120,7 +119,6 @@ class AIGDataModule(pl.LightningDataModule):
         self._val_batch_plan: list[list[int]] = (
             BalancedDynamicBatchSampler.build_batch_plan(
                 val_sizes,
-                batch_size=self.batch_size,
                 max_total_nodes=self.max_total_nodes,
             )
         )
@@ -155,7 +153,6 @@ class AIGDataModule(pl.LightningDataModule):
                 train_sizes = self.train_ds.get_num_nodes_list()
                 self._train_batch_plan: list[list[int]] = load_or_build_batch_plan(
                     train_sizes,
-                    batch_size=self.batch_size,
                     max_total_nodes=self.max_total_nodes,
                     cache_path=self._dynamic_batch_plan_cache_path(),
                 )
@@ -175,7 +172,6 @@ class AIGDataModule(pl.LightningDataModule):
             if plan is None:
                 plan = load_or_build_batch_plan(
                     self.train_ds.get_num_nodes_list(),
-                    batch_size=self.batch_size,
                     max_total_nodes=self.max_total_nodes,
                     cache_path=self._dynamic_batch_plan_cache_path(),
                 )
@@ -198,7 +194,6 @@ class AIGDataModule(pl.LightningDataModule):
             if precomputed is None:
                 precomputed = BalancedDynamicBatchSampler.build_batch_plan(
                     self.val_ds.get_num_nodes_list(),
-                    batch_size=self.batch_size,
                     max_total_nodes=self.max_total_nodes,
                 )
                 self._val_batch_plan = precomputed

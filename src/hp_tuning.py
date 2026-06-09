@@ -315,8 +315,8 @@ def objective(trial: optuna.Trial, args: argparse.Namespace) -> float:
             huber_delta=huber_delta,
         )
 
-        pruning_cb = PyTorchLightningPruningCallback(trial, monitor="val/mae_node")
-        early_stop_cb = EarlyStopping(monitor="val/mae_node", patience=3, mode="min")
+        pruning_cb = PyTorchLightningPruningCallback(trial, monitor="val_mae_epoch")
+        early_stop_cb = EarlyStopping(monitor="val_mae_epoch", patience=3, mode="min")
         callbacks = [pruning_cb, early_stop_cb]
 
         # Lightweight post-fix sanity snapshots: job 1, trial 0 only.

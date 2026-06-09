@@ -67,7 +67,11 @@ def _make_rows(pt_paths: list[Path], *, opt_start: float = 0.1) -> list[dict]:
 
 
 def _make_design_rows(
-    root: Path, design_names: list[str], *, graphs_per_design: int, opt_start: float = 0.1
+    root: Path,
+    design_names: list[str],
+    *,
+    graphs_per_design: int,
+    opt_start: float = 0.1,
 ) -> list[dict]:
     """Create rows whose graph paths encode the design in the folder structure."""
     data = aig_to_pytorch_geometric(_AIG_PATH)
@@ -489,7 +493,11 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
         tier0_cache_dir = self.root / "gnn_tier0"
 
         AIGGraphRegressionDataset(
-            csv, split="train", cache_dir=cache_dir, tier0_cache_dir=tier0_cache_dir, seed=0
+            csv,
+            split="train",
+            cache_dir=cache_dir,
+            tier0_cache_dir=tier0_cache_dir,
+            seed=0,
         )
 
         self.assertTrue(
@@ -517,7 +525,11 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
 
         # First run: builds .pt files + global map
         AIGGraphRegressionDataset(
-            csv, split="train", cache_dir=cache_dir, tier0_cache_dir=tier0_cache_dir, seed=0
+            csv,
+            split="train",
+            cache_dir=cache_dir,
+            tier0_cache_dir=tier0_cache_dir,
+            seed=0,
         )
 
         # Simulate SLURM kill: delete the train manifest so it must be rebuilt
@@ -532,9 +544,15 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
             load_calls.append(graph_path)
             return _orig_load(self_inner, graph_path)
 
-        with patch.object(AIGGraphRegressionDataset, "_torch_load_graph", _counting_load):
+        with patch.object(
+            AIGGraphRegressionDataset, "_torch_load_graph", _counting_load
+        ):
             AIGGraphRegressionDataset(
-                csv, split="train", cache_dir=cache_dir, tier0_cache_dir=tier0_cache_dir, seed=0
+                csv,
+                split="train",
+                cache_dir=cache_dir,
+                tier0_cache_dir=tier0_cache_dir,
+                seed=0,
             )
 
         self.assertEqual(
@@ -567,7 +585,9 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
 
         # Tier-0 .pt files must appear in tier0_cache_dir
         shared_pts = list(tier0_cache_dir.rglob("*.pt"))
-        self.assertGreater(len(shared_pts), 0, "No .pt files written to tier0_cache_dir")
+        self.assertGreater(
+            len(shared_pts), 0, "No .pt files written to tier0_cache_dir"
+        )
 
         # No .pt files should appear under cache_dir/processed_graphs
         algo_pts = list((cache_dir / "processed_graphs").rglob("*.pt"))
@@ -590,10 +610,18 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
         tier0_cache_dir = self.root / "shared_tier0"
 
         AIGGraphRegressionDataset(
-            csv, split="train", cache_dir=self.root / "algo_a", tier0_cache_dir=tier0_cache_dir, seed=0
+            csv,
+            split="train",
+            cache_dir=self.root / "algo_a",
+            tier0_cache_dir=tier0_cache_dir,
+            seed=0,
         )
         AIGGraphRegressionDataset(
-            csv, split="train", cache_dir=self.root / "algo_b", tier0_cache_dir=tier0_cache_dir, seed=0
+            csv,
+            split="train",
+            cache_dir=self.root / "algo_b",
+            tier0_cache_dir=tier0_cache_dir,
+            seed=0,
         )
 
         # Shared cache has exactly as many unique .pt files as unique source graphs
@@ -602,8 +630,12 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
         }
         self.assertGreater(len(unique_source_hashes), 0)
         # Both algorithm cache dirs should have NO .pt files
-        self.assertEqual(len(list((self.root / "algo_a" / "processed_graphs").rglob("*.pt"))), 0)
-        self.assertEqual(len(list((self.root / "algo_b" / "processed_graphs").rglob("*.pt"))), 0)
+        self.assertEqual(
+            len(list((self.root / "algo_a" / "processed_graphs").rglob("*.pt"))), 0
+        )
+        self.assertEqual(
+            len(list((self.root / "algo_b" / "processed_graphs").rglob("*.pt"))), 0
+        )
 
     def test_tier1_graphs_routed_to_tier1_cache_dir(self):
         """Tier-1 graphs must be cached in tier1_cache_dir, not per-algorithm processed_graphs."""
@@ -626,7 +658,9 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
         )
 
         shared_pts = list(tier1_cache_dir.rglob("*.pt"))
-        self.assertGreater(len(shared_pts), 0, "No .pt files written to tier1_cache_dir")
+        self.assertGreater(
+            len(shared_pts), 0, "No .pt files written to tier1_cache_dir"
+        )
 
         algo_pts = list((cache_dir / "processed_graphs").rglob("*.pt"))
         self.assertEqual(
@@ -664,8 +698,12 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
 
         unique_source_hashes = {p.name for p in tier1_cache_dir.rglob("*.pt")}
         self.assertGreater(len(unique_source_hashes), 0)
-        self.assertEqual(len(list((self.root / "algo_a" / "processed_graphs").rglob("*.pt"))), 0)
-        self.assertEqual(len(list((self.root / "algo_b" / "processed_graphs").rglob("*.pt"))), 0)
+        self.assertEqual(
+            len(list((self.root / "algo_a" / "processed_graphs").rglob("*.pt"))), 0
+        )
+        self.assertEqual(
+            len(list((self.root / "algo_b" / "processed_graphs").rglob("*.pt"))), 0
+        )
 
     def test_manifest_stores_cache_path(self):
         """New manifests store absolute cache_path per entry (not cache_name)."""
@@ -682,7 +720,11 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
         tier0_cache_dir = self.root / "manifest_tier0"
 
         AIGGraphRegressionDataset(
-            csv, split="train", cache_dir=cache_dir, tier0_cache_dir=tier0_cache_dir, seed=0
+            csv,
+            split="train",
+            cache_dir=cache_dir,
+            tier0_cache_dir=tier0_cache_dir,
+            seed=0,
         )
 
         manifest_files = list((cache_dir / "metadata").glob("*_manifest.json"))
@@ -767,7 +809,9 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
 
         self.assertEqual(len(ds_reloaded.samples), len(ds.samples))
         self.assertNotIn(stale_path, ds_reloaded._graph_cache_path_map)
-        self.assertEqual(len(ds_reloaded.get_num_nodes_list()), len(ds_reloaded.samples))
+        self.assertEqual(
+            len(ds_reloaded.get_num_nodes_list()), len(ds_reloaded.samples)
+        )
 
     def test_pos_enc_continuous_is_float(self):
         """Test that continuous features like 'pi_paths' are converted to floats."""
@@ -1052,15 +1096,19 @@ class TestBalancedDynamicBatchSampler(unittest.TestCase):
 
         sizes = [1, 2, 3, 4, 100, 101, 102, 103]
         sampler = BalancedDynamicBatchSampler(
-            sizes, batch_size=4, shuffle=False, seed=123
+            sizes,
+            batch_size=4,
+            shuffle=False,
+            seed=123,
+            max_total_nodes=105,
         )
 
         batches = list(sampler)
-        self.assertEqual(len(batches), 2)
+        self.assertEqual(len(batches), 4)
 
         for batch in batches:
             batch_sizes = [sizes[i] for i in batch]
-            self.assertEqual(len(batch), 4)
+            self.assertEqual(len(batch), 2)
             self.assertGreaterEqual(max(batch_sizes), 100)
             self.assertLessEqual(min(batch_sizes), 4)
 
@@ -1072,24 +1120,45 @@ class TestBalancedDynamicBatchSampler(unittest.TestCase):
         from data.sampler import BalancedDynamicBatchSampler
 
         sizes = [1, 2, 3, 4, 100, 101, 102, 103]
-        batch_size = 4
+        max_total_nodes = 105
 
         sampler = BalancedDynamicBatchSampler(
-            sizes, batch_size=batch_size, shuffle=False, seed=7
+            sizes,
+            batch_size=4,
+            shuffle=False,
+            seed=7,
+            max_total_nodes=max_total_nodes,
         )
         dynamic_batches = list(sampler)
         dynamic_totals = [sum(sizes[i] for i in batch) for batch in dynamic_batches]
 
-        # Baseline: descending contiguous chunks, which tend to pack large graphs.
+        # Baseline: descending contiguous pairs, which tend to pack large graphs together.
         descending_indices = sorted(
             range(len(sizes)), key=lambda i: sizes[i], reverse=True
         )
         baseline_totals = []
-        for start in range(0, len(sizes), batch_size):
-            chunk = descending_indices[start : start + batch_size]
+        for start in range(0, len(sizes), 2):
+            chunk = descending_indices[start : start + 2]
             baseline_totals.append(sum(sizes[i] for i in chunk))
 
         self.assertLess(max(dynamic_totals), max(baseline_totals))
+
+    def test_node_budget_has_no_graph_count_cap(self):
+        from data.sampler import BalancedDynamicBatchSampler
+
+        sizes = [1] * 40
+        sampler = BalancedDynamicBatchSampler(
+            sizes,
+            batch_size=32,
+            shuffle=False,
+            seed=11,
+            max_total_nodes=100,
+        )
+
+        batches = list(sampler)
+
+        self.assertEqual(len(batches), 1)
+        self.assertEqual(len(batches[0]), 40)
 
     def test_max_total_nodes_creates_singletons_for_huge_graphs(self):
         from data.sampler import BalancedDynamicBatchSampler

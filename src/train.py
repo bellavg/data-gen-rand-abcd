@@ -139,7 +139,7 @@ def main(args):
         checkpoint_cb,
         early_stop_cb,
         LearningRateMonitor(logging_interval="epoch"),
-        TrainingStartupCallback(),
+        TrainingStartupCallback(report_every_n_steps=args.log_steps),
     ]
 
     trainer = pl.Trainer(

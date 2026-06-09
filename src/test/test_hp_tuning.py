@@ -787,11 +787,11 @@ class TestPruningCallbackStepSemantics(unittest.TestCase):
         trial.should_prune.return_value = False
         callback = hp_tuning.PyTorchLightningPruningCallback(
             trial,
-            monitor="val/mae_node",
+            monitor="val_mae_epoch",
         )
 
         trainer = types.SimpleNamespace(
-            callback_metrics={"val/mae_node": torch.tensor(0.123)},
+            callback_metrics={"val_mae_epoch": torch.tensor(0.123)},
             current_epoch=0,
             sanity_checking=True,
         )

@@ -7,24 +7,28 @@ from collections import deque
 from pathlib import Path
 
 _DYNAMIC_BATCH_PLAN_CACHE: dict[str, list[list[int]]] = {}
+_NODE_BUDGET_PLAN_VERSION = "node_budget_v3"
 
 
 def batch_plan_cache_path(
     dataset_signature: str | None,
     *,
     cache_dir: Path | str | None,
-    batch_size: int,
     max_total_nodes: int,
 ) -> Path | None:
     if not dataset_signature or cache_dir is None:
         return None
-    key = f"{dataset_signature}|bs={batch_size}|max_nodes={int(max_total_nodes)}"
+    key = f"{dataset_signature}|plan={_NODE_BUDGET_PLAN_VERSION}|max_nodes={int(max_total_nodes)}"
     digest = hashlib.sha1(key.encode("utf-8")).hexdigest()[:16]
     return Path(cache_dir) / "metadata" / "dynamic_batches" / f"train_{digest}.json"
 
 
 class BalancedDynamicBatchSampler:
-    """Build dynamic batches from graph sizes under a total-node budget."""
+    """Build dynamic batches from graph sizes under a total-node budget.
+
+    ``batch_size`` is kept only for call-site compatibility; the node budget
+    alone controls how many graphs are packed into a batch.
+    """
 
     def __init__(
         self,
@@ -47,7 +51,6 @@ class BalancedDynamicBatchSampler:
                 )
             self._base_batches = self.build_batch_plan(
                 sizes,
-                batch_size=max(1, batch_size),
                 max_total_nodes=max(1, int(max_total_nodes)),
             )
         self._epoch = 0
@@ -58,7 +61,6 @@ class BalancedDynamicBatchSampler:
         *,
         sizes: list[int],
         max_total_nodes: int,
-        batch_size: int,
     ) -> list[list[int]]:
         pool = deque(indices)
         batches: list[list[int]] = []
@@ -68,7 +70,7 @@ class BalancedDynamicBatchSampler:
             batch = [largest_idx]
             total_nodes = int(sizes[largest_idx])
 
-            while pool and len(batch) < batch_size:
+            while pool:
                 smallest_idx = pool[0]
                 smallest_nodes = int(sizes[smallest_idx])
                 if total_nodes + smallest_nodes > max_total_nodes:
@@ -85,16 +87,13 @@ class BalancedDynamicBatchSampler:
         cls,
         sizes: list[int],
         *,
-        batch_size: int,
         max_total_nodes: int,
     ) -> list[list[int]]:
-        batch_size = max(1, int(batch_size))
         indices = sorted(range(len(sizes)), key=lambda i: sizes[i])
         return cls._build_node_budgeted_batches(
             indices,
             sizes=sizes,
             max_total_nodes=max(1, int(max_total_nodes)),
-            batch_size=batch_size,
         )
 
     def __len__(self) -> int:
@@ -126,7 +125,6 @@ def _normalize_batch_plan(plan: object, *, sample_count: int) -> list[list[int]]
 def load_or_build_batch_plan(
     sizes: list[int],
     *,
-    batch_size: int,
     max_total_nodes: int,
     cache_path: Path | None = None,
 ) -> list[list[int]]:
@@ -146,7 +144,6 @@ def load_or_build_batch_plan(
 
     built = BalancedDynamicBatchSampler.build_batch_plan(
         sizes,
-        batch_size=batch_size,
         max_total_nodes=max_total_nodes,
     )
 

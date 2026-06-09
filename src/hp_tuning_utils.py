@@ -307,7 +307,6 @@ def _install_hp_guarded_dataloaders(
                 sizes = dm.train_ds.get_num_nodes_list()
                 precomputed_batches = load_or_build_batch_plan(
                     sizes,
-                    batch_size=batch_size,
                     max_total_nodes=max_total_nodes,
                     cache_path=dm._dynamic_batch_plan_cache_path(),
                 )
@@ -338,7 +337,6 @@ def _install_hp_guarded_dataloaders(
                 val_sizes = dm.val_ds.get_num_nodes_list()
                 val_plan = BalancedDynamicBatchSampler.build_batch_plan(
                     val_sizes,
-                    batch_size=batch_size,
                     max_total_nodes=max_total_nodes,
                 )
             if dm is not None:
