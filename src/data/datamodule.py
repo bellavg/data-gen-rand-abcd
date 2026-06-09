@@ -15,6 +15,10 @@ from data.sampler import (
 )
 
 
+def raw_list_collate(batch):
+    return batch
+
+
 class AIGDataModule(pl.LightningDataModule):
     def __init__(
         self,
@@ -142,6 +146,7 @@ class AIGDataModule(pl.LightningDataModule):
         return DataLoader(
             ds,
             batch_sampler=sampler,
+            collate_fn=raw_list_collate,
             **self._loader_kwargs(include_batch_size=False, is_train=is_train),
         )
 
@@ -185,6 +190,7 @@ class AIGDataModule(pl.LightningDataModule):
         return DataLoader(
             self.train_ds,
             shuffle=True,
+            collate_fn=raw_list_collate,
             **self._loader_kwargs(is_train=True),
         )
 
@@ -206,6 +212,7 @@ class AIGDataModule(pl.LightningDataModule):
         return DataLoader(
             self.val_ds,
             shuffle=False,
+            collate_fn=raw_list_collate,
             **self._loader_kwargs(is_train=False),
         )
 
@@ -213,6 +220,7 @@ class AIGDataModule(pl.LightningDataModule):
         return DataLoader(
             self.test_ds,
             shuffle=False,
+            collate_fn=raw_list_collate,
             **self._loader_kwargs(is_train=False),
         )
 

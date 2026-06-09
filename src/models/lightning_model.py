@@ -3,6 +3,7 @@ from typing import Any, Dict, Optional
 import pytorch_lightning as pl
 import torch
 import torch.nn.functional as F
+import torch_geometric
 
 from config import MIN_LR
 from constants import EDGE_ATTR_DIM, NODE_INPUT_DIM, TASK_OUT_DIM
@@ -128,13 +129,19 @@ class AIGRegressionLightningModule(pl.LightningModule):
     def training_step(self, batch: object, batch_idx: int) -> Optional[torch.Tensor]:
         # if hasattr(self.model.encoder, "redraw_projection"):
         #     self.model.encoder.redraw_projection.redraw_projections()
-        return self._compute_loss_and_metrics(batch, batch_idx, prefix="train")
+        batch_list = [d.to(self.device) for d in batch]
+        gpu_batch = torch_geometric.data.Batch.from_data_list(batch_list)
+        return self._compute_loss_and_metrics(gpu_batch, batch_idx, prefix="train")
 
     def validation_step(self, batch: object, batch_idx: int) -> None:
-        self._compute_loss_and_metrics(batch, batch_idx, prefix="val")
+        batch_list = [d.to(self.device) for d in batch]
+        gpu_batch = torch_geometric.data.Batch.from_data_list(batch_list)
+        self._compute_loss_and_metrics(gpu_batch, batch_idx, prefix="val")
 
     def test_step(self, batch: object, batch_idx: int) -> None:
-        self._compute_loss_and_metrics(batch, batch_idx, prefix="test")
+        batch_list = [d.to(self.device) for d in batch]
+        gpu_batch = torch_geometric.data.Batch.from_data_list(batch_list)
+        self._compute_loss_and_metrics(gpu_batch, batch_idx, prefix="test")
 
     def configure_optimizers(self) -> Dict[str, Any]:
         initial_lr = self.hparams.lr
