@@ -44,7 +44,7 @@ class AIGRegressionLightningModule(pl.LightningModule):
             pooling_type=self.hparams.pooling_type,
             encoder_kwargs=self.hparams.encoder_kwargs,
         )
-        self.model = torch.compile(self.model, dynamic=True)
+        # self.model = torch.compile(self.model, dynamic=True)
 
     def forward(self, batch: object) -> torch.Tensor:
         return self.model.forward_batch(batch)
