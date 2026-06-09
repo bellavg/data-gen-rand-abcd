@@ -4,7 +4,7 @@ import warnings
 from pathlib import Path
 
 import pytorch_lightning as pl
-from torch_geometric.loader import DataLoader
+from torch.utils.data import DataLoader
 
 import config
 from data.dataset import AIGGraphRegressionDataset
