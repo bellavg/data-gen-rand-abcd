@@ -913,13 +913,13 @@ class TestAIGDataModule(unittest.TestCase):
         self.assertTrue(train_kwargs["persistent_workers"])
         self.assertFalse(val_kwargs["persistent_workers"])
 
-    def test_persistent_workers_train_only_bucketed_dataloaders(self):
+    def test_persistent_workers_train_only_budgeted_dataloaders(self):
         dm = self._make_dm(
             num_workers=2,
             persistent_workers=True,
             prefetch_factor=1,
             dynamic_batching=True,
-            dynamic_bucket_rules=[(30, 2)],
+            max_total_nodes=30,
         )
 
         train_loader = dm.train_dataloader()
@@ -1091,7 +1091,7 @@ class TestBalancedDynamicBatchSampler(unittest.TestCase):
 
         self.assertLess(max(dynamic_totals), max(baseline_totals))
 
-    def test_bucket_rules_create_singletons_for_huge_graphs(self):
+    def test_max_total_nodes_creates_singletons_for_huge_graphs(self):
         from data.sampler import BalancedDynamicBatchSampler
 
         sizes = [1, 2, 3, 4, 100, 101, 300, 350]
@@ -1100,7 +1100,7 @@ class TestBalancedDynamicBatchSampler(unittest.TestCase):
             batch_size=8,
             shuffle=False,
             seed=1,
-            bucket_rules=[(300, 1), (100, 2)],
+            max_total_nodes=300,
         )
 
         batches = list(sampler)
@@ -1116,7 +1116,7 @@ class TestBalancedDynamicBatchSampler(unittest.TestCase):
         flattened = [idx for batch in batches for idx in batch]
         self.assertEqual(set(flattened), set(range(len(sizes))))
 
-    def test_bucket_rules_pair_large_with_small(self):
+    def test_max_total_nodes_fills_with_smallest_graphs_first(self):
         from data.sampler import BalancedDynamicBatchSampler
 
         sizes = [1, 2, 3, 4, 100, 101, 300, 350]
@@ -1125,23 +1125,15 @@ class TestBalancedDynamicBatchSampler(unittest.TestCase):
             batch_size=8,
             shuffle=False,
             seed=1,
-            bucket_rules=[(300, 1), (100, 2)],
+            max_total_nodes=350,
         )
 
         batches = list(sampler)
-        idx_101 = sizes.index(101)
-        idx_100 = sizes.index(100)
+        idx_300 = sizes.index(300)
+        batch_300 = next(batch for batch in batches if idx_300 in batch)
 
-        batch_101 = next(batch for batch in batches if idx_101 in batch)
-        batch_100 = next(batch for batch in batches if idx_100 in batch)
-
-        self.assertEqual(len(batch_101), 2)
-        self.assertEqual(len(batch_100), 2)
-
-        mate_101 = next(i for i in batch_101 if i != idx_101)
-        mate_100 = next(i for i in batch_100 if i != idx_100)
-        self.assertLessEqual(sizes[mate_101], 2)
-        self.assertLessEqual(sizes[mate_100], 3)
+        self.assertEqual(sorted(sizes[i] for i in batch_300), [1, 2, 3, 4, 300])
+        self.assertLessEqual(sum(sizes[i] for i in batch_300), 350)
 
 
 # ---------------------------------------------------------------------------

@@ -197,29 +197,6 @@ def _estimate_memory_tokens(
     return (node_term + edge_term) * expansion_factor * gps_multiplier
 
 
-def _parse_dynamic_bucket_rules(
-    rule_text: str | None,
-) -> list[tuple[int, int]]:
-    """Parse dynamic bucket rules from CLI text.
-
-    Format: ``"min_nodes:batch_size,min_nodes:batch_size,..."``.
-    Example: ``"300000:1,180000:2,90000:4"``.
-
-    Args:
-        rule_text: Raw CLI string, or ``None`` / empty to return an empty list.
-
-    Returns:
-        List of ``(min_nodes, batch_size)`` tuples as provided.
-    """
-    if not rule_text:
-        return []
-    parsed: list[tuple[int, int]] = []
-    for chunk in (r.strip() for r in rule_text.split(",") if r.strip()):
-        min_nodes, target = chunk.split(":", 1)
-        parsed.append((int(min_nodes), int(target)))
-    return parsed
-
-
 # ---------------------------------------------------------------------------
 # 4. Memory-guard collate (pre-allocation OOM prevention)
 # ---------------------------------------------------------------------------
@@ -301,12 +278,12 @@ def _install_hp_guarded_dataloaders(
     Args:
         datamodule: The ``AIGDataModule`` instance to patch.
         memory_guard: Dict passed to :func:`_build_guarded_collate`.
-        dynamic_batching: Whether to use bucket-based dynamic batching.
+        dynamic_batching: Whether to use node-budgeted dynamic batching.
     """
     guarded_collate = _build_guarded_collate(memory_guard)
     seed = int(getattr(datamodule, "seed", 42))
-    bucket_rules = list(datamodule.dynamic_bucket_rules)
-    use_buckets = dynamic_batching and bool(bucket_rules)
+    max_total_nodes = int(datamodule.max_total_nodes)
+    use_dynamic_batching = dynamic_batching
 
     batch_size = datamodule.batch_size
     train_kw = datamodule._loader_kwargs(is_train=True)
@@ -315,15 +292,14 @@ def _install_hp_guarded_dataloaders(
     val_kw_no_bs = datamodule._loader_kwargs(include_batch_size=False, is_train=False)
     _dm_ref = weakref.ref(datamodule)
 
-    if use_buckets:
-        rules_text = ", ".join(f"{nodes}:{size}" for nodes, size in bucket_rules)
+    if use_dynamic_batching:
         print(
-            f"[memory_guard] dynamic bucket rules (min_nodes:batch_size): {rules_text}"
+            f"[memory_guard] max_total_nodes_per_batch={max_total_nodes}"
         )
 
     def train_dataloader() -> DataLoader:
         dm = _dm_ref()
-        if use_buckets:
+        if use_dynamic_batching:
             precomputed_batches = (
                 getattr(dm, "_train_batch_plan", None) if dm is not None else None
             )
@@ -332,14 +308,14 @@ def _install_hp_guarded_dataloaders(
                 precomputed_batches = load_or_build_batch_plan(
                     sizes,
                     batch_size=batch_size,
-                    bucket_rules=bucket_rules,
+                    max_total_nodes=max_total_nodes,
                     cache_path=dm._dynamic_batch_plan_cache_path(),
                 )
             sampler = BalancedDynamicBatchSampler(
                 batch_size=batch_size,
                 shuffle=True,
                 seed=seed,
-                bucket_rules=bucket_rules,
+                max_total_nodes=max_total_nodes,
                 precomputed_batches=precomputed_batches,
             )
             if dm is not None:
@@ -356,14 +332,14 @@ def _install_hp_guarded_dataloaders(
 
     def val_dataloader() -> DataLoader:
         dm = _dm_ref()
-        if use_buckets:
+        if use_dynamic_batching:
             val_plan = getattr(dm, "_val_batch_plan", None) if dm is not None else None
             if val_plan is None:
                 val_sizes = dm.val_ds.get_num_nodes_list()
                 val_plan = BalancedDynamicBatchSampler.build_batch_plan(
                     val_sizes,
                     batch_size=batch_size,
-                    bucket_rules=bucket_rules,
+                    max_total_nodes=max_total_nodes,
                 )
             if dm is not None:
                 dm._val_batch_plan = None
@@ -371,7 +347,7 @@ def _install_hp_guarded_dataloaders(
                 batch_size=batch_size,
                 shuffle=False,
                 seed=seed,
-                bucket_rules=bucket_rules,
+                max_total_nodes=max_total_nodes,
                 precomputed_batches=val_plan,
             )
             return DataLoader(

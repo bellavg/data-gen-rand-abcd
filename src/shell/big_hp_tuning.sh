@@ -108,15 +108,15 @@ else
 fi
 
 # Stage-specific memory defaults. Stage 2 keeps safety guards enabled but uses
-# larger H100-oriented limits and less restrictive dynamic buckets.
+# larger H100-oriented limits and the same node budget.
 if [[ "$STAGE" == "2" ]]; then
     MEMORY_GUARD_MAX_TOKENS="${MEMORY_GUARD_MAX_TOKENS:-1.2e10}"
     HARD_PRUNE_RISK="${HARD_PRUNE_RISK:-1.5e10}"
-    DYNAMIC_BUCKET_RULES="${DYNAMIC_BUCKET_RULES:-240000:1,160000:1,100000:2}"
+    MAX_TOTAL_NODES_PER_BATCH="${MAX_TOTAL_NODES_PER_BATCH:-1000000}"
 else
     MEMORY_GUARD_MAX_TOKENS="${MEMORY_GUARD_MAX_TOKENS:-2.5e8}"
     HARD_PRUNE_RISK="${HARD_PRUNE_RISK:-1e10}"
-    DYNAMIC_BUCKET_RULES="${DYNAMIC_BUCKET_RULES:-}"
+    MAX_TOTAL_NODES_PER_BATCH="${MAX_TOTAL_NODES_PER_BATCH:-1000000}"
 fi
 HARD_PRUNE="${HARD_PRUNE:-true}"
 
@@ -266,8 +266,8 @@ fi
 if [ "$DYNAMIC_BATCHING" = "true" ]; then
     EXTRA_FLAGS+=(--dynamic_batching)
 fi
-if [ "$DYNAMIC_BATCHING" = "true" ] && [ -n "$DYNAMIC_BUCKET_RULES" ]; then
-    EXTRA_FLAGS+=(--dynamic_bucket_rules "$DYNAMIC_BUCKET_RULES")
+if [ "$DYNAMIC_BATCHING" = "true" ]; then
+    EXTRA_FLAGS+=(--max_total_nodes_per_batch "$MAX_TOTAL_NODES_PER_BATCH")
 fi
 if [ "$USE_IN_MEMORY_STORAGE" = "true" ]; then
     EXTRA_FLAGS+=(--in_memory_storage)
@@ -278,7 +278,7 @@ fi
 
 echo "DataLoader config: num_workers=$NUM_WORKERS pin_memory=$PIN_MEMORY persistent_workers=$PERSISTENT_WORKERS prefetch_factor=$PREFETCH_FACTOR dynamic_batching=$DYNAMIC_BATCHING"
 echo "Memory guard: max_tokens=$MEMORY_GUARD_MAX_TOKENS hard_prune=$HARD_PRUNE hard_prune_risk=$HARD_PRUNE_RISK"
-echo "Dynamic buckets: ${DYNAMIC_BUCKET_RULES:-(disabled)}"
+echo "Dynamic node budget: ${MAX_TOTAL_NODES_PER_BATCH}"
 echo "Restart policy: max_restarts_on_oom=$MAX_RESTARTS_ON_OOM restart_delay_sec=$RESTART_DELAY_SEC"
 
 echo "Starting Big Worker $TASK_ID on GPU 0 (stage=$STAGE sampler_seed=$SAMPLER_SEED, study=$STUDY_NAME)..."
