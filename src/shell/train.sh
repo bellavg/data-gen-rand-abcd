@@ -113,8 +113,8 @@ fi
 # 4. Runtime settings
 # =========================================================
 # Number of data-loader workers (default: SLURM_CPUS_PER_TASK or 16)
-NUM_WORKERS="${NUM_WORKERS:-${SLURM_CPUS_PER_TASK:-8}}"
-
+NUM_WORKERS="${NUM_WORKERS:-${SLURM_CPUS_PER_TASK:-16}}"
+echo "Using NUM_WORKERS=$NUM_WORKERS for data loading."
 # =========================================================
 # 5. EXECUTE TRAINING
 # =========================================================

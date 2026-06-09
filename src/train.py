@@ -16,6 +16,8 @@ from data.datamodule import AIGDataModule
 from models.lightning_model import AIGRegressionLightningModule
 from train_utils import TrainingStartupCallback
 
+torch.set_num_threads(1)
+
 ENCODER_KWARGS_DEFAULTS = config.ENCODER_KWARGS_DEFAULTS
 
 
@@ -222,7 +224,7 @@ if __name__ == "__main__":
         help="Lightning sanity-validation batches before training. Default 0 for final-train startup.",
     )
     parser.add_argument("--num_workers", type=int, default=4)
-    parser.add_argument("--prefetch_factor", type=int, default=2)
+    parser.add_argument("--prefetch_factor", type=int, default=8)
     parser.add_argument(
         "--enable_hardware_profiler",
         action="store_true",
