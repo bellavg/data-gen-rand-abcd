@@ -126,20 +126,24 @@ class AIGRegressionLightningModule(pl.LightningModule):
 
         return loss if prefix == "train" else None
 
+    @staticmethod
+    def _unwrap_batch(batch):
+        return [d[0] if isinstance(d, tuple) else d for d in batch]
+
     def training_step(self, batch: object, batch_idx: int) -> Optional[torch.Tensor]:
         # if hasattr(self.model.encoder, "redraw_projection"):
         #     self.model.encoder.redraw_projection.redraw_projections()
-        batch_list = [d.to(self.device) for d in batch]
+        batch_list = [d.to(self.device) for d in self._unwrap_batch(batch)]
         gpu_batch = torch_geometric.data.Batch.from_data_list(batch_list)
         return self._compute_loss_and_metrics(gpu_batch, batch_idx, prefix="train")
 
     def validation_step(self, batch: object, batch_idx: int) -> None:
-        batch_list = [d.to(self.device) for d in batch]
+        batch_list = [d.to(self.device) for d in self._unwrap_batch(batch)]
         gpu_batch = torch_geometric.data.Batch.from_data_list(batch_list)
         self._compute_loss_and_metrics(gpu_batch, batch_idx, prefix="val")
 
     def test_step(self, batch: object, batch_idx: int) -> None:
-        batch_list = [d.to(self.device) for d in batch]
+        batch_list = [d.to(self.device) for d in self._unwrap_batch(batch)]
         gpu_batch = torch_geometric.data.Batch.from_data_list(batch_list)
         self._compute_loss_and_metrics(gpu_batch, batch_idx, prefix="test")
 
