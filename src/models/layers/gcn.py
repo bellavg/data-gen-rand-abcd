@@ -50,7 +50,7 @@ class GCNConvWithEdges(MessagePassing):
             row, col = edge_index
             deg = degree(col, x.size(0), dtype=x.dtype)
             deg_inv_sqrt = deg.pow(-0.5)
-            deg_inv_sqrt[deg_inv_sqrt == float("inf")] = 0
+            deg_inv_sqrt.nan_to_num_(posinf=0.0)
             edge_weight = deg_inv_sqrt[row] * deg_inv_sqrt[col]
 
         x = self.lin(x)
