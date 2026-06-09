@@ -1,4 +1,4 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, call, patch
 
 import pytest
 import pytorch_lightning as pl
@@ -241,6 +241,87 @@ def test_loss_logic(basic_model, dummy_batch):
 
     assert loss_high > loss_low
     assert loss_low < 0.01
+
+
+def test_training_step_logs_step_and_epoch_metrics(basic_model, dummy_batch):
+    basic_model.trainer.sanity_checking = False
+    basic_model.log = MagicMock()
+    basic_model.forward = MagicMock(return_value=torch.zeros((5, 1)))
+
+    loss = basic_model.training_step(dummy_batch, batch_idx=0)
+
+    assert torch.isfinite(loss)
+    basic_model.log.assert_has_calls(
+        [
+            call(
+                "train_loss_step",
+                ANY,
+                batch_size=5,
+                sync_dist=False,
+                prog_bar=False,
+                on_step=True,
+                on_epoch=False,
+            ),
+            call(
+                "train_mae_step",
+                ANY,
+                batch_size=5,
+                sync_dist=False,
+                prog_bar=False,
+                on_step=True,
+                on_epoch=False,
+            ),
+            call(
+                "train_loss_epoch",
+                ANY,
+                batch_size=5,
+                sync_dist=False,
+                prog_bar=False,
+                on_step=False,
+                on_epoch=True,
+            ),
+            call(
+                "train_mae_epoch",
+                ANY,
+                batch_size=5,
+                sync_dist=False,
+                prog_bar=False,
+                on_step=False,
+                on_epoch=True,
+            ),
+        ]
+    )
+
+
+def test_validation_step_logs_epoch_metrics_only(basic_model, dummy_batch):
+    basic_model.trainer.sanity_checking = False
+    basic_model.log = MagicMock()
+    basic_model.forward = MagicMock(return_value=torch.zeros((5, 1)))
+
+    basic_model.validation_step(dummy_batch, batch_idx=0)
+
+    basic_model.log.assert_has_calls(
+        [
+            call(
+                "val_loss_epoch",
+                ANY,
+                batch_size=5,
+                sync_dist=False,
+                prog_bar=False,
+                on_step=False,
+                on_epoch=True,
+            ),
+            call(
+                "val_mae_epoch",
+                ANY,
+                batch_size=5,
+                sync_dist=False,
+                prog_bar=False,
+                on_step=False,
+                on_epoch=True,
+            ),
+        ]
+    )
 
 
 def test_fast_dev_run(basic_model):

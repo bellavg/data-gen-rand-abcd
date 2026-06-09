@@ -4,7 +4,7 @@ import pytorch_lightning as pl
 
 
 class TrainingStartupCallback(pl.Callback):
-    def __init__(self):
+    def __init__(self, report_every_n_steps: int = 1000):
         self._fit_start_time: float | None = None
         self._epoch_start_time: float | None = None
         self._first_batch_reported = False
@@ -17,9 +17,10 @@ class TrainingStartupCallback(pl.Callback):
         self._train_graph_count = 0
         self._train_node_count = 0
         self._train_edge_count = 0
+        self._report_every_n_steps = max(1, int(report_every_n_steps))
 
     def _should_report_batch(self, batch_idx: int) -> bool:
-        return batch_idx < 5 or ((batch_idx + 1) % 10000 == 0)
+        return batch_idx == 0 or ((batch_idx + 1) % self._report_every_n_steps == 0)
 
     def _format_val_batches(self, trainer) -> str:
         num_val_batches = getattr(trainer, "num_val_batches", None)
@@ -30,7 +31,15 @@ class TrainingStartupCallback(pl.Callback):
         return str(int(num_val_batches))
 
     def _batch_stats(self, batch) -> tuple[int, int, int]:
-        num_graphs = int(getattr(batch, "num_graphs", 1))
+        num_graphs = getattr(batch, "num_graphs", None)
+        if num_graphs is None:
+            targets = getattr(batch, "y", None)
+            if getattr(targets, "dim", None) is not None and targets.dim() > 0:
+                num_graphs = int(targets.size(0))
+            else:
+                num_graphs = 1
+        else:
+            num_graphs = int(num_graphs)
         num_nodes = int(batch.x.size(0)) if getattr(batch, "x", None) is not None else 0
         edge_index = getattr(batch, "edge_index", None)
         num_edges = int(edge_index.size(1)) if edge_index is not None else 0

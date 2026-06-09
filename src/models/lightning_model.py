@@ -49,10 +49,57 @@ class AIGRegressionLightningModule(pl.LightningModule):
     def forward(self, batch: object) -> torch.Tensor:
         return self.model.forward_batch(batch)
 
+    @staticmethod
+    def _logged_graph_count(batch: object, targets: torch.Tensor) -> int:
+        num_graphs = getattr(batch, "num_graphs", None)
+        if num_graphs is not None:
+            return int(num_graphs)
+        if targets.dim() > 0:
+            return int(targets.size(0))
+        return 1
+
+    def _log_stage_metrics(
+        self,
+        *,
+        prefix: str,
+        loss: torch.Tensor,
+        mae: torch.Tensor,
+        batch_size: int,
+        log_step: bool,
+        log_epoch: bool,
+    ) -> None:
+        for suffix, on_step, on_epoch in (
+            ("step", True, False),
+            ("epoch", False, True),
+        ):
+            if (suffix == "step" and not log_step) or (
+                suffix == "epoch" and not log_epoch
+            ):
+                continue
+
+            self.log(
+                f"{prefix}_loss_{suffix}",
+                loss,
+                batch_size=batch_size,
+                sync_dist=False,
+                prog_bar=False,
+                on_step=on_step,
+                on_epoch=on_epoch,
+            )
+            self.log(
+                f"{prefix}_mae_{suffix}",
+                mae,
+                batch_size=batch_size,
+                sync_dist=False,
+                prog_bar=False,
+                on_step=on_step,
+                on_epoch=on_epoch,
+            )
+
     def _compute_loss_and_metrics(
         self, batch: object, batch_idx: int, prefix: str
     ) -> Optional[torch.Tensor]:
-        """Compute loss and metrics, and log them to the logger."""
+        """Compute loss and metrics and log step/epoch aggregates explicitly."""
         preds = self.forward(batch)
         targets = batch.y
 
@@ -60,49 +107,21 @@ class AIGRegressionLightningModule(pl.LightningModule):
             targets = targets.view(-1, self.hparams.task_out_dim)
 
         loss = F.huber_loss(preds, targets, delta=self.hparams.huber_delta)
-        mae_node_opt = F.l1_loss(preds.squeeze(-1), targets.squeeze(-1))
+        mae = F.l1_loss(preds.squeeze(-1), targets.squeeze(-1))
 
         if self.trainer is not None:
-            b_size = getattr(batch, "num_graphs", 1)
-            metric_prefix = prefix.replace("/", "_")
-            # Log on_step only for training, keep validation/test on_epoch-only
-            is_train = prefix == "train"
+            b_size = self._logged_graph_count(batch, targets)
+            if prefix == "val" and getattr(self.trainer, "sanity_checking", False):
+                return None
 
-            self.log(
-                f"{metric_prefix}_loss",
-                loss,
+            self._log_stage_metrics(
+                prefix=prefix,
+                loss=loss,
+                mae=mae,
                 batch_size=b_size,
-                sync_dist=False,
-                prog_bar=False,
-                on_step=is_train,
-                on_epoch=True,
+                log_step=prefix == "train",
+                log_epoch=True,
             )
-            self.log(
-                f"{metric_prefix}_mae_node",
-                mae_node_opt,
-                batch_size=b_size,
-                sync_dist=False,
-                on_step=is_train,
-                on_epoch=True,
-            )
-
-            if prefix == "val" and not getattr(self.trainer, "sanity_checking", False):
-                self.log(
-                    f"{metric_prefix}_loss_epoch",
-                    loss,
-                    batch_size=b_size,
-                    sync_dist=False,
-                    on_step=False,
-                    on_epoch=True,
-                )
-                self.log(
-                    f"{metric_prefix}_mae_node_epoch",
-                    mae_node_opt,
-                    batch_size=b_size,
-                    sync_dist=False,
-                    on_step=False,
-                    on_epoch=True,
-                )
 
         return loss if prefix == "train" else None
 
