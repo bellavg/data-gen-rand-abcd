@@ -18,7 +18,6 @@ from hp_tuning_utils import (
     _estimate_trial_risk,
     _install_hp_guarded_dataloaders,
     _mark_trial_outcome,
-    _parse_dynamic_bucket_rules,
     _purge_trial_memory,
     _runtime_oom_prune_payload,
     _select_trainer_precision,
@@ -272,8 +271,6 @@ def objective(trial: optuna.Trial, args: argparse.Namespace) -> float:
             )
 
     try:
-        dynamic_bucket_rules = _parse_dynamic_bucket_rules(args.dynamic_bucket_rules)
-
         guard_expansion = 3.0 if encoder_name in ATTENTION_ENCODERS else 2.0
         memory_guard = {
             "hidden_dim": hidden_dim,
@@ -298,7 +295,7 @@ def objective(trial: optuna.Trial, args: argparse.Namespace) -> float:
             pin_memory=args.pin_memory,
             prefetch_factor=args.prefetch_factor,
             dynamic_batching=args.dynamic_batching,
-            dynamic_bucket_rules=dynamic_bucket_rules,
+            max_total_nodes=args.max_total_nodes_per_batch,
         )
         _install_hp_guarded_dataloaders(
             datamodule,
@@ -560,14 +557,10 @@ if __name__ == "__main__":
         help="Enable dynamic batch construction based on graph size.",
     )
     parser.add_argument(
-        "--dynamic_bucket_rules",
-        type=str,
-        default="",
-        help=(
-            "Optional bucket rules for dynamic batching in the format "
-            "'min_nodes:batch_size,min_nodes:batch_size'. "
-            "Example: '300000:1,180000:2,90000:4'."
-        ),
+        "--max_total_nodes_per_batch",
+        type=int,
+        default=1_000_000,
+        help="Maximum total node budget per dynamically constructed batch.",
     )
     parser.add_argument(
         "--memory_guard_max_tokens",

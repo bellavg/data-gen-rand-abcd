@@ -6,6 +6,7 @@ from pathlib import Path
 import pytorch_lightning as pl
 from torch_geometric.loader import DataLoader
 
+import config
 from data.dataset import AIGGraphRegressionDataset
 from data.sampler import (
     BalancedDynamicBatchSampler,
@@ -29,7 +30,7 @@ class AIGDataModule(pl.LightningDataModule):
         pin_memory: bool = False,
         prefetch_factor: int = 1,
         dynamic_batching: bool = False,
-        dynamic_bucket_rules: list[tuple[int, int]] | None = None,
+        max_total_nodes: int = config.MAX_TOTAL_NODES_PER_BATCH,
         train_num_samples: int | None = None,
         test_num_samples: int | None = None,
         hp_tuning_splits_path: str | Path | None = None,
@@ -48,10 +49,7 @@ class AIGDataModule(pl.LightningDataModule):
         self.pin_memory = pin_memory
         self.prefetch_factor = prefetch_factor
         self.dynamic_batching = dynamic_batching
-        self.dynamic_bucket_rules = BalancedDynamicBatchSampler._normalize_bucket_rules(
-            dynamic_bucket_rules,
-            self.batch_size,
-        )
+        self.max_total_nodes = max(1, int(max_total_nodes))
         self.train_num_samples = train_num_samples
         self.test_num_samples = test_num_samples
         self.hp_tuning_splits_path = hp_tuning_splits_path
@@ -78,7 +76,7 @@ class AIGDataModule(pl.LightningDataModule):
             sig,
             cache_dir=self.cache_dir,
             batch_size=self.batch_size,
-            bucket_rules=self.dynamic_bucket_rules,
+            max_total_nodes=self.max_total_nodes,
         )
 
     def _loader_kwargs(
@@ -116,19 +114,19 @@ class AIGDataModule(pl.LightningDataModule):
         )
 
     def _ensure_val_plan(self) -> None:
-        if not (self.dynamic_batching and self.dynamic_bucket_rules):
+        if not self.dynamic_batching:
             return
         val_sizes = self.val_ds.get_num_nodes_list()
         self._val_batch_plan: list[list[int]] = (
             BalancedDynamicBatchSampler.build_batch_plan(
                 val_sizes,
                 batch_size=self.batch_size,
-                bucket_rules=self.dynamic_bucket_rules,
+                max_total_nodes=self.max_total_nodes,
             )
         )
         self.val_ds.release_runtime_caches()
 
-    def _make_bucketed_dataloader(
+    def _make_budgeted_dataloader(
         self,
         ds,
         plan: list[list[int]],
@@ -140,7 +138,7 @@ class AIGDataModule(pl.LightningDataModule):
             batch_size=self.batch_size,
             shuffle=shuffle,
             seed=self.seed,
-            bucket_rules=self.dynamic_bucket_rules,
+            max_total_nodes=self.max_total_nodes,
             precomputed_batches=plan,
         )
         return DataLoader(
@@ -153,12 +151,12 @@ class AIGDataModule(pl.LightningDataModule):
         if stage in ("fit", None):
             self.train_ds = self._make_dataset("train", self.train_num_samples)
             self.val_ds = self._make_dataset("val", self.train_num_samples)
-            if self.dynamic_batching and self.dynamic_bucket_rules:
+            if self.dynamic_batching:
                 train_sizes = self.train_ds.get_num_nodes_list()
                 self._train_batch_plan: list[list[int]] = load_or_build_batch_plan(
                     train_sizes,
                     batch_size=self.batch_size,
-                    bucket_rules=self.dynamic_bucket_rules,
+                    max_total_nodes=self.max_total_nodes,
                     cache_path=self._dynamic_batch_plan_cache_path(),
                 )
                 self.train_ds.release_runtime_caches()
@@ -172,17 +170,17 @@ class AIGDataModule(pl.LightningDataModule):
             self.test_ds = self._make_dataset("test", self.test_num_samples)
 
     def train_dataloader(self) -> DataLoader:
-        if self.dynamic_batching and self.dynamic_bucket_rules:
+        if self.dynamic_batching:
             plan = getattr(self, "_train_batch_plan", None)
             if plan is None:
                 plan = load_or_build_batch_plan(
                     self.train_ds.get_num_nodes_list(),
                     batch_size=self.batch_size,
-                    bucket_rules=self.dynamic_bucket_rules,
+                    max_total_nodes=self.max_total_nodes,
                     cache_path=self._dynamic_batch_plan_cache_path(),
                 )
             self._train_batch_plan = None
-            return self._make_bucketed_dataloader(
+            return self._make_budgeted_dataloader(
                 self.train_ds,
                 plan,
                 shuffle=True,
@@ -195,16 +193,16 @@ class AIGDataModule(pl.LightningDataModule):
         )
 
     def val_dataloader(self) -> DataLoader:
-        if self.dynamic_batching and self.dynamic_bucket_rules:
+        if self.dynamic_batching:
             precomputed = getattr(self, "_val_batch_plan", None)
             if precomputed is None:
                 precomputed = BalancedDynamicBatchSampler.build_batch_plan(
                     self.val_ds.get_num_nodes_list(),
                     batch_size=self.batch_size,
-                    bucket_rules=self.dynamic_bucket_rules,
+                    max_total_nodes=self.max_total_nodes,
                 )
                 self._val_batch_plan = precomputed
-            return self._make_bucketed_dataloader(
+            return self._make_budgeted_dataloader(
                 self.val_ds,
                 precomputed,
                 shuffle=False,

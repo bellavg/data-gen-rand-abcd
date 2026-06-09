@@ -58,20 +58,6 @@ def main(args):
     print(f"--- Starting Final Training for Algorithm: {args.algorithm} ---")
 
     # 2. Setup DataModule
-    # Parse dynamic_bucket_rules string into list of (int, int) tuples
-    parsed_rules = []
-    if getattr(args, "dynamic_bucket_rules", None):
-        try:
-            parsed_rules = [
-                tuple(map(int, item.split(":")))
-                for item in args.dynamic_bucket_rules.split(",")
-                if item.strip()
-            ]
-        except Exception as e:
-            raise ValueError(
-                f"Failed to parse dynamic_bucket_rules: {args.dynamic_bucket_rules}"
-            ) from e
-
     datamodule = AIGDataModule(
         csv_paths=args.csv_paths,
         positional_encoding=args.pe_type if args.pe_type != "none" else None,
@@ -86,7 +72,7 @@ def main(args):
         tier0_cache_dir=args.tier0_cache_dir,
         tier1_cache_dir=args.tier1_cache_dir,
         dynamic_batching=getattr(args, "dynamic_batching", False),
-        dynamic_bucket_rules=parsed_rules,
+        max_total_nodes=args.max_total_nodes_per_batch,
     )
 
     # 3. Configure Encoder Kwargs
@@ -208,7 +194,9 @@ if __name__ == "__main__":
         default=config.DYNAMIC_BATCHING,
     )
     parser.add_argument(
-        "--dynamic_bucket_rules", type=str, default=config.DYNAMIC_BUCKET_RULES
+        "--max_total_nodes_per_batch",
+        type=int,
+        default=config.MAX_TOTAL_NODES_PER_BATCH,
     )
 
     # Training Loop Parameters

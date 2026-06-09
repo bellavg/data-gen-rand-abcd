@@ -225,15 +225,6 @@ from data.datamodule import AIGDataModule
 
 t0 = time.monotonic()
 
-# Parse dynamic bucket rules from config
-parsed_rules = []
-if getattr(config, "DYNAMIC_BUCKET_RULES", None):
-    parsed_rules = [
-        tuple(map(int, s.split(':')))
-        for s in config.DYNAMIC_BUCKET_RULES.split(',')
-        if s.strip()
-    ]
-
 dm = AIGDataModule(
     csv_paths=["$csv_path"],
     positional_encoding=config.PE_TYPE if config.PE_TYPE != "none" else None,
@@ -247,7 +238,7 @@ dm = AIGDataModule(
     hp_tuning_splits_path=$splits_arg,
     # Precompute node-sizes so dynamic_batching=True is instant at training time.
     dynamic_batching=config.DYNAMIC_BATCHING,
-    dynamic_bucket_rules=parsed_rules,
+    max_total_nodes=config.MAX_TOTAL_NODES_PER_BATCH,
 )
 
 # Warm train + val only; test does not need to be preloaded.
