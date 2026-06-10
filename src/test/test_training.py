@@ -385,6 +385,44 @@ def test_training_startup_callback_logs_epoch_time():
     module.log.assert_called_once_with("epoch_time_seconds", 3.5)
 
 
+def test_training_startup_callback_logs_step_time_with_explicit_batch_size():
+    callback = TrainingStartupCallback()
+    trainer = MagicMock()
+    module = MagicMock()
+
+    batch = tuple(
+        [
+            Data(
+                x=torch.randn(5, 4),
+                edge_index=torch.randint(0, 5, (2, 10)),
+                edge_attr=torch.randn(10, 2),
+                y=torch.randn(1, 1),
+            ),
+            Data(
+                x=torch.randn(6, 4),
+                edge_index=torch.randint(0, 6, (2, 12)),
+                edge_attr=torch.randn(12, 2),
+                y=torch.randn(1, 1),
+            ),
+        ]
+    )
+
+    with patch("train_utils.time.monotonic", side_effect=[10.0, 10.5]):
+        callback.on_train_batch_start(trainer, module, batch=batch, batch_idx=0)
+        callback.on_train_batch_end(
+            trainer, module, outputs=None, batch=batch, batch_idx=0
+        )
+
+    module.log.assert_called_once_with(
+        "train_step_time_s",
+        0.5,
+        batch_size=2,
+        on_step=True,
+        on_epoch=True,
+        prog_bar=True,
+    )
+
+
 @pytest.mark.parametrize(
     "encoder_name,extra_kwargs",
     [
