@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import MagicMock
 
 import pytorch_lightning as pl
 import torch
@@ -12,7 +13,6 @@ from models.base_model import UnifiedGraphBaseModel
 from models.layers.positional_encodings import get_pe_transform
 from models.lightning_model import AIGRegressionLightningModule
 from models.model_utils import get_batch_positional_encoding
-from unittest.mock import MagicMock
 
 # ---------------------------------------------------------------------------
 # Shared constants & dummy data generators for AIGs
@@ -319,7 +319,7 @@ class TestPositionalEncodingCompatibility(unittest.TestCase):
         data = _make_aig_data(seed=2)
         transform = get_pe_transform("level")
         data = transform(data)
-        batch = next(iter(DataLoader([data, data], batch_size=2)))
+        batch = [data, data]
 
         # Fixed: Corrected keyword arguments
         lm = AIGRegressionLightningModule(

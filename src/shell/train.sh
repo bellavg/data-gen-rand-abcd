@@ -5,7 +5,8 @@
 #SBATCH --cpus-per-task=16
 #SBATCH --partition=gpu_h100
 #SBATCH --gpus=1
-#SBATCH --array=0-3                      # 4 jobs total (indices 0, 1, 2, 3)
+#SBATCH --array=0-3   
+#SBATCH --constraint=scratch-node
 #SBATCH --output=logs/train_%A_%a.out    # %A is the array master job ID, %a is the task index
 #
 # Recommended: pre-warm the dataset cache on a CPU node before submitting this
@@ -18,6 +19,9 @@
 # immediately, so the dependency is cheap.
 
 set -euo pipefail
+
+export TEMP="$TMPDIR"
+export TMP="$TMPDIR"
 
 echo "=========================================="
 echo "JOB ARRAY ID: $SLURM_ARRAY_JOB_ID, TASK ID: $SLURM_ARRAY_TASK_ID"
