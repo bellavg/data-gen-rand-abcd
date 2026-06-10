@@ -50,6 +50,23 @@ class AIGRegressionLightningModule(pl.LightningModule):
     def forward(self, batch: object) -> torch.Tensor:
         return self.model.forward_batch(batch)
 
+    def _to_geometric_batch(self, batch: object) -> torch_geometric.data.Batch:
+        if isinstance(batch, torch_geometric.data.Batch):
+            return batch.to(self.device)
+
+        if isinstance(batch, torch_geometric.data.Data):
+            return torch_geometric.data.Batch.from_data_list([batch.to(self.device)])
+
+        if isinstance(batch, (list, tuple)):
+            if len(batch) == 1:
+                return self._to_geometric_batch(batch[0])
+            if all(hasattr(item, "to") for item in batch):
+                return torch_geometric.data.Batch.from_data_list(
+                    [item.to(self.device) for item in batch]
+                )
+
+        raise TypeError(f"Unsupported batch type: {type(batch)!r}")
+
     @staticmethod
     def _logged_graph_count(batch: object, targets: torch.Tensor) -> int:
         num_graphs = getattr(batch, "num_graphs", None)
@@ -129,18 +146,15 @@ class AIGRegressionLightningModule(pl.LightningModule):
     def training_step(self, batch: object, batch_idx: int) -> Optional[torch.Tensor]:
         # if hasattr(self.model.encoder, "redraw_projection"):
         #     self.model.encoder.redraw_projection.redraw_projections()
-        batch_list = [d.to(self.device) for d in batch]
-        gpu_batch = torch_geometric.data.Batch.from_data_list(batch_list)
+        gpu_batch = self._to_geometric_batch(batch)
         return self._compute_loss_and_metrics(gpu_batch, batch_idx, prefix="train")
 
     def validation_step(self, batch: object, batch_idx: int) -> None:
-        batch_list = [d.to(self.device) for d in batch]
-        gpu_batch = torch_geometric.data.Batch.from_data_list(batch_list)
+        gpu_batch = self._to_geometric_batch(batch)
         self._compute_loss_and_metrics(gpu_batch, batch_idx, prefix="val")
 
     def test_step(self, batch: object, batch_idx: int) -> None:
-        batch_list = [d.to(self.device) for d in batch]
-        gpu_batch = torch_geometric.data.Batch.from_data_list(batch_list)
+        gpu_batch = self._to_geometric_batch(batch)
         self._compute_loss_and_metrics(gpu_batch, batch_idx, prefix="test")
 
     def configure_optimizers(self) -> Dict[str, Any]:

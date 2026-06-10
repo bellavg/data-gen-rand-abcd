@@ -243,6 +243,18 @@ def test_loss_logic(basic_model, dummy_batch):
     assert loss_low < 0.01
 
 
+def test_training_step_accepts_tuple_batches(basic_model, dummy_batch):
+    basic_model.trainer.sanity_checking = False
+    basic_model.log = MagicMock()
+    basic_model.forward = MagicMock(return_value=torch.zeros((5, 1)))
+
+    tuple_batch = tuple(dummy_batch.to_data_list())
+    loss = basic_model.training_step(tuple_batch, batch_idx=0)
+
+    assert torch.isfinite(loss)
+    basic_model.forward.assert_called_once()
+
+
 def test_training_step_logs_step_and_epoch_metrics(basic_model, dummy_batch):
     basic_model.trainer.sanity_checking = False
     basic_model.log = MagicMock()
