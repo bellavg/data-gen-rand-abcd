@@ -31,6 +31,10 @@ class TrainingStartupCallback(pl.Callback):
         return str(int(num_val_batches))
 
     def _batch_stats(self, batch) -> tuple[int, int, int]:
+        if isinstance(batch, (list, tuple)):
+            stats = [self._batch_stats(item) for item in batch]
+            return tuple(map(sum, zip(*stats))) if stats else (0, 0, 0)
+
         num_graphs = getattr(batch, "num_graphs", None)
         if num_graphs is None:
             targets = getattr(batch, "y", None)
@@ -121,11 +125,13 @@ class TrainingStartupCallback(pl.Callback):
         if self._batch_start_time is not None:
             step_time = end_time - self._batch_start_time
             self._train_step_time_sum += step_time
+            num_graphs, _, _ = self._batch_stats(batch)
 
             # Log step time to W&B - logs on every step and averages at end of epoch
             pl_module.log(
                 "train_step_time_s",
                 step_time,
+                batch_size=num_graphs,
                 on_step=True,
                 on_epoch=True,
                 prog_bar=True,
