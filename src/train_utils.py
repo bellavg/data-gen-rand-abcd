@@ -96,30 +96,41 @@ class TrainingStartupCallback(pl.Callback):
 
         if self._first_batch_reported or batch_idx != 0:
             if self._should_report_batch(batch_idx):
-                print(
-                    "[train] Batch stats: "
-                    f"idx={batch_idx} graphs={num_graphs} nodes={num_nodes} "
-                    f"edges={num_edges} data_wait_s={wait_time:.3f}",
-                    flush=True,
-                )
+                # print(
+                #     "[train] Batch stats: "
+                #     f"idx={batch_idx} graphs={num_graphs} nodes={num_nodes} "
+                #     f"edges={num_edges} data_wait_s={wait_time:.3f}",
+                #     flush=True,
+                # )
+                pass
             return
         self._first_batch_reported = True
         print(
             f"[train] First training batch started after {self._elapsed():.1f}s.",
             flush=True,
         )
-        print(
-            "[train] Batch stats: "
-            f"idx={batch_idx} graphs={num_graphs} nodes={num_nodes} "
-            f"edges={num_edges} data_wait_s={wait_time:.3f}",
-            flush=True,
-        )
+        # print(
+        #     "[train] Batch stats: "
+        #     f"idx={batch_idx} graphs={num_graphs} nodes={num_nodes} "
+        #     f"edges={num_edges} data_wait_s={wait_time:.3f}",
+        #     flush=True,
+        # )
 
     def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
         end_time = time.monotonic()
         if self._batch_start_time is not None:
             step_time = end_time - self._batch_start_time
             self._train_step_time_sum += step_time
+
+            # Log step time to W&B - logs on every step and averages at end of epoch
+            pl_module.log(
+                "train_step_time_s",
+                step_time,
+                on_step=True,
+                on_epoch=True,
+                prog_bar=True,
+            )
+
             if self._should_report_batch(batch_idx):
                 print(
                     f"[train] Batch compute: idx={batch_idx} step_s={step_time:.3f}",
@@ -135,19 +146,19 @@ class TrainingStartupCallback(pl.Callback):
             return
         epoch_duration = time.monotonic() - self._epoch_start_time
         pl_module.log("epoch_time_seconds", epoch_duration)
-        if self._train_batch_count > 0:
-            avg_graphs = self._train_graph_count / self._train_batch_count
-            avg_nodes = self._train_node_count / self._train_batch_count
-            avg_edges = self._train_edge_count / self._train_batch_count
-            avg_wait = self._train_wait_time_sum / self._train_batch_count
-            avg_step = self._train_step_time_sum / self._train_batch_count
-            print(
-                "[train] Epoch summary: "
-                f"avg_graphs_per_batch={avg_graphs:.2f} "
-                f"avg_nodes_per_batch={avg_nodes:.0f} "
-                f"avg_edges_per_batch={avg_edges:.0f} "
-                f"avg_data_wait_s={avg_wait:.3f} "
-                f"avg_step_s={avg_step:.3f} "
-                f"epoch_s={epoch_duration:.1f}",
-                flush=True,
-            )
+        # if self._train_batch_count > 0:
+        #     avg_graphs = self._train_graph_count / self._train_batch_count
+        #     avg_nodes = self._train_node_count / self._train_batch_count
+        #     avg_edges = self._train_edge_count / self._train_batch_count
+        #     avg_wait = self._train_wait_time_sum / self._train_batch_count
+        #     avg_step = self._train_step_time_sum / self._train_batch_count
+        # print(
+        #     "[train] Epoch summary: "
+        #     f"avg_graphs_per_batch={avg_graphs:.2f} "
+        #     f"avg_nodes_per_batch={avg_nodes:.0f} "
+        #     f"avg_edges_per_batch={avg_edges:.0f} "
+        #     f"avg_data_wait_s={avg_wait:.3f} "
+        #     f"avg_step_s={avg_step:.3f} "
+        #     f"epoch_s={epoch_duration:.1f}",
+        #     flush=True,
+        # )

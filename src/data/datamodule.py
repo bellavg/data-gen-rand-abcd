@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytorch_lightning as pl
 from torch.utils.data import DataLoader
+from torch_geometric.data import Batch
 
 import config
 from data.dataset import AIGGraphRegressionDataset
@@ -13,10 +14,6 @@ from data.sampler import (
     batch_plan_cache_path,
     load_or_build_batch_plan,
 )
-
-
-def raw_list_collate(batch):
-    return batch
 
 
 class AIGDataModule(pl.LightningDataModule):
@@ -95,7 +92,9 @@ class AIGDataModule(pl.LightningDataModule):
         if include_batch_size:
             kwargs["batch_size"] = self.batch_size
         if self.num_workers > 0:
-            kwargs["persistent_workers"] = self.persistent_workers
+            kwargs["persistent_workers"] = (
+                self.persistent_workers if is_train else False
+            )
             kwargs["prefetch_factor"] = self.prefetch_factor
         return kwargs
 
@@ -146,7 +145,7 @@ class AIGDataModule(pl.LightningDataModule):
         return DataLoader(
             ds,
             batch_sampler=sampler,
-            collate_fn=raw_list_collate,
+            collate_fn=Batch.from_data_list,
             **self._loader_kwargs(include_batch_size=False, is_train=is_train),
         )
 
@@ -190,7 +189,7 @@ class AIGDataModule(pl.LightningDataModule):
         return DataLoader(
             self.train_ds,
             shuffle=True,
-            collate_fn=raw_list_collate,
+            collate_fn=Batch.from_data_list,
             **self._loader_kwargs(is_train=True),
         )
 
@@ -212,7 +211,7 @@ class AIGDataModule(pl.LightningDataModule):
         return DataLoader(
             self.val_ds,
             shuffle=False,
-            collate_fn=raw_list_collate,
+            collate_fn=Batch.from_data_list,
             **self._loader_kwargs(is_train=False),
         )
 
@@ -220,7 +219,7 @@ class AIGDataModule(pl.LightningDataModule):
         return DataLoader(
             self.test_ds,
             shuffle=False,
-            collate_fn=raw_list_collate,
+            collate_fn=Batch.from_data_list,
             **self._loader_kwargs(is_train=False),
         )
 
