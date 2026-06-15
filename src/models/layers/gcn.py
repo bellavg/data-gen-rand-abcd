@@ -1,8 +1,9 @@
+from typing import Optional
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch_geometric.nn as gnn  # 1. Standard alias for PyG layers
-from typing import Optional
 from torch import Tensor
 from torch_geometric.nn import MessagePassing
 from torch_geometric.typing import Adj
@@ -33,7 +34,9 @@ class GCNConvWithEdges(MessagePassing):
         self.edge_encoder = gnn.Linear(edge_dim, out_channels, bias=False)
         self.bias_param = nn.Parameter(torch.zeros(out_channels)) if bias else None
 
-    def message(self, x_j: Tensor, edge_weight: Optional[Tensor], edge_attr: Tensor) -> Tensor:
+    def message(
+        self, x_j: Tensor, edge_weight: Optional[Tensor], edge_attr: Tensor
+    ) -> Tensor:
         # Encode edge attributes and fuse with neighbour features before GCN scaling.
         # edge_attr is passed directly through propagate() — no instance-variable side
         # channel so this is thread-safe and works correctly with DataLoader workers.
@@ -60,7 +63,9 @@ class GCNConvWithEdges(MessagePassing):
 
         x = self.lin(x)
 
-        out = self.propagate(edge_index, x=x, edge_weight=edge_weight, edge_attr=edge_attr, size=None)
+        out = self.propagate(
+            edge_index, x=x, edge_weight=edge_weight, edge_attr=edge_attr, size=None
+        )
 
         if self.bias_param is not None:
             out = out + self.bias_param
@@ -92,7 +97,6 @@ class GCNConvLayer(nn.Module):
             normalize=normalize_edges,
             bias=True,
         )
-        self.norm_node = get_norm_layer(norm_type, dim_out)
         self.act = nn.LeakyReLU()  # Maintain LeakyReLU for symmetric target range
         self.drop = nn.Dropout(dropout)
 
@@ -120,16 +124,18 @@ class GCNConvLayer(nn.Module):
         x_in = x
 
         # 1. Message Passing
-        x = self.model(x, edge_index=edge_index, edge_attr=edge_attr, edge_weight=edge_weight)
+        x = self.model(
+            x, edge_index=edge_index, edge_attr=edge_attr, edge_weight=edge_weight
+        )
 
-        # 2. Graph-Aware Normalization
-        x = apply_norm(self.norm_node, x, batch)
+        # 2. Post-message activation/dropout
         x = self.act(x)
         x = self.drop(x)
 
         # 3. Residual Connection
         if x_in.shape == x.shape:
             x = x_in + x
+        # First layer may have dim_in != dim_out; skip residual in that case.
 
         # 4. FFN Block
         x = apply_norm(self.norm1_local, x, batch)
@@ -160,8 +166,9 @@ class GCNEncoder(nn.Module):
         self.num_layers = num_layers
         self.jk_mode = kwargs.get("jk_mode", "cat")
 
-        # 4. Use gnn.Linear for initial projection
-        if node_input_dim != hid_dim:
+        # Initial projection is only needed when JK explicitly includes raw input.
+        self.use_input_jk = self.jk_mode == "cat"
+        if self.use_input_jk and node_input_dim != hid_dim:
             self.jk_proj = gnn.Linear(node_input_dim, hid_dim)
         else:
             self.jk_proj = nn.Identity()
@@ -181,9 +188,8 @@ class GCNEncoder(nn.Module):
             )
 
     def forward(self, x, edge_index, edge_attr, batch=None, edge_weight=None):
-        x_jk = self.jk_proj(x)
-
         if self.jk_mode == "cat":
+            x_jk = self.jk_proj(x)
             h_list = [x_jk]
             for layer in self.layers:
                 x = layer(
@@ -197,8 +203,15 @@ class GCNEncoder(nn.Module):
             return torch.cat(h_list, dim=1)
 
         elif self.jk_mode == "max":
-            res = x_jk
-            for layer in self.layers:
+            x = self.layers[0](
+                x,
+                edge_index=edge_index,
+                edge_attr=edge_attr,
+                batch=batch,
+                edge_weight=edge_weight,
+            )
+            res = x
+            for layer in self.layers[1:]:
                 x = layer(
                     x,
                     edge_index=edge_index,
@@ -210,8 +223,15 @@ class GCNEncoder(nn.Module):
             return res
 
         elif self.jk_mode == "sum":
-            res = x_jk
-            for layer in self.layers:
+            x = self.layers[0](
+                x,
+                edge_index=edge_index,
+                edge_attr=edge_attr,
+                batch=batch,
+                edge_weight=edge_weight,
+            )
+            res = x
+            for layer in self.layers[1:]:
                 x = layer(
                     x,
                     edge_index=edge_index,
