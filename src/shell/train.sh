@@ -68,8 +68,8 @@ cd "$BASE_DIR"
 # 2. ARRAY MAPPING (Algorithm & Data)
 # =========================================================
 
-# Define our 4 algorithms
-ALGORITHMS=("Orchestrate" "Deepsyn" "Syn4" "C2RS")
+# Define our 3 algorithms
+ALGORITHMS=("Orchestrate" "Deepsyn" "C2RS")
 
 # Select the algorithm for this specific array task
 ALGORITHM=${ALGORITHMS[$SLURM_ARRAY_TASK_ID]}

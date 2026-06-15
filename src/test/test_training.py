@@ -266,43 +266,27 @@ def test_training_step_logs_step_and_epoch_metrics(basic_model, dummy_batch):
     basic_model.log.assert_has_calls(
         [
             call(
-                "train_loss_step",
+                "train_loss",
                 ANY,
                 batch_size=5,
                 sync_dist=False,
                 prog_bar=False,
                 on_step=True,
-                on_epoch=False,
-            ),
-            call(
-                "train_mae_step",
-                ANY,
-                batch_size=5,
-                sync_dist=False,
-                prog_bar=False,
-                on_step=True,
-                on_epoch=False,
-            ),
-            call(
-                "train_loss_epoch",
-                ANY,
-                batch_size=5,
-                sync_dist=False,
-                prog_bar=False,
-                on_step=False,
                 on_epoch=True,
             ),
             call(
-                "train_mae_epoch",
+                "train_rmse",
                 ANY,
                 batch_size=5,
                 sync_dist=False,
                 prog_bar=False,
-                on_step=False,
+                on_step=True,
                 on_epoch=True,
             ),
         ]
     )
+    logged_names = [args[0] for args, _ in basic_model.log.call_args_list]
+    assert "train_r2" not in logged_names
 
 
 def test_validation_step_logs_epoch_metrics_only(basic_model, dummy_batch):
@@ -315,7 +299,7 @@ def test_validation_step_logs_epoch_metrics_only(basic_model, dummy_batch):
     basic_model.log.assert_has_calls(
         [
             call(
-                "val_loss_epoch",
+                "val_loss",
                 ANY,
                 batch_size=5,
                 sync_dist=False,
@@ -324,7 +308,16 @@ def test_validation_step_logs_epoch_metrics_only(basic_model, dummy_batch):
                 on_epoch=True,
             ),
             call(
-                "val_mae_epoch",
+                "val_rmse",
+                ANY,
+                batch_size=5,
+                sync_dist=False,
+                prog_bar=False,
+                on_step=False,
+                on_epoch=True,
+            ),
+            call(
+                "val_r2",
                 ANY,
                 batch_size=5,
                 sync_dist=False,
