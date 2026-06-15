@@ -5,7 +5,6 @@ import time
 import pytorch_lightning as pl
 import torch
 from pytorch_lightning.callbacks import (
-    EarlyStopping,
     LearningRateMonitor,
     ModelCheckpoint,
 )
@@ -14,7 +13,7 @@ from pytorch_lightning.loggers import WandbLogger
 import config
 from data.datamodule import AIGDataModule
 from models.lightning_model import AIGRegressionLightningModule
-from train_utils import TrainingStartupCallback
+from train_utils import PreciseEarlyStopping, TrainingStartupCallback
 
 torch.set_num_threads(1)
 
@@ -86,6 +85,7 @@ def main(args):
             "dropout": args.dropout,
             "norm_type": args.norm_type,
             "jk_mode": args.jk_mode,
+            "normalize_edges": config.NORMALIZE_EDGES,
         }
     )
 
@@ -120,7 +120,7 @@ def main(args):
         save_on_train_epoch_end=True,
     )
 
-    early_stop_cb = EarlyStopping(
+    early_stop_cb = PreciseEarlyStopping(
         monitor="val_loss_epoch",
         patience=args.patience,
         mode="min",
@@ -141,7 +141,10 @@ def main(args):
         checkpoint_cb,
         early_stop_cb,
         LearningRateMonitor(logging_interval="epoch"),
-        TrainingStartupCallback(report_every_n_steps=args.log_steps),
+        TrainingStartupCallback(
+            report_every_n_steps=args.log_steps,
+            max_batch_compute_reports=args.max_batch_compute_reports,
+        ),
     ]
 
     trainer = pl.Trainer(
@@ -241,6 +244,15 @@ if __name__ == "__main__":
         default=config.PERSISTENT_WORKERS,
     )
     parser.add_argument("--log_steps", type=int, default=config.LOG_EVERY_N_STEPS)
+    parser.add_argument(
+        "--max_batch_compute_reports",
+        type=int,
+        default=config.MAX_BATCH_COMPUTE_REPORTS,
+        help=(
+            "Maximum number of '[train] Batch compute' lines to print "
+            "during the full run."
+        ),
+    )
 
     # Algorithm & Data Arguments
     parser.add_argument(

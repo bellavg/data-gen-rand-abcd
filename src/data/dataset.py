@@ -118,6 +118,7 @@ class AIGGraphRegressionDataset(PyGDataset):
         csv_paths: str | Path | list[str | Path],
         *,
         positional_encoding: str | None = None,
+        normalize_edges: bool = False,
         split: str | None = None,
         cache_dir: str | Path | None = None,
         tier0_cache_dir: str | Path | None = None,
@@ -134,6 +135,7 @@ class AIGGraphRegressionDataset(PyGDataset):
             self.csv_paths = [Path(p) for p in csv_paths]
 
         self.positional_encoding = positional_encoding
+        self.normalize_edges = bool(normalize_edges)
         self.split = split
         self.cache_dir = Path(cache_dir) if cache_dir is not None else None
         self._tier0_cache_dir = Path(tier0_cache_dir) if tier0_cache_dir is not None else None
@@ -439,19 +441,20 @@ class AIGGraphRegressionDataset(PyGDataset):
             return torch.load(fh, map_location="cpu", weights_only=True)
 
     def _prepare_cached_graph(self, data_obj: _PyGData) -> _PyGData:
-        if (
-            getattr(data_obj, "edge_weight", None) is None
-            and getattr(data_obj, "edge_index", None) is not None
-        ):
-            edge_index = data_obj.edge_index
-            if edge_index.numel() > 0:
-                row, col = edge_index
-                deg = degree(col, data_obj.num_nodes, dtype=data_obj.x.dtype)
-                deg_inv_sqrt = deg.pow(-0.5)
-                deg_inv_sqrt[deg_inv_sqrt == float("inf")] = 0
-                data_obj.edge_weight = deg_inv_sqrt[row] * deg_inv_sqrt[col]
-            else:
-                data_obj.edge_weight = torch.empty((0,), dtype=data_obj.x.dtype)
+        if self.normalize_edges:
+            if (
+                getattr(data_obj, "edge_weight", None) is None
+                and getattr(data_obj, "edge_index", None) is not None
+            ):
+                edge_index = data_obj.edge_index
+                if edge_index.numel() > 0:
+                    row, col = edge_index
+                    deg = degree(col, data_obj.num_nodes, dtype=data_obj.x.dtype)
+                    deg_inv_sqrt = deg.pow(-0.5)
+                    deg_inv_sqrt[deg_inv_sqrt == float("inf")] = 0
+                    data_obj.edge_weight = deg_inv_sqrt[row] * deg_inv_sqrt[col]
+                else:
+                    data_obj.edge_weight = torch.empty((0,), dtype=data_obj.x.dtype)
 
         if self._cache_precomputed_level_pe and getattr(data_obj, "pos_enc", None) is None:
             data_obj = self.pe_transform(data_obj)
@@ -463,7 +466,7 @@ class AIGGraphRegressionDataset(PyGDataset):
         if cache_path.is_file():
             obj = self._torch_load_graph(cache_path)
             needs_refresh = (
-                getattr(obj, "edge_weight", None) is None
+                (self.normalize_edges and getattr(obj, "edge_weight", None) is None)
                 or (
                     self._cache_precomputed_level_pe
                     and getattr(obj, "pos_enc", None) is None
@@ -676,6 +679,10 @@ class AIGGraphRegressionDataset(PyGDataset):
     def get(self, idx: int) -> _PyGData:
         sample = self.samples[idx]
         data_obj = self._load_graph_for_sample(sample)
+        if not self.normalize_edges and hasattr(data_obj, "edge_weight"):
+            # Keep edge_weight in cache files, but drop it from runtime samples
+            # to avoid unnecessary batching/device transfer when disabled.
+            del data_obj.edge_weight
         data_obj.y = torch.tensor([[sample.y_node_opt]], dtype=torch.float32)
         return data_obj
 
