@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch_geometric.nn as gnn  # 1. Standard alias for PyG layers
+from typing import Optional
 from torch import Tensor
 from torch_geometric.nn import MessagePassing
 from torch_geometric.typing import Adj
@@ -32,7 +33,7 @@ class GCNConvWithEdges(MessagePassing):
         self.edge_encoder = gnn.Linear(edge_dim, out_channels, bias=False)
         self.bias_param = nn.Parameter(torch.zeros(out_channels)) if bias else None
 
-    def message(self, x_j: Tensor, edge_weight: Tensor | None, edge_attr: Tensor) -> Tensor:
+    def message(self, x_j: Tensor, edge_weight: Optional[Tensor], edge_attr: Tensor) -> Tensor:
         # Encode edge attributes and fuse with neighbour features before GCN scaling.
         # edge_attr is passed directly through propagate() — no instance-variable side
         # channel so this is thread-safe and works correctly with DataLoader workers.
