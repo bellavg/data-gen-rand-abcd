@@ -29,6 +29,7 @@ class UnifiedGraphBaseModel(nn.Module):
         hidden_dim: int,
         encoder_kwargs: Dict,
         pe_type: str,
+        head_dropout: Optional[float] = None,
         pos_enc_dim: Optional[int] = 0,
         node_input_dim: int = 4,
         edge_attr_dim: int = 2,
@@ -90,7 +91,22 @@ class UnifiedGraphBaseModel(nn.Module):
             )
         encoder_cls = ENCODER_REGISTRY[self.encoder_name]
         self.encoder = encoder_cls(**self.kwargs)
-        self.head = nn.Linear(self.kwargs["output_dim"], int(task_out_dim))
+
+        head_in_dim = self.kwargs["output_dim"]
+        head_hidden_dim = head_in_dim // 2
+        head_dropout = (
+            float(head_dropout)
+            if head_dropout is not None
+            else float(encoder_kwargs.get("dropout", 0.0))
+        )
+
+        self.head = nn.Sequential(
+            nn.Linear(head_in_dim, head_hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(p=head_dropout),
+            nn.Linear(head_hidden_dim, int(task_out_dim)),
+            nn.Sigmoid(),
+        )
 
     def _integrate_positional_encoding(
         self, x: torch.Tensor, pos_enc: Optional[torch.Tensor]

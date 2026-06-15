@@ -11,6 +11,7 @@ from optuna.storages import RDBStorage
 from pytorch_lightning.callbacks import EarlyStopping
 from pytorch_lightning.loggers import CSVLogger
 
+import config
 from data.datamodule import AIGDataModule
 from hp_tuning_utils import (
     ATTENTION_ENCODERS,
@@ -171,8 +172,6 @@ def objective(trial: optuna.Trial, args: argparse.Namespace) -> float:
     batch_size = trial.suggest_categorical("batch_size", BATCH_SIZE_CHOICES)
     lr = trial.suggest_float("lr", 1e-4, 1e-2, log=True)
     weight_decay = trial.suggest_float("weight_decay", 1e-5, 1e-2, log=True)
-    huber_delta = trial.suggest_float("huber_delta", 0.5, 2.0)
-
     encoder_name = trial.suggest_categorical(
         "encoder_name",
         ["gine", "transformer_conv", "graphgps", "egin", "gcn", "vanilla_mpnn"],
@@ -312,11 +311,15 @@ def objective(trial: optuna.Trial, args: argparse.Namespace) -> float:
             encoder_kwargs=encoder_kwargs,
             lr=lr,
             weight_decay=weight_decay,
-            huber_delta=huber_delta,
+            scheduler_patience=config.SCHEDULER_PATIENCE,
+            warmup_steps=config.WARMUP_STEPS,
+            warmup_start_lr=config.WARMUP_START_LR,
         )
 
-        pruning_cb = PyTorchLightningPruningCallback(trial, monitor="val_mae_epoch")
-        early_stop_cb = EarlyStopping(monitor="val_mae_epoch", patience=3, mode="min")
+        pruning_cb = PyTorchLightningPruningCallback(trial, monitor="val_loss")
+        early_stop_cb = EarlyStopping(
+            monitor="val_loss", patience=config.PATIENCE, mode="min"
+        )
         callbacks = [pruning_cb, early_stop_cb]
 
         # Lightweight post-fix sanity snapshots: job 1, trial 0 only.

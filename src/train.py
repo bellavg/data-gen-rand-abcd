@@ -4,6 +4,7 @@ import time
 
 import pytorch_lightning as pl
 import torch
+import torch.nn as nn
 from pytorch_lightning.callbacks import (
     LearningRateMonitor,
     ModelCheckpoint,
@@ -11,6 +12,7 @@ from pytorch_lightning.callbacks import (
 from pytorch_lightning.loggers import WandbLogger
 
 import config
+from config import HEAD_DROPOUT, NORMALIZE_EDGES
 from data.datamodule import AIGDataModule
 from models.lightning_model import AIGRegressionLightningModule
 from train_utils import PreciseEarlyStopping, TrainingStartupCallback
@@ -85,7 +87,7 @@ def main(args):
             "dropout": args.dropout,
             "norm_type": args.norm_type,
             "jk_mode": args.jk_mode,
-            "normalize_edges": config.NORMALIZE_EDGES,
+            "normalize_edges": NORMALIZE_EDGES,
         }
     )
 
@@ -100,10 +102,13 @@ def main(args):
         pos_enc_dim=args.pos_enc_dim if args.pe_type != "none" else 0,
         pooling_type=args.pooling_type,
         encoder_kwargs=encoder_kwargs,
+        head_dropout=HEAD_DROPOUT,
         lr=args.lr,
         weight_decay=args.weight_decay,
-        huber_delta=args.huber_delta,
         scheduler_patience=args.scheduler_patience,
+        warmup_steps=args.warmup_steps,
+        warmup_start_lr=args.warmup_start_lr,
+        loss_fn=nn.L1Loss(),
     )
 
     # 5. Define Callbacks and Logger
@@ -114,14 +119,14 @@ def main(args):
         dirpath=algo_checkpoint_dir,
         save_top_k=3,
         save_last=True,
-        monitor="val_loss_epoch",
+        monitor="val_loss",
         mode="min",
-        filename="{epoch:02d}-val_loss={val_loss_epoch:.4f}",
+        filename="{epoch:02d}-val_loss={val_loss:.4f}",
         save_on_train_epoch_end=True,
     )
 
     early_stop_cb = PreciseEarlyStopping(
-        monitor="val_loss_epoch",
+        monitor="val_loss",
         patience=args.patience,
         mode="min",
         verbose=True,
@@ -184,7 +189,6 @@ if __name__ == "__main__":
     parser.add_argument("--batch_size", type=int, default=config.BATCH_SIZE)
     parser.add_argument("--lr", type=float, default=config.LR)
     parser.add_argument("--weight_decay", type=float, default=config.WEIGHT_DECAY)
-    parser.add_argument("--huber_delta", type=float, default=config.HUBER_DELTA)
     parser.add_argument("--hidden_dim", type=int, default=config.HIDDEN_DIM)
     parser.add_argument("--pe_type", type=str, default=config.PE_TYPE)
     parser.add_argument("--pos_enc_dim", type=int, default=config.POS_ENC_DIM)
@@ -207,8 +211,12 @@ if __name__ == "__main__":
     # Training Loop Parameters
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--max_epochs", type=int, default=100)
-    parser.add_argument("--patience", type=int, default=20)
-    parser.add_argument("--scheduler_patience", type=int, default=10)
+    parser.add_argument("--patience", type=int, default=config.PATIENCE)
+    parser.add_argument(
+        "--scheduler_patience", type=int, default=config.SCHEDULER_PATIENCE
+    )
+    parser.add_argument("--warmup_steps", type=int, default=config.WARMUP_STEPS)
+    parser.add_argument("--warmup_start_lr", type=float, default=config.WARMUP_START_LR)
     parser.add_argument("--gradient_clip_val", type=float, default=1.0)
     parser.add_argument("--check_val_every_n", type=float, default=0.5)
     parser.add_argument(
