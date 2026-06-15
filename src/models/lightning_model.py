@@ -123,10 +123,10 @@ class AIGRegressionLightningModule(pl.LightningModule):
         # because per-step R² on a single mini-batch is statistically
         # meaningless and can be highly misleading.
         self.rmse_metrics: nn.ModuleDict = nn.ModuleDict(
-            {stage: MeanSquaredError(squared=False) for stage in _STAGES}
+            {f"s_{stage}": MeanSquaredError(squared=False) for stage in _STAGES}
         )
         self.r2_metrics: nn.ModuleDict = nn.ModuleDict(
-            {stage: R2Score() for stage in ("val", "test")}
+            {f"s_{stage}": R2Score() for stage in ("val", "test")}
         )
 
     # ---------------------------------------------------------------------- #
@@ -249,12 +249,12 @@ class AIGRegressionLightningModule(pl.LightningModule):
         if is_sanity:
             return loss
 
-        rmse: MeanSquaredError = self.rmse_metrics[prefix]  # type: ignore[assignment]
+        rmse: MeanSquaredError = self.rmse_metrics[f"s_{prefix}"]  # type: ignore[assignment]
         rmse(preds, targets)
         self.log(f"{prefix}_rmse", rmse, **log_kwargs)
 
         if prefix in ("val", "test"):
-            r2: R2Score = self.r2_metrics[prefix]  # type: ignore[assignment]
+            r2: R2Score = self.r2_metrics[f"s_{prefix}"]  # type: ignore[assignment]
             r2(preds, targets)
             self.log(
                 f"{prefix}_r2",
