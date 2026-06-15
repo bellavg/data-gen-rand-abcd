@@ -17,6 +17,7 @@ PIN_MEMORY = True
 PERSISTENT_WORKERS = True
 MIN_LR = 1e-6
 LOG_EVERY_N_STEPS = 1000
+MAX_BATCH_COMPUTE_REPORTS = 4
 
 # Default Huber delta for training
 HUBER_DELTA = 0.704
@@ -30,6 +31,7 @@ MAX_NUM_GATES = 366040
 TASK_OUT_DIM = 1  # Regression task with single output value
 NODE_INPUT_DIM = 4  # [constant, pi, and_gate, po]
 EDGE_ATTR_DIM = 2  # [normal edge, primary output edge]
+NORMALIZE_EDGES = False
 
 VALID_ALGORITHMS = {"Orchestrate", "Deepsyn", "Syn4", "C2RS"}
 
@@ -45,6 +47,7 @@ ENCODER_KWARGS_DEFAULTS = {
     "dropout": DROPOUT,
     "jk_mode": JK_MODE,
     "norm_type": NORM_TYPE,
+    "normalize_edges": NORMALIZE_EDGES,
     # EGIN-specific
     "egin_kwargs": {
         "num_mlp_layers": None,

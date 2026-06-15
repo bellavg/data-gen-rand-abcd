@@ -1,10 +1,34 @@
 import time
 
 import pytorch_lightning as pl
+import torch
+from pytorch_lightning.callbacks import EarlyStopping
+
+
+class PreciseEarlyStopping(EarlyStopping):
+    """EarlyStopping with non-rounded improvement logging for small metrics."""
+
+    @staticmethod
+    def _fmt(value) -> str:
+        return f"{float(value):.6g}"
+
+    def _improvement_message(self, current: torch.Tensor) -> str:
+        if torch.isfinite(self.best_score):
+            improvement = abs(float(self.best_score) - float(current))
+            return (
+                f"Metric {self.monitor} improved by {self._fmt(improvement)} >= "
+                f"min_delta = {self._fmt(abs(self.min_delta))}. "
+                f"New best score: {self._fmt(current)}"
+            )
+        return f"Metric {self.monitor} improved. New best score: {self._fmt(current)}"
 
 
 class TrainingStartupCallback(pl.Callback):
-    def __init__(self, report_every_n_steps: int = 1000):
+    def __init__(
+        self,
+        report_every_n_steps: int = 1000,
+        max_batch_compute_reports: int = 4,
+    ):
         self._fit_start_time: float | None = None
         self._epoch_start_time: float | None = None
         self._first_batch_reported = False
@@ -18,9 +42,14 @@ class TrainingStartupCallback(pl.Callback):
         self._train_node_count = 0
         self._train_edge_count = 0
         self._report_every_n_steps = max(1, int(report_every_n_steps))
+        self._max_batch_compute_reports = max(0, int(max_batch_compute_reports))
+        self._batch_compute_reports_emitted = 0
 
     def _should_report_batch(self, batch_idx: int) -> bool:
         return batch_idx == 0 or ((batch_idx + 1) % self._report_every_n_steps == 0)
+
+    def _can_emit_batch_compute_report(self) -> bool:
+        return self._batch_compute_reports_emitted < self._max_batch_compute_reports
 
     def _format_val_batches(self, trainer) -> str:
         num_val_batches = getattr(trainer, "num_val_batches", None)
@@ -137,11 +166,12 @@ class TrainingStartupCallback(pl.Callback):
                 prog_bar=True,
             )
 
-            if self._should_report_batch(batch_idx):
+            if self._should_report_batch(batch_idx) and self._can_emit_batch_compute_report():
                 print(
                     f"[train] Batch compute: idx={batch_idx} step_s={step_time:.3f}",
                     flush=True,
                 )
+                self._batch_compute_reports_emitted += 1
         self._last_batch_end_time = end_time
 
     def on_train_epoch_start(self, trainer, pl_module):
