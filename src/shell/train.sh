@@ -1,11 +1,11 @@
 #!/bin/bash
 #SBATCH --job-name=aig_train_array
-#SBATCH --time=72:00:00
+#SBATCH --time=48:00:00
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=16
 #SBATCH --partition=gpu_h100
 #SBATCH --gpus=1
-#SBATCH --array=0-3   
+#SBATCH --array=0-2   
 #SBATCH --constraint=scratch-node
 #SBATCH --output=logs/train_%A_%a.out    # %A is the array master job ID, %a is the task index
 #
