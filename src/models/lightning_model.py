@@ -26,7 +26,7 @@ import torch
 import torch.nn as nn
 from torchmetrics import MeanSquaredError, R2Score
 
-from config import MIN_LR
+from config import MIN_LR, SCHEDULER_FACTOR, SCHEDULER_PATIENCE, WARMUP_START_LR, WARMUP_STEPS
 from constants import EDGE_ATTR_DIM, NODE_INPUT_DIM, TASK_OUT_DIM
 from models.base_model import UnifiedGraphBaseModel
 
@@ -38,7 +38,8 @@ class AIGRegressionLightningModule(pl.LightningModule):
     """LightningModule for AIG graph-level regression.
 
     Wraps ``UnifiedGraphBaseModel`` with training, validation, and test loops,
-    metric tracking, and an AdamW optimiser with a cosine annealing LR schedule.
+    metric tracking, and an AdamW optimiser with linear warmup followed by
+    ReduceLROnPlateau scheduling.
 
     Args:
         encoder_name: Name of the GNN encoder backbone.
@@ -56,7 +57,11 @@ class AIGRegressionLightningModule(pl.LightningModule):
             disables dropout.
         lr: Peak learning rate for the optimizer.
         weight_decay: AdamW L2 regularisation coefficient.
-        min_lr: Final minimum learning rate reached by the cosine scheduler.
+        min_lr: Floor learning rate enforced by ReduceLROnPlateau.
+        warmup_steps: Number of optimizer steps used for linear warmup.
+        warmup_start_lr: Learning rate at warmup step 0.
+        scheduler_patience: Plateau patience in epochs before LR reduction.
+        scheduler_factor: Multiplicative LR decay factor on plateau.
         loss_fn: Loss module applied to ``(preds, targets)``. Defaults to
             ``nn.L1Loss()`` (MAE). Must use ``reduction="mean"`` so that
             per-step losses are already graph-averaged; this keeps
@@ -78,6 +83,10 @@ class AIGRegressionLightningModule(pl.LightningModule):
         lr: float = 1e-3,
         weight_decay: float = 1e-5,
         min_lr: float = MIN_LR,
+        warmup_steps: int = WARMUP_STEPS,
+        warmup_start_lr: float = WARMUP_START_LR,
+        scheduler_patience: int = SCHEDULER_PATIENCE,
+        scheduler_factor: float = SCHEDULER_FACTOR,
         loss_fn: nn.Module | None = None,
     ) -> None:
         super().__init__()
@@ -298,64 +307,72 @@ class AIGRegressionLightningModule(pl.LightningModule):
     # ---------------------------------------------------------------------- #
 
     def configure_optimizers(self) -> dict[str, Any]:
-        """Build the AdamW optimiser and a pure Cosine Annealing step scheduler.
+        """Build AdamW with linear warmup + ReduceLROnPlateau.
 
-        The learning rate begins at ``lr`` and smoothly decays following a cosine
-        curve down to ``min_lr`` at the absolute final step of training.
+        Warmup is applied per optimizer step via ``optimizer_step`` and ramps LR
+        from ``warmup_start_lr`` to ``lr`` across ``warmup_steps`` updates.
+        After warmup, LR adaptation is handled by ``ReduceLROnPlateau`` on
+        ``val_loss`` with factor/patience from hyperparameters.
 
         Returns:
             A Lightning-compatible configuration dict containing
             ``"optimizer"`` and ``"lr_scheduler"`` keys.
         """
-        # 1. Initialize optimizer with your standard peak learning rate (e.g., 3e-4)
         optimizer = torch.optim.AdamW(
             self.parameters(),
             lr=self.hparams.lr,
             weight_decay=self.hparams.weight_decay,
         )
 
-        # 2. Automatically retrieve the total step count of your training run
-        if self.trainer and self.trainer.estimated_stepping_batches != float("inf"):
-            total_steps = self.trainer.estimated_stepping_batches
-        else:
-            # Safe fallback in case dataset length cannot be computed during initialization
-            total_steps = 161_500
+        warmup_steps = int(self.hparams.warmup_steps)
+        if warmup_steps > 0:
+            warmup_start_lr = float(self.hparams.warmup_start_lr)
+            for param_group in optimizer.param_groups:
+                param_group["lr"] = warmup_start_lr
 
-        # 3. Use the built-in native Cosine scheduler
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             optimizer,
-            T_max=total_steps,
-            eta_min=self.hparams.min_lr,  # Your MIN_LR variable (1e-6)
+            mode="min",
+            factor=float(self.hparams.scheduler_factor),
+            patience=int(self.hparams.scheduler_patience),
+            min_lr=float(self.hparams.min_lr),
         )
 
         return {
             "optimizer": optimizer,
             "lr_scheduler": {
                 "scheduler": scheduler,
-                "interval": "step",  # Crucial: decays smoothly batch-by-batch
+                "interval": "epoch",
                 "frequency": 1,
+                "monitor": "val_loss",
+                "strict": True,
             },
         }
 
-    # def optimizer_step(
-    #     self,
-    #     epoch: int,
-    #     batch_idx: int,
-    #     optimizer: torch.optim.Optimizer,
-    #     optimizer_closure: Any | None = None,
-    # ) -> None:
-    #     """Apply the optimiser update and advance the LR warm-up schedule.
+    def optimizer_step(
+        self,
+        epoch: int,
+        batch_idx: int,
+        optimizer: torch.optim.Optimizer,
+        optimizer_closure: Any | None = None,
+    ) -> None:
+        """Apply optimizer update and perform per-step linear warmup.
 
-    #     Warm-up is implemented here rather than via a chained ``LambdaLR`` so
-    #     that ``ReduceLROnPlateau`` has exclusive ownership of the LR once
-    #     warm-up is complete, avoiding interference between the two schedules.
+        Args:
+            epoch: Current epoch index, provided by Lightning.
+            batch_idx: Current batch index within the epoch.
+            optimizer: The optimizer instance to step.
+            optimizer_closure: Optional closure for optimizers that require it.
+        """
+        warmup_steps = int(self.hparams.warmup_steps)
+        if warmup_steps > 0:
+            current_step = int(getattr(self, "global_step", 0))
+            if current_step < warmup_steps:
+                warmup_start_lr = float(self.hparams.warmup_start_lr)
+                peak_lr = float(self.hparams.lr)
+                progress = float(current_step + 1) / float(warmup_steps)
+                step_lr = warmup_start_lr + progress * (peak_lr - warmup_start_lr)
+                for param_group in optimizer.param_groups:
+                    param_group["lr"] = step_lr
 
-    #     Args:
-    #         epoch: Current epoch index, provided by Lightning.
-    #         batch_idx: Current batch index within the epoch.
-    #         optimizer: The optimiser instance to step.
-    #         optimizer_closure: Optional closure that re-evaluates the model
-    #             and returns the loss. Required by some optimisers (e.g.
-    #             L-BFGS); passed through unchanged.
-    #     """
-    #     optimizer.step(closure=optimizer_closure)
+        optimizer.step(closure=optimizer_closure)

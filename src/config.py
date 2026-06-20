@@ -17,11 +17,14 @@ MAX_TOTAL_NODES_PER_BATCH = 2_000_000
 PIN_MEMORY = True
 PERSISTENT_WORKERS = True
 MIN_LR = 1e-6
-PATIENCE = 2
-# Scheduler/warmup removed: use cosine annealing scheduler with `min_lr`.
-SCHEDULER_PATIENCE = None
-WARMUP_STEPS = 0
-WARMUP_START_LR = None
+PATIENCE = 3
+# Two-phase LR schedule:
+# 1) linear warmup from WARMUP_START_LR -> LR over WARMUP_STEPS updates
+# 2) ReduceLROnPlateau on val_loss after warmup
+SCHEDULER_PATIENCE = 2
+SCHEDULER_FACTOR = 0.5
+WARMUP_STEPS = 10_000
+WARMUP_START_LR = 1e-6
 LOG_EVERY_N_STEPS = 1000
 MAX_BATCH_COMPUTE_REPORTS = 4
 

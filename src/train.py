@@ -105,7 +105,11 @@ def main(args):
         head_dropout=HEAD_DROPOUT,
         lr=args.lr,
         weight_decay=args.weight_decay,
-        # Warm-up / scheduler params removed; using cosine annealing scheduler.
+        min_lr=args.min_lr,
+        warmup_steps=args.warmup_steps,
+        warmup_start_lr=args.warmup_start_lr,
+        scheduler_patience=args.scheduler_patience,
+        scheduler_factor=args.scheduler_factor,
         loss_fn=nn.SmoothL1Loss(beta=0.01),
     )
 
@@ -210,7 +214,17 @@ if __name__ == "__main__":
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--max_epochs", type=int, default=100)
     parser.add_argument("--patience", type=int, default=config.PATIENCE)
-    # Warm-up / scheduler CLI flags removed; scheduler now uses cosine annealing.
+    parser.add_argument("--min_lr", type=float, default=config.MIN_LR)
+    parser.add_argument("--warmup_steps", type=int, default=config.WARMUP_STEPS)
+    parser.add_argument(
+        "--warmup_start_lr", type=float, default=config.WARMUP_START_LR
+    )
+    parser.add_argument(
+        "--scheduler_patience", type=int, default=config.SCHEDULER_PATIENCE
+    )
+    parser.add_argument(
+        "--scheduler_factor", type=float, default=config.SCHEDULER_FACTOR
+    )
     parser.add_argument("--gradient_clip_val", type=float, default=1.0)
     parser.add_argument("--check_val_every_n", type=float, default=0.5)
     parser.add_argument(
