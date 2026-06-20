@@ -311,7 +311,11 @@ def objective(trial: optuna.Trial, args: argparse.Namespace) -> float:
             encoder_kwargs=encoder_kwargs,
             lr=lr,
             weight_decay=weight_decay,
-            # Warm-up / plateau scheduler removed; using cosine annealing.
+            min_lr=config.MIN_LR,
+            warmup_steps=config.WARMUP_STEPS,
+            warmup_start_lr=config.WARMUP_START_LR,
+            scheduler_patience=config.SCHEDULER_PATIENCE,
+            scheduler_factor=config.SCHEDULER_FACTOR,
         )
 
         pruning_cb = PyTorchLightningPruningCallback(trial, monitor="val_loss")
