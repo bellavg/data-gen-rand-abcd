@@ -189,36 +189,11 @@ class AIGRegressionLightningModule(pl.LightningModule):
         batch: Any,
         prefix: str,
     ) -> torch.Tensor:
-        """Compute the loss, update torchmetrics, and log everything.
+        # Collate if batch is a list or tuple of Data objects
+        if isinstance(batch, (list, tuple)):
+            from torch_geometric.data import Batch
+            batch = Batch.from_data_list(batch)
 
-        This is the single shared implementation called by ``training_step``,
-        ``validation_step``, and ``test_step``. The ``prefix`` argument drives
-        all branching so there is no duplicated logic between stages.
-
-        Logging behaviour per stage:
-
-        - **train**: loss and RMSE logged at both step and epoch level.
-          R² is intentionally omitted — per-step R² on a mini-batch is
-          numerically unstable and not meaningful.
-        - **val / test**: loss, RMSE, and R² logged at epoch level only,
-          giving clean aggregate evaluation metrics.
-
-        Torchmetric state updates are skipped during Lightning's sanity-check
-        pass (the few validation batches run before training begins) to prevent
-        the small, unrepresentative sanity batches from polluting the metric
-        accumulators before real training starts. The loss is still returned
-        so the sanity check can complete normally.
-
-        Args:
-            batch: The current PyG ``Batch`` object.
-            prefix: Stage identifier — one of ``"train"``, ``"val"``, or
-                ``"test"``.
-
-        Returns:
-            Scalar loss tensor. Returned for all stages so that Lightning's
-            training loop can call ``.backward()`` on it; ``validation_step``
-            and ``test_step`` simply discard the return value.
-        """
         preds: torch.Tensor = self.forward(batch).squeeze(-1)
 
         targets: torch.Tensor = batch.y

@@ -8,16 +8,9 @@ NODE_INPUT_DIM = 4  # [constant, pi, and_gate, po]
 EDGE_ATTR_DIM = 2  # [normal edge, primary output edge]
 
 
-# Encoder classes are imported lazily on first access to avoid loading all six
-# heavy modules (including PerformerAttention in graphgps.py) at startup.
-# Each trial only uses one encoder, so the other five should not be paid for.
+# GCN is the only GNN encoder model retained in the registry.
 _ENCODER_MODULE_MAP = {
     "gcn": ("models.layers.gcn", "GCNEncoder"),
-    "gine": ("models.layers.gine", "GINEEncoder"),
-    "graphgps": ("models.layers.graphgps", "GraphGPSEncoder"),
-    "transformer_conv": ("models.layers.transformer_conv", "TransformerConvEncoder"),
-    "vanilla_mpnn": ("models.layers.vanilla_mpnn", "MPNNEncoder"),
-    "egin": ("models.layers.egin", "GraphEGIN"),
 }
 _ENCODER_CACHE: dict = {}
 
@@ -41,9 +34,17 @@ class _LazyEncoderRegistry(dict):
     def __contains__(self, key):
         return key in _ENCODER_MODULE_MAP
 
+    def keys(self):
+        return _ENCODER_MODULE_MAP.keys()
+
+    def __iter__(self):
+        return iter(_ENCODER_MODULE_MAP)
+
+    def __len__(self):
+        return len(_ENCODER_MODULE_MAP)
+
 
 ENCODER_REGISTRY = _LazyEncoderRegistry()
-
 
 VALID_ALGORITHMS = {"Orchestrate", "Deepsyn", "Syn4", "C2RS"}
 
@@ -53,9 +54,6 @@ def get_output_dim_for_encoder(encoder_name, encoder_kwargs):
     Calculates the output dimension of the encoder based on its architecture
     and Jumping Knowledge (JK) strategy.
     """
-    if encoder_name == "egin":
-        return TASK_OUT_DIM
-
     hid_dim = int(encoder_kwargs["hid_dim"])
     jk_mode = encoder_kwargs.get("jk_mode", "cat")  # Default to 'cat' if not specified
 

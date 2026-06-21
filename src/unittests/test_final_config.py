@@ -43,34 +43,33 @@ class GradientVerificationCallback(pl.Callback):
 def test_final_gcn_config_values():
     """Pins the finalized GCN config so accidental drift is caught by CI."""
     assert config.BATCH_SIZE == 32
-    assert config.LR == pytest.approx(0.000516)
+    assert config.LR == pytest.approx(0.0003)
     assert config.WEIGHT_DECAY == pytest.approx(0.00396)
-    assert config.HUBER_DELTA == pytest.approx(0.704)
 
     assert config.ENCODER_NAME == "gcn"
-    assert config.NUM_LAYERS == 5
+    assert config.NUM_LAYERS == 4
     assert config.HIDDEN_DIM == 128
-    assert config.JK_MODE == "last"
+    assert config.JK_MODE == "sum"
 
     assert config.POOLING_TYPE == "mean"
-    assert config.DROPOUT == pytest.approx(0.3)
+    assert config.DROPOUT == pytest.approx(0.15)
     assert config.NORM_TYPE == "layer"
 
     assert config.PE_TYPE == "level"
     assert config.POS_ENC_DIM == 32
-    assert config.MAX_TOTAL_NODES_PER_BATCH == 1_000_000
+    assert config.MAX_TOTAL_NODES_PER_BATCH == 2_000_000
 
 
 def _mock_dataset(tmp_path: Path, algorithm: str) -> Path:
     """Clones adder.aig 10 times with injected feature noise."""
-    aig_path = Path("src/test/data/adder.aig")
+    aig_path = Path("src/unittests/data/adder.aig")
     assert aig_path.exists(), f"Dummy AIG missing at {aig_path}!"
 
     base_data = aig_to_pytorch_geometric(aig_path)
     pt_paths = []
 
-    # Create 10 noisy copies for a healthy 8/1/1 data split
-    for i in range(10):
+    # Create 20 noisy copies for a healthy 8/1/1 data split
+    for i in range(20):
         data = base_data.clone()
         if data.x.is_floating_point():
             data.x = data.x + torch.randn_like(data.x) * 0.05
@@ -122,8 +121,6 @@ def test_final_training_pipeline_fast_dev_run(algorithm: str, tmp_path: Path):
             "jk_mode": config.JK_MODE,
         }
     )
-    if config.ENCODER_NAME in ["transformer_conv", "graphgps"]:
-        encoder_kwargs["heads"] = config.HEADS
 
     model = AIGRegressionLightningModule(
         encoder_name=config.ENCODER_NAME,
@@ -134,7 +131,6 @@ def test_final_training_pipeline_fast_dev_run(algorithm: str, tmp_path: Path):
         encoder_kwargs=encoder_kwargs,
         lr=config.LR,
         weight_decay=config.WEIGHT_DECAY,
-        huber_delta=config.HUBER_DELTA,
     )
 
     datamodule = AIGDataModule(
@@ -168,8 +164,6 @@ def test_model_optimization_readiness():
             "jk_mode": config.JK_MODE,
         }
     )
-    if config.ENCODER_NAME in ["transformer_conv", "graphgps"]:
-        encoder_kwargs["heads"] = config.HEADS
 
     lightning_module = AIGRegressionLightningModule(
         encoder_name=config.ENCODER_NAME,
@@ -180,7 +174,6 @@ def test_model_optimization_readiness():
         encoder_kwargs=encoder_kwargs,
         lr=config.LR,
         weight_decay=config.WEIGHT_DECAY,
-        huber_delta=config.HUBER_DELTA,
     )
 
     # Check every submodule to ensure LazyLinear was completely replaced by standard nn.Linear

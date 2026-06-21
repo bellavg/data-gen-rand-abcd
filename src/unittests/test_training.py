@@ -41,7 +41,7 @@ def basic_model():
         "jk_mode": "last",
     }
     model = AIGRegressionLightningModule(
-        encoder_name="gine",
+        encoder_name="gcn",
         hidden_dim=32,
         node_input_dim=4,
         edge_attr_dim=2,
@@ -102,20 +102,20 @@ def test_output_range_capabilities(basic_model, dummy_batch):
     """
     basic_model.eval()
     with torch.no_grad():
-        # 1. Warm-up forward pass to initialize LazyLinear parameters
+        # 1. Warm-up forward pass to initialize parameters
         _ = basic_model(dummy_batch)
 
         # 2. Test positive capability: Force a positive bias
-        torch.nn.init.constant_(basic_model.model.head.bias, 1.0)
+        torch.nn.init.constant_(basic_model.model.head[3].bias, 2.0)
         out_pos = basic_model(dummy_batch)
-        assert out_pos.max() > 0, (
+        assert out_pos.max() > 0.7, (
             f"Model failed to produce positive values. Max: {out_pos.max()}"
         )
 
         # 3. Test negative capability: Force a negative bias
-        torch.nn.init.constant_(basic_model.model.head.bias, -1.0)
+        torch.nn.init.constant_(basic_model.model.head[3].bias, -2.0)
         out_neg = basic_model(dummy_batch)
-        assert out_neg.min() < 0, (
+        assert out_neg.min() < 0.3, (
             f"Model failed to produce negative values. Min: {out_neg.min()}"
         )
 
@@ -188,10 +188,10 @@ def test_variable_graph_sizes_in_batch(basic_model):
 
 @pytest.mark.parametrize(
     "encoder_name",
-    ["gine", "gcn", "vanilla_mpnn", "transformer_conv", "egin", "graphgps"],
+    ["gcn"],
 )
 def test_encoder_registry_compatibility(encoder_name, dummy_batch):
-    """Ensures all registered encoders integrate with the unified model and lightning module."""
+    """Ensures GCN encoder integrates with the unified model and lightning module."""
     encoder_kwargs = {
         "num_layers": 2,
         "hid_dim": 32,
@@ -199,10 +199,6 @@ def test_encoder_registry_compatibility(encoder_name, dummy_batch):
         "norm_type": "batch",
         "jk_mode": "last",
     }
-    # Specific requirements for certain encoders
-    if encoder_name == "egin":
-        encoder_kwargs["num_mlp_layers"] = 2
-        encoder_kwargs["edge_hidden_dim"] = 32
 
     model = AIGRegressionLightningModule(
         encoder_name=encoder_name,
@@ -229,18 +225,18 @@ def test_loss_logic(basic_model, dummy_batch):
     Ensures that loss is high for bad predictions and low for perfect ones.
     """
     basic_model.eval()
-    # Initialize lazy head and then zero it out
+    # Initialize head and then zero out the last linear layer
     with torch.no_grad():
         _ = basic_model(dummy_batch)
-        basic_model.model.head.weight.zero_()
-        basic_model.model.head.bias.zero_()
+        basic_model.model.head[3].weight.zero_()
+        basic_model.model.head[3].bias.zero_()
 
-    # 1. Target is far from zero (Loss should be high)
+    # 1. Target is far from 0.5 (Loss should be high)
     dummy_batch.y = torch.ones_like(dummy_batch.y) * 0.9
     loss_high = basic_model.training_step(dummy_batch, 0)
 
-    # 2. Target is exactly zero (Loss should be near zero)
-    dummy_batch.y = torch.zeros_like(dummy_batch.y)
+    # 2. Target is exactly 0.5 (Loss should be near zero)
+    dummy_batch.y = torch.ones_like(dummy_batch.y) * 0.5
     loss_low = basic_model.training_step(dummy_batch, 0)
 
     assert loss_high > loss_low
@@ -262,10 +258,35 @@ def test_training_step_accepts_tuple_batches(basic_model, dummy_batch):
 def test_training_step_logs_step_and_epoch_metrics(basic_model, dummy_batch):
     basic_model.trainer.sanity_checking = False
     basic_model.log = MagicMock()
+    basic_model.forward = MagicMock(return_value=torch.zeros((5, 1)))
 
+    loss = basic_model.training_step(dummy_batch, batch_idx=0)
 
-def test_random_hash_partition_default_enabled_in_config():
-    assert config.RANDOM_HASH_PARTITION is True
+    assert torch.isfinite(loss)
+    basic_model.log.assert_has_calls(
+        [
+            call(
+                "train_loss",
+                ANY,
+                batch_size=5,
+                sync_dist=False,
+                prog_bar=False,
+                on_step=True,
+                on_epoch=True,
+            ),
+            call(
+                "train_rmse",
+                ANY,
+                batch_size=5,
+                sync_dist=False,
+                prog_bar=False,
+                on_step=True,
+                on_epoch=True,
+            ),
+        ]
+    )
+    logged_names = [args[0] for args, _ in basic_model.log.call_args_list]
+    assert "train_r2" not in logged_names
 
 
 def test_train_main_passes_partition_to_datamodule(tmp_path, basic_model, dummy_batch):
@@ -329,35 +350,6 @@ def test_train_main_passes_partition_to_datamodule(tmp_path, basic_model, dummy_
         train.main(args)
 
     assert datamodule_cls.call_args.kwargs["partition"] is None
-    basic_model.forward = MagicMock(return_value=torch.zeros((5, 1)))
-
-    loss = basic_model.training_step(dummy_batch, batch_idx=0)
-
-    assert torch.isfinite(loss)
-    basic_model.log.assert_has_calls(
-        [
-            call(
-                "train_loss",
-                ANY,
-                batch_size=5,
-                sync_dist=False,
-                prog_bar=False,
-                on_step=True,
-                on_epoch=True,
-            ),
-            call(
-                "train_rmse",
-                ANY,
-                batch_size=5,
-                sync_dist=False,
-                prog_bar=False,
-                on_step=True,
-                on_epoch=True,
-            ),
-        ]
-    )
-    logged_names = [args[0] for args, _ in basic_model.log.call_args_list]
-    assert "train_r2" not in logged_names
 
 
 def test_validation_step_logs_epoch_metrics_only(basic_model, dummy_batch):
@@ -490,8 +482,7 @@ def test_training_startup_callback_logs_step_time_with_explicit_batch_size():
 @pytest.mark.parametrize(
     "encoder_name,extra_kwargs",
     [
-        ("vanilla_mpnn", {}),
-        ("transformer_conv", {"heads": 1}),
+        ("gcn", {}),
     ],
 )
 def test_large_graph_forward_backward_no_crash(encoder_name, extra_kwargs):

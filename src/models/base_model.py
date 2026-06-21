@@ -85,7 +85,7 @@ class UnifiedGraphBaseModel(nn.Module):
 
         # 6. Encoder and Head
         if self.encoder_name not in ENCODER_REGISTRY:
-            raise ValueError(
+            raise KeyError(
                 f"Unknown encoder_name '{self.encoder_name}'. "
                 f"Valid options: {sorted(ENCODER_REGISTRY.keys())}"
             )
@@ -111,6 +111,8 @@ class UnifiedGraphBaseModel(nn.Module):
     def _integrate_positional_encoding(
         self, x: torch.Tensor, pos_enc: Optional[torch.Tensor]
     ):
+        if pos_enc is None or self.pe_type == "none":
+            return x
         pos_enc = pos_enc.unsqueeze(-1) if pos_enc.dim() == 1 else pos_enc
         pos_enc = self.pe_encoder(pos_enc)
         pos_enc = (
@@ -129,6 +131,7 @@ class UnifiedGraphBaseModel(nn.Module):
         edge_attr: torch.Tensor,
         batch: torch.Tensor,
         pos_enc: Optional[torch.Tensor] = None,
+        partition_id: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         # Project nodes to latent hidden_dim
         x = self.node_embed(x.float())
@@ -136,7 +139,10 @@ class UnifiedGraphBaseModel(nn.Module):
         edge_attr = self.edge_attr_proj(edge_attr.float())
 
         x = self._integrate_positional_encoding(x, pos_enc)
-        x = self.input_node_norm(x, batch)
+        
+        # If partition_id is provided, normalize per-partition to prevent pollution
+        norm_batch = partition_id if partition_id is not None else batch
+        x = self.input_node_norm(x, norm_batch)
 
         return x, edge_attr
 
@@ -206,10 +212,11 @@ class UnifiedGraphBaseModel(nn.Module):
         num_partitions: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         x, edge_attr = self.encode_and_integrate(
-            x, edge_index, edge_attr, batch, pos_enc
+            x, edge_index, edge_attr, batch, pos_enc, partition_id=partition_id
         )
 
-        enc_out = self._encode(x, edge_index, edge_attr, batch, edge_weight=edge_weight)
+        enc_batch = partition_id if partition_id is not None else batch
+        enc_out = self._encode(x, edge_index, edge_attr, enc_batch, edge_weight=edge_weight)
 
         if batch is None:
             batch = torch.zeros(

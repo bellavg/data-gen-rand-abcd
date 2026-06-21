@@ -1157,8 +1157,8 @@ class TestAIGDataModule(unittest.TestCase):
     def test_batch_reconstruction_is_lossless(self):
         from torch_geometric.loader import DataLoader
 
-        # Fix: Use the DataModule to get the dataset
-        dm = self._make_dm()
+        # Fix: Use the DataModule to get the dataset (disable random partitioning to ensure stability)
+        dm = self._make_dm(partition=None)
         ds = dm.train_ds
 
         loader = DataLoader(ds, batch_size=2, shuffle=False)

@@ -92,9 +92,6 @@ def main(args):
         }
     )
 
-    if args.encoder_name in ["transformer_conv", "graphgps"]:
-        encoder_kwargs["heads"] = args.heads
-
     # 4. Initialize the Lightning Module
     model = AIGRegressionLightningModule(
         encoder_name=args.encoder_name,
