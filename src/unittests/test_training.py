@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 from unittest.mock import ANY, MagicMock, call, patch
 
 import pytest
@@ -5,6 +6,9 @@ import pytorch_lightning as pl
 import torch
 from torch_geometric.data import Batch, Data
 from torch_geometric.loader import DataLoader as PyGDataLoader
+
+import config
+import train
 
 # Adjust imports based on your project structure
 from models.lightning_model import AIGRegressionLightningModule
@@ -93,7 +97,7 @@ def test_gradient_flow(basic_model, dummy_batch):
 
 def test_output_range_capabilities(basic_model, dummy_batch):
     """
-    Ensures the model can produce both positive and negative values
+    Ensures the model can produce values close to 0 and 1
     by manually shifting the head bias.
     """
     basic_model.eval()
@@ -258,6 +262,73 @@ def test_training_step_accepts_tuple_batches(basic_model, dummy_batch):
 def test_training_step_logs_step_and_epoch_metrics(basic_model, dummy_batch):
     basic_model.trainer.sanity_checking = False
     basic_model.log = MagicMock()
+
+
+def test_random_hash_partition_default_enabled_in_config():
+    assert config.RANDOM_HASH_PARTITION is True
+
+
+def test_train_main_passes_partition_to_datamodule(tmp_path, basic_model, dummy_batch):
+    args = SimpleNamespace(
+        enable_hardware_profiler=False,
+        algorithm="Orchestrate",
+        seed=42,
+        csv_paths=[str(tmp_path / "dummy.csv")],
+        pe_type="none",
+        partition=None,
+        batch_size=2,
+        num_workers=0,
+        pin_memory=False,
+        persistent_workers=False,
+        prefetch_factor=1,
+        cache_dir=None,
+        hp_tuning_splits_path=None,
+        tier0_cache_dir=None,
+        tier1_cache_dir=None,
+        dynamic_batching=False,
+        max_total_nodes_per_batch=16,
+        num_layers=2,
+        hidden_dim=16,
+        dropout=0.0,
+        norm_type="layer",
+        jk_mode="last",
+        encoder_name="gcn",
+        heads=4,
+        pos_enc_dim=0,
+        pooling_type="mean",
+        lr=1e-3,
+        weight_decay=1e-4,
+        min_lr=1e-6,
+        warmup_steps=1,
+        warmup_start_lr=1e-6,
+        scheduler_patience=1,
+        scheduler_factor=0.5,
+        checkpoint_dir=str(tmp_path / "checkpoints"),
+        log_dir=str(tmp_path / "logs"),
+        patience=1,
+        max_batch_compute_reports=0,
+        max_epochs=1,
+        gradient_clip_val=1.0,
+        val_check_interval=1.0,
+        num_sanity_val_steps=0,
+        log_steps=1,
+    )
+
+    with (
+        patch("train.AIGDataModule") as datamodule_cls,
+        patch("train.AIGRegressionLightningModule"),
+        patch("train.ModelCheckpoint"),
+        patch("train.PreciseEarlyStopping"),
+        patch("train.LearningRateMonitor"),
+        patch("train.TrainingStartupCallback"),
+        patch("train.WandbLogger"),
+        patch("train.pl.Trainer") as trainer_cls,
+        patch("train.pl.seed_everything"),
+    ):
+        trainer_cls.return_value.fit = MagicMock()
+        train.main(args)
+
+    assert datamodule_cls.call_args.kwargs["partition"] is None
     basic_model.forward = MagicMock(return_value=torch.zeros((5, 1)))
 
     loss = basic_model.training_step(dummy_batch, batch_idx=0)

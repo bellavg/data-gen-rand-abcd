@@ -18,6 +18,7 @@ from torch_geometric.data import Dataset as PyGDataset
 from torch_geometric.data import storage as _pyg_storage
 from torch_geometric.utils import degree
 
+from data.partition_utils import PartitionedData, random_partitioning
 from models.layers.positional_encodings import get_pe_transform
 
 # Register PyG classes in the secure deserialization allowlist so torch.load
@@ -25,7 +26,7 @@ from models.layers.positional_encodings import get_pe_transform
 # This bypasses the Python Unpickler entirely, eliminating the Unpickler memo
 # dict leak that causes TypedStorage, UntypedStorage, cell, FileIO, and
 # BufferedReader objects to accumulate linearly across training steps.
-_pyg_safe_globals: list = [_PyGData, _pyg_storage.GlobalStorage]
+_pyg_safe_globals: list = [_PyGData, _pyg_storage.GlobalStorage, PartitionedData]
 for _name in ("DataTensorAttr", "DataEdgeAttr"):
     try:
         import torch_geometric.data.data as _pyg_data_mod
@@ -118,6 +119,7 @@ class AIGGraphRegressionDataset(PyGDataset):
         csv_paths: str | Path | list[str | Path],
         *,
         positional_encoding: str | None = None,
+        partition: str | None = None,
         normalize_edges: bool = False,
         split: str | None = None,
         cache_dir: str | Path | None = None,
@@ -135,6 +137,7 @@ class AIGGraphRegressionDataset(PyGDataset):
             self.csv_paths = [Path(p) for p in csv_paths]
 
         self.positional_encoding = positional_encoding
+        self.partition = partition
         self.normalize_edges = bool(normalize_edges)
         self.split = split
         self.cache_dir = Path(cache_dir) if cache_dir is not None else None
@@ -458,6 +461,11 @@ class AIGGraphRegressionDataset(PyGDataset):
 
         if self._cache_precomputed_level_pe and getattr(data_obj, "pos_enc", None) is None:
             data_obj = self.pe_transform(data_obj)
+            # pe_transform (ExtractPrecomputedPE) already deleted 'level'; drop
+            # the unused siblings so they are not persisted in the cache file.
+            for _attr in ("pi_paths", "local_sp_sum"):
+                if hasattr(data_obj, _attr):
+                    delattr(data_obj, _attr)
 
         return data_obj
 
@@ -683,6 +691,16 @@ class AIGGraphRegressionDataset(PyGDataset):
             # Keep edge_weight in cache files, but drop it from runtime samples
             # to avoid unnecessary batching/device transfer when disabled.
             del data_obj.edge_weight
+        if self.positional_encoding is not None and getattr(data_obj, "pos_enc", None) is None:
+            data_obj = self.pe_transform(data_obj)
+        # ExtractPrecomputedPE already deletes the one attr it consumed; mop up
+        # any remaining siblings that weren't used as the PE source.
+        if self.positional_encoding is not None:
+            for _attr in ("level", "pi_paths", "local_sp_sum"):
+                if hasattr(data_obj, _attr):
+                    delattr(data_obj, _attr)
+        if self.partition == "random":
+            data_obj = random_partitioning(data_obj)
         data_obj.y = torch.tensor([[sample.y_node_opt]], dtype=torch.float32)
         return data_obj
 

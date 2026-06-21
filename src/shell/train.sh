@@ -7,7 +7,7 @@
 #SBATCH --gpus=1
 #SBATCH --array=0-2   
 #SBATCH --constraint=scratch-node
-#SBATCH --output=logs/train_%A_%a.out    # %A is the array master job ID, %a is the task index
+#SBATCH --output=logs/train_partition_%A_%a.out    # %A is the array master job ID, %a is the task index
 #
 # Recommended: pre-warm the dataset cache on a CPU node before submitting this
 # job so the GPU is not idle during graph loading.  Chain with warmup_cache.sh:

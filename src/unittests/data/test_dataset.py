@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import torch
+from torch_geometric.data import Data
 
 from data.data_utils import aig_to_pytorch_geometric
 
@@ -50,6 +51,28 @@ def _write_csv(path: Path, rows: list[dict]) -> None:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
+
+
+def _make_partition_graph_pt(dest: Path) -> Path:
+    data = Data(
+        x=torch.tensor([[0.0], [1.0], [2.0], [3.0]], dtype=torch.float32),
+        edge_index=torch.tensor(
+            [[0, 1, 0, 2, 2, 3], [1, 0, 2, 0, 3, 2]],
+            dtype=torch.long,
+        ),
+        edge_attr=torch.tensor(
+            [[0.0, 1.0], [1.0, 0.0], [0.0, 2.0], [2.0, 0.0], [2.0, 3.0], [3.0, 2.0]],
+            dtype=torch.float32,
+        ),
+        pos_enc=torch.tensor([[100.0], [101.0], [102.0], [103.0]], dtype=torch.float32),
+        level=torch.tensor([[200.0], [201.0], [202.0], [203.0]], dtype=torch.float32),
+        pi_paths=torch.tensor([[300.0], [301.0], [302.0], [303.0]], dtype=torch.float32),
+        local_sp_sum=torch.tensor([[400.0], [401.0], [402.0], [403.0]], dtype=torch.float32),
+        edge_weight=torch.tensor([10.0, 11.0, 12.0, 13.0, 14.0, 15.0], dtype=torch.float32),
+    )
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(data, dest)
+    return dest
 
 
 def _make_rows(pt_paths: list[Path], *, opt_start: float = 0.1) -> list[dict]:
@@ -116,7 +139,8 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
     def _make_ds(self, **kwargs):
         from data.dataset import AIGGraphRegressionDataset
 
-        return AIGGraphRegressionDataset(self.csv_path, **kwargs)
+        csv_paths = kwargs.pop("csv_paths", self.csv_path)
+        return AIGGraphRegressionDataset(csv_paths, **kwargs)
 
     # --- PyG root sentinel regression ---
 
@@ -246,13 +270,80 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
         self.assertIsNotNone(pe)
         self.assertEqual(pe.shape, (item.x.shape[0], 1))
 
+    def test_partition_random_returns_partitioned_data_with_all_nodes(self):
+        """partition='random' keeps all nodes and edges but adds partition_id labels."""
+        partition_pt = _make_partition_graph_pt(self.root / "partition_graph.pt")
+        partition_csv = self.root / "partition.csv"
+        _write_csv(
+            partition_csv,
+            [
+                {
+                    "unoptimized_graph_path": str(partition_pt),
+                    "design": "adder",
+                    "algorithm": "Orchestrate",
+                    "tier_id": "1",
+                    "optimizability": "0.25",
+                }
+            ],
+        )
+
+        from data.partition_utils import PartitionedData
+
+        ds = self._make_ds(
+            csv_paths=partition_csv,
+            positional_encoding="pi_paths",
+            partition="random",
+            seed=7,
+        )
+        item = ds[0]
+
+        # All 4 nodes are retained (no node filtering)
+        self.assertEqual(item.x.shape[0], 4)
+        # Cross-partition edges are dropped; only intra-partition edges survive
+        self.assertLessEqual(item.edge_index.shape[1], 6)
+        # Returns a PartitionedData instance
+        self.assertIsInstance(item, PartitionedData)
+        # partition_id labels every node
+        self.assertEqual(item.partition_id.shape, (4,))
+        self.assertEqual(item.num_partitions.item(), 2)
+        # Raw PE source attrs are cleaned up
+        self.assertFalse(hasattr(item, "level"))
+        self.assertFalse(hasattr(item, "pi_paths"))
+        self.assertFalse(hasattr(item, "local_sp_sum"))
+
+    def test_partition_none_does_not_add_partition_labels(self):
+        partition_pt = _make_partition_graph_pt(self.root / "partition_graph_off.pt")
+        partition_csv = self.root / "partition_off.csv"
+        _write_csv(
+            partition_csv,
+            [
+                {
+                    "unoptimized_graph_path": str(partition_pt),
+                    "design": "adder",
+                    "algorithm": "Orchestrate",
+                    "tier_id": "1",
+                    "optimizability": "0.25",
+                }
+            ],
+        )
+
+        ds = self._make_ds(csv_paths=partition_csv, partition=None)
+        item = ds[0]
+
+        self.assertFalse(hasattr(item, "partition_id"))
+        self.assertFalse(hasattr(item, "num_partitions"))
+        self.assertEqual(item.edge_index.shape[1], 6)
+        torch.testing.assert_close(item.pos_enc.squeeze(-1), torch.tensor([100.0, 101.0, 102.0, 103.0]))
+
     def test_only_pos_enc_tensor_retained_for_each_pe_mode(self):
         for pe_name in ("level", "pi_paths", "local_sp_sum"):
             with self.subTest(pe_name=pe_name):
                 ds = self._make_ds(positional_encoding=pe_name)
                 item = ds[0]
                 self.assertIsNotNone(getattr(item, "pos_enc", None))
-                # dataset now returns original object; additional PE attrs may exist
+                self.assertFalse(hasattr(item, "level"))
+                self.assertFalse(hasattr(item, "pi_paths"))
+                self.assertFalse(hasattr(item, "local_sp_sum"))
 
     # --- num_samples ---
 
