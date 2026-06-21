@@ -18,9 +18,7 @@ PIN_MEMORY = True
 PERSISTENT_WORKERS = True
 MIN_LR = 1e-6
 PATIENCE = 3
-# Two-phase LR schedule:
-# 1) linear warmup from WARMUP_START_LR -> LR over WARMUP_STEPS updates
-# 2) ReduceLROnPlateau on val_loss after warmup
+
 SCHEDULER_PATIENCE = 2
 SCHEDULER_FACTOR = 0.5
 WARMUP_STEPS = 10_000
@@ -38,9 +36,10 @@ TASK_OUT_DIM = 1  # Regression task with single output value
 NODE_INPUT_DIM = 4  # [constant, pi, and_gate, po]
 EDGE_ATTR_DIM = 2  # [normal edge, primary output edge]
 NORMALIZE_EDGES = False
+PARTITION = "random"
 
-VALID_ALGORITHMS = {"Orchestrate", "Deepsyn", "Syn4", "C2RS"}
-
+# VALID_ALGORITHMS = {"Orchestrate", "Deepsyn", "Syn4", "C2RS"}
+VALID_ALGORITHMS = {"Orchestrate"}
 # Output dimension used by models (set equal to hidden dim by default)
 OUTPUT_DIM = HIDDEN_DIM
 

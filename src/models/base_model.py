@@ -160,6 +160,40 @@ class UnifiedGraphBaseModel(nn.Module):
             return global_max_pool(emb, batch)
         raise ValueError(f"Unknown pooling type: {self.pooling_type}")
 
+    def _pool_partitioned_graph_embeddings(
+        self,
+        node_emb: torch.Tensor,
+        partition_id: torch.Tensor,
+        num_partitions: torch.Tensor,
+    ) -> torch.Tensor:
+        """Two-level hierarchical pooling: nodes → partitions → graph.
+
+        Args:
+            node_emb:       Node embeddings ``[total_nodes, hidden_dim]``.
+            partition_id:   Globally-unique partition assignment per node
+                            ``[total_nodes]`` (already offset by PyG Batch).
+            num_partitions: Number of partitions per graph in the batch
+                            ``[num_graphs]``.
+
+        Returns:
+            Graph-level embeddings ``[num_graphs, hidden_dim]``.
+        """
+        # 1. Pool node embeddings → one embedding per partition.
+        #    partition_id is globally unique across the batch, so this
+        #    produces shape [total_partitions, hidden_dim].
+        partition_emb = self._pool_graph_embeddings(node_emb, partition_id)
+
+        # 2. Build a partition→graph assignment vector so we know which
+        #    graph each partition belongs to.
+        num_graphs = num_partitions.size(0)
+        partition_batch = torch.repeat_interleave(
+            torch.arange(num_graphs, device=node_emb.device),
+            num_partitions,
+        )
+
+        # 3. Pool partition embeddings → one embedding per graph.
+        return self._pool_graph_embeddings(partition_emb, partition_batch)
+
     def forward(
         self,
         x: torch.Tensor,
@@ -168,6 +202,8 @@ class UnifiedGraphBaseModel(nn.Module):
         batch: torch.Tensor | None = None,
         pos_enc: Optional[torch.Tensor] = None,
         edge_weight: Optional[torch.Tensor] = None,
+        partition_id: Optional[torch.Tensor] = None,
+        num_partitions: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         x, edge_attr = self.encode_and_integrate(
             x, edge_index, edge_attr, batch, pos_enc
@@ -180,13 +216,21 @@ class UnifiedGraphBaseModel(nn.Module):
                 enc_out.size(0), dtype=torch.long, device=enc_out.device
             )
 
-        graph_emb = self._pool_graph_embeddings(enc_out, batch)
+        if partition_id is not None and num_partitions is not None:
+            # Hierarchical pooling: nodes → partitions → graph.
+            graph_emb = self._pool_partitioned_graph_embeddings(
+                enc_out, partition_id, num_partitions
+            )
+        else:
+            graph_emb = self._pool_graph_embeddings(enc_out, batch)
 
         return self.head(graph_emb)
 
     def forward_batch(self, batch) -> torch.Tensor:
         pos_enc = get_batch_positional_encoding(batch)
         edge_weight = getattr(batch, "edge_weight", None)
+        partition_id = getattr(batch, "partition_id", None)
+        num_partitions = getattr(batch, "num_partitions", None)
 
         return self.forward(
             x=batch.x,
@@ -195,4 +239,6 @@ class UnifiedGraphBaseModel(nn.Module):
             batch=batch.batch,
             pos_enc=pos_enc,
             edge_weight=edge_weight,
+            partition_id=partition_id,
+            num_partitions=num_partitions,
         )
