@@ -61,19 +61,37 @@ def random_partitioning(
     result = PartitionedData(**{k: v for k, v in data_obj})
 
     n = data_obj.num_nodes
-    result.partition_id = torch.randint(0, num_partitions, (n,), dtype=torch.long)
-    result.num_partitions = torch.tensor([num_partitions], dtype=torch.long)
+    device = data_obj.x.device  # Ensure strict device consistency
+    
+    # 1. Assign partition IDs randomly
+    partition_id = torch.randint(0, num_partitions, (n,), dtype=torch.long, device=device)
+    
+    # 2. Sort partition IDs to ensure contiguous partitions
+    sort_idx = torch.argsort(partition_id)
+    sorted_partition_id = partition_id[sort_idx]
+    
+    # 3. Map old node indices to new contiguous indices (Canonical Permutation Inversion)
+    map_tensor = torch.empty(n, dtype=torch.long, device=device)
+    map_tensor[sort_idx] = torch.arange(n, device=device)
+    
+    # 4. Update all node-level attributes safely using PyG's native inspection
+    for key, value in result:
+        if result.is_node_attr(key) and torch.is_tensor(value) and value.size(0) == n:
+            result[key] = value[sort_idx]
+            
+    result.partition_id = sorted_partition_id
+    result.num_partitions = torch.tensor([num_partitions], dtype=torch.long, device=device)
 
-    # Drop edges that cross partition boundaries so each partition forms an
-    # isolated subgraph during GNN message passing.
-    src, dst = result.edge_index
+    # 5. Map and filter edges (removing cross-partition edges)
+    mapped_edge_index = map_tensor[result.edge_index]
+    src, dst = mapped_edge_index
     intra_mask = result.partition_id[src] == result.partition_id[dst]
-    result.edge_index = result.edge_index[:, intra_mask]
-    result.edge_attr = result.edge_attr[intra_mask]           # always present
-    if hasattr(result, "edge_weight") and result.edge_weight is not None:  # optional
+    
+    result.edge_index = mapped_edge_index[:, intra_mask]
+    result.edge_attr = result.edge_attr[intra_mask]
+    if hasattr(result, "edge_weight") and result.edge_weight is not None:
         result.edge_weight = result.edge_weight[intra_mask]
 
     return result
-
 
 __all__ = ["PartitionedData", "random_partitioning"]

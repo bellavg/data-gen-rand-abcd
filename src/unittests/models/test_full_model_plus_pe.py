@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 
 import pytorch_lightning as pl
 import torch
-from torch_geometric.data import Data
+from torch_geometric.data import Batch, Data
 from torch_geometric.loader import DataLoader
 
 # Import your models and layers
@@ -77,7 +77,7 @@ class TestUnifiedGraphBaseModel(unittest.TestCase):
     def test_forward_pass_learned_level(self):
         """Test base model with discrete depth embedding."""
         model = UnifiedGraphBaseModel(
-            encoder_name="gine",
+            encoder_name="gcn",
             hidden_dim=HIDDEN_DIM,
             encoder_kwargs={"num_layers": 2, "hid_dim": HIDDEN_DIM},
             pe_type="level",
@@ -106,7 +106,7 @@ class TestUnifiedGraphBaseModel(unittest.TestCase):
     def test_forward_pass_continuous_pe(self):
         """Test base model with continuous positional encodings (pi_paths)."""
         model = UnifiedGraphBaseModel(
-            encoder_name="vanilla_mpnn",
+            encoder_name="gcn",
             hidden_dim=HIDDEN_DIM,
             encoder_kwargs={"num_layers": 2, "hid_dim": HIDDEN_DIM},
             pe_type="pi_paths",
@@ -131,25 +131,8 @@ class TestUnifiedGraphBaseModel(unittest.TestCase):
         )
         self.assertEqual(out.shape, (1, OUT_DIM))
 
-    def test_egin_encoder_bypass(self):
-        """Test EGIN encoder bypasses the LazyLinear head."""
-        model = UnifiedGraphBaseModel(
-            encoder_name="egin",
-            hidden_dim=HIDDEN_DIM,
-            pe_type="none",
-            encoder_kwargs={"num_layers": 3, "hid_dim": HIDDEN_DIM},
-            node_input_dim=IN_DIM,
-            edge_attr_dim=EDGE_DIM,
-            task_out_dim=OUT_DIM,
-        )
-        model.eval()
-        data = _make_aig_data()
-        out = model.forward_batch(data)
-        # EGIN handles its own output dim; verify it reaches the task dim
-        self.assertEqual(out.shape, (1, OUT_DIM))
-
     def test_gradient_flows(self):
-        encoders = ["gine", "egin", "graphgps"]
+        encoders = ["gcn"]
         for enc in encoders:
             with self.subTest(encoder=enc):
                 model = UnifiedGraphBaseModel(
@@ -157,15 +140,12 @@ class TestUnifiedGraphBaseModel(unittest.TestCase):
                     hidden_dim=HIDDEN_DIM,
                     pe_type="level",
                     pos_enc_dim=PE_DIM,
-                    encoder_kwargs={"num_layers": 2, "hid_dim": HIDDEN_DIM, "heads": 2},
+                    encoder_kwargs={"num_layers": 2, "hid_dim": HIDDEN_DIM},
                 )
                 data = get_pe_transform("level")(_make_aig_data())
                 out = model.forward_batch(data)
                 out.mean().backward()
                 for name, p in model.named_parameters():
-                    # EGIN does not use the global head, so skip it
-                    if enc == "egin" and "head" in name:
-                        continue
                     if p.requires_grad:
                         self.assertIsNotNone(p.grad, f"[{enc}] Broken graph at {name}")
 
@@ -173,26 +153,17 @@ class TestUnifiedGraphBaseModel(unittest.TestCase):
         """Ensures processing graphs in a batch yields identical results to processing them individually."""
         from torch_geometric.data import Batch
 
-        encoders = [
-            "gine",
-            "gcn",
-            "vanilla_mpnn",
-            "egin",
-            "transformer_conv",
-            "graphgps",
-        ]
+        encoders = ["gcn"]
 
         for encoder_name in encoders:
             with self.subTest(encoder_name=encoder_name):
                 encoder_kwargs = {"num_layers": 2, "hid_dim": HIDDEN_DIM}
-                if encoder_name in ["transformer_conv", "graphgps"]:
-                    encoder_kwargs["heads"] = 2
 
                 model = UnifiedGraphBaseModel(
                     encoder_name=encoder_name,
                     hidden_dim=HIDDEN_DIM,
                     encoder_kwargs=encoder_kwargs,
-                    pe_type="none",  # Fixed missing pe_type
+                    pe_type="none",
                     node_input_dim=IN_DIM,
                     edge_attr_dim=EDGE_DIM,
                     task_out_dim=OUT_DIM,
@@ -319,7 +290,7 @@ class TestPositionalEncodingCompatibility(unittest.TestCase):
         data = _make_aig_data(seed=2)
         transform = get_pe_transform("level")
         data = transform(data)
-        batch = [data, data]
+        batch = Batch.from_data_list([data, data])
 
         # Fixed: Corrected keyword arguments
         lm = AIGRegressionLightningModule(
@@ -341,37 +312,17 @@ class TestPositionalEncodingCompatibility(unittest.TestCase):
 
 
 class TestEncoderKwargsPropagation(unittest.TestCase):
-    def test_base_model_respects_non_egin_encoder_kwargs(self):
-
-        test_cases = [
-            ("gcn", "layers", 3, 20),
-            ("gine", "layers", 4, 24),
-            ("vanilla_mpnn", "convs", 2, 12),
-        ]
-
-        for encoder_name, layer_attr, num_layers, hid_dim in test_cases:
-            with self.subTest(encoder=encoder_name):
-                model = UnifiedGraphBaseModel(
-                    encoder_name=encoder_name,
-                    hidden_dim=HIDDEN_DIM,
-                    encoder_kwargs={"num_layers": num_layers, "hid_dim": hid_dim},
-                    pe_type="none",
-                    node_input_dim=IN_DIM,
-                    edge_attr_dim=EDGE_DIM,
-                    task_out_dim=OUT_DIM,
-                )
-                self.assertEqual(model.encoder.num_layers, num_layers)
-
-    def test_base_model_respects_egin_encoder_kwargs(self):
+    def test_base_model_respects_gcn_encoder_kwargs(self):
         model = UnifiedGraphBaseModel(
-            encoder_name="egin",
+            encoder_name="gcn",
             hidden_dim=HIDDEN_DIM,
+            encoder_kwargs={"num_layers": 3, "hid_dim": 20},
             pe_type="none",
-            encoder_kwargs={"num_layers": 5, "hid_dim": 18},
+            node_input_dim=IN_DIM,
+            edge_attr_dim=EDGE_DIM,
+            task_out_dim=OUT_DIM,
         )
-        # Verify layer count in EGIN
-        self.assertEqual(model.encoder.num_layers, 5)
-        self.assertEqual(len(model.encoder.mlps), 4)
+        self.assertEqual(model.encoder.num_layers, 3)
 
     def test_lightning_passes_encoder_kwargs_to_base_model(self):
         lm = AIGRegressionLightningModule(

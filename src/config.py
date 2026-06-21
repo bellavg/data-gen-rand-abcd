@@ -53,19 +53,6 @@ ENCODER_KWARGS_DEFAULTS = {
     "jk_mode": JK_MODE,
     "norm_type": NORM_TYPE,
     "normalize_edges": NORMALIZE_EDGES,
-    # EGIN-specific
-    "egin_kwargs": {
-        "num_mlp_layers": None,
-        "dot_update": None,
-        "edge_mlp": None,
-        "edge_hidden_dim": HIDDEN_DIM,
-    },
-    # Attention/Transformer/GPS specific
-    "heads": HEADS,
-    "concat": None,
-    "performer_redraw_interval": None,
-    "beta": None,
-    "root_weight": None,
 }
 
 
@@ -74,9 +61,6 @@ def get_output_dim_for_encoder(encoder_name, encoder_kwargs):
     Calculates the output dimension of the encoder based on its architecture
     and Jumping Knowledge (JK) strategy.
     """
-    if encoder_name == "egin":
-        return TASK_OUT_DIM
-
     hid_dim = int(encoder_kwargs["hid_dim"])
     jk_mode = encoder_kwargs.get("jk_mode", "cat")  # Default to 'cat' if not specified
 

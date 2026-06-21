@@ -60,17 +60,26 @@ class TestRandomPartitioning(unittest.TestCase):
         self.assertEqual(data.num_nodes, 10)
 
     def test_cross_partition_edges_dropped(self):
-        g = _make_graph(num_nodes=6, num_edges=8)
+        torch.manual_seed(42)
+        g = _make_graph(num_nodes=24, num_edges=32)
         data = random_partitioning(g)
         src, dst = data.edge_index
         # Every surviving edge must connect nodes in the same partition
         self.assertTrue((data.partition_id[src] == data.partition_id[dst]).all())
         # Edge count is <= original (cross-partition edges removed)
-        self.assertLessEqual(data.edge_index.shape[1], 8)
+        self.assertLessEqual(data.edge_index.shape[1], 32)
+
+    def test_partition_id_is_sorted_and_contiguous(self):
+        """Verify that partition_id values are grouped contiguously in non-decreasing order."""
+        g = _make_graph(num_nodes=30)
+        data = random_partitioning(g)
+        # A sorted tensor will always have a non-negative diff between successive entries
+        self.assertTrue(torch.all(data.partition_id[:-1] <= data.partition_id[1:]))
 
     def test_edge_attr_always_present_and_in_sync(self):
         """edge_attr is always present and must stay aligned with edge_index."""
-        g = _make_graph(num_nodes=6, num_edges=8)
+        torch.manual_seed(42)
+        g = _make_graph(num_nodes=24, num_edges=32)
         data = random_partitioning(g)
         self.assertIsNotNone(data.edge_attr)
         self.assertEqual(data.edge_attr.shape[0], data.edge_index.shape[1])

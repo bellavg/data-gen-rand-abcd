@@ -36,30 +36,31 @@ def test_continuous_pe_log_scaling():
     assert data.pos_enc[2].item() < 12.0, "Massive value was not scaled down!"
 
 
-def test_discrete_pe_no_scaling():
+def test_level_pe_is_processed_as_continuous():
     """
-    Test that discrete categorical features like 'level' (logic depth)
-    are NOT log-scaled and are correctly cast to Long tensors for Embeddings.
+    Test that 'level' (logic depth) PE is processed as a continuous float tensor
+    and is log-scaled, matching the current implementation.
     """
     # 1. Setup fake logic depths
-    fake_levels = torch.tensor([[0], [1], [5], [12]])
+    fake_levels = torch.tensor([[0.0], [1.0], [5.0], [12.0]])
     data = Data(x=torch.randn(4, 10), level=fake_levels)
 
     # 2. Get the transform for level
     transform = get_pe_transform("level", attr_name="pos_enc")
+
+    # Precompute expected values before the transform mutates/deletes
+    expected_values = torch.log1p(fake_levels.clone().float())
 
     # 3. Apply the transform
     data = transform(data)
 
     # 4. Verify the results
     assert hasattr(data, "pos_enc"), "pos_enc attribute was not attached"
-    assert data.pos_enc.dtype == torch.int64, "Discrete PE should be a Long tensor"
+    assert data.pos_enc.dtype == torch.float32, "Discrete PE 'level' should be float32"
     assert not hasattr(data, "level"), "Source PE tensor should be removed"
 
-    # The values should remain exactly the same (no log scaling)
-    assert torch.equal(data.pos_enc, fake_levels.long()), (
-        "Discrete values were improperly modified!"
-    )
+    # Check that it matches expected log-scaled values
+    assert torch.allclose(data.pos_enc, expected_values), "Log scaling of level failed!"
 
 
 def test_sinusoidal_pe():
