@@ -80,8 +80,10 @@ class UnifiedGraphBaseModel(nn.Module):
         else:
             self.pe_encoder = nn.Identity()
 
-        # Update output_dim for Jumping Knowledge/Pooling based on hid_dim
-        self.kwargs["output_dim"] = hidden_dim
+        # Update output_dim for Jumping Knowledge/Pooling based on jk_mode
+        from constants import get_output_dim_for_encoder
+        encoder_out_dim = get_output_dim_for_encoder(self.encoder_name, self.kwargs)
+        self.kwargs["output_dim"] = encoder_out_dim
 
         # 6. Encoder and Head
         if self.encoder_name not in ENCODER_REGISTRY:
@@ -92,7 +94,7 @@ class UnifiedGraphBaseModel(nn.Module):
         encoder_cls = ENCODER_REGISTRY[self.encoder_name]
         self.encoder = encoder_cls(**self.kwargs)
 
-        head_in_dim = self.kwargs["output_dim"]
+        head_in_dim = encoder_out_dim
         head_hidden_dim = head_in_dim // 2
         head_dropout = (
             float(head_dropout)
