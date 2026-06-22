@@ -37,6 +37,7 @@ NODE_INPUT_DIM = 4  # [constant, pi, and_gate, po]
 EDGE_ATTR_DIM = 2  # [normal edge, primary output edge]
 NORMALIZE_EDGES = False
 PARTITION = "random"
+NUM_PARTITIONS = 2
 
 # VALID_ALGORITHMS = {"Orchestrate", "Deepsyn", "Syn4", "C2RS"}
 VALID_ALGORITHMS = {"Orchestrate"}
