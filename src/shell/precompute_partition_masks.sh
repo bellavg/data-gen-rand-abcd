@@ -2,7 +2,7 @@
 #SBATCH --job-name=precompute_partition_masks
 #SBATCH --time=08:00:00
 #SBATCH --nodes=1
-#SBATCH --cpus-per-task=32
+#SBATCH --cpus-per-task=48
 #SBATCH --partition=genoa
 #SBATCH --output=logs/precompute_partition_%J.out
 
@@ -50,6 +50,8 @@ module load SciPy-bundle/2025.06-gfbf-2025a
 VENV_PATH="${VENV_PATH:-/scratch-shared/$USER/.venv}"
 source "$VENV_PATH/bin/activate"
 
+pip install pymetis
+
 BASE_DIR="${BASE_DIR:-$HOME/data-gen-rand-abcd}"
 unset PYTHONPATH
 unset PYTHONHOME
@@ -69,7 +71,6 @@ TIER1_CACHE_DIR="/scratch-shared/$USER/aig_train_run/shared_tier1_cache"
 # Target algorithm cache directories
 ORCHESTRATE_CACHE_DIR="/scratch-shared/$USER/aig_train_run/Orchestrate/cache"
 DEEPSYN_CACHE_DIR="/scratch-shared/$USER/aig_train_run/Deepsyn/cache"
-SYN4_CACHE_DIR="/scratch-shared/$USER/aig_train_run/Syn4/cache"
 C2RS_CACHE_DIR="/scratch-shared/$USER/aig_train_run/C2RS/cache"
 
 # =========================================================
@@ -83,7 +84,6 @@ python -u -m data.partition "$PARTITION_ALGO" \
         "$TIER1_CACHE_DIR" \
         "$ORCHESTRATE_CACHE_DIR" \
         "$DEEPSYN_CACHE_DIR" \
-        "$SYN4_CACHE_DIR" \
         "$C2RS_CACHE_DIR"
 
 echo "=========================================="

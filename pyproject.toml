@@ -23,6 +23,7 @@ dependencies = [
     "tqdm>=4.66",
     "psutil>=5.9",
     "xxhash>=3.0",
+    "pymetis>=2025.2.2",
 ]
 
 [project.optional-dependencies]
