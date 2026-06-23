@@ -5,102 +5,123 @@ import uuid
 import torch
 from pathlib import Path
 from tqdm import tqdm
-import torch
 from torch_geometric.data import Data
-from torch_geometric.loader import ClusterData
 from torch_geometric.utils import to_undirected
 # Ensure safe unpickling globals are registered by importing dataset first
 from data.dataset import AIGGraphRegressionDataset
 
+
 # =====================================================================
-# PLACEHOLDERS FOR YOUR PARTITIONING ALGORITHMS
-# Replace the contents of these functions with your actual library calls.
+# DYNAMIC K HEURISTIC
+# =====================================================================
+
+def compute_dynamic_k(
+    num_nodes: int,
+    target_nodes_per_part: int,
+    min_k: int,
+    max_k: int,
+) -> int:
+    """Compute the number of partitions for a graph using the heuristic:
+
+        k = clamp(num_nodes // target_nodes_per_part, min_k, max_k)
+
+    Args:
+        num_nodes:             Number of nodes in the graph.
+        target_nodes_per_part: Desired average nodes per partition.
+        min_k:                 Minimum allowed k (>= 1).
+        max_k:                 Maximum allowed k.
+
+    Returns:
+        An integer k in ``[min_k, max_k]``.
+    """
+    k = num_nodes // max(1, target_nodes_per_part)
+    return max(min_k, min(max_k, k))
+
+
+# =====================================================================
+# PARTITIONING ALGORITHMS
+#
+# Each function receives a concrete ``num_partitions`` integer that has
+# already been computed by the pipeline using ``compute_dynamic_k``.
+# The functions are pure implementations — they do not read config or
+# decide k themselves.
 # =====================================================================
 
 def run_metis(data_obj, num_partitions: int) -> torch.Tensor:
-    """Computes METIS partitions using PyTorch Geometric's ClusterData.
-    
-    Safely handles directed AIG/circuit graphs by mapping them to an
-    undirected skeleton structure before executing the METIS engine.
+    """Computes standard METIS partitions using pymetis.
+
+    Args:
+        data_obj:       A PyG ``Data`` object.
+        num_partitions: Number of partitions (pre-computed by the pipeline).
+
+    Returns:
+        A 1-D ``torch.long`` tensor of shape ``[num_nodes]`` with values in
+        ``{0, …, num_partitions - 1}``.
     """
+    import pymetis
+    from torch_geometric.utils import to_scipy_sparse_matrix
+
     num_nodes = data_obj.num_nodes
 
-    # 1. METIS requires an undirected structure. Symmetrize the edge indices 
-    # to avoid a Segmentation Fault / Core Dump from METIS library binaries.
+    # 1. METIS requires an undirected structure
     undirected_edges = to_undirected(data_obj.edge_index, num_nodes=num_nodes)
 
-    # 2. Create a lightweight skeleton Data container.
-    # Bypassing node/edge features avoids redundant deep-copies in memory.
-    skeleton_data = Data(edge_index=undirected_edges, num_nodes=num_nodes)
+    # 2. Convert to CSR format for pymetis
+    adj_sparse = to_scipy_sparse_matrix(
+        edge_index=undirected_edges, 
+        num_nodes=num_nodes
+    ).tocsr()
 
-    # 3. Invoke PyG's METIS implementation wrapper
-    # Setting recursive=False uses multi-level k-way partitioning (best for small k)
-    cluster_data = ClusterData(
-        skeleton_data, 
-        num_parts=num_partitions, 
-        recursive=False, 
-        log=False
+    # 3. Invoke pymetis with CSRAdjacency (unweighted)
+    adjacency = pymetis.CSRAdjacency(
+        adj_starts=adj_sparse.indptr,
+        adjacent=adj_sparse.indices
+    )
+    _, part_labels = pymetis.part_graph(
+        nparts=num_partitions,
+        adjacency=adjacency
     )
 
-    # 4. Extract the underlying partition assignment map.
-    # ClusterData tracks partitions internally using a flat permutation tensor (node_perm)
-    # and boundary index pointers (partptr) indicating where each cluster begins/ends.
-    node_perm = cluster_data.partition.node_perm
-    partptr = cluster_data.partition.partptr
-
-    # 5. Unpack the layout boundaries into a flat [num_nodes] assignment mask
-    assignment_mask = torch.empty(num_nodes, dtype=torch.long, device="cpu")
-    
-    for part_id in range(num_partitions):
-        start_idx = int(partptr[part_id])
-        end_idx = int(partptr[part_id + 1])
-        
-        # Pull global node IDs assigned to the current partition group
-        allocated_nodes = node_perm[start_idx:end_idx]
-        assignment_mask[allocated_nodes] = part_id
-
-    return assignment_mask
+    return torch.tensor(part_labels, dtype=torch.long, device="cpu")
 
 
-def run_level_bisect(data_obj, num_partitions: int = 2) -> torch.Tensor:
-    """Partitions a graph into ``num_partitions`` equal buckets by node level.
+def run_level_slicing(data_obj, num_partitions: int) -> torch.Tensor:
+    """Partitions a graph into equal buckets by node level (topological depth).
 
-    Nodes are sorted by their ``level`` attribute (topological depth) and
-    divided into ``num_partitions`` equal-sized buckets.  This preserves the
-    natural DAG layering of AIG/circuit graphs rather than using a
-    graph-topology method like METIS.
+    Nodes are sorted by their ``level`` attribute and divided into
+    ``num_partitions`` equal-sized buckets.  This preserves the natural DAG
+    layering of AIG/circuit graphs rather than using a graph-topology method
+    like METIS.
 
     Strategy
     --------
-    1. Read ``data_obj.level`` — a 1-D or 2-D integer tensor of shape
-       ``[num_nodes]`` or ``[num_nodes, 1]``.
+    1. Read ``data_obj.level`` — a 1-D integer tensor of shape ``[num_nodes]``.
     2. Sort the nodes by their level value.
-    3. Divide the sorted order into ``num_partitions`` equal buckets and
-       assign each bucket a partition index in ``{0, …, num_partitions - 1}``.
+    3. Divide the sorted order into ``num_partitions`` equal buckets and assign
+       each bucket a partition index in ``{0, …, num_partitions - 1}``.
 
     Args:
         data_obj:       A PyG ``Data`` object carrying a ``level`` node attribute
                         (shape ``[num_nodes]`` or ``[num_nodes, 1]``, integer/float dtype).
-        num_partitions: Number of equal-depth buckets to create (default 2).
+        num_partitions: Number of equal-depth buckets (pre-computed by the pipeline).
 
     Returns:
         A 1-D ``torch.long`` tensor of shape ``[num_nodes]`` with values in
-        ``{0, …, num_partitions - 1}`` representing partition membership.
+        ``{0, …, num_partitions - 1}``.
 
     Raises:
         AttributeError: If ``data_obj`` has no ``level`` attribute.
-        ValueError:     If ``num_partitions`` is less than 1.
+        ValueError:     If ``num_partitions`` < 1.
     """
     if num_partitions < 1:
         raise ValueError(f"num_partitions must be >= 1, got {num_partitions}")
 
     if not hasattr(data_obj, "level") or data_obj.level is None:
         raise AttributeError(
-            "run_level_bisect requires a 'level' node attribute on the Data object, "
+            "run_level_slicing requires a 'level' node attribute on the Data object, "
             "but none was found. Ensure the cached .pt files include the 'level' tensor."
         )
 
-    # Access the per-node level tensor — shape [num_nodes], integer dtype.
     level = data_obj.level
     if not isinstance(level, torch.Tensor):
         level = torch.tensor(level, dtype=torch.long)
@@ -111,12 +132,11 @@ def run_level_bisect(data_obj, num_partitions: int = 2) -> torch.Tensor:
     # Sort nodes by level, then assign equal-sized buckets.
     sort_idx = torch.argsort(level, stable=True)
 
-    # Use torch.div with floor rounding to assign bucket IDs to sorted positions.
-    # Each position i maps to bucket floor(i * num_partitions / num_nodes).
+    # Each sorted position i maps to bucket floor(i * num_partitions / num_nodes).
     positions = torch.arange(num_nodes, dtype=torch.long)
     bucket_for_position = torch.div(
         positions * num_partitions, num_nodes, rounding_mode="floor"
-    ).clamp(max=num_partitions - 1)  # guard against floating-point edge at i==num_nodes
+    ).clamp(max=num_partitions - 1)  # guard against edge at i == num_nodes
 
     assignment_mask = torch.empty(num_nodes, dtype=torch.long, device="cpu")
     assignment_mask[sort_idx] = bucket_for_position
@@ -124,12 +144,83 @@ def run_level_bisect(data_obj, num_partitions: int = 2) -> torch.Tensor:
     return assignment_mask
 
 
-def run_kahip(data_obj: torch.geometric.data.Data, num_partitions: int) -> torch.Tensor:
-    """Computes KaHIP partitions.
-    Should return a 1D LongTensor of shape [num_nodes] filled with values 0 to num_partitions-1.
+def run_random(data_obj, num_partitions: int, seed: int = 0) -> torch.Tensor:
+    """Assigns each node a uniformly random partition label using a fixed seed.
+
+    Producing the mask offline ensures every training run sees **identical**
+    partition assignments for the same graph, making random partitioning
+    comparable to deterministic algorithms like METIS or level-slicing.
+
+    Args:
+        data_obj:       A PyG ``Data`` object.
+        num_partitions: Number of partitions (pre-computed by the pipeline).
+        seed:           Integer RNG seed for reproducibility (default 0).
+                        Pass ``config.PARTITION_SEED`` from the call-site.
+
+    Returns:
+        A 1-D ``torch.long`` tensor of shape ``[num_nodes]`` with values in
+        ``{0, …, num_partitions - 1}``.
     """
-    # TODO: Integrate your KaHIP wrapper here
-    raise NotImplementedError("Integrate your KaHIP library call here.")
+    num_nodes = data_obj.num_nodes
+    generator = torch.Generator()
+    generator.manual_seed(seed)
+    return torch.randint(0, num_partitions, (num_nodes,), dtype=torch.long, generator=generator)
+
+
+def run_span_weighted_metis(data_obj, num_partitions: int, alpha: float = 10.0) -> torch.Tensor:
+    """Computes a Span-Aware METIS partition by penalizing cuts on long edges.
+
+    Args:
+        data_obj: PyG Data object carrying a 'level' node attribute.
+        num_partitions: Number of partitions to create.
+        alpha: Penalty multiplier. Higher alpha means METIS is more 
+               reluctant to cut edges spanning multiple levels.
+    """
+    import pymetis
+    from torch_geometric.utils import to_scipy_sparse_matrix
+
+    num_nodes = data_obj.num_nodes
+
+    # 1. METIS requires an undirected structure
+    undirected_edges = to_undirected(data_obj.edge_index, num_nodes=num_nodes)
+
+    # 2. Compute edge spans
+    # Ensure levels are parsed as a flat tensor of floats for distance calculation
+    levels = data_obj.level.view(-1).to(dtype=torch.float32)
+    src, dst = undirected_edges
+
+    # Span is the absolute difference in topological level between the two nodes
+    spans = torch.abs(levels[src] - levels[dst])
+
+    # 3. Formulate the edge weights
+    # METIS seeks to *minimize* the sum of the weights of cut edges. 
+    # High weight = do not cut. Low weight = safe to cut.
+    # METIS strictly requires integer weights > 0.
+    edge_weights = 1 + (alpha * spans)
+    edge_weights = edge_weights.to(torch.int32)
+
+    # 4. Convert to CSR format for pymetis using PyG's Scipy utility
+    # Scipy's COO->CSR conversion naturally handles summing weights of duplicate/parallel edges
+    adj_sparse = to_scipy_sparse_matrix(
+        edge_index=undirected_edges, 
+        edge_attr=edge_weights, 
+        num_nodes=num_nodes
+    ).tocsr()
+
+    # 5. Invoke the PyMetis wrapper
+    # Using CSRAdjacency to avoid deprecation warnings.
+    adjacency = pymetis.CSRAdjacency(
+        adj_starts=adj_sparse.indptr,
+        adjacent=adj_sparse.indices
+    )
+    _, part_labels = pymetis.part_graph(
+        nparts=num_partitions,
+        adjacency=adjacency,
+        eweights=adj_sparse.data.astype(int)
+    )
+
+    # 6. Return as a PyTorch tensor to match your pipeline
+    return torch.tensor(part_labels, dtype=torch.long, device="cpu")
 
 
 # =====================================================================
@@ -137,65 +228,78 @@ def run_kahip(data_obj: torch.geometric.data.Data, num_partitions: int) -> torch
 # =====================================================================
 
 def update_existing_cache_with_masks(
-    csv_paths: str | Path | list[str | Path],
-    cache_dir: str | Path,
-    tier0_cache_dir: str | Path | None = None,
-    tier1_cache_dir: str | Path | None = None,
-    partition_configs: list[tuple[str, int, callable]] | None = None,
+    directories: list[str | Path],
+    partition_configs: list[tuple[str, callable]] | None = None,
 ) -> None:
-    """Loads pre-cached graph files, computes requested partition masks, 
-    and saves them back directly into the existing files.
+    """Loads pre-cached graph files from specified directories, computes partition masks, and saves them back.
+
+    Searches recursively for all ``*.pt`` files in the provided directories.
+    Deduplicates the file paths so that each file is processed exactly once,
+    avoiding redundant computation in shared/overlapping cache folders.
+
+    For every graph the number of partitions ``k`` is determined dynamically
+    by ``compute_dynamic_k`` using the ``TARGET_NODES_PER_PART``, ``MIN_K``,
+    and ``MAX_K`` values from ``config.py``.
+
+    Stored attributes (per graph, per algorithm):
+        ``{algo_name}_dynamic_mask``            – 1-D long tensor, shape [num_nodes]
+        ``{algo_name}_dynamic_num_partitions``  – scalar long tensor, value = k
     """
     if partition_configs is None:
         raise ValueError(
-            "partition_configs must be provided explicitly. "
-            "Pass a list of (algo_name, num_partitions, callable) tuples, e.g.:\n"
-            "  [(\"metis\", 4, run_metis), (\"level_bisect\", 4, run_level_bisect)]\n"
-            "Or run this module directly via __main__ to have it read from config.py."
+            "partition_configs must be provided explicitly.\n"
+            "Pass a list of (algo_name, algo_fn) pairs, e.g.:\n"
+            "  [(\"metis\", run_metis), (\"level_slicing\", run_level_slicing)]\n"
         )
 
-    print("[Mask Precomputation] Initializing dataset to discover file paths...")
-    # Instantiate the dataset with split=None to resolve every graph across train/val/test
-    dataset = AIGGraphRegressionDataset(
-        csv_paths=csv_paths,
-        cache_dir=cache_dir,
-        tier0_cache_dir=tier0_cache_dir,
-        tier1_cache_dir=tier1_cache_dir,
-        split=None,
-    )
+    import config as _cfg
+    target_nodes = getattr(_cfg, "TARGET_NODES_PER_PART", 10_000)
+    min_k        = getattr(_cfg, "MIN_K", 2)
+    max_k        = getattr(_cfg, "MAX_K", 32)
 
-    # Extract all distinct cached file paths from the manifest map
-    unique_cache_paths = sorted(set(dataset._graph_cache_path_map.values()))
+    print(
+        f"[Mask Precomputation] Dynamic-k heuristic: "
+        f"TARGET_NODES_PER_PART={target_nodes}, MIN_K={min_k}, MAX_K={max_k}"
+    )
+    print(f"[Mask Precomputation] Scanning directories for cached graph files: {directories}")
+
+    unique_cache_paths = []
+    for d in directories:
+        d_path = Path(d)
+        if d_path.is_dir():
+            unique_cache_paths.extend(d_path.rglob("*.pt"))
+        elif d_path.is_file() and d_path.suffix == ".pt":
+            unique_cache_paths.append(d_path)
+
+    unique_cache_paths = sorted(set(p.resolve() for p in unique_cache_paths))
     print(f"[Mask Precomputation] Found {len(unique_cache_paths)} unique graph cache files to process.")
 
     success_count = 0
-    
-    # Iterate through each .pt file with a progress bar
+
     for cache_path in tqdm(unique_cache_paths, desc="Appending masks to cache"):
         if not cache_path.is_file():
             continue
 
-        # 1. Load the existing file using your project's secure deserialization settings
+        # 1. Load the existing .pt file.
         with open(cache_path, "rb") as fh:
             data_obj = torch.load(fh, map_location="cpu", weights_only=True)
 
-        # 2. Iterate through all algorithm configurations and attach them as attributes
-        for algo_name, num_partitions, algo_fn in partition_configs:
-            mask_attr_name = f"{algo_name}_{num_partitions}_mask"
-            num_attr_name = f"{algo_name}_{num_partitions}_num_partitions"
+        # 2. Compute k once per graph (shared across all algorithms).
+        k = compute_dynamic_k(data_obj.num_nodes, target_nodes, min_k, max_k)
 
-            # Execute your partitioning function
-            mask_tensor = algo_fn(data_obj, num_partitions)
-            
+        # 3. Run each requested algorithm with the pre-computed k.
+        for algo_name, algo_fn in partition_configs:
+            mask_tensor = algo_fn(data_obj, k)
+
             if not isinstance(mask_tensor, torch.Tensor):
                 mask_tensor = torch.tensor(mask_tensor, dtype=torch.long)
-                
-            # Direct attribute assignment on the existing object
-            setattr(data_obj, mask_attr_name, mask_tensor.to(dtype=torch.long, device="cpu"))
-            setattr(data_obj, num_attr_name, torch.tensor([num_partitions], dtype=torch.long, device="cpu"))
 
-        # 3. Atomically overwrite the file on disk using your dataset's temp pattern
-        # This prevents file corruption if the script is forcefully interrupted midway
+            setattr(data_obj, f"{algo_name}_dynamic_mask",
+                    mask_tensor.to(dtype=torch.long, device="cpu"))
+            setattr(data_obj, f"{algo_name}_dynamic_num_partitions",
+                    torch.tensor([k], dtype=torch.long, device="cpu"))
+
+        # 4. Atomically overwrite the file on disk.
         temp_file = cache_path.with_suffix(f".tmp_{uuid.uuid4().hex[:8]}")
         torch.save(data_obj, temp_file)
         os.replace(temp_file, cache_path)
@@ -206,37 +310,57 @@ def update_existing_cache_with_masks(
 
 
 if __name__ == "__main__":
+    import functools
+    import argparse
     import config
 
-    # ---------------------------------------------------------------------------
-    # All settings are driven by config.py — edit that file, not this one.
-    # ---------------------------------------------------------------------------
+    # -----------------------------------------------------------------------
+    # Settings are driven by config.py (except algorithm/dirs which are CLI args).
+    # -----------------------------------------------------------------------
+    _target_nodes = getattr(config, "TARGET_NODES_PER_PART", 10_000)
+    _min_k        = getattr(config, "MIN_K", 2)
+    _max_k        = getattr(config, "MAX_K", 32)
+    _seed         = getattr(config, "PARTITION_SEED", 0)
+
+    # run_random takes an extra `seed` kwarg; bind it so all callables share
+    # the same (data_obj, num_partitions) signature expected by the pipeline.
     _ALGO_MAP = {
-        "metis": run_metis,
-        "level_bisect": run_level_bisect,
-        "kahip": run_kahip,
+        "metis":               run_metis,
+        "span_weighted_metis": run_span_weighted_metis,
+        "level_slicing":       run_level_slicing,
+        "random":              functools.partial(run_random, seed=_seed),
     }
 
-    _algo_name    = getattr(config, "PARTITION", "metis")
-    _num_parts    = getattr(config, "NUM_PARTITIONS", 2)
+    parser = argparse.ArgumentParser(
+        description="Precompute dynamic-k partition masks for cached graphs."
+    )
+    parser.add_argument(
+        "algorithm",
+        type=str,
+        choices=["metis", "span_weighted_metis", "level_slicing", "random", "all"],
+        help="Partition algorithm to run, or 'all' to run all available partition algorithms."
+    )
+    parser.add_argument(
+        "--dirs",
+        nargs="+",
+        required=True,
+        help="One or more directory paths (or individual .pt files) to search recursively for cached graphs."
+    )
+    args = parser.parse_args()
 
-    if _algo_name not in _ALGO_MAP:
-        raise ValueError(
-            f"config.PARTITION='{_algo_name}' is not a known algorithm. "
-            f"Choose from: {sorted(_ALGO_MAP)}"
-        )
-
-    _partition_configs = [(_algo_name, _num_parts, _ALGO_MAP[_algo_name])]
+    if args.algorithm == "all":
+        partition_configs = list(_ALGO_MAP.items())
+    else:
+        partition_configs = [(args.algorithm, _ALGO_MAP[args.algorithm])]
 
     print(
-        f"[partition.py] Using algorithm='{_algo_name}', "
-        f"num_partitions={_num_parts} (from config.py)"
+        f"[partition.py] Running for algorithm(s)={sorted([name for name, _ in partition_configs])}, dynamic-k heuristic\n"
+        f"  TARGET_NODES_PER_PART={_target_nodes}, MIN_K={_min_k}, MAX_K={_max_k}\n"
+        f"  seed={_seed}\n"
+        f"  dirs={args.dirs}"
     )
 
     update_existing_cache_with_masks(
-        csv_paths=getattr(config, "CSV_PATHS", "data/raw/your_dataset_manifest.csv"),
-        cache_dir=getattr(config, "CACHE_DIR", "data/cache"),
-        tier0_cache_dir=getattr(config, "TIER0_CACHE_DIR", None),
-        tier1_cache_dir=getattr(config, "TIER1_CACHE_DIR", None),
-        partition_configs=_partition_configs,
+        directories=args.dirs,
+        partition_configs=partition_configs,
     )

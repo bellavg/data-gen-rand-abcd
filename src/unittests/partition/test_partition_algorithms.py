@@ -3,144 +3,297 @@ from __future__ import annotations
 import unittest
 import torch
 from torch_geometric.data import Data
-from data.partition import run_metis, run_level_bisect
+from data.partition import run_metis, run_span_weighted_metis, run_level_slicing, run_random, compute_dynamic_k
 
-class TestPartitionAlgorithms(unittest.TestCase):
-    def test_run_metis_basic(self):
-        # Symmetrized edges are required for METIS, but run_metis does this internally.
-        # Symmetrized graph with 6 nodes
-        edge_index = torch.tensor([[0, 1, 1, 2, 2, 3, 3, 4, 4, 5],
-                                   [1, 0, 2, 1, 3, 2, 4, 3, 5, 4]], dtype=torch.long)
+
+class TestRunMetis(unittest.TestCase):
+    def test_basic(self):
+        # Symmetrized graph with 6 nodes; run_metis handles symmetrization internally.
+        edge_index = torch.tensor(
+            [[0, 1, 1, 2, 2, 3, 3, 4, 4, 5],
+             [1, 0, 2, 1, 3, 2, 4, 3, 5, 4]], dtype=torch.long
+        )
         data = Data(edge_index=edge_index, num_nodes=6)
-        
+
         try:
             mask = run_metis(data, num_partitions=2)
         except ImportError as e:
             if "requires either" in str(e):
                 self.skipTest(f"Skipping METIS test: {e}")
             raise
-            
+
         self.assertEqual(mask.shape, (6,))
         self.assertEqual(mask.dtype, torch.long)
         self.assertEqual(mask.device.type, "cpu")
         self.assertTrue((mask >= 0).all())
         self.assertTrue((mask < 2).all())
 
-    def test_run_level_bisect_missing_level(self):
+
+class TestRunSpanWeightedMetis(unittest.TestCase):
+    def test_basic(self):
+        # Symmetrized graph with 6 nodes and levels attribute.
+        edge_index = torch.tensor(
+            [[0, 1, 1, 2, 2, 3, 3, 4, 4, 5],
+             [1, 0, 2, 1, 3, 2, 4, 3, 5, 4]], dtype=torch.long
+        )
+        level = torch.tensor([0, 1, 2, 3, 4, 5], dtype=torch.long)
+        data = Data(edge_index=edge_index, level=level, num_nodes=6)
+
+        try:
+            mask = run_span_weighted_metis(data, num_partitions=2)
+        except ImportError as e:
+            self.skipTest(f"Skipping Span-Weighted METIS test: {e}")
+            return
+
+        self.assertEqual(mask.shape, (6,))
+        self.assertEqual(mask.dtype, torch.long)
+        self.assertEqual(mask.device.type, "cpu")
+        self.assertTrue((mask >= 0).all())
+        self.assertTrue((mask < 2).all())
+
+    def test_span_weighted_differs_from_unweighted(self):
+        # Create a 4-node cycle: 0-1, 1-3, 3-2, 2-0
+        edge_index = torch.tensor(
+            [[0, 1, 1, 3, 3, 2, 2, 0],
+             [1, 0, 3, 1, 2, 3, 0, 2]], dtype=torch.long
+        )
+        # Assign levels: 0 and 2 are 0, 1 and 3 are 100.
+        # This makes edges (0,1) and (2,3) have huge span (100),
+        # whereas edges (0,2) and (1,3) have span 0.
+        level = torch.tensor([0, 100, 0, 100], dtype=torch.long)
+        data = Data(edge_index=edge_index, level=level, num_nodes=4)
+
+        try:
+            mask_unweighted = run_metis(data, num_partitions=2)
+            mask_weighted = run_span_weighted_metis(data, num_partitions=2, alpha=100.0)
+        except ImportError as e:
+            self.skipTest(f"Skipping METIS comparison test: {e}")
+            return
+
+        # 1. Verify shapes
+        self.assertEqual(mask_unweighted.shape, (4,))
+        self.assertEqual(mask_weighted.shape, (4,))
+
+        # 2. For the weighted version, it should strictly avoid cutting the high-span edges:
+        # (0,1) and (2,3). Therefore, node 0 and 1 must have the same partition,
+        # and node 2 and 3 must have the same partition.
+        self.assertEqual(mask_weighted[0], mask_weighted[1])
+        self.assertEqual(mask_weighted[2], mask_weighted[3])
+
+        # 3. Standard unweighted METIS has no level awareness, so it partitions
+        # the graph such that it cuts (0,1) and (2,3) to get {0, 2} and {1, 3}.
+        self.assertNotEqual(mask_unweighted[0], mask_unweighted[1])
+        self.assertNotEqual(mask_unweighted[2], mask_unweighted[3])
+
+
+class TestRunLevelSlicing(unittest.TestCase):
+    def test_missing_level_raises(self):
         data = Data(num_nodes=5)
         with self.assertRaises(AttributeError):
-            run_level_bisect(data, num_partitions=2)
+            run_level_slicing(data, num_partitions=2)
 
-    def test_run_level_bisect_even_nodes(self):
-        # 10 nodes with various levels
+    def test_invalid_num_partitions_raises(self):
+        level = torch.tensor([1, 2, 3], dtype=torch.long)
+        data = Data(level=level, num_nodes=3)
+        with self.assertRaises(ValueError):
+            run_level_slicing(data, num_partitions=0)
+
+    def test_even_nodes_two_partitions(self):
+        # 10 nodes, 2 equal buckets → exactly 5 each.
         level = torch.tensor([1, 4, 2, 5, 1, 2, 3, 3, 4, 5], dtype=torch.long)
         data = Data(level=level, num_nodes=10)
-        
-        mask = run_level_bisect(data, num_partitions=2)
+
+        mask = run_level_slicing(data, num_partitions=2)
         self.assertEqual(mask.shape, (10,))
         self.assertEqual(mask.dtype, torch.long)
         self.assertEqual(mask.device.type, "cpu")
-        
-        # Verify 50/50 split
-        num_zero = (mask == 0).sum().item()
-        num_one = (mask == 1).sum().item()
-        self.assertEqual(num_zero, 5)
-        self.assertEqual(num_one, 5)
 
-        # Verify partition ordering:
-        # All nodes in partition 0 should have levels <= all nodes in partition 1
+        self.assertEqual((mask == 0).sum().item(), 5)
+        self.assertEqual((mask == 1).sum().item(), 5)
+
+        # Lower-level nodes belong to bucket 0.
         max_level_part0 = level[mask == 0].max().item()
         min_level_part1 = level[mask == 1].min().item()
         self.assertLessEqual(max_level_part0, min_level_part1)
 
-    def test_run_level_bisect_odd_nodes(self):
-        # 9 nodes
+    def test_odd_nodes_two_partitions(self):
+        # 9 nodes: floor(i*2/9) for i=0..8 → [0,0,0,0,1,1,1,1,1]
+        # → bucket 0 gets positions 0-4 (5 nodes), bucket 1 gets positions 5-8 (4 nodes).
         level = torch.tensor([5, 4, 3, 2, 1, 2, 3, 4, 5], dtype=torch.long)
         data = Data(level=level, num_nodes=9)
-        
-        mask = run_level_bisect(data, num_partitions=2)
+
+        mask = run_level_slicing(data, num_partitions=2)
         self.assertEqual(mask.shape, (9,))
-        
-        # Verify split: half_size = 9 // 2 = 4 assigned to 0, 5 assigned to 1
-        num_zero = (mask == 0).sum().item()
-        num_one = (mask == 1).sum().item()
-        self.assertEqual(num_zero, 4)
-        self.assertEqual(num_one, 5)
+        self.assertEqual((mask == 0).sum().item(), 5)
+        self.assertEqual((mask == 1).sum().item(), 4)
 
         max_level_part0 = level[mask == 0].max().item()
         min_level_part1 = level[mask == 1].min().item()
         self.assertLessEqual(max_level_part0, min_level_part1)
 
-    def test_run_level_bisect_single_node(self):
+
+    def test_four_partitions(self):
+        # 12 nodes, 4 equal buckets → exactly 3 each.
+        level = torch.arange(12, dtype=torch.long)
+        data = Data(level=level, num_nodes=12)
+
+        mask = run_level_slicing(data, num_partitions=4)
+        self.assertEqual(mask.shape, (12,))
+        self.assertTrue((mask >= 0).all())
+        self.assertTrue((mask < 4).all())
+        for p in range(4):
+            self.assertEqual((mask == p).sum().item(), 3)
+
+    def test_single_node(self):
+        # 1 node → floor(0 * K / 1) = 0 for any K, clamped to K-1 at most.
         level = torch.tensor([3], dtype=torch.long)
         data = Data(level=level, num_nodes=1)
-        
-        mask = run_level_bisect(data, num_partitions=2)
-        self.assertEqual(mask.shape, (1,))
-        self.assertEqual(mask[0].item(), 1) # half_size = 0, so assigned to 1
 
-    def test_run_level_bisect_empty(self):
+        mask = run_level_slicing(data, num_partitions=2)
+        self.assertEqual(mask.shape, (1,))
+        # New equal-bucket formula: floor(0 * 2 / 1) = 0
+        self.assertEqual(mask[0].item(), 0)
+
+    def test_empty(self):
         level = torch.tensor([], dtype=torch.long)
         data = Data(level=level, num_nodes=0)
-        
-        mask = run_level_bisect(data, num_partitions=2)
+
+        mask = run_level_slicing(data, num_partitions=2)
         self.assertEqual(mask.shape, (0,))
 
-    def test_random_partitioning_positional_arguments(self):
-        from data.partition_utils import random_partitioning
-        # Test 2 nodes
-        data = Data(x=torch.randn(10, 4), edge_index=torch.zeros((2, 0), dtype=torch.long), num_nodes=10)
-        
-        # Test positional passing
-        part_data = random_partitioning(data, 4)
-        self.assertEqual(part_data.num_partitions.item(), 4)
-        self.assertTrue((part_data.partition_id >= 0).all())
-        self.assertTrue((part_data.partition_id < 4).all())
 
-    def test_precomputed_partitioning_direct_lookup(self):
+    def test_dynamic_k_heuristic(self):
+        """compute_dynamic_k clamps correctly at min/max boundaries."""
+        # 5000 nodes → k = 5000//10000 = 0, clamped to min_k=2
+        self.assertEqual(compute_dynamic_k(5_000, 10_000, 2, 32), 2)
+        # 50000 nodes → k = 50000//10000 = 5
+        self.assertEqual(compute_dynamic_k(50_000, 10_000, 2, 32), 5)
+        # 1_000_000 nodes → k = 100, clamped to max_k=32
+        self.assertEqual(compute_dynamic_k(1_000_000, 10_000, 2, 32), 32)
+
+
+class TestRunRandom(unittest.TestCase):
+    def _make_data(self, n: int = 20) -> Data:
+        return Data(
+            x=torch.randn(n, 4),
+            edge_index=torch.zeros((2, 0), dtype=torch.long),
+            num_nodes=n,
+        )
+
+    def test_shape_and_dtype(self):
+        data = self._make_data(20)
+        mask = run_random(data, num_partitions=4, seed=0)
+        self.assertEqual(mask.shape, (20,))
+        self.assertEqual(mask.dtype, torch.long)
+
+    def test_values_in_range(self):
+        data = self._make_data(50)
+        mask = run_random(data, num_partitions=3, seed=7)
+        self.assertTrue((mask >= 0).all())
+        self.assertTrue((mask < 3).all())
+
+    def test_reproducible_with_same_seed(self):
+        data = self._make_data(30)
+        mask_a = run_random(data, num_partitions=2, seed=42)
+        mask_b = run_random(data, num_partitions=2, seed=42)
+        self.assertTrue(torch.equal(mask_a, mask_b))
+
+    def test_different_seeds_differ(self):
+        data = self._make_data(100)
+        mask_a = run_random(data, num_partitions=4, seed=1)
+        mask_b = run_random(data, num_partitions=4, seed=2)
+        # With 100 nodes and 4 partitions, getting identical masks is astronomically unlikely.
+        self.assertFalse(torch.equal(mask_a, mask_b))
+
+    def test_two_partitions(self):
+        data = self._make_data(10)
+        mask = run_random(data, num_partitions=2, seed=0)
+        self.assertTrue((mask >= 0).all())
+        self.assertTrue((mask < 2).all())
+
+
+class TestPrecomputedPartitioning(unittest.TestCase):
+    def test_direct_lookup(self):
         from data.partition_utils import precomputed_partitioning
-        data = Data(x=torch.randn(10, 4), edge_index=torch.zeros((2, 0), dtype=torch.long), num_nodes=10)
-        
-        # Test direct lookup: f"{algo_name}_{num_partitions}_mask"
-        data.metis_4_mask = torch.tensor([0, 0, 1, 1, 2, 2, 3, 3, 0, 1], dtype=torch.long)
-        part_data = precomputed_partitioning(data, "metis", 4)
+        data = Data(
+            x=torch.randn(10, 4),
+            edge_index=torch.zeros((2, 0), dtype=torch.long),
+            num_nodes=10,
+        )
+        # Use the new dynamic-key format written by the precompute pipeline
+        data.metis_dynamic_mask = torch.tensor([0, 0, 1, 1, 2, 2, 3, 3, 0, 1], dtype=torch.long)
+        data.metis_dynamic_num_partitions = torch.tensor([4], dtype=torch.long)
+
+        part_data = precomputed_partitioning(data, "metis")
         self.assertEqual(part_data.num_partitions.item(), 4)
-        self.assertTrue(torch.equal(part_data.partition_id, torch.sort(data.metis_4_mask)[0]))
+        self.assertTrue(torch.equal(part_data.partition_id, torch.sort(data.metis_dynamic_mask)[0]))
 
-        # Test invalid name or mismatch raises AttributeError
+    def test_missing_mask_raises_attribute_error(self):
+        from data.partition_utils import precomputed_partitioning
+        data = Data(
+            x=torch.randn(10, 4),
+            edge_index=torch.zeros((2, 0), dtype=torch.long),
+            num_nodes=10,
+        )
         with self.assertRaises(AttributeError):
-            precomputed_partitioning(data, "metis", 2)
-            
-        with self.assertRaises(AttributeError):
-            precomputed_partitioning(data, "non_existent", 4)
+            precomputed_partitioning(data, "metis")
 
-    def test_dataset_dynamic_partitioning_fallback(self):
+        with self.assertRaises(AttributeError):
+            precomputed_partitioning(data, "non_existent")
+
+
+class TestDatasetPartitionFallback(unittest.TestCase):
+    """Verifies that dataset.get() raises RuntimeError when the precomputed
+    mask is missing — dynamic on-the-fly computation is no longer supported."""
+
+    def test_missing_mask_raises_runtime_error(self):
         from data.dataset import AIGGraphRegressionDataset
         from unittest.mock import MagicMock
 
-        # Create a mock dataset instance
         ds = MagicMock(spec=AIGGraphRegressionDataset)
-        ds.partition = "level_bisect"
+        ds.partition = "level_slicing"
         ds.positional_encoding = None
         ds.normalize_edges = False
         ds.samples = [MagicMock(y_node_opt=0.5)]
         ds._load_graph_for_sample = MagicMock()
-        
-        # A mock graph data object with no precomputed mask
-        level = torch.tensor([1, 2, 1, 2, 3, 3], dtype=torch.long)
-        mock_graph = Data(x=torch.randn(6, 4), edge_index=torch.zeros((2, 0), dtype=torch.long), level=level, num_nodes=6)
+
+        # Graph has NO precomputed mask stored (no _dynamic_ key)
+        mock_graph = Data(
+            x=torch.randn(6, 4),
+            edge_index=torch.zeros((2, 0), dtype=torch.long),
+            level=torch.tensor([1, 2, 1, 2, 3, 3], dtype=torch.long),
+            num_nodes=6,
+        )
         ds._load_graph_for_sample.return_value = mock_graph
-        
-        # Let's call the actual get method logic (from the base class / class method)
-        # using our mock dataset as 'self'
+
+        with self.assertRaises(RuntimeError):
+            AIGGraphRegressionDataset.get(ds, 0)
+
+    def test_precomputed_random_mask_is_applied(self):
+        """random is now an offline algorithm; the precomputed dynamic mask should be used."""
+        from data.dataset import AIGGraphRegressionDataset
+        from unittest.mock import MagicMock
+
+        ds = MagicMock(spec=AIGGraphRegressionDataset)
+        ds.partition = "random"
+        ds.positional_encoding = None
+        ds.normalize_edges = False
+        ds.samples = [MagicMock(y_node_opt=0.5)]
+        ds._load_graph_for_sample = MagicMock()
+
+        # Provide a precomputed random_dynamic_mask (k=2 stored in the tensor)
+        mock_graph = Data(
+            x=torch.randn(6, 4),
+            edge_index=torch.zeros((2, 0), dtype=torch.long),
+            num_nodes=6,
+        )
+        mock_graph.random_dynamic_mask = torch.tensor([0, 1, 0, 1, 0, 1], dtype=torch.long)
+        mock_graph.random_dynamic_num_partitions = torch.tensor([2], dtype=torch.long)
+        ds._load_graph_for_sample.return_value = mock_graph
+
         result = AIGGraphRegressionDataset.get(ds, 0)
-        
-        # Verify it partitioned dynamically on-the-fly!
         self.assertEqual(result.num_partitions.item(), 2)
-        # Partition 0 gets the 3 lowest level nodes (half_size = 3)
-        # Partition 1 gets the rest
-        self.assertEqual((result.partition_id == 0).sum().item(), 3)
-        self.assertEqual((result.partition_id == 1).sum().item(), 3)
+
 
 if __name__ == "__main__":
     unittest.main()

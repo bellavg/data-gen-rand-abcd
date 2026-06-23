@@ -207,6 +207,8 @@ class TestDatasetIntegration(unittest.TestCase):
             pi_paths=torch.rand(8, 1),
             local_sp_sum=torch.rand(8, 1),
         )
+        g.random_dynamic_mask = torch.tensor([0, 1, 0, 1, 0, 1, 0, 1], dtype=torch.long)
+        g.random_dynamic_num_partitions = torch.tensor([2], dtype=torch.long)
         pt_path = self.root / "graph.pt"
         torch.save(g, pt_path)
 

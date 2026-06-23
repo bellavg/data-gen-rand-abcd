@@ -289,7 +289,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--partition",
         type=lambda x: x.lower() if x.lower() != "none" else None,
-        default=config.PARTITION,
+        default=None,
         help="Graph partitioning algorithm to apply on-the-fly (e.g. 'random'). Pass 'none' to disable.",
     )
 
