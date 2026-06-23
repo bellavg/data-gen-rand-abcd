@@ -124,7 +124,6 @@ def random_partitioning(
 def precomputed_partitioning(
     data_obj: _PyGData,
     algo_name: str,
-    num_partitions: int = 2,
 ) -> PartitionedData:
     """Apply a precomputed partitioning assignment stored in the Data object.
 
@@ -132,27 +131,32 @@ def precomputed_partitioning(
         data_obj:       A PyG ``Data`` object.
         algo_name:      The base attribute name (string) where the precomputed
                         partition assignments are stored (e.g., "metis").
-        num_partitions: The number of partitions to retrieve.
 
     Returns:
         A ``PartitionedData`` object with partition-contiguous nodes and
         cross-partition edges zeroed out.
     """
-    key = f"{algo_name}_{num_partitions}_mask"
+    # Look up the stable "_dynamic_" key and read stored k.
+    key      = f"{algo_name}_dynamic_mask"
+    num_key  = f"{algo_name}_dynamic_num_partitions"
     if not hasattr(data_obj, key) and key not in data_obj.keys():
         raise AttributeError(
-            f"Precomputed partition assignment for '{algo_name}' with {num_partitions} "
-            f"partitions was not found in Data object (tried '{key}')."
+            f"Dynamic precomputed partition mask '{key}' not found in Data object. "
+            f"Precompute masks by running: python -m data.partition {algo_name} --dirs <cache_dir>"
         )
-    
     partition_id = data_obj[key]
-    
+    if not hasattr(data_obj, num_key) and num_key not in data_obj.keys():
+        raise AttributeError(
+            f"Dynamic partition count attribute '{num_key}' not found in Data object."
+        )
+    num_partitions = int(data_obj[num_key].item())
+
     # Cast to long tensor if not already
     if not isinstance(partition_id, torch.Tensor):
         partition_id = torch.tensor(partition_id, dtype=torch.long, device=data_obj.x.device)
     else:
         partition_id = partition_id.to(dtype=torch.long, device=data_obj.x.device)
-        
+
     return partition_by_assignment(data_obj, partition_id, num_partitions)
 
 

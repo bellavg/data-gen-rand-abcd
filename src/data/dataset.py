@@ -18,7 +18,7 @@ from torch_geometric.data import Dataset as PyGDataset
 from torch_geometric.data import storage as _pyg_storage
 from torch_geometric.utils import degree
 
-from data.partition_utils import PartitionedData, random_partitioning, precomputed_partitioning, partition_by_assignment
+from data.partition_utils import PartitionedData, precomputed_partitioning, partition_by_assignment
 from models.layers.positional_encodings import get_pe_transform
 
 # Register PyG classes in the secure deserialization allowlist so torch.load
@@ -702,21 +702,21 @@ class AIGGraphRegressionDataset(PyGDataset):
         data_obj.y = torch.tensor([[sample.y_node_opt]], dtype=torch.float32)
         # --- PARTITION HANDLING SYSTEM ---
         if self.partition is not None:
-            import config
-            num_parts = getattr(config, "NUM_PARTITIONS", 2)
-            if self.partition == "random":
-                data_obj = random_partitioning(data_obj, num_parts)
+            # Dynamic mode: look for the per-graph key written by the precompute
+            # pipeline (key is stable regardless of actual k for that graph).
+            dynamic_key = f"{self.partition}_dynamic_mask"
+            if hasattr(data_obj, dynamic_key) or dynamic_key in data_obj.keys():
+                # precomputed_partitioning reads k from the stored
+                # {algo}_dynamic_num_partitions tensor in the .pt file.
+                data_obj = precomputed_partitioning(data_obj, self.partition)
             else:
-                # 1. Try to load the precomputed mask from cache
-                key = f"{self.partition}_{num_parts}_mask"
-                if hasattr(data_obj, key) or key in data_obj.keys():
-                    data_obj = precomputed_partitioning(data_obj, self.partition, num_parts)
-                else:
-                    raise RuntimeError(
-                        f"Precomputed partition mask '{key}' not found in cached graph. "
-                        f"Run 'python -m data.partition' with PARTITION='{self.partition}' "
-                        f"and NUM_PARTITIONS={num_parts} in config.py to precompute masks."
-                    )
+                raise RuntimeError(
+                    f"Precomputed dynamic partition mask '{dynamic_key}' not found in "
+                    f"cached graph. Precompute masks by running:\n"
+                    f"  python -m data.partition {self.partition} --dirs <cache_dir>\n"
+                    f"  The pipeline stores masks under '{self.partition}_dynamic_mask' "
+                    f"with the actual k saved in '{self.partition}_dynamic_num_partitions'."
+                )
         return data_obj
 
     def get_num_nodes_list(self) -> list[int]:

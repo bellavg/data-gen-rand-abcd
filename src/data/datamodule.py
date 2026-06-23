@@ -22,7 +22,7 @@ class AIGDataModule(pl.LightningDataModule):
         csv_paths: str | Path | list[str | Path],
         *,
         positional_encoding: str | None = None,
-        partition: str | None = config.PARTITION,
+        partition: str | None = None,
         normalize_edges: bool = config.NORMALIZE_EDGES,
         cache_dir: str | Path | None = None,
         split_ratios: tuple[float, float, float] = (0.8, 0.1, 0.1),
