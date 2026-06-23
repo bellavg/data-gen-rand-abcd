@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import uuid
 import torch
+import functools
 from pathlib import Path
 from tqdm import tqdm
 from torch_geometric.data import Data
@@ -224,14 +225,64 @@ def run_span_weighted_metis(data_obj, num_partitions: int, alpha: float = 10.0) 
 
 
 # =====================================================================
+# WORKER TASK FOR PARALLEL EXECUTION
+# =====================================================================
+
+def _process_single_cache_file(
+    cache_path: Path,
+    target_nodes: int,
+    min_k: int,
+    max_k: int,
+    algo_names: list[str],
+    seed: int,
+) -> None:
+    if not cache_path.is_file():
+        return
+
+    # 1. Load the existing .pt file.
+    with open(cache_path, "rb") as fh:
+        data_obj = torch.load(fh, map_location="cpu", weights_only=True)
+
+    # 2. Compute k once per graph (shared across all algorithms).
+    k = compute_dynamic_k(data_obj.num_nodes, target_nodes, min_k, max_k)
+
+    # 3. Run each requested algorithm with the pre-computed k.
+    for algo_name in algo_names:
+        if algo_name == "metis":
+            mask_tensor = run_metis(data_obj, k)
+        elif algo_name == "span_weighted_metis":
+            mask_tensor = run_span_weighted_metis(data_obj, k)
+        elif algo_name == "level_slicing":
+            mask_tensor = run_level_slicing(data_obj, k)
+        elif algo_name == "random":
+            mask_tensor = run_random(data_obj, k, seed=seed)
+        else:
+            raise ValueError(f"Unknown algorithm: {algo_name}")
+
+        if not isinstance(mask_tensor, torch.Tensor):
+            mask_tensor = torch.tensor(mask_tensor, dtype=torch.long)
+
+        setattr(data_obj, f"{algo_name}_dynamic_mask",
+                mask_tensor.to(dtype=torch.long, device="cpu"))
+        setattr(data_obj, f"{algo_name}_dynamic_num_partitions",
+                torch.tensor([k], dtype=torch.long, device="cpu"))
+
+    # 4. Atomically overwrite the file on disk.
+    temp_file = cache_path.with_suffix(f".tmp_{uuid.uuid4().hex[:8]}")
+    torch.save(data_obj, temp_file)
+    os.replace(temp_file, cache_path)
+
+
+# =====================================================================
 # CORE UPDATE PIPELINE
 # =====================================================================
 
 def update_existing_cache_with_masks(
     directories: list[str | Path],
-    partition_configs: list[tuple[str, callable]] | None = None,
+    algo_names: list[str],
+    seed: int = 0,
 ) -> None:
-    """Loads pre-cached graph files from specified directories, computes partition masks, and saves them back.
+    """Loads pre-cached graph files from specified directories, computes partition masks in parallel, and saves them back.
 
     Searches recursively for all ``*.pt`` files in the provided directories.
     Deduplicates the file paths so that each file is processed exactly once,
@@ -245,14 +296,9 @@ def update_existing_cache_with_masks(
         ``{algo_name}_dynamic_mask``            – 1-D long tensor, shape [num_nodes]
         ``{algo_name}_dynamic_num_partitions``  – scalar long tensor, value = k
     """
-    if partition_configs is None:
-        raise ValueError(
-            "partition_configs must be provided explicitly.\n"
-            "Pass a list of (algo_name, algo_fn) pairs, e.g.:\n"
-            "  [(\"metis\", run_metis), (\"level_slicing\", run_level_slicing)]\n"
-        )
-
     import config as _cfg
+    import concurrent.futures
+
     target_nodes = getattr(_cfg, "TARGET_NODES_PER_PART", 10_000)
     min_k        = getattr(_cfg, "MIN_K", 2)
     max_k        = getattr(_cfg, "MAX_K", 32)
@@ -272,67 +318,61 @@ def update_existing_cache_with_masks(
             unique_cache_paths.append(d_path)
 
     unique_cache_paths = sorted(set(p.resolve() for p in unique_cache_paths))
-    print(f"[Mask Precomputation] Found {len(unique_cache_paths)} unique graph cache files to process.")
+    total_files = len(unique_cache_paths)
+    print(f"[Mask Precomputation] Found {total_files} unique graph cache files to process.")
+
+    if total_files == 0:
+        print("[Mask Precomputation] No graph cache files found. Exiting.")
+        return
+
+    # Respect SLURM allocated CPUs
+    try:
+        num_workers = len(os.sched_getaffinity(0))
+    except AttributeError:
+        num_workers = os.cpu_count() or 1
+
+    print(f"[Mask Precomputation] Using {num_workers} parallel worker processes...")
 
     success_count = 0
+    worker_fn = functools.partial(
+        _process_single_cache_file,
+        target_nodes=target_nodes,
+        min_k=min_k,
+        max_k=max_k,
+        algo_names=algo_names,
+        seed=seed,
+    )
 
-    for cache_path in tqdm(unique_cache_paths, desc="Appending masks to cache"):
-        if not cache_path.is_file():
-            continue
+    with concurrent.futures.ProcessPoolExecutor(max_workers=num_workers) as executor:
+        futures = {executor.submit(worker_fn, path): path for path in unique_cache_paths}
 
-        # 1. Load the existing .pt file.
-        with open(cache_path, "rb") as fh:
-            data_obj = torch.load(fh, map_location="cpu", weights_only=True)
-
-        # 2. Compute k once per graph (shared across all algorithms).
-        k = compute_dynamic_k(data_obj.num_nodes, target_nodes, min_k, max_k)
-
-        # 3. Run each requested algorithm with the pre-computed k.
-        for algo_name, algo_fn in partition_configs:
-            mask_tensor = algo_fn(data_obj, k)
-
-            if not isinstance(mask_tensor, torch.Tensor):
-                mask_tensor = torch.tensor(mask_tensor, dtype=torch.long)
-
-            setattr(data_obj, f"{algo_name}_dynamic_mask",
-                    mask_tensor.to(dtype=torch.long, device="cpu"))
-            setattr(data_obj, f"{algo_name}_dynamic_num_partitions",
-                    torch.tensor([k], dtype=torch.long, device="cpu"))
-
-        # 4. Atomically overwrite the file on disk.
-        temp_file = cache_path.with_suffix(f".tmp_{uuid.uuid4().hex[:8]}")
-        torch.save(data_obj, temp_file)
-        os.replace(temp_file, cache_path)
-        success_count += 1
+        for future in tqdm(
+            concurrent.futures.as_completed(futures),
+            total=total_files,
+            desc="Appending masks to cache"
+        ):
+            path = futures[future]
+            try:
+                future.result()
+                success_count += 1
+            except Exception as e:
+                print(f"\n[ERROR] Failed to process {path.name}: {e}")
 
     print(f"\n[Mask Precomputation] Complete! Successfully updated {success_count} files.")
     print("All other properties (features, edge layouts, positional encodings) were preserved untouched.")
 
 
 if __name__ == "__main__":
-    import functools
     import argparse
     import config
 
     # -----------------------------------------------------------------------
     # Settings are driven by config.py (except algorithm/dirs which are CLI args).
     # -----------------------------------------------------------------------
-    _target_nodes = getattr(config, "TARGET_NODES_PER_PART", 10_000)
-    _min_k        = getattr(config, "MIN_K", 2)
-    _max_k        = getattr(config, "MAX_K", 32)
-    _seed         = getattr(config, "PARTITION_SEED", 0)
-
-    # run_random takes an extra `seed` kwarg; bind it so all callables share
-    # the same (data_obj, num_partitions) signature expected by the pipeline.
-    _ALGO_MAP = {
-        "metis":               run_metis,
-        "span_weighted_metis": run_span_weighted_metis,
-        "level_slicing":       run_level_slicing,
-        "random":              functools.partial(run_random, seed=_seed),
-    }
+    _seed = getattr(config, "PARTITION_SEED", 0)
 
     parser = argparse.ArgumentParser(
-        description="Precompute dynamic-k partition masks for cached graphs."
+        description="Precompute dynamic-k partition masks for cached graphs in parallel."
     )
     parser.add_argument(
         "algorithm",
@@ -349,18 +389,18 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.algorithm == "all":
-        partition_configs = list(_ALGO_MAP.items())
+        algo_names = ["metis", "span_weighted_metis", "level_slicing", "random"]
     else:
-        partition_configs = [(args.algorithm, _ALGO_MAP[args.algorithm])]
+        algo_names = [args.algorithm]
 
     print(
-        f"[partition.py] Running for algorithm(s)={sorted([name for name, _ in partition_configs])}, dynamic-k heuristic\n"
-        f"  TARGET_NODES_PER_PART={_target_nodes}, MIN_K={_min_k}, MAX_K={_max_k}\n"
+        f"[partition.py] Running for algorithm(s)={sorted(algo_names)}, dynamic-k heuristic\n"
         f"  seed={_seed}\n"
         f"  dirs={args.dirs}"
     )
 
     update_existing_cache_with_masks(
         directories=args.dirs,
-        partition_configs=partition_configs,
+        algo_names=algo_names,
+        seed=_seed,
     )
