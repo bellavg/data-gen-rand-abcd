@@ -243,11 +243,20 @@ def _process_single_cache_file(
     with open(cache_path, "rb") as fh:
         data_obj = torch.load(fh, map_location="cpu", weights_only=True)
 
+    missing_algos = []
+    for algo_name in algo_names:
+        if not hasattr(data_obj, f"{algo_name}_dynamic_mask"):
+            missing_algos.append(algo_name)
+    
+    if not missing_algos:
+        # All requested algorithms are already computed.
+        return
+
     # 2. Compute k once per graph (shared across all algorithms).
     k = compute_dynamic_k(data_obj.num_nodes, target_nodes, min_k, max_k)
 
     # 3. Run each requested algorithm with the pre-computed k.
-    for algo_name in algo_names:
+    for algo_name in missing_algos:
         if algo_name == "metis":
             mask_tensor = run_metis(data_obj, k)
         elif algo_name == "span_weighted_metis":

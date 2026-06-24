@@ -118,7 +118,11 @@ fi
 # =========================================================
 # Number of data-loader workers (default: SLURM_CPUS_PER_TASK or 16)
 NUM_WORKERS="${NUM_WORKERS:-${SLURM_CPUS_PER_TASK:-16}}"
+# Partition algorithm to apply (choices: metis, span_weighted_metis, level_slicing, random, none)
+PARTITION="${PARTITION:-none}"
+
 echo "Using NUM_WORKERS=$NUM_WORKERS for data loading."
+echo "Using PARTITION=$PARTITION partitioning."
 # =========================================================
 # 5. EXECUTE TRAINING
 # =========================================================
@@ -128,6 +132,7 @@ echo "Starting Final Training for $ALGORITHM on GPU 0..."
 srun python -u -m train \
     --algorithm         "$ALGORITHM" \
     --csv_paths         "$CSV_PATH" \
+    --partition         "$PARTITION" \
     --checkpoint_dir    "$CHECKPOINT_DIR" \
     --log_dir           "$LOG_DIR" \
     --cache_dir         "$CACHE_DIR" \
