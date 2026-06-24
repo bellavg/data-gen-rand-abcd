@@ -50,13 +50,16 @@ module load SciPy-bundle/2025.06-gfbf-2025a
 VENV_PATH="${VENV_PATH:-/scratch-shared/$USER/.venv}"
 source "$VENV_PATH/bin/activate"
 
-pip install pymetis
-
 BASE_DIR="${BASE_DIR:-$HOME/data-gen-rand-abcd}"
 unset PYTHONPATH
 unset PYTHONHOME
 export PYTHONNOUSERSITE=1
 export PYTHONPATH="$BASE_DIR/src"
+
+# Prevent PyTorch from using all 48 cores per worker process
+# which causes severe thread thrashing and massive slowdowns.
+export OMP_NUM_THREADS=1
+export MKL_NUM_THREADS=1
 
 cd "$BASE_DIR"
 
