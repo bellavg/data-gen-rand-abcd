@@ -73,8 +73,6 @@ TIER1_CACHE_DIR="/scratch-shared/$USER/aig_train_run/shared_tier1_cache"
 
 # Target algorithm cache directories
 ORCHESTRATE_CACHE_DIR="/scratch-shared/$USER/aig_train_run/Orchestrate/cache"
-DEEPSYN_CACHE_DIR="/scratch-shared/$USER/aig_train_run/Deepsyn/cache"
-C2RS_CACHE_DIR="/scratch-shared/$USER/aig_train_run/C2RS/cache"
 
 # =========================================================
 # 3. EXECUTE PIPELINE
@@ -85,9 +83,7 @@ python -u -m data.partition "$PARTITION_ALGO" \
     --dirs \
         "$TIER0_CACHE_DIR" \
         "$TIER1_CACHE_DIR" \
-        "$ORCHESTRATE_CACHE_DIR" \
-        "$DEEPSYN_CACHE_DIR" \
-        "$C2RS_CACHE_DIR"
+        "$ORCHESTRATE_CACHE_DIR" 
 
 echo "=========================================="
 echo "Precomputation complete."
