@@ -5,7 +5,7 @@
 #SBATCH --cpus-per-task=16
 #SBATCH --partition=gpu_h100
 #SBATCH --gpus=1
-#SBATCH --array=0-2   
+#SBATCH --array=0-3
 #SBATCH --constraint=scratch-node
 #SBATCH --output=logs/train_partition_%A_%a.out    # %A is the array master job ID, %a is the task index
 #
@@ -65,19 +65,23 @@ cd "$BASE_DIR"
 
 
 # =========================================================
-# 2. ARRAY MAPPING (Algorithm & Data)
+# 2. ARRAY MAPPING (Partition & Data)
 # =========================================================
 
-# Define our 3 algorithms
-ALGORITHMS=("Orchestrate" "Deepsyn" "C2RS")
+# Hardcode algorithm to Orchestrate
+ALGORITHM="Orchestrate"
 
-# Select the algorithm for this specific array task
-ALGORITHM=${ALGORITHMS[$SLURM_ARRAY_TASK_ID]}
+# Define our 4 partition methods
+PARTITIONS=("metis" "span_weighted_metis" "level_slicing" "random")
+
+# Select the partition for this specific array task
+PARTITION=${PARTITIONS[$SLURM_ARRAY_TASK_ID]}
 
 # Set the CSV path dynamically based on the chosen algorithm
 CSV_PATH="$BASE_DIR/data/designs/design_metadata/algo_${ALGORITHM}_ml.csv"
 
-echo "Task $SLURM_ARRAY_TASK_ID assigned to ALGORITHM: $ALGORITHM"
+echo "Task $SLURM_ARRAY_TASK_ID assigned to PARTITION: $PARTITION"
+echo "Using ALGORITHM: $ALGORITHM"
 echo "Using CSV dataset: $CSV_PATH"
 
 # =========================================================
@@ -118,8 +122,6 @@ fi
 # =========================================================
 # Number of data-loader workers (default: SLURM_CPUS_PER_TASK or 16)
 NUM_WORKERS="${NUM_WORKERS:-${SLURM_CPUS_PER_TASK:-16}}"
-# Partition algorithm to apply (choices: metis, span_weighted_metis, level_slicing, random, none)
-PARTITION="${PARTITION:-none}"
 
 echo "Using NUM_WORKERS=$NUM_WORKERS for data loading."
 echo "Using PARTITION=$PARTITION partitioning."
