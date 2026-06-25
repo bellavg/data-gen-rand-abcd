@@ -74,9 +74,6 @@ cd "$BASE_DIR"
 TIER0_CACHE_DIR="/scratch-shared/$USER/aig_train_run/shared_tier0_cache"
 TIER1_CACHE_DIR="/scratch-shared/$USER/aig_train_run/shared_tier1_cache"
 
-# Target algorithm cache directories
-ORCHESTRATE_CACHE_DIR="/scratch-shared/$USER/aig_train_run/Orchestrate/cache"
-
 # =========================================================
 # 3. EXECUTE PIPELINE
 # =========================================================
@@ -85,8 +82,7 @@ echo "Running partition precomputation for all cache directories..."
 python -u -m data.partition "$PARTITION_ALGO" \
     --dirs \
         "$TIER0_CACHE_DIR" \
-        "$TIER1_CACHE_DIR" \
-        "$ORCHESTRATE_CACHE_DIR" 
+        "$TIER1_CACHE_DIR" 
 
 echo "=========================================="
 echo "Precomputation complete."
