@@ -64,7 +64,7 @@ def main(args):
     datamodule = AIGDataModule(
         csv_paths=args.csv_paths,
         positional_encoding=args.pe_type if args.pe_type != "none" else None,
-        partition=args.partition,
+        sparsification=args.sparsification,
         batch_size=args.batch_size,
         split_ratios=(0.8, 0.1, 0.1),
         num_workers=args.num_workers,
@@ -112,8 +112,8 @@ def main(args):
     )
 
     # 5. Define Callbacks and Logger
-    partition_name = args.partition or "none"
-    algo_checkpoint_dir = os.path.join(args.checkpoint_dir, f"{args.algorithm}_{partition_name}")
+    sparsification_name = args.sparsification or "none"
+    algo_checkpoint_dir = os.path.join(args.checkpoint_dir, f"{args.algorithm}_{sparsification_name}")
     os.makedirs(algo_checkpoint_dir, exist_ok=True)
 
     checkpoint_cb = ModelCheckpoint(
@@ -135,12 +135,12 @@ def main(args):
     )
 
     # Use WandbLogger
-    log_dir = f"{args.log_dir}_{partition_name}"
+    log_dir = f"{args.log_dir}_{sparsification_name}"
     os.makedirs(log_dir, exist_ok=True)
     logger = WandbLogger(
         project="AIG-SUMMARIZE",
         entity="isabella-v-gardner-university-of-amsterdam",
-        name=f"train_{args.algorithm}_partition_{partition_name}",
+        name=f"train_{args.algorithm}_{sparsification_name}",
         save_dir=log_dir,
     )
 
@@ -287,10 +287,10 @@ if __name__ == "__main__":
     parser.add_argument("--tier1_cache_dir", type=str, default=None)
     parser.add_argument("--hp_tuning_splits_path", type=str, default=None)
     parser.add_argument(
-        "--partition",
+        "--sparsification",
         type=lambda x: x.lower() if x.lower() != "none" else None,
         default=None,
-        help="Graph partitioning algorithm to apply on-the-fly (e.g. 'random'). Pass 'none' to disable.",
+        help="Sparsification algorithm to apply (e.g. 'random_edge_dropout'). Pass 'none' to disable.",
     )
 
     args = parser.parse_args()

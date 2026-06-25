@@ -270,70 +270,6 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
         self.assertIsNotNone(pe)
         self.assertEqual(pe.shape, (item.x.shape[0], 1))
 
-    def test_partition_random_returns_partitioned_data_with_all_nodes(self):
-        """partition='random' keeps all nodes and edges but adds partition_id labels."""
-        partition_pt = _make_partition_graph_pt(self.root / "partition_graph.pt")
-        partition_csv = self.root / "partition.csv"
-        _write_csv(
-            partition_csv,
-            [
-                {
-                    "unoptimized_graph_path": str(partition_pt),
-                    "design": "adder",
-                    "algorithm": "Orchestrate",
-                    "tier_id": "1",
-                    "optimizability": "0.25",
-                }
-            ],
-        )
-
-        from data.partition_utils import PartitionedData
-
-        ds = self._make_ds(
-            csv_paths=partition_csv,
-            positional_encoding="pi_paths",
-            partition="random",
-            seed=7,
-        )
-        item = ds[0]
-
-        # All 4 nodes are retained (no node filtering)
-        self.assertEqual(item.x.shape[0], 4)
-        # Cross-partition edges are dropped; only intra-partition edges survive
-        self.assertLessEqual(item.edge_index.shape[1], 6)
-        # Returns a PartitionedData instance
-        self.assertIsInstance(item, PartitionedData)
-        # partition_id labels every node
-        self.assertEqual(item.partition_id.shape, (4,))
-        self.assertEqual(item.num_partitions.item(), 2)
-        # Raw PE source attrs are cleaned up
-        self.assertFalse(hasattr(item, "level"))
-        self.assertFalse(hasattr(item, "pi_paths"))
-        self.assertFalse(hasattr(item, "local_sp_sum"))
-
-    def test_partition_none_does_not_add_partition_labels(self):
-        partition_pt = _make_partition_graph_pt(self.root / "partition_graph_off.pt")
-        partition_csv = self.root / "partition_off.csv"
-        _write_csv(
-            partition_csv,
-            [
-                {
-                    "unoptimized_graph_path": str(partition_pt),
-                    "design": "adder",
-                    "algorithm": "Orchestrate",
-                    "tier_id": "1",
-                    "optimizability": "0.25",
-                }
-            ],
-        )
-
-        ds = self._make_ds(csv_paths=partition_csv, partition=None)
-        item = ds[0]
-
-        self.assertFalse(hasattr(item, "partition_id"))
-        self.assertFalse(hasattr(item, "num_partitions"))
-        self.assertEqual(item.edge_index.shape[1], 6)
-        torch.testing.assert_close(item.pos_enc.squeeze(-1), torch.tensor([100.0, 101.0, 102.0, 103.0]))
 
     def test_only_pos_enc_tensor_retained_for_each_pe_mode(self):
         for pe_name in ("level", "pi_paths", "local_sp_sum"):
@@ -344,6 +280,56 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
                 self.assertFalse(hasattr(item, "level"))
                 self.assertFalse(hasattr(item, "pi_paths"))
                 self.assertFalse(hasattr(item, "local_sp_sum"))
+
+    # --- sparsification ---
+
+    def test_sparsification_mask_applied_correctly(self):
+        # Create a graph with a pre-saved mask
+        pt_path = self.root / "sparse_graph.pt"
+        data = Data(
+            x=torch.ones((4, 2)),
+            edge_index=torch.tensor([[0, 1, 2, 3], [1, 2, 3, 0]], dtype=torch.long),
+            edge_attr=torch.tensor([[0.1], [0.2], [0.3], [0.4]]),
+            edge_weight=torch.tensor([1.0, 2.0, 3.0, 4.0]),
+        )
+        # 4 edges total. Let's keep the first and last (mask = [True, False, False, True])
+        data.random_edge_dropout_sparsification_mask = torch.tensor([True, False, False, True])
+        
+        pt_path.parent.mkdir(parents=True, exist_ok=True)
+        torch.save(data, pt_path)
+        
+        csv_path = self.root / "sparse.csv"
+        _write_csv(
+            csv_path,
+            [
+                {
+                    "unoptimized_graph_path": str(pt_path),
+                    "design": "dummy",
+                    "algorithm": "Orchestrate",
+                    "tier_id": "1",
+                    "optimizability": "0.5",
+                }
+            ],
+        )
+
+        # 1. Test without sparsification
+        ds_none = self._make_ds(csv_paths=csv_path, sparsification=None, normalize_edges=True)
+        item_none = ds_none[0]
+        self.assertEqual(item_none.edge_index.shape[1], 4)
+        self.assertEqual(item_none.edge_attr.shape[0], 4)
+        self.assertEqual(item_none.edge_weight.shape[0], 4)
+
+        # 2. Test with sparsification
+        ds_sparse = self._make_ds(csv_paths=csv_path, sparsification="random_edge_dropout", normalize_edges=True)
+        item_sparse = ds_sparse[0]
+        self.assertEqual(item_sparse.edge_index.shape[1], 2)
+        self.assertEqual(item_sparse.edge_attr.shape[0], 2)
+        self.assertEqual(item_sparse.edge_weight.shape[0], 2)
+
+        # Check exact values
+        torch.testing.assert_close(item_sparse.edge_index, torch.tensor([[0, 3], [1, 0]], dtype=torch.long))
+        torch.testing.assert_close(item_sparse.edge_attr, torch.tensor([[0.1], [0.4]]))
+        torch.testing.assert_close(item_sparse.edge_weight, torch.tensor([1.0, 4.0]))
 
     # --- num_samples ---
 
@@ -1157,8 +1143,8 @@ class TestAIGDataModule(unittest.TestCase):
     def test_batch_reconstruction_is_lossless(self):
         from torch_geometric.loader import DataLoader
 
-        # Fix: Use the DataModule to get the dataset (disable random partitioning to ensure stability)
-        dm = self._make_dm(partition=None)
+        # Fix: Use the DataModule to get the dataset
+        dm = self._make_dm()
         ds = dm.train_ds
 
         loader = DataLoader(ds, batch_size=2, shuffle=False)
