@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import time
 import uuid
 import torch
 import functools
@@ -316,19 +317,32 @@ def update_existing_cache_with_masks(
         f"[Mask Precomputation] Dynamic-k heuristic: "
         f"TARGET_NODES_PER_PART={target_nodes}, MIN_K={min_k}, MAX_K={max_k}"
     )
-    print(f"[Mask Precomputation] Scanning directories for cached graph files: {directories}")
-
-    unique_cache_paths = []
+    unique_paths_set = set()
+    scan_start = time.time()
+    
     for d in directories:
-        d_path = Path(d)
-        if d_path.is_dir():
-            unique_cache_paths.extend(d_path.rglob("*.pt"))
-        elif d_path.is_file() and d_path.suffix == ".pt":
-            unique_cache_paths.append(d_path)
+        # Convert the base directory to an absolute string immediately
+        d_path = str(Path(d).absolute())
+        print(f"  -> Scanning {d_path}...")
+        
+        if os.path.isfile(d_path):
+            if d_path.endswith(".pt"):
+                unique_paths_set.add(d_path)
+        elif os.path.isdir(d_path):
+            # os.walk is extremely fast because it minimizes 'stat' system calls.
+            # We ignore the directory list (dirs) and just grab the files.
+            for root, dirs, files in os.walk(d_path):
+                for file_name in files:
+                    if file_name.endswith(".pt"):
+                        # Pure string concatenation - zero filesystem checks
+                        full_path = os.path.join(root, file_name)
+                        unique_paths_set.add(full_path)
 
-    unique_cache_paths = sorted(set(p.resolve() for p in unique_cache_paths))
+    # Convert back to Path objects and sort for the worker pool
+    unique_cache_paths = sorted([Path(p) for p in unique_paths_set])
     total_files = len(unique_cache_paths)
-    print(f"[Mask Precomputation] Found {total_files} unique graph cache files to process.")
+    
+    print(f"[Mask Precomputation] Found {total_files} files in {time.time() - scan_start:.2f} seconds.")
 
     if total_files == 0:
         print("[Mask Precomputation] No graph cache files found. Exiting.")
