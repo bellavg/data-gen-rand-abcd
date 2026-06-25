@@ -18,7 +18,6 @@ from torch_geometric.data import Dataset as PyGDataset
 from torch_geometric.data import storage as _pyg_storage
 from torch_geometric.utils import degree
 
-from data.partition_utils import PartitionedData, precomputed_partitioning, partition_by_assignment
 from models.layers.positional_encodings import get_pe_transform
 
 # Register PyG classes in the secure deserialization allowlist so torch.load
@@ -26,7 +25,7 @@ from models.layers.positional_encodings import get_pe_transform
 # This bypasses the Python Unpickler entirely, eliminating the Unpickler memo
 # dict leak that causes TypedStorage, UntypedStorage, cell, FileIO, and
 # BufferedReader objects to accumulate linearly across training steps.
-_pyg_safe_globals: list = [_PyGData, _pyg_storage.GlobalStorage, PartitionedData]
+_pyg_safe_globals: list = [_PyGData, _pyg_storage.GlobalStorage]
 for _name in ("DataTensorAttr", "DataEdgeAttr"):
     try:
         import torch_geometric.data.data as _pyg_data_mod
@@ -119,7 +118,7 @@ class AIGGraphRegressionDataset(PyGDataset):
         csv_paths: str | Path | list[str | Path],
         *,
         positional_encoding: str | None = None,
-        partition: str | None = None,
+        sparsification: str | None = None,
         normalize_edges: bool = False,
         split: str | None = None,
         cache_dir: str | Path | None = None,
@@ -137,7 +136,7 @@ class AIGGraphRegressionDataset(PyGDataset):
             self.csv_paths = [Path(p) for p in csv_paths]
 
         self.positional_encoding = positional_encoding
-        self.partition = partition
+        self.sparsification = sparsification
         self.normalize_edges = bool(normalize_edges)
         self.split = split
         self.cache_dir = Path(cache_dir) if cache_dir is not None else None
@@ -700,23 +699,26 @@ class AIGGraphRegressionDataset(PyGDataset):
                 if hasattr(data_obj, _attr):
                     delattr(data_obj, _attr)
         data_obj.y = torch.tensor([[sample.y_node_opt]], dtype=torch.float32)
-        # --- PARTITION HANDLING SYSTEM ---
-        if self.partition is not None:
-            # Dynamic mode: look for the per-graph key written by the precompute
-            # pipeline (key is stable regardless of actual k for that graph).
-            dynamic_key = f"{self.partition}_dynamic_mask"
-            if hasattr(data_obj, dynamic_key) or dynamic_key in data_obj.keys():
-                # precomputed_partitioning reads k from the stored
-                # {algo}_dynamic_num_partitions tensor in the .pt file.
-                data_obj = precomputed_partitioning(data_obj, self.partition)
+
+        # --- SPARSIFICATION HANDLING SYSTEM ---
+        if self.sparsification is not None:
+            mask_key = f"{self.sparsification}_sparsification_mask"
+            if hasattr(data_obj, mask_key) or mask_key in data_obj.keys():
+                mask = getattr(data_obj, mask_key)
+                
+                # Apply mask to edges
+                data_obj.edge_index = data_obj.edge_index[:, mask]
+                if hasattr(data_obj, "edge_attr") and data_obj.edge_attr is not None:
+                    data_obj.edge_attr = data_obj.edge_attr[mask]
+                if hasattr(data_obj, "edge_weight") and data_obj.edge_weight is not None:
+                    data_obj.edge_weight = data_obj.edge_weight[mask]
             else:
                 raise RuntimeError(
-                    f"Precomputed dynamic partition mask '{dynamic_key}' not found in "
+                    f"Precomputed sparsification mask '{mask_key}' not found in "
                     f"cached graph. Precompute masks by running:\n"
-                    f"  python -m data.partition {self.partition} --dirs <cache_dir>\n"
-                    f"  The pipeline stores masks under '{self.partition}_dynamic_mask' "
-                    f"with the actual k saved in '{self.partition}_dynamic_num_partitions'."
+                    f"  python -m data.sparsification {self.sparsification} --dirs <cache_dir>"
                 )
+
         return data_obj
 
     def get_num_nodes_list(self) -> list[int]:

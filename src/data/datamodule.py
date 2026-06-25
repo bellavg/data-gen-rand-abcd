@@ -22,7 +22,7 @@ class AIGDataModule(pl.LightningDataModule):
         csv_paths: str | Path | list[str | Path],
         *,
         positional_encoding: str | None = None,
-        partition: str | None = None,
+        sparsification: str | None = None,
         normalize_edges: bool = config.NORMALIZE_EDGES,
         cache_dir: str | Path | None = None,
         split_ratios: tuple[float, float, float] = (0.8, 0.1, 0.1),
@@ -43,7 +43,7 @@ class AIGDataModule(pl.LightningDataModule):
         super().__init__()
         self.csv_paths = csv_paths
         self.positional_encoding = positional_encoding
-        self.partition = partition
+        self.sparsification = sparsification
         self.normalize_edges = bool(normalize_edges)
         self.cache_dir = cache_dir
         self.split_ratios = split_ratios
@@ -108,7 +108,7 @@ class AIGDataModule(pl.LightningDataModule):
         return AIGGraphRegressionDataset(
             self.csv_paths,
             positional_encoding=self.positional_encoding,
-            partition=self.partition,
+            sparsification=self.sparsification,
             normalize_edges=self.normalize_edges,
             split=split,
             cache_dir=self.cache_dir,

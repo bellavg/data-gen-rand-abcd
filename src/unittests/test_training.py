@@ -296,7 +296,7 @@ def test_train_main_passes_partition_to_datamodule(tmp_path, basic_model, dummy_
         seed=42,
         csv_paths=[str(tmp_path / "dummy.csv")],
         pe_type="none",
-        partition=None,
+        sparsification=None,
         batch_size=2,
         num_workers=0,
         pin_memory=False,
@@ -349,7 +349,7 @@ def test_train_main_passes_partition_to_datamodule(tmp_path, basic_model, dummy_
         trainer_cls.return_value.fit = MagicMock()
         train.main(args)
 
-    assert datamodule_cls.call_args.kwargs["partition"] is None
+    assert "partition" not in datamodule_cls.call_args.kwargs
 
 
 def test_validation_step_logs_epoch_metrics_only(basic_model, dummy_batch):

@@ -5,9 +5,8 @@
 #SBATCH --cpus-per-task=16
 #SBATCH --partition=gpu_h100
 #SBATCH --gpus=1
-#SBATCH --array=0-3
 #SBATCH --constraint=scratch-node
-#SBATCH --output=logs/train_partition_%A_%a.out    # %A is the array master job ID, %a is the task index
+#SBATCH --output=logs/train_%J.out
 #
 # Recommended: pre-warm the dataset cache on a CPU node before submitting this
 # job so the GPU is not idle during graph loading.  Chain with warmup_cache.sh:
@@ -24,7 +23,7 @@ export TEMP="$TMPDIR"
 export TMP="$TMPDIR"
 
 echo "=========================================="
-echo "JOB ARRAY ID: $SLURM_ARRAY_JOB_ID, TASK ID: $SLURM_ARRAY_TASK_ID"
+echo "JOB ID: $SLURM_JOB_ID"
 echo "Running on: $(hostname)"
 echo "Start time: $(date)"
 echo "=========================================="
@@ -65,22 +64,15 @@ cd "$BASE_DIR"
 
 
 # =========================================================
-# 2. ARRAY MAPPING (Partition & Data)
+# 2. DATA
 # =========================================================
 
 # Hardcode algorithm to Orchestrate
 ALGORITHM="Orchestrate"
 
-# Define our 4 partition methods
-PARTITIONS=("metis" "span_weighted_metis" "level_slicing" "random")
-
-# Select the partition for this specific array task
-PARTITION=${PARTITIONS[$SLURM_ARRAY_TASK_ID]}
-
 # Set the CSV path dynamically based on the chosen algorithm
 CSV_PATH="$BASE_DIR/data/designs/design_metadata/algo_${ALGORITHM}_ml.csv"
 
-echo "Task $SLURM_ARRAY_TASK_ID assigned to PARTITION: $PARTITION"
 echo "Using ALGORITHM: $ALGORITHM"
 echo "Using CSV dataset: $CSV_PATH"
 
@@ -124,7 +116,6 @@ fi
 NUM_WORKERS="${NUM_WORKERS:-${SLURM_CPUS_PER_TASK:-16}}"
 
 echo "Using NUM_WORKERS=$NUM_WORKERS for data loading."
-echo "Using PARTITION=$PARTITION partitioning."
 # =========================================================
 # 5. EXECUTE TRAINING
 # =========================================================
@@ -134,7 +125,6 @@ echo "Starting Final Training for $ALGORITHM on GPU 0..."
 srun python -u -m train \
     --algorithm         "$ALGORITHM" \
     --csv_paths         "$CSV_PATH" \
-    --partition         "$PARTITION" \
     --checkpoint_dir    "$CHECKPOINT_DIR" \
     --log_dir           "$LOG_DIR" \
     --cache_dir         "$CACHE_DIR" \
@@ -146,5 +136,5 @@ srun python -u -m train \
     --patience          10
 
 echo "=========================================="
-echo "Task $SLURM_ARRAY_TASK_ID for $ALGORITHM complete."
+echo "Training for $ALGORITHM complete."
 echo "End time: $(date)"
