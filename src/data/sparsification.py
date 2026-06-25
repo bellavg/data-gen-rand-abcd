@@ -162,15 +162,17 @@ def and_gate_only_sparsification(data_obj) -> Data:
     out.num_nodes = len(kept)
     out.num_edges = new_edge_index.size(1)
 
-    for attr_name in ("level", "pi_paths", "local_sp_sum"):
-        val = getattr(data_obj, attr_name, None)
-        if val is not None and isinstance(val, torch.Tensor) and val.size(0) == n:
-            setattr(out, attr_name, val[kept_t])
-
-    for meta in ("num_pis", "num_pos"):
-        val = getattr(data_obj, meta, None)
-        if val is not None:
-            setattr(out, meta, val)
+    # Dynamically copy all other attributes (e.g. 'y', 'pos_enc', metadata)
+    for key in data_obj.keys():
+        if key in ("x", "edge_index", "edge_attr", "num_nodes", "num_edges", "edge_weight"):
+            continue
+        val = data_obj[key]
+        if isinstance(val, torch.Tensor) and val.dim() > 0 and val.size(0) == n:
+            # Node-level attribute (e.g. pos_enc, level) -> slice to kept nodes
+            setattr(out, key, val[kept_t])
+        else:
+            # Graph-level attribute (e.g. y, num_pis, etc.) -> copy exactly
+            setattr(out, key, val)
 
     return out
 
