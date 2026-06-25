@@ -241,6 +241,84 @@ class TestPrecomputedPartitioning(unittest.TestCase):
         with self.assertRaises(AttributeError):
             precomputed_partitioning(data, "non_existent")
 
+    def test_index_file_roundtrip(self):
+        """Full round-trip: precompute writes index → precomputed_partitioning reads it via cache_path."""
+        import tempfile
+        from pathlib import Path
+        from data.partition import update_existing_cache_with_masks
+        from data.partition_utils import precomputed_partitioning, clear_mask_index_cache
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+
+            # Graph with 8 nodes, no pre-existing mask.
+            graph = Data(
+                x=torch.randn(8, 4),
+                edge_index=torch.zeros((2, 0), dtype=torch.long),
+                num_nodes=8,
+            )
+            graph.level = torch.zeros(8, dtype=torch.long)
+            cache_path = tmp_path / "graph.pt"
+            torch.save(graph, cache_path)
+
+            # Precompute: writes _masks_random.pt index file, does NOT touch graph.pt.
+            update_existing_cache_with_masks(
+                directories=[tmp_path],
+                algo_names=["random"],
+                seed=99,
+            )
+
+            # graph.pt must still have no embedded mask.
+            reloaded = torch.load(cache_path, map_location="cpu", weights_only=False)
+            self.assertFalse(hasattr(reloaded, "random_dynamic_mask"),
+                             "graph.pt should not be modified")
+
+            # Clear the in-process cache so the lookup reads from disk.
+            clear_mask_index_cache()
+
+            # Read path: precomputed_partitioning finds the mask via cache_path.
+            result = precomputed_partitioning(reloaded, "random", cache_path=cache_path)
+
+            self.assertEqual(result.num_nodes, 8)
+            self.assertEqual(result.num_partitions.item(), 2)  # 8 nodes / 10000 → k=2 (min_k)
+            self.assertEqual(result.partition_id.shape, (8,))
+            self.assertTrue((result.partition_id >= 0).all())
+            self.assertTrue((result.partition_id < 2).all())
+
+    def test_embedded_attrs_take_precedence_over_index(self):
+        """Embedded attributes are used first; the index file is not consulted."""
+        import tempfile
+        from pathlib import Path
+        from data.partition_utils import precomputed_partitioning, clear_mask_index_cache, _get_mask_entry
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            cache_path = tmp_path / "graph.pt"
+
+            # Write an index that says k=4, but embed k=2 directly on the object.
+            index = {
+                "graph.pt": {
+                    "mask": torch.tensor([0, 1, 2, 3, 0, 1, 2, 3], dtype=torch.long),
+                    "k":    torch.tensor([4], dtype=torch.long),
+                }
+            }
+            torch.save(index, tmp_path / "_masks_random.pt")
+
+            clear_mask_index_cache()
+
+            graph = Data(
+                x=torch.randn(8, 4),
+                edge_index=torch.zeros((2, 0), dtype=torch.long),
+                num_nodes=8,
+            )
+            # Embedded mask says k=2 — should win over the index's k=4.
+            graph.random_dynamic_mask = torch.tensor([0, 1, 0, 1, 0, 1, 0, 1], dtype=torch.long)
+            graph.random_dynamic_num_partitions = torch.tensor([2], dtype=torch.long)
+
+            result = precomputed_partitioning(graph, "random", cache_path=cache_path)
+            self.assertEqual(result.num_partitions.item(), 2,
+                             "Embedded attr (k=2) should take precedence over index (k=4)")
+
 
 class TestDatasetPartitionFallback(unittest.TestCase):
     """Verifies that dataset.get() raises RuntimeError when the precomputed
