@@ -6,9 +6,6 @@ import uuid
 import torch
 import functools
 from pathlib import Path
-from tqdm import tqdm
-from torch_geometric.data import Data
-from torch_geometric.utils import to_undirected
 
 
 def _register_pyg_safe_globals() -> None:
@@ -19,6 +16,7 @@ def _register_pyg_safe_globals() -> None:
     workers all imported simultaneously.
     """
     import torch.serialization
+    from torch_geometric.data import Data
     import torch_geometric.data.data as _pyg_data_mod
     import torch_geometric.data.storage as _pyg_storage
     from data.partition_utils import PartitionedData
@@ -79,7 +77,7 @@ def run_metis(data_obj, num_partitions: int) -> torch.Tensor:
         ``{0, …, num_partitions - 1}``.
     """
     import pymetis
-    from torch_geometric.utils import to_scipy_sparse_matrix
+    from torch_geometric.utils import to_scipy_sparse_matrix, to_undirected
 
     num_nodes = data_obj.num_nodes
 
@@ -197,7 +195,7 @@ def run_span_weighted_metis(data_obj, num_partitions: int, alpha: float = 10.0) 
                reluctant to cut edges spanning multiple levels.
     """
     import pymetis
-    from torch_geometric.utils import to_scipy_sparse_matrix
+    from torch_geometric.utils import to_scipy_sparse_matrix, to_undirected
 
     num_nodes = data_obj.num_nodes
 
@@ -402,6 +400,7 @@ def update_existing_cache_with_masks(
     ) as executor:
         futures = {executor.submit(worker_fn, path): path for path in unique_cache_paths}
 
+        from tqdm import tqdm
         for future in tqdm(
             concurrent.futures.as_completed(futures),
             total=total_files,
