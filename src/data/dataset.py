@@ -702,27 +702,38 @@ class AIGGraphRegressionDataset(PyGDataset):
 
         # --- SPARSIFICATION HANDLING SYSTEM ---
         if self.sparsification is not None:
-            mask_key = f"{self.sparsification}_sparsification_mask"
-            if hasattr(data_obj, mask_key) or mask_key in data_obj.keys():
-                mask = getattr(data_obj, mask_key)
-                
-                # Check if it is a node mask or an edge mask
-                if self.sparsification == "pagerank":
-                    # Apply node mask to create the sparsified graph
-                    data_obj = data_obj.subgraph(mask)
-                else:
-                    # Apply mask to edges
-                    data_obj.edge_index = data_obj.edge_index[:, mask]
-                    if hasattr(data_obj, "edge_attr") and data_obj.edge_attr is not None:
-                        data_obj.edge_attr = data_obj.edge_attr[mask]
-                    if hasattr(data_obj, "edge_weight") and data_obj.edge_weight is not None:
-                        data_obj.edge_weight = data_obj.edge_weight[mask]
+            if self.sparsification == "and_gate_only":
+                # Structural transform: the reduced graph is stored as a nested
+                # Data attribute rather than a bool mask.
+                if not hasattr(data_obj, "and_gate_only_graph"):
+                    raise RuntimeError(
+                        "Precomputed 'and_gate_only_graph' attribute not found in cached graph. "
+                        "Precompute by running:\n"
+                        "  python -m data.sparsification and_gate_only --dirs <cache_dir>"
+                    )
+                data_obj = data_obj.and_gate_only_graph
             else:
-                raise RuntimeError(
-                    f"Precomputed sparsification mask '{mask_key}' not found in "
-                    f"cached graph. Precompute masks by running:\n"
-                    f"  python -m data.sparsification {self.sparsification} --dirs <cache_dir>"
-                )
+                mask_key = f"{self.sparsification}_sparsification_mask"
+                if hasattr(data_obj, mask_key) or mask_key in data_obj.keys():
+                    mask = getattr(data_obj, mask_key)
+                    
+                    # Check if it is a node mask or an edge mask
+                    if self.sparsification == "pagerank":
+                        # Apply node mask to create the sparsified graph
+                        data_obj = data_obj.subgraph(mask)
+                    else:
+                        # Apply mask to edges
+                        data_obj.edge_index = data_obj.edge_index[:, mask]
+                        if hasattr(data_obj, "edge_attr") and data_obj.edge_attr is not None:
+                            data_obj.edge_attr = data_obj.edge_attr[mask]
+                        if hasattr(data_obj, "edge_weight") and data_obj.edge_weight is not None:
+                            data_obj.edge_weight = data_obj.edge_weight[mask]
+                else:
+                    raise RuntimeError(
+                        f"Precomputed sparsification mask '{mask_key}' not found in "
+                        f"cached graph. Precompute masks by running:\n"
+                        f"  python -m data.sparsification {self.sparsification} --dirs <cache_dir>"
+                    )
 
         return data_obj
 

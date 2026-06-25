@@ -296,3 +296,4 @@ def aig_to_pytorch_geometric(
     data_obj.num_pos = aig.num_pos
 
     return data_obj
+
