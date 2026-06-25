@@ -706,12 +706,17 @@ class AIGGraphRegressionDataset(PyGDataset):
             if hasattr(data_obj, mask_key) or mask_key in data_obj.keys():
                 mask = getattr(data_obj, mask_key)
                 
-                # Apply mask to edges
-                data_obj.edge_index = data_obj.edge_index[:, mask]
-                if hasattr(data_obj, "edge_attr") and data_obj.edge_attr is not None:
-                    data_obj.edge_attr = data_obj.edge_attr[mask]
-                if hasattr(data_obj, "edge_weight") and data_obj.edge_weight is not None:
-                    data_obj.edge_weight = data_obj.edge_weight[mask]
+                # Check if it is a node mask or an edge mask
+                if self.sparsification == "pagerank":
+                    # Apply node mask to create the sparsified graph
+                    data_obj = data_obj.subgraph(mask)
+                else:
+                    # Apply mask to edges
+                    data_obj.edge_index = data_obj.edge_index[:, mask]
+                    if hasattr(data_obj, "edge_attr") and data_obj.edge_attr is not None:
+                        data_obj.edge_attr = data_obj.edge_attr[mask]
+                    if hasattr(data_obj, "edge_weight") and data_obj.edge_weight is not None:
+                        data_obj.edge_weight = data_obj.edge_weight[mask]
             else:
                 raise RuntimeError(
                     f"Precomputed sparsification mask '{mask_key}' not found in "

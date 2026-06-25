@@ -331,6 +331,46 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
         torch.testing.assert_close(item_sparse.edge_attr, torch.tensor([[0.1], [0.4]]))
         torch.testing.assert_close(item_sparse.edge_weight, torch.tensor([1.0, 4.0]))
 
+    def test_node_sparsification_mask_applied_correctly(self):
+        # Create a graph with a pre-saved node mask
+        pt_path = self.root / "node_sparse_graph.pt"
+        data = Data(
+            x=torch.tensor([[1.0], [2.0], [3.0], [4.0]], dtype=torch.float32),
+            edge_index=torch.tensor([[0, 1, 2, 3], [1, 2, 3, 0]], dtype=torch.long),
+            edge_attr=torch.tensor([[0.1], [0.2], [0.3], [0.4]]),
+            edge_weight=torch.tensor([1.0, 2.0, 3.0, 4.0]),
+        )
+        # Keep nodes 0, 1, and 3 (mask = [True, True, False, True])
+        data.pagerank_sparsification_mask = torch.tensor([True, True, False, True])
+        
+        pt_path.parent.mkdir(parents=True, exist_ok=True)
+        torch.save(data, pt_path)
+        
+        csv_path = self.root / "node_sparse.csv"
+        _write_csv(
+            csv_path,
+            [
+                {
+                    "unoptimized_graph_path": str(pt_path),
+                    "design": "dummy_node",
+                    "algorithm": "Orchestrate",
+                    "tier_id": "1",
+                    "optimizability": "0.5",
+                }
+            ],
+        )
+
+        # Test with pagerank sparsification
+        ds_sparse = self._make_ds(csv_paths=csv_path, sparsification="pagerank", normalize_edges=True)
+        item_sparse = ds_sparse[0]
+        
+        # Subgraph keeps nodes 0, 1, 3 (which are mapped to new indices 0, 1, 2)
+        self.assertEqual(item_sparse.num_nodes, 3)
+        self.assertEqual(item_sparse.edge_index.shape[1], 2)
+        
+        # Check values
+        torch.testing.assert_close(item_sparse.x, torch.tensor([[1.0], [2.0], [4.0]]))
+
     # --- num_samples ---
 
     def test_num_samples_limits_dataset(self):

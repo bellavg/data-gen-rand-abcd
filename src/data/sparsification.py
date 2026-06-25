@@ -10,8 +10,11 @@ import networkx as nx
 from torch_geometric.utils import to_networkx
 
 # =====================================================================
-# DUMMY ALGORITHMS
+# ALGORITHMS
 # =====================================================================
+
+# Apply the node mask to create the sparsified graph
+# sparsified_data = data_obj.subgraph(node_mask)
 
 def random_edge_dropout(data_obj, dropout_rate=0.5, seed=0):
     """Sparsification 1: Randomly drop a percentage of edges."""
@@ -45,6 +48,21 @@ def spanner_sparsification(data_obj, stretch=3.0, seed=0):
             
     return mask
 
+def pagerank_sparsification(data_obj, keep_ratio=0.8, alpha=0.85):
+    """
+    Identical functionality to the above, written for maximum tensor operation speed.
+    """
+    G = to_networkx(data_obj, to_undirected=False)
+    pr_scores = nx.pagerank(G, alpha=alpha)
+    
+    sorted_nodes = sorted(pr_scores, key=pr_scores.get, reverse=True)
+    num_to_keep = max(1, int(len(sorted_nodes) * keep_ratio))
+    
+    node_mask = torch.zeros(data_obj.num_nodes, dtype=torch.bool)
+    node_mask[sorted_nodes[:num_to_keep]] = True
+    
+    return node_mask
+
 # =====================================================================
 
 def _process_single_cache_file(
@@ -52,7 +70,9 @@ def _process_single_cache_file(
     algo_names: list[str],
     dropout_rate: float,
     stretch: float,
-    seed: int,
+    keep_ratio: float = 0.8,
+    alpha: float = 0.85,
+    seed: int = 42,
 ) -> None:
     if not cache_path.is_file():
         return
@@ -76,6 +96,8 @@ def _process_single_cache_file(
             mask_tensor = random_edge_dropout(data_obj, dropout_rate=dropout_rate, seed=seed)
         elif algo_name == "spanner":
             mask_tensor = spanner_sparsification(data_obj, stretch=stretch, seed=seed)
+        elif algo_name == "pagerank":
+            mask_tensor = pagerank_sparsification(data_obj, keep_ratio=keep_ratio, alpha=alpha)
         else:
             raise ValueError(f"Unknown algorithm: {algo_name}")
 
@@ -100,6 +122,8 @@ def update_existing_cache_with_masks(
     algo_names: list[str],
     dropout_rate: float,
     stretch: float,
+    keep_ratio: float,
+    alpha: float,
     seed: int,
 ) -> None:
     """Loads pre-cached graph files from specified directories, computes sparsification masks in parallel, and saves them back.
@@ -108,7 +132,7 @@ def update_existing_cache_with_masks(
     Deduplicates the file paths so that each file is processed exactly once.
 
     Stored attributes (per graph, per algorithm):
-        ``{algo_name}_sparsification_mask`` – 1-D bool tensor, shape [num_edges]
+        ``{algo_name}_sparsification_mask`` – 1-D bool tensor, shape [num_edges] (or [num_nodes] for node-based masks)
     """
     print(f"[Mask Precomputation] Scanning directories for cached graph files: {directories}")
 
@@ -142,6 +166,8 @@ def update_existing_cache_with_masks(
         algo_names=algo_names,
         dropout_rate=dropout_rate,
         stretch=stretch,
+        keep_ratio=keep_ratio,
+        alpha=alpha,
         seed=seed,
     )
 
@@ -171,6 +197,8 @@ if __name__ == "__main__":
     _seed = getattr(config, "SPARSIFICATION_SEED", 0)
     _dropout_rate = getattr(config, "SPARSIFICATION_RANDOM_DROPOUT_RATE", 0.5)
     _stretch = getattr(config, "SPARSIFICATION_SPANNER_STRETCH", 3.0)
+    _keep_ratio = getattr(config, "SPARSIFICATION_PAGERANK_KEEP_RATIO", 0.8)
+    _alpha = getattr(config, "SPARSIFICATION_PAGERANK_ALPHA", 0.85)
 
     parser = argparse.ArgumentParser(
         description="Precompute sparsification edge masks for cached graphs in parallel."
@@ -178,7 +206,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "algorithm",
         type=str,
-        choices=["random_edge_dropout", "spanner", "all"],
+        choices=["random_edge_dropout", "spanner", "pagerank", "all"],
         help="Sparsification algorithm to run, or 'all' to run all available sparsification algorithms."
     )
     parser.add_argument(
@@ -190,7 +218,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.algorithm == "all":
-        algo_names = ["random_edge_dropout", "spanner"]
+        algo_names = ["random_edge_dropout", "spanner", "pagerank"]
     else:
         algo_names = [args.algorithm]
 
@@ -198,6 +226,8 @@ if __name__ == "__main__":
         f"[sparsification.py] Running for algorithm(s)={sorted(algo_names)}\n"
         f"  dropout_rate={_dropout_rate}\n"
         f"  stretch={_stretch}\n"
+        f"  keep_ratio={_keep_ratio}\n"
+        f"  alpha={_alpha}\n"
         f"  seed={_seed}\n"
         f"  dirs={args.dirs}"
     )
@@ -207,5 +237,7 @@ if __name__ == "__main__":
         algo_names=algo_names,
         dropout_rate=_dropout_rate,
         stretch=_stretch,
+        keep_ratio=_keep_ratio,
+        alpha=_alpha,
         seed=_seed,
     )
