@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import torch
+from pathlib import Path
 from torch_geometric.data import Data as _PyGData
 
 
@@ -12,7 +13,7 @@ class PartitionedData(_PyGData):
     graph's ``partition_id`` values are offset by the **previous** graph's
     ``num_partitions``, making partition IDs globally unique across the batch.
 
-    Example (batch of two graphs, each split into 2 partitions):
+    Example (batch of two graphs, each split into 2 partitions)::
 
         batch.partition_id   → [0, 0, 1, 1, 2, 2, 3, 3]   # globally unique
         batch.num_partitions → [2, 2]                       # per-graph scalar
@@ -29,6 +30,71 @@ class PartitionedData(_PyGData):
             # Offset by this graph's num_partitions so IDs are globally unique.
             return self.num_partitions
         return super().__inc__(key, value, *args, **kwargs)
+
+
+# =====================================================================
+# MASK INDEX CACHE
+#
+# Each dataloader worker process loads the per-directory mask index
+# exactly once (lazily, on first access) and reuses it for all
+# subsequent ``get()`` calls.  The OS page cache lets multiple workers
+# share the underlying memory pages when the index is opened with
+# ``mmap=True``, keeping per-worker resident memory low.
+# =====================================================================
+
+# Key: (str(cache_dir), algo_name) → index dict
+_MASK_INDEX_CACHE: dict[tuple[str, str], dict] = {}
+
+_MASKS_PREFIX = "_masks_"
+
+
+def _get_mask_entry(
+    cache_dir: Path,
+    algo_name: str,
+    basename: str,
+) -> dict | None:
+    """Return the index entry for *basename* in *cache_dir* for *algo_name*.
+
+    The index is loaded from ``{cache_dir}/_masks_{algo_name}.pt`` on first
+    access and then kept in the module-level ``_MASK_INDEX_CACHE``.  Entries
+    have the form ``{"mask": torch.Tensor, "k": torch.Tensor}``.
+
+    Returns ``None`` if the index file does not exist or the basename is not
+    present in it.
+    """
+    cache_key = (str(cache_dir), algo_name)
+    if cache_key not in _MASK_INDEX_CACHE:
+        index_path = cache_dir / f"{_MASKS_PREFIX}{algo_name}.pt"
+        if index_path.is_file():
+            try:
+                # mmap=True: tensor data is lazily paged from disk.
+                # Multiple workers sharing the same NFS file benefit from
+                # the OS page cache — only one physical read per page.
+                _MASK_INDEX_CACHE[cache_key] = torch.load(
+                    index_path,
+                    map_location="cpu",
+                    weights_only=True,
+                    mmap=True,
+                )
+            except TypeError:
+                # mmap kwarg not available in older PyTorch versions.
+                _MASK_INDEX_CACHE[cache_key] = torch.load(
+                    index_path,
+                    map_location="cpu",
+                    weights_only=True,
+                )
+            except Exception as exc:
+                print(f"[partition_utils] WARNING: could not load mask index {index_path}: {exc}")
+                _MASK_INDEX_CACHE[cache_key] = {}
+        else:
+            _MASK_INDEX_CACHE[cache_key] = {}
+
+    return _MASK_INDEX_CACHE[cache_key].get(basename)
+
+
+def clear_mask_index_cache() -> None:
+    """Drop all cached mask indices (useful between trials in Optuna studies)."""
+    _MASK_INDEX_CACHE.clear()
 
 
 def partition_by_assignment(
@@ -124,38 +190,76 @@ def random_partitioning(
 def precomputed_partitioning(
     data_obj: _PyGData,
     algo_name: str,
+    cache_path: str | Path | None = None,
 ) -> PartitionedData:
-    """Apply a precomputed partitioning assignment stored in the Data object.
+    """Apply a precomputed partitioning assignment to a graph.
+
+    Lookup order:
+
+    1. **Embedded attributes** (backward-compatible): checks for
+       ``{algo_name}_dynamic_mask`` directly on *data_obj*.  This covers
+       graphs whose masks were written into the ``.pt`` file by an older
+       version of the precompute pipeline.
+
+    2. **Directory index file**: looks up the mask in the per-directory
+       ``_masks_{algo_name}.pt`` index file written by the current pipeline.
+       Requires *cache_path* to be provided so the directory can be derived.
 
     Args:
-        data_obj:       A PyG ``Data`` object.
-        algo_name:      The base attribute name (string) where the precomputed
-                        partition assignments are stored (e.g., "metis").
+        data_obj:    A PyG ``Data`` object.
+        algo_name:   The partition algorithm name (e.g. ``"metis"``).
+        cache_path:  Absolute path to the ``.pt`` file that *data_obj* was
+                     loaded from.  Required for the index-file lookup path.
+                     May be omitted when embedded attributes are guaranteed
+                     to be present (e.g. in unit tests).
 
     Returns:
         A ``PartitionedData`` object with partition-contiguous nodes and
-        cross-partition edges zeroed out.
-    """
-    # Look up the stable "_dynamic_" key and read stored k.
-    key      = f"{algo_name}_dynamic_mask"
-    num_key  = f"{algo_name}_dynamic_num_partitions"
-    if not hasattr(data_obj, key) and key not in data_obj.keys():
-        raise AttributeError(
-            f"Dynamic precomputed partition mask '{key}' not found in Data object. "
-            f"Precompute masks by running: python -m data.partition {algo_name} --dirs <cache_dir>"
-        )
-    partition_id = data_obj[key]
-    if not hasattr(data_obj, num_key) and num_key not in data_obj.keys():
-        raise AttributeError(
-            f"Dynamic partition count attribute '{num_key}' not found in Data object."
-        )
-    num_partitions = int(data_obj[num_key].item())
+        cross-partition edges removed.
 
-    # Cast to long tensor if not already
+    Raises:
+        AttributeError: If neither embedded attributes nor the index file
+                        contain a mask for this graph + algorithm.
+    """
+    key     = f"{algo_name}_dynamic_mask"
+    num_key = f"{algo_name}_dynamic_num_partitions"
+
+    partition_id: torch.Tensor | None = None
+    num_partitions: int | None        = None
+
+    # ------------------------------------------------------------------
+    # 1. Try embedded attributes (backward compat with old pipeline)
+    # ------------------------------------------------------------------
+    if hasattr(data_obj, key) or key in data_obj.keys():
+        partition_id   = data_obj[key]
+        num_partitions = int(data_obj[num_key].item())
+
+    # ------------------------------------------------------------------
+    # 2. Try the per-directory index file
+    # ------------------------------------------------------------------
+    if partition_id is None and cache_path is not None:
+        p = Path(cache_path)
+        entry = _get_mask_entry(p.parent, algo_name, p.name)
+        if entry is not None:
+            partition_id   = entry["mask"]
+            num_partitions = int(entry["k"].item())
+
+    if partition_id is None:
+        raise AttributeError(
+            f"Precomputed partition mask for algorithm '{algo_name}' not found.\n"
+            f"  Checked embedded attribute '{key}' on data_obj: not present.\n"
+            f"  Checked index file '_masks_{algo_name}.pt' in cache directory"
+            + (f" '{Path(cache_path).parent}': not present." if cache_path else ": cache_path not provided.")
+            + f"\nPrecompute masks by running:\n"
+            f"  python -m data.partition {algo_name} --dirs <cache_dir>"
+        )
+
+    # Cast to long tensor on the correct device
+    device = data_obj.x.device
     if not isinstance(partition_id, torch.Tensor):
-        partition_id = torch.tensor(partition_id, dtype=torch.long, device=data_obj.x.device)
+        partition_id = torch.tensor(partition_id, dtype=torch.long, device=device)
     else:
-        partition_id = partition_id.to(dtype=torch.long, device=data_obj.x.device)
+        partition_id = partition_id.to(dtype=torch.long, device=device)
 
     return partition_by_assignment(data_obj, partition_id, num_partitions)
 
@@ -165,4 +269,5 @@ __all__ = [
     "random_partitioning",
     "partition_by_assignment",
     "precomputed_partitioning",
+    "clear_mask_index_cache",
 ]

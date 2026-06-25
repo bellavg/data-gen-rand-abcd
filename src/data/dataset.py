@@ -702,21 +702,16 @@ class AIGGraphRegressionDataset(PyGDataset):
         data_obj.y = torch.tensor([[sample.y_node_opt]], dtype=torch.float32)
         # --- PARTITION HANDLING SYSTEM ---
         if self.partition is not None:
-            # Dynamic mode: look for the per-graph key written by the precompute
-            # pipeline (key is stable regardless of actual k for that graph).
-            dynamic_key = f"{self.partition}_dynamic_mask"
-            if hasattr(data_obj, dynamic_key) or dynamic_key in data_obj.keys():
-                # precomputed_partitioning reads k from the stored
-                # {algo}_dynamic_num_partitions tensor in the .pt file.
-                data_obj = precomputed_partitioning(data_obj, self.partition)
-            else:
-                raise RuntimeError(
-                    f"Precomputed dynamic partition mask '{dynamic_key}' not found in "
-                    f"cached graph. Precompute masks by running:\n"
-                    f"  python -m data.partition {self.partition} --dirs <cache_dir>\n"
-                    f"  The pipeline stores masks under '{self.partition}_dynamic_mask' "
-                    f"with the actual k saved in '{self.partition}_dynamic_num_partitions'."
-                )
+            # Resolve the cache path so precomputed_partitioning can look up
+            # the per-directory mask index file (_masks_{algo}.pt) when the
+            # mask is not embedded directly in the graph .pt object.
+            graph_path = sample.graph_path
+            _cached_path: Path | None = self._graph_cache_path_map.get(graph_path)
+            # precomputed_partitioning checks embedded attributes first
+            # (backward compat), then falls back to the index file.
+            data_obj = precomputed_partitioning(
+                data_obj, self.partition, cache_path=_cached_path
+            )
         return data_obj
 
     def get_num_nodes_list(self) -> list[int]:
