@@ -295,5 +295,55 @@ class TestDatasetPartitionFallback(unittest.TestCase):
         self.assertEqual(result.num_partitions.item(), 2)
 
 
+class TestUpdateExistingCacheWithMasks(unittest.TestCase):
+    def test_update_existing_cache(self):
+        import tempfile
+        from pathlib import Path
+        from data.partition import update_existing_cache_with_masks
+        from torch_geometric.data import Data
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            
+            # Create subdirs
+            sub_dir = tmp_path / "subdir"
+            sub_dir.mkdir()
+            
+            # Create valid pyg data objects and save as .pt files
+            data1 = Data(x=torch.randn(10, 4), edge_index=torch.zeros((2, 0), dtype=torch.long), num_nodes=10)
+            data2 = Data(x=torch.randn(5, 4), edge_index=torch.zeros((2, 0), dtype=torch.long), num_nodes=5)
+            
+            data1.level = torch.zeros(10, dtype=torch.long)
+            data2.level = torch.zeros(5, dtype=torch.long)
+
+            file1 = tmp_path / "graph1.pt"
+            file2 = sub_dir / "graph2.pt"
+            file_other = tmp_path / "readme.txt"
+            
+            torch.save(data1, file1)
+            torch.save(data2, file2)
+            
+            with open(file_other, "w") as f:
+                f.write("This is a dummy text file")
+                
+            # Run the update cache function with a subset of algorithms
+            update_existing_cache_with_masks(
+                directories=[tmp_path],
+                algo_names=["random"],
+                seed=42
+            )
+            
+            # Load and assert they were updated with random masks
+            updated1 = torch.load(file1, map_location="cpu")
+            updated2 = torch.load(file2, map_location="cpu")
+            
+            self.assertTrue(hasattr(updated1, "random_dynamic_mask"))
+            self.assertTrue(hasattr(updated2, "random_dynamic_mask"))
+            
+            # Check readme.txt was not modified or affected
+            with open(file_other, "r") as f:
+                self.assertEqual(f.read(), "This is a dummy text file")
+
+
 if __name__ == "__main__":
     unittest.main()
