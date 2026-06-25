@@ -256,8 +256,10 @@ class TestDatasetPartitionFallback(unittest.TestCase):
         ds.normalize_edges = False
         ds.samples = [MagicMock(y_node_opt=0.5)]
         ds._load_graph_for_sample = MagicMock()
+        # _graph_cache_path_map is an instance attr set in __init__; mock needs it explicitly.
+        ds._graph_cache_path_map = {}
 
-        # Graph has NO precomputed mask stored (no _dynamic_ key)
+        # Graph has NO precomputed mask and no index file → should raise AttributeError.
         mock_graph = Data(
             x=torch.randn(6, 4),
             edge_index=torch.zeros((2, 0), dtype=torch.long),
@@ -266,7 +268,7 @@ class TestDatasetPartitionFallback(unittest.TestCase):
         )
         ds._load_graph_for_sample.return_value = mock_graph
 
-        with self.assertRaises(RuntimeError):
+        with self.assertRaises(AttributeError):
             AIGGraphRegressionDataset.get(ds, 0)
 
     def test_precomputed_random_mask_is_applied(self):
@@ -280,8 +282,11 @@ class TestDatasetPartitionFallback(unittest.TestCase):
         ds.normalize_edges = False
         ds.samples = [MagicMock(y_node_opt=0.5)]
         ds._load_graph_for_sample = MagicMock()
+        # _graph_cache_path_map is an instance attr set in __init__; mock needs it explicitly.
+        ds._graph_cache_path_map = {}
 
-        # Provide a precomputed random_dynamic_mask (k=2 stored in the tensor)
+        # Provide a precomputed random_dynamic_mask embedded in the graph object
+        # (backward-compat path — precomputed_partitioning checks embedded attrs first).
         mock_graph = Data(
             x=torch.randn(6, 4),
             edge_index=torch.zeros((2, 0), dtype=torch.long),
@@ -299,49 +304,56 @@ class TestUpdateExistingCacheWithMasks(unittest.TestCase):
     def test_update_existing_cache(self):
         import tempfile
         from pathlib import Path
-        from data.partition import update_existing_cache_with_masks
+        from data.partition import update_existing_cache_with_masks, _get_index_path
         from torch_geometric.data import Data
 
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
-            
-            # Create subdirs
-            sub_dir = tmp_path / "subdir"
-            sub_dir.mkdir()
-            
-            # Create valid pyg data objects and save as .pt files
+
+            # Flat cache dir — scandir is non-recursive (matches production layout).
             data1 = Data(x=torch.randn(10, 4), edge_index=torch.zeros((2, 0), dtype=torch.long), num_nodes=10)
             data2 = Data(x=torch.randn(5, 4), edge_index=torch.zeros((2, 0), dtype=torch.long), num_nodes=5)
-            
             data1.level = torch.zeros(10, dtype=torch.long)
             data2.level = torch.zeros(5, dtype=torch.long)
 
             file1 = tmp_path / "graph1.pt"
-            file2 = sub_dir / "graph2.pt"
+            file2 = tmp_path / "graph2.pt"
+            # Non-.pt file should be silently ignored by the scanner.
             file_other = tmp_path / "readme.txt"
-            
+
             torch.save(data1, file1)
             torch.save(data2, file2)
-            
             with open(file_other, "w") as f:
                 f.write("This is a dummy text file")
-                
-            # Run the update cache function with a subset of algorithms
+
             update_existing_cache_with_masks(
                 directories=[tmp_path],
                 algo_names=["random"],
-                seed=42
+                seed=42,
             )
-            
-            # Load and assert they were updated with random masks
-            updated1 = torch.load(file1, map_location="cpu")
-            updated2 = torch.load(file2, map_location="cpu")
-            
-            self.assertTrue(hasattr(updated1, "random_dynamic_mask"))
-            self.assertTrue(hasattr(updated2, "random_dynamic_mask"))
-            
-            # Check readme.txt was not modified or affected
-            with open(file_other, "r") as f:
+
+            # Masks now live in the index file, NOT embedded in the graph .pt files.
+            index_path = _get_index_path(tmp_path, "random")
+            self.assertTrue(index_path.is_file(), "Index file should have been created")
+
+            index = torch.load(index_path, map_location="cpu", weights_only=True)
+            self.assertIn("graph1.pt", index, "graph1.pt should be in the index")
+            self.assertIn("graph2.pt", index, "graph2.pt should be in the index")
+            self.assertIn("mask", index["graph1.pt"])
+            self.assertIn("k", index["graph1.pt"])
+            self.assertEqual(index["graph1.pt"]["mask"].shape[0], 10)
+            self.assertEqual(index["graph2.pt"]["mask"].shape[0], 5)
+
+            # Graph .pt files must NOT have been modified.
+            updated1 = torch.load(file1, map_location="cpu", weights_only=False)
+            updated2 = torch.load(file2, map_location="cpu", weights_only=False)
+            self.assertFalse(hasattr(updated1, "random_dynamic_mask"),
+                             "Graph .pt should not have embedded masks")
+            self.assertFalse(hasattr(updated2, "random_dynamic_mask"),
+                             "Graph .pt should not have embedded masks")
+
+            # Non-.pt file must be untouched.
+            with open(file_other) as f:
                 self.assertEqual(f.read(), "This is a dummy text file")
 
 

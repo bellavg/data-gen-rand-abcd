@@ -5,7 +5,13 @@ import time
 import uuid
 import torch
 import functools
+import itertools
 from pathlib import Path
+
+# Prefix for index files — excluded from scanning so they are never treated
+# as graph cache files.
+_MASKS_PREFIX = "_masks_"
+CHECKPOINT_EVERY = 50_000   # atomic index save cadence (number of completed files)
 
 
 def _register_pyg_safe_globals() -> None:
@@ -66,119 +72,49 @@ def compute_dynamic_k(
 # =====================================================================
 
 def run_metis(data_obj, num_partitions: int) -> torch.Tensor:
-    """Computes standard METIS partitions using pymetis.
-
-    Args:
-        data_obj:       A PyG ``Data`` object.
-        num_partitions: Number of partitions (pre-computed by the pipeline).
-
-    Returns:
-        A 1-D ``torch.long`` tensor of shape ``[num_nodes]`` with values in
-        ``{0, …, num_partitions - 1}``.
-    """
+    """Computes standard METIS partitions using pymetis."""
     import pymetis
     from torch_geometric.utils import to_scipy_sparse_matrix, to_undirected
 
     num_nodes = data_obj.num_nodes
-
-    # 1. METIS requires an undirected structure
     undirected_edges = to_undirected(data_obj.edge_index, num_nodes=num_nodes)
-
-    # 2. Convert to CSR format for pymetis
     adj_sparse = to_scipy_sparse_matrix(
-        edge_index=undirected_edges, 
+        edge_index=undirected_edges,
         num_nodes=num_nodes
     ).tocsr()
-
-    # 3. Invoke pymetis with CSRAdjacency (unweighted)
     adjacency = pymetis.CSRAdjacency(
         adj_starts=adj_sparse.indptr,
         adjacent=adj_sparse.indices
     )
-    _, part_labels = pymetis.part_graph(
-        nparts=num_partitions,
-        adjacency=adjacency
-    )
-
+    _, part_labels = pymetis.part_graph(nparts=num_partitions, adjacency=adjacency)
     return torch.tensor(part_labels, dtype=torch.long, device="cpu")
 
 
 def run_level_slicing(data_obj, num_partitions: int) -> torch.Tensor:
-    """Partitions a graph into equal buckets by node level (topological depth).
-
-    Nodes are sorted by their ``level`` attribute and divided into
-    ``num_partitions`` equal-sized buckets.  This preserves the natural DAG
-    layering of AIG/circuit graphs rather than using a graph-topology method
-    like METIS.
-
-    Strategy
-    --------
-    1. Read ``data_obj.level`` — a 1-D integer tensor of shape ``[num_nodes]``.
-    2. Sort the nodes by their level value.
-    3. Divide the sorted order into ``num_partitions`` equal buckets and assign
-       each bucket a partition index in ``{0, …, num_partitions - 1}``.
-
-    Args:
-        data_obj:       A PyG ``Data`` object carrying a ``level`` node attribute
-                        (shape ``[num_nodes]`` or ``[num_nodes, 1]``, integer/float dtype).
-        num_partitions: Number of equal-depth buckets (pre-computed by the pipeline).
-
-    Returns:
-        A 1-D ``torch.long`` tensor of shape ``[num_nodes]`` with values in
-        ``{0, …, num_partitions - 1}``.
-
-    Raises:
-        AttributeError: If ``data_obj`` has no ``level`` attribute.
-        ValueError:     If ``num_partitions`` < 1.
-    """
+    """Partitions a graph into equal buckets by node level (topological depth)."""
     if num_partitions < 1:
         raise ValueError(f"num_partitions must be >= 1, got {num_partitions}")
-
     if not hasattr(data_obj, "level") or data_obj.level is None:
         raise AttributeError(
-            "run_level_slicing requires a 'level' node attribute on the Data object, "
-            "but none was found. Ensure the cached .pt files include the 'level' tensor."
+            "run_level_slicing requires a 'level' node attribute on the Data object."
         )
-
     level = data_obj.level
     if not isinstance(level, torch.Tensor):
         level = torch.tensor(level, dtype=torch.long)
     level = level.to(dtype=torch.long, device="cpu").view(-1)
-
     num_nodes = level.size(0)
-
-    # Sort nodes by level, then assign equal-sized buckets.
     sort_idx = torch.argsort(level, stable=True)
-
-    # Each sorted position i maps to bucket floor(i * num_partitions / num_nodes).
     positions = torch.arange(num_nodes, dtype=torch.long)
     bucket_for_position = torch.div(
         positions * num_partitions, num_nodes, rounding_mode="floor"
-    ).clamp(max=num_partitions - 1)  # guard against edge at i == num_nodes
-
+    ).clamp(max=num_partitions - 1)
     assignment_mask = torch.empty(num_nodes, dtype=torch.long, device="cpu")
     assignment_mask[sort_idx] = bucket_for_position
-
     return assignment_mask
 
 
 def run_random(data_obj, num_partitions: int, seed: int = 0) -> torch.Tensor:
-    """Assigns each node a uniformly random partition label using a fixed seed.
-
-    Producing the mask offline ensures every training run sees **identical**
-    partition assignments for the same graph, making random partitioning
-    comparable to deterministic algorithms like METIS or level-slicing.
-
-    Args:
-        data_obj:       A PyG ``Data`` object.
-        num_partitions: Number of partitions (pre-computed by the pipeline).
-        seed:           Integer RNG seed for reproducibility (default 0).
-                        Pass ``config.PARTITION_SEED`` from the call-site.
-
-    Returns:
-        A 1-D ``torch.long`` tensor of shape ``[num_nodes]`` with values in
-        ``{0, …, num_partitions - 1}``.
-    """
+    """Assigns each node a uniformly random partition label using a fixed seed."""
     num_nodes = data_obj.num_nodes
     generator = torch.Generator()
     generator.manual_seed(seed)
@@ -186,47 +122,21 @@ def run_random(data_obj, num_partitions: int, seed: int = 0) -> torch.Tensor:
 
 
 def run_span_weighted_metis(data_obj, num_partitions: int, alpha: float = 10.0) -> torch.Tensor:
-    """Computes a Span-Aware METIS partition by penalizing cuts on long edges.
-
-    Args:
-        data_obj: PyG Data object carrying a 'level' node attribute.
-        num_partitions: Number of partitions to create.
-        alpha: Penalty multiplier. Higher alpha means METIS is more 
-               reluctant to cut edges spanning multiple levels.
-    """
+    """Computes a Span-Aware METIS partition by penalizing cuts on long edges."""
     import pymetis
     from torch_geometric.utils import to_scipy_sparse_matrix, to_undirected
 
     num_nodes = data_obj.num_nodes
-
-    # 1. METIS requires an undirected structure
     undirected_edges = to_undirected(data_obj.edge_index, num_nodes=num_nodes)
-
-    # 2. Compute edge spans
-    # Ensure levels are parsed as a flat tensor of floats for distance calculation
     levels = data_obj.level.view(-1).to(dtype=torch.float32)
     src, dst = undirected_edges
-
-    # Span is the absolute difference in topological level between the two nodes
     spans = torch.abs(levels[src] - levels[dst])
-
-    # 3. Formulate the edge weights
-    # METIS seeks to *minimize* the sum of the weights of cut edges. 
-    # High weight = do not cut. Low weight = safe to cut.
-    # METIS strictly requires integer weights > 0.
-    edge_weights = 1 + (alpha * spans)
-    edge_weights = edge_weights.to(torch.int32)
-
-    # 4. Convert to CSR format for pymetis using PyG's Scipy utility
-    # Scipy's COO->CSR conversion naturally handles summing weights of duplicate/parallel edges
+    edge_weights = (1 + alpha * spans).to(torch.int32)
     adj_sparse = to_scipy_sparse_matrix(
-        edge_index=undirected_edges, 
-        edge_attr=edge_weights, 
+        edge_index=undirected_edges,
+        edge_attr=edge_weights,
         num_nodes=num_nodes
     ).tocsr()
-
-    # 5. Invoke the PyMetis wrapper
-    # Using CSRAdjacency to avoid deprecation warnings.
     adjacency = pymetis.CSRAdjacency(
         adj_starts=adj_sparse.indptr,
         adjacent=adj_sparse.indices
@@ -236,9 +146,52 @@ def run_span_weighted_metis(data_obj, num_partitions: int, alpha: float = 10.0) 
         adjacency=adjacency,
         eweights=adj_sparse.data.astype(int)
     )
-
-    # 6. Return as a PyTorch tensor to match your pipeline
     return torch.tensor(part_labels, dtype=torch.long, device="cpu")
+
+
+# =====================================================================
+# INDEX FILE HELPERS
+# =====================================================================
+
+def _get_index_path(cache_dir: Path, algo_name: str) -> Path:
+    """Return the path of the per-directory, per-algorithm mask index file.
+
+    Index files are named ``_masks_{algo_name}.pt`` and live directly inside
+    the cache directory alongside the graph ``.pt`` files.  The leading
+    underscore distinguishes them from graph files so the scanner skips them.
+    """
+    return cache_dir / f"{_MASKS_PREFIX}{algo_name}.pt"
+
+
+def _load_mask_index(cache_dir: Path, algo_name: str) -> dict:
+    """Load an existing mask index from disk, returning an empty dict on miss/error.
+
+    Index format::
+
+        {
+            "abc123.pt": {
+                "mask": torch.Tensor,  # shape [num_nodes], dtype long
+                "k":    torch.Tensor,  # shape [1],         dtype long
+            },
+            ...
+        }
+    """
+    index_path = _get_index_path(cache_dir, algo_name)
+    if not index_path.is_file():
+        return {}
+    try:
+        return torch.load(index_path, map_location="cpu", weights_only=True)
+    except Exception as exc:
+        print(f"[WARNING] Could not load existing index {index_path}: {exc}. Starting fresh.")
+        return {}
+
+
+def _save_mask_index(cache_dir: Path, algo_name: str, index: dict) -> None:
+    """Atomically persist the mask index for one directory + algorithm."""
+    index_path = _get_index_path(cache_dir, algo_name)
+    temp_file = index_path.with_suffix(f".tmp_{uuid.uuid4().hex[:8]}")
+    torch.save(index, temp_file)
+    os.replace(temp_file, index_path)
 
 
 # =====================================================================
@@ -249,12 +202,9 @@ def _worker_initializer() -> None:
     """Called once per worker process at pool startup.
 
     - Registers PyG safe globals for ``weights_only=True`` torch.load.
-    - Pins PyTorch to 1 intra-op thread.  Each worker process re-initializes
-      the PyTorch thread pool and defaults to using all available cores.
-      With 48 workers that would create 48 × 48 = 2304 threads competing for
-      48 CPUs — a severe thread-thrashing bottleneck.  OMP_NUM_THREADS and
-      MKL_NUM_THREADS in the shell script only help if set *before* torch is
-      first imported; inside a spawned worker they are already too late.
+    - Pins PyTorch to 1 intra-op thread to prevent thread-thrashing when
+      many workers run concurrently (OMP_NUM_THREADS is set too late in
+      spawned processes to help on its own).
     """
     import torch as _torch
     _torch.set_num_threads(1)
@@ -268,28 +218,27 @@ def _process_single_cache_file(
     max_k: int,
     algo_names: list[str],
     seed: int,
-) -> None:
-    if not cache_path.is_file():
-        return
+) -> tuple[str, dict] | None:
+    """Compute partition masks for one cache file and return them as tensors.
 
-    # 1. Load the existing .pt file.
+    **No disk writes are performed here.**  The caller (main process) is
+    responsible for accumulating results and flushing the index to disk.
+
+    Returns:
+        ``(basename, mask_entry_dict)`` where *mask_entry_dict* maps
+        ``algo_name`` → ``{"mask": tensor, "k": tensor}``.
+        Returns ``None`` if the file does not exist.
+    """
+    if not cache_path.is_file():
+        return None
+
     with open(cache_path, "rb") as fh:
         data_obj = torch.load(fh, map_location="cpu", weights_only=True)
 
-    missing_algos = []
-    for algo_name in algo_names:
-        if not hasattr(data_obj, f"{algo_name}_dynamic_mask"):
-            missing_algos.append(algo_name)
-    
-    if not missing_algos:
-        # All requested algorithms are already computed.
-        return
-
-    # 2. Compute k once per graph (shared across all algorithms).
     k = compute_dynamic_k(data_obj.num_nodes, target_nodes, min_k, max_k)
 
-    # 3. Run each requested algorithm with the pre-computed k.
-    for algo_name in missing_algos:
+    result: dict[str, dict] = {}
+    for algo_name in algo_names:
         if algo_name == "metis":
             mask_tensor = run_metis(data_obj, k)
         elif algo_name == "span_weighted_metis":
@@ -301,18 +250,12 @@ def _process_single_cache_file(
         else:
             raise ValueError(f"Unknown algorithm: {algo_name}")
 
-        if not isinstance(mask_tensor, torch.Tensor):
-            mask_tensor = torch.tensor(mask_tensor, dtype=torch.long)
+        result[algo_name] = {
+            "mask": mask_tensor.to(dtype=torch.long, device="cpu"),
+            "k":    torch.tensor([k], dtype=torch.long, device="cpu"),
+        }
 
-        setattr(data_obj, f"{algo_name}_dynamic_mask",
-                mask_tensor.to(dtype=torch.long, device="cpu"))
-        setattr(data_obj, f"{algo_name}_dynamic_num_partitions",
-                torch.tensor([k], dtype=torch.long, device="cpu"))
-
-    # 4. Atomically overwrite the file on disk.
-    temp_file = cache_path.with_suffix(f".tmp_{uuid.uuid4().hex[:8]}")
-    torch.save(data_obj, temp_file)
-    os.replace(temp_file, cache_path)
+    return cache_path.name, result
 
 
 # =====================================================================
@@ -324,25 +267,43 @@ def update_existing_cache_with_masks(
     algo_names: list[str],
     seed: int = 0,
 ) -> None:
-    """Loads pre-cached graph files from specified directories, computes partition masks in parallel, and saves them back.
+    """Compute partition masks for all cached graph files and save them in
+    per-directory index files.
 
-    Searches recursively for all ``*.pt`` files in the provided directories.
-    Deduplicates the file paths so that each file is processed exactly once,
-    avoiding redundant computation in shared/overlapping cache folders.
+    Instead of embedding masks inside each individual graph ``.pt`` file
+    (which requires loading and re-saving the full graph for every file),
+    this pipeline writes one lightweight index file per *(cache directory,
+    algorithm)* pair::
 
-    For every graph the number of partitions ``k`` is determined dynamically
-    by ``compute_dynamic_k`` using the ``TARGET_NODES_PER_PART``, ``MIN_K``,
-    and ``MAX_K`` values from ``config.py``.
+        {cache_dir}/_masks_{algo_name}.pt
 
-    Stored attributes (per graph, per algorithm):
-        ``{algo_name}_dynamic_mask``            – 1-D long tensor, shape [num_nodes]
-        ``{algo_name}_dynamic_num_partitions``  – scalar long tensor, value = k
+    Each index file maps graph basenames to their precomputed mask tensors.
+
+    **Inode cost**: 1 index file per (directory × algorithm).  With 2 cache
+    directories and 4 algorithms that is 8 new inodes — a negligible addition.
+
+    **Resume support**: On startup the existing indices are loaded and files
+    that already have all requested masks are skipped automatically.
+
+    **Streaming**: Files are submitted to the worker pool immediately as
+    ``os.scandir`` discovers them — workers start within seconds rather than
+    waiting for a full directory scan to complete.  This is critical when
+    reading 984K+ file names from NFS takes many minutes.
+
+    **Checkpointing**: The indices are flushed to disk atomically every
+    ``CHECKPOINT_EVERY`` completed files so that a SLURM time-limit kill
+    preserves as much work as possible.
+
+    Args:
+        directories: Flat cache directories to scan for graph ``.pt`` files.
+                     All files that are *not* index files (``_masks_*.pt``)
+                     are submitted to the worker pool.
+        algo_names:  Partition algorithm names to compute.
+        seed:        RNG seed forwarded to ``run_random``.
     """
     import config as _cfg
     import concurrent.futures
 
-    # Register PyG safe globals in the main process (workers get their own
-    # registration via _worker_initializer).
     _register_pyg_safe_globals()
 
     target_nodes = getattr(_cfg, "TARGET_NODES_PER_PART", 10_000)
@@ -353,50 +314,82 @@ def update_existing_cache_with_masks(
         f"[Mask Precomputation] Dynamic-k heuristic: "
         f"TARGET_NODES_PER_PART={target_nodes}, MIN_K={min_k}, MAX_K={max_k}"
     )
-    unique_paths_set = set()
-    scan_start = time.time()
-    
+
+    # ------------------------------------------------------------------
+    # 1. LOAD EXISTING INDICES
+    #    The top-level cache directories are known upfront (they are the
+    #    arguments passed in).  We load their existing mask indices so we
+    #    can skip already-computed files without any per-file stat calls.
+    # ------------------------------------------------------------------
+    top_dirs: list[Path] = []
+    lone_files: list[Path] = []
     for d in directories:
-        # Convert the base directory to an absolute string immediately
-        d_path = str(Path(d).absolute())
-        print(f"  -> Scanning {d_path}...")
-        
-        if os.path.isfile(d_path):
-            if d_path.endswith(".pt"):
-                unique_paths_set.add(d_path)
-        elif os.path.isdir(d_path):
-            # os.walk is extremely fast because it minimizes 'stat' system calls.
-            # We ignore the directory list (dirs) and just grab the files.
-            for root, dirs, files in os.walk(d_path):
-                for file_name in files:
-                    if file_name.endswith(".pt"):
-                        # Pure string concatenation - zero filesystem checks
-                        full_path = os.path.join(root, file_name)
-                        unique_paths_set.add(full_path)
+        p = Path(d).absolute()
+        (top_dirs if p.is_dir() else lone_files).append(p)
 
-    # Convert back to Path objects and sort for the worker pool
-    unique_cache_paths = sorted([Path(p) for p in unique_paths_set])
-    total_files = len(unique_cache_paths)
-    
-    print(f"[Mask Precomputation] Found {total_files} files in {time.time() - scan_start:.2f} seconds.")
+    # accumulated[str(cache_dir)][algo_name] = {basename: {"mask": t, "k": t}}
+    accumulated: dict[str, dict[str, dict]] = {}
+    done_by_dir: dict[str, set[str]] = {}
 
-    if total_files == 0:
-        print("[Mask Precomputation] No graph cache files found. Exiting.")
-        return
+    for top_dir in top_dirs:
+        d_str = str(top_dir)
+        accumulated[d_str] = {a: _load_mask_index(top_dir, a) for a in algo_names}
+        # A basename is fully done only when it appears in ALL algo indices.
+        if algo_names:
+            all_done = [set(accumulated[d_str][a].keys()) for a in algo_names]
+            done_by_dir[d_str] = (
+                all_done[0].intersection(*all_done[1:]) if len(all_done) > 1 else all_done[0]
+            )
+        else:
+            done_by_dir[d_str] = set()
+        print(f"  -> {top_dir}: {len(done_by_dir[d_str])} entries already in index")
 
-    # Respect SLURM allocated CPUs, but cap at 75 % to leave headroom for
-    # the OS, NFS client daemon, and filesystem I/O threads.  Fully
-    # saturating all cores with compute workers slows I/O-bound workloads
-    # on scratch/NFS filesystems.
+    # ------------------------------------------------------------------
+    # 2. STREAMING PATH GENERATOR
+    #    Uses os.scandir (single-level, no recursion) since cache directories
+    #    are flat.  Files are yielded one-by-one so the executor can start
+    #    immediately — no need to finish scanning before work begins.
+    # ------------------------------------------------------------------
+    def _path_stream():
+        # Lone file arguments (rare, but supported)
+        for p in lone_files:
+            if not p.name.startswith(_MASKS_PREFIX):
+                d_str = str(p.parent)
+                if d_str not in accumulated:
+                    accumulated[d_str] = {a: {} for a in algo_names}
+                    done_by_dir[d_str] = set()
+                if p.name not in done_by_dir[d_str]:
+                    yield d_str, p
+
+        # Main cache directories.
+        # os.scandir reads directory entries in kernel-batched chunks — no
+        # extra stat() calls per entry, no recursive traversal overhead.
+        # All files in the cache are graph .pt files; we only skip the
+        # lightweight index files written by this pipeline itself.
+        for top_dir in top_dirs:
+            d_str    = str(top_dir)
+            done_set = done_by_dir[d_str]
+            try:
+                with os.scandir(str(top_dir)) as scanner:
+                    for entry in scanner:
+                        if (entry.is_file(follow_symlinks=False)
+                                and entry.name.endswith(".pt")
+                                and not entry.name.startswith(_MASKS_PREFIX)
+                                and entry.name not in done_set):
+                            yield d_str, Path(entry.path)
+            except PermissionError as exc:
+                print(f"[WARNING] Cannot scan {top_dir}: {exc}")
+
+    # ------------------------------------------------------------------
+    # 3. PARALLEL COMPUTATION — streaming producer / consumer
+    # ------------------------------------------------------------------
     try:
         all_cpus = len(os.sched_getaffinity(0))
     except AttributeError:
         all_cpus = os.cpu_count() or 1
-    num_workers = max(1, int(all_cpus * 0.9))
-
+    num_workers = max(1, int(all_cpus * 0.75))
     print(f"[Mask Precomputation] Using {num_workers}/{all_cpus} parallel worker processes...")
 
-    success_count = 0
     worker_fn = functools.partial(
         _process_single_cache_file,
         target_nodes=target_nodes,
@@ -406,36 +399,97 @@ def update_existing_cache_with_masks(
         seed=seed,
     )
 
+    # Cap the number of in-flight futures so we don't buffer all 984K paths
+    # in memory — the path generator stays paused until slots open up.
+    PENDING_LIMIT = num_workers * 8
+
+    success_count = 0
+    error_count   = 0
+
+    def _flush_indices() -> None:
+        """Atomically write all accumulated index dicts to disk."""
+        for d_str, algo_map in accumulated.items():
+            for algo_name, index in algo_map.items():
+                if index:
+                    _save_mask_index(Path(d_str), algo_name, index)
+
+    path_stream = _path_stream()
+
+    from tqdm import tqdm
     with concurrent.futures.ProcessPoolExecutor(
         max_workers=num_workers,
         initializer=_worker_initializer,
     ) as executor:
-        futures = {executor.submit(worker_fn, path): path for path in unique_cache_paths}
+        # futures: future -> (cache_dir_str, Path)
+        futures: dict[concurrent.futures.Future, tuple[str, Path]] = {}
 
-        from tqdm import tqdm
-        for future in tqdm(
-            concurrent.futures.as_completed(futures),
-            total=total_files,
-            desc="Appending masks to cache"
-        ):
-            path = futures[future]
-            try:
-                future.result()
-                success_count += 1
-            except Exception as e:
-                print(f"\n[ERROR] Failed to process {path.name}: {e}")
+        # Prime the pool — fill up to PENDING_LIMIT so every worker has
+        # something to do before the main loop starts collecting results.
+        for d_str, path in itertools.islice(path_stream, PENDING_LIMIT):
+            f = executor.submit(worker_fn, path)
+            futures[f] = (d_str, path)
 
-    print(f"\n[Mask Precomputation] Complete! Successfully updated {success_count} files.")
-    print("All other properties (features, edge layouts, positional encodings) were preserved untouched.")
+        print(
+            f"[Mask Precomputation] {len(futures)} tasks submitted, "
+            f"workers running. Streaming remaining files as slots open..."
+        )
+
+        with tqdm(desc="Computing partition masks", unit=" files") as pbar:
+            while futures:
+                done_futures, _ = concurrent.futures.wait(
+                    futures,
+                    return_when=concurrent.futures.FIRST_COMPLETED,
+                )
+                for future in done_futures:
+                    d_str, path = futures.pop(future)
+                    try:
+                        result = future.result()
+                        if result is not None:
+                            basename, algo_results = result
+                            for algo_name, entry in algo_results.items():
+                                accumulated[d_str][algo_name][basename] = entry
+                            success_count += 1
+                    except Exception as exc:
+                        error_count += 1
+                        print(f"\n[ERROR] {path.name}: {exc}")
+
+                    pbar.update(1)
+
+                    # Refill: submit the next unprocessed file for each freed slot.
+                    try:
+                        next_d_str, next_path = next(path_stream)
+                        new_f = executor.submit(worker_fn, next_path)
+                        futures[new_f] = (next_d_str, next_path)
+                    except StopIteration:
+                        pass  # scan exhausted; drain remaining in-flight futures
+
+                # Periodic checkpoint — preserve progress across SLURM kills.
+                if success_count > 0 and success_count % CHECKPOINT_EVERY == 0:
+                    print(f"\n[Checkpoint] {success_count} done — flushing indices...")
+                    _flush_indices()
+
+    # ------------------------------------------------------------------
+    # 4. FINAL SAVE
+    # ------------------------------------------------------------------
+    print(f"\n[Mask Precomputation] Saving final indices to disk...")
+    _flush_indices()
+
+    for d_str, algo_map in accumulated.items():
+        for algo_name, index in algo_map.items():
+            idx_path = _get_index_path(Path(d_str), algo_name)
+            print(f"  {idx_path}  ({len(index)} entries)")
+
+    print(
+        f"\n[Mask Precomputation] Complete! "
+        f"Processed {success_count} files, {error_count} errors."
+    )
+    print("Graph .pt files were NOT modified — masks live in index files only.")
 
 
 if __name__ == "__main__":
     import argparse
     import config
 
-    # -----------------------------------------------------------------------
-    # Settings are driven by config.py (except algorithm/dirs which are CLI args).
-    # -----------------------------------------------------------------------
     _seed = getattr(config, "PARTITION_SEED", 0)
 
     parser = argparse.ArgumentParser(
@@ -445,13 +499,13 @@ if __name__ == "__main__":
         "algorithm",
         type=str,
         choices=["metis", "span_weighted_metis", "level_slicing", "random", "all"],
-        help="Partition algorithm to run, or 'all' to run all available partition algorithms."
+        help="Partition algorithm to run, or 'all' to run all available algorithms.",
     )
     parser.add_argument(
         "--dirs",
         nargs="+",
         required=True,
-        help="One or more directory paths (or individual .pt files) to search recursively for cached graphs."
+        help="One or more flat cache directories (or individual .pt files) to process.",
     )
     args = parser.parse_args()
 
