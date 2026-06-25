@@ -3,6 +3,7 @@ __pycache__/
 *.py[codz]
 *$py.class
 .vscode 
+.github/agent.md
 
 logs/inspect_issues_22600850/
 logs/combined_logs.zip
