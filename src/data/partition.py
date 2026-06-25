@@ -246,10 +246,18 @@ def run_span_weighted_metis(data_obj, num_partitions: int, alpha: float = 10.0) 
 # =====================================================================
 
 def _worker_initializer() -> None:
-    """Called once per worker process at pool startup to register PyG safe
-    globals for ``weights_only=True`` torch.load, without re-importing the
-    heavy dataset module chain.
+    """Called once per worker process at pool startup.
+
+    - Registers PyG safe globals for ``weights_only=True`` torch.load.
+    - Pins PyTorch to 1 intra-op thread.  Each worker process re-initializes
+      the PyTorch thread pool and defaults to using all available cores.
+      With 48 workers that would create 48 × 48 = 2304 threads competing for
+      48 CPUs — a severe thread-thrashing bottleneck.  OMP_NUM_THREADS and
+      MKL_NUM_THREADS in the shell script only help if set *before* torch is
+      first imported; inside a spawned worker they are already too late.
     """
+    import torch as _torch
+    _torch.set_num_threads(1)
     _register_pyg_safe_globals()
 
 
@@ -376,13 +384,17 @@ def update_existing_cache_with_masks(
         print("[Mask Precomputation] No graph cache files found. Exiting.")
         return
 
-    # Respect SLURM allocated CPUs
+    # Respect SLURM allocated CPUs, but cap at 75 % to leave headroom for
+    # the OS, NFS client daemon, and filesystem I/O threads.  Fully
+    # saturating all cores with compute workers slows I/O-bound workloads
+    # on scratch/NFS filesystems.
     try:
-        num_workers = len(os.sched_getaffinity(0))
+        all_cpus = len(os.sched_getaffinity(0))
     except AttributeError:
-        num_workers = os.cpu_count() or 1
+        all_cpus = os.cpu_count() or 1
+    num_workers = max(1, int(all_cpus * 0.75))
 
-    print(f"[Mask Precomputation] Using {num_workers} parallel worker processes...")
+    print(f"[Mask Precomputation] Using {num_workers}/{all_cpus} parallel worker processes...")
 
     success_count = 0
     worker_fn = functools.partial(
