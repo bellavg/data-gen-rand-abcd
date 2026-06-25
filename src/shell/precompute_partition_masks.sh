@@ -2,7 +2,7 @@
 #SBATCH --job-name=precompute_partition_masks
 #SBATCH --time=08:00:00
 #SBATCH --nodes=1
-#SBATCH --cpus-per-task=48
+#SBATCH --cpus-per-task=72
 #SBATCH --partition=genoa
 #SBATCH --array=0-3
 #SBATCH --output=logs/precompute_partition_%A_%a.out

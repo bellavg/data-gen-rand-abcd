@@ -392,7 +392,7 @@ def update_existing_cache_with_masks(
         all_cpus = len(os.sched_getaffinity(0))
     except AttributeError:
         all_cpus = os.cpu_count() or 1
-    num_workers = max(1, int(all_cpus * 0.75))
+    num_workers = max(1, int(all_cpus * 0.9))
 
     print(f"[Mask Precomputation] Using {num_workers}/{all_cpus} parallel worker processes...")
 
