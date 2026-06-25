@@ -9,8 +9,26 @@ from pathlib import Path
 from tqdm import tqdm
 from torch_geometric.data import Data
 from torch_geometric.utils import to_undirected
-# Ensure safe unpickling globals are registered by importing dataset first
-from data.dataset import AIGGraphRegressionDataset
+
+
+def _register_pyg_safe_globals() -> None:
+    """Register the minimal set of PyG classes needed for ``weights_only=True``
+    torch.load calls.  Doing this inline avoids importing the heavy
+    ``data.dataset`` module (which pulls in pandas, models, etc.) in every
+    spawned worker process, which caused a thundering-herd NFS stall when 48
+    workers all imported simultaneously.
+    """
+    import torch.serialization
+    import torch_geometric.data.data as _pyg_data_mod
+    import torch_geometric.data.storage as _pyg_storage
+    from data.partition_utils import PartitionedData
+
+    safe_globals: list = [Data, _pyg_storage.GlobalStorage, PartitionedData]
+    for _name in ("DataTensorAttr", "DataEdgeAttr"):
+        _cls = getattr(_pyg_data_mod, _name, None)
+        if _cls is not None:
+            safe_globals.append(_cls)
+    torch.serialization.add_safe_globals(safe_globals)
 
 
 # =====================================================================
@@ -229,6 +247,14 @@ def run_span_weighted_metis(data_obj, num_partitions: int, alpha: float = 10.0) 
 # WORKER TASK FOR PARALLEL EXECUTION
 # =====================================================================
 
+def _worker_initializer() -> None:
+    """Called once per worker process at pool startup to register PyG safe
+    globals for ``weights_only=True`` torch.load, without re-importing the
+    heavy dataset module chain.
+    """
+    _register_pyg_safe_globals()
+
+
 def _process_single_cache_file(
     cache_path: Path,
     target_nodes: int,
@@ -309,6 +335,10 @@ def update_existing_cache_with_masks(
     import config as _cfg
     import concurrent.futures
 
+    # Register PyG safe globals in the main process (workers get their own
+    # registration via _worker_initializer).
+    _register_pyg_safe_globals()
+
     target_nodes = getattr(_cfg, "TARGET_NODES_PER_PART", 10_000)
     min_k        = getattr(_cfg, "MIN_K", 2)
     max_k        = getattr(_cfg, "MAX_K", 32)
@@ -366,7 +396,10 @@ def update_existing_cache_with_masks(
         seed=seed,
     )
 
-    with concurrent.futures.ProcessPoolExecutor(max_workers=num_workers) as executor:
+    with concurrent.futures.ProcessPoolExecutor(
+        max_workers=num_workers,
+        initializer=_worker_initializer,
+    ) as executor:
         futures = {executor.submit(worker_fn, path): path for path in unique_cache_paths}
 
         for future in tqdm(
