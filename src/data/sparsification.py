@@ -427,7 +427,7 @@ def update_existing_cache_with_masks(
         all_cpus = len(os.sched_getaffinity(0))
     except AttributeError:
         all_cpus = os.cpu_count() or 1
-    num_workers = max(1, int(all_cpus * 0.75))
+    num_workers = min(32, max(1, int(all_cpus * 0.5)))
     print(f"[Mask Precomputation] Using {num_workers}/{all_cpus} parallel worker processes...")
 
     worker_fn = functools.partial(
@@ -452,9 +452,12 @@ def update_existing_cache_with_masks(
 
     path_stream = _path_stream()
 
+    import multiprocessing as mp
     with concurrent.futures.ProcessPoolExecutor(
         max_workers=num_workers,
         initializer=_worker_initializer,
+        mp_context=mp.get_context("spawn"),
+        max_tasks_per_child=50,
     ) as executor:
         futures: dict[concurrent.futures.Future, tuple[str, Path]] = {}
 
