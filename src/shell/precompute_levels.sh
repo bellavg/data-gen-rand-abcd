@@ -4,6 +4,7 @@
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=24
 #SBATCH --partition=genoa
+#SBATCH --constraint=scratch-node
 #SBATCH --output=logs/precompute_levels_%j.out
 
 # ---------------------------------------------------------------------------
@@ -49,7 +50,7 @@ SHARED_CACHES=(
 )
 
 # Local NVMe caches (Destination)
-LOCAL_WORKSPACE="${TMPDIR:-/tmp}/aig_cache_$SLURM_JOB_ID"
+LOCAL_WORKSPACE="/scratch-node/${USER}.${SLURM_JOB_ID}/aig_cache_${SLURM_JOB_ID}"
 echo "Creating local NVMe workspace at $LOCAL_WORKSPACE..."
 mkdir -p "$LOCAL_WORKSPACE"
 
