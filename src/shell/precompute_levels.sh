@@ -49,43 +49,16 @@ SHARED_CACHES=(
     "/scratch-shared/$USER/aig_train_run/shared_tier1_cache"
 )
 
-if [[ -z "${TMPDIR:-}" ]]; then
-    export TMPDIR="/scratch-shared/$USER/tmp"
-fi
-mkdir -p "$TMPDIR"
-
-LOCAL_WORKSPACE="$(mktemp -d "$TMPDIR/aig_cache_XXXXXX")"
-echo "Creating local NVMe workspace at $LOCAL_WORKSPACE..."
-
-# Ensure cleanup on exit
-trap 'rm -rf "$LOCAL_WORKSPACE" && echo "Cleaned up $LOCAL_WORKSPACE"' EXIT
-
 for SHARED_DIR in "${SHARED_CACHES[@]}"; do
-    CACHE_NAME=$(basename "$SHARED_DIR")
-    LOCAL_DIR="$LOCAL_WORKSPACE/$CACHE_NAME"
-    
     echo "=========================================="
-    echo "Processing $CACHE_NAME"
+    echo "Processing $SHARED_DIR"
     echo "=========================================="
     
-    echo "Copying $CACHE_NAME to local NVMe via tar pipe..."
-    mkdir -p "$LOCAL_DIR"
-    time tar -cf - -C "$SHARED_DIR" . | tar -xf - -C "$LOCAL_DIR"
-
-    echo "Running levels precomputation against local NVMe directory..."
-    # The python script will read data from LOCAL_DIR but save the index directly to SHARED_DIR
+    echo "Running levels precomputation directly against shared cache..."
     time python -u -m data.compute_levels \
-        --dirs "$LOCAL_DIR" \
+        --dirs "$SHARED_DIR" \
         --out-dirs "$SHARED_DIR"
 
-    echo "Cleaning up local workspace for $CACHE_NAME to save space..."
-    rm -rf "$LOCAL_DIR"
-done
-
-echo "Cleaning up entire local workspace..."
-rm -rf "$LOCAL_WORKSPACE"
-
-echo "=========================================="
 echo "Precomputation complete."
 echo "End time: $(date)"
 echo "=========================================="
