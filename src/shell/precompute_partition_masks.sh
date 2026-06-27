@@ -70,19 +70,41 @@ cd "$BASE_DIR"
 # 2. CACHE DIRECTORIES
 # =========================================================
 
-# Shared caches for tier-0 and tier-1 graphs (must match warmup_train_cache.sh)
-TIER0_CACHE_DIR="/scratch-shared/$USER/aig_train_run/shared_tier0_cache"
-TIER1_CACHE_DIR="/scratch-shared/$USER/aig_train_run/shared_tier1_cache"
+# Shared caches for tier-0 and tier-1 graphs (Source)
+SHARED_CACHES=(
+    "/scratch-shared/$USER/aig_train_run/shared_tier0_cache"
+    "/scratch-shared/$USER/aig_train_run/shared_tier1_cache"
+)
 
-# =========================================================
-# 3. EXECUTE PIPELINE
-# =========================================================
+# Local NVMe caches (Destination)
+LOCAL_WORKSPACE="/scratch-node/$USER/$SLURM_JOB_ID"
+echo "Creating local NVMe workspace at $LOCAL_WORKSPACE..."
+mkdir -p "$LOCAL_WORKSPACE"
 
-echo "Running partition precomputation for all cache directories..."
-python -u -m data.partition "$PARTITION_ALGO" \
-    --dirs \
-        "$TIER0_CACHE_DIR" \
-        "$TIER1_CACHE_DIR" 
+for SHARED_DIR in "${SHARED_CACHES[@]}"; do
+    CACHE_NAME=$(basename "$SHARED_DIR")
+    LOCAL_DIR="$LOCAL_WORKSPACE/$CACHE_NAME"
+    
+    echo "=========================================="
+    echo "Processing $CACHE_NAME"
+    echo "=========================================="
+    
+    echo "Copying $CACHE_NAME to local NVMe via tar pipe..."
+    mkdir -p "$LOCAL_DIR"
+    time tar -cf - -C "$SHARED_DIR" . | tar -xf - -C "$LOCAL_DIR"
+
+    echo "Running partition precomputation against local NVMe directory..."
+    # The python script will read data from LOCAL_DIR but save indices directly to SHARED_DIR
+    time python -u -m data.partition "$PARTITION_ALGO" \
+        --dirs "$LOCAL_DIR" \
+        --out-dirs "$SHARED_DIR"
+
+    echo "Cleaning up local workspace for $CACHE_NAME to save space..."
+    rm -rf "$LOCAL_DIR"
+done
+
+echo "Cleaning up entire local workspace..."
+rm -rf "$LOCAL_WORKSPACE"
 
 echo "=========================================="
 echo "Precomputation complete."

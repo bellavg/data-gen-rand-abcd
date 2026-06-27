@@ -245,14 +245,14 @@ def _process_single_cache_file(
     max_k: int,
     algo_names: list[str],
     seed: int,
-) -> tuple[str, dict] | None:
+) -> tuple[str, str, dict] | None:
     """Compute partition masks for one cache file and return them as tensors.
 
     **No disk writes are performed here.**  The caller (main process) is
     responsible for accumulating results and flushing the index to disk.
 
     Returns:
-        ``(basename, mask_entry_dict)`` where *mask_entry_dict* maps
+        ``(cache_dir_str, basename, mask_entry_dict)`` where *mask_entry_dict* maps
         ``algo_name`` → ``{"mask": tensor, "k": tensor}``.
         Returns ``None`` if the file does not exist.
     """
@@ -287,7 +287,7 @@ def _process_single_cache_file(
             "k":    torch.tensor([k], dtype=torch.long, device="cpu"),
         }
 
-    return cache_path.name, result
+    return str(cache_path.parent), cache_path.name, result
 
 
 # =====================================================================
@@ -298,6 +298,7 @@ def update_existing_cache_with_masks(
     directories: list[str | Path],
     algo_names: list[str],
     seed: int = 0,
+    out_directories: list[str | Path] | None = None,
 ) -> None:
     """Compute partition masks for all cached graph files and save them in
     per-directory index files.
@@ -353,19 +354,24 @@ def update_existing_cache_with_masks(
     #    arguments passed in).  We load their existing mask indices so we
     #    can skip already-computed files without any per-file stat calls.
     # ------------------------------------------------------------------
-    top_dirs: list[Path] = []
-    lone_files: list[Path] = []
-    for d in directories:
-        p = Path(d).absolute()
-        (top_dirs if p.is_dir() else lone_files).append(p)
+    top_dirs = [Path(d).absolute() for d in directories]
+    if out_directories is None:
+        out_dirs_list = top_dirs
+    else:
+        out_dirs_list = [Path(d).absolute() for d in out_directories]
+        if len(top_dirs) != len(out_dirs_list):
+            raise ValueError("--dirs and --out-dirs must have the same length")
+    
+    dir_map = {str(d): str(o) for d, o in zip(top_dirs, out_dirs_list)}
 
-    # accumulated[str(cache_dir)][algo_name] = {basename: {"mask": t, "k": t}}
     accumulated: dict[str, dict[str, dict]] = {}
     done_by_dir: dict[str, set[str]] = {}
 
     for top_dir in top_dirs:
         d_str = str(top_dir)
-        accumulated[d_str] = {a: _load_mask_index(top_dir, a) for a in algo_names}
+        out_d_str = dir_map[d_str]
+        accumulated[d_str] = {a: _load_mask_index(Path(out_d_str), a) for a in algo_names}
+        
         # A basename is fully done only when it appears in ALL algo indices.
         if algo_names:
             all_done = [set(accumulated[d_str][a].keys()) for a in algo_names]
@@ -374,30 +380,12 @@ def update_existing_cache_with_masks(
             )
         else:
             done_by_dir[d_str] = set()
-        print(f"  -> {top_dir}: {len(done_by_dir[d_str])} entries already in index")
+        print(f"  -> {out_d_str}: {len(done_by_dir[d_str])} entries already in index")
 
     # ------------------------------------------------------------------
     # 2. STREAMING PATH GENERATOR
-    #    Uses os.scandir (single-level, no recursion) since cache directories
-    #    are flat.  Files are yielded one-by-one so the executor can start
-    #    immediately — no need to finish scanning before work begins.
     # ------------------------------------------------------------------
     def _path_stream():
-        # Lone file arguments (rare, but supported)
-        for p in lone_files:
-            if not p.name.startswith(_MASKS_PREFIX):
-                d_str = str(p.parent)
-                if d_str not in accumulated:
-                    accumulated[d_str] = {a: {} for a in algo_names}
-                    done_by_dir[d_str] = set()
-                if p.name not in done_by_dir[d_str]:
-                    yield d_str, p
-
-        # Main cache directories.
-        # os.scandir reads directory entries in kernel-batched chunks — no
-        # extra stat() calls per entry, no recursive traversal overhead.
-        # All files in the cache are graph .pt files; we only skip the
-        # lightweight index files written by this pipeline itself.
         for top_dir in top_dirs:
             d_str    = str(top_dir)
             done_set = done_by_dir[d_str]
@@ -419,7 +407,7 @@ def update_existing_cache_with_masks(
         all_cpus = len(os.sched_getaffinity(0))
     except AttributeError:
         all_cpus = os.cpu_count() or 1
-    num_workers = min(32, max(1, int(all_cpus * 0.5)))
+    num_workers = max(1, all_cpus - 1)
     print(f"[Mask Precomputation] Using {num_workers}/{all_cpus} parallel worker processes...")
 
     worker_fn = functools.partial(
@@ -431,72 +419,44 @@ def update_existing_cache_with_masks(
         seed=seed,
     )
 
-    # Cap the number of in-flight futures so we don't buffer all 984K paths
-    # in memory — the path generator stays paused until slots open up.
-    PENDING_LIMIT = num_workers * 8
-
     success_count = 0
     error_count   = 0
 
     def _flush_indices() -> None:
         """Atomically write all accumulated index dicts to disk."""
         for d_str, algo_map in accumulated.items():
+            out_d_str = dir_map[d_str]
             for algo_name, index in algo_map.items():
                 if index:
-                    _save_mask_index(Path(d_str), algo_name, index)
+                    _save_mask_index(Path(out_d_str), algo_name, index)
 
-    path_stream = _path_stream()
+    path_stream = (p for p in _path_stream())
 
-    from tqdm import tqdm
-    import multiprocessing as mp
-    with concurrent.futures.ProcessPoolExecutor(
-        max_workers=num_workers,
+    import torch.multiprocessing as mp
+    mp_ctx = mp.get_context("spawn")
+
+    with mp_ctx.Pool(
+        processes=num_workers,
         initializer=_worker_initializer,
-        mp_context=mp.get_context("spawn"),
-        max_tasks_per_child=50,
-    ) as executor:
-        # futures: future -> (cache_dir_str, Path)
-        futures: dict[concurrent.futures.Future, tuple[str, Path]] = {}
-
-        # Prime the pool — fill up to PENDING_LIMIT so every worker has
-        # something to do before the main loop starts collecting results.
-        for d_str, path in itertools.islice(path_stream, PENDING_LIMIT):
-            f = executor.submit(worker_fn, path)
-            futures[f] = (d_str, path)
-
-        print(
-            f"[Mask Precomputation] {len(futures)} tasks submitted, "
-            f"workers running. Streaming remaining files as slots open..."
+        maxtasksperchild=50
+    ) as pool:
+        
+        results_iter = pool.imap_unordered(
+            worker_fn, 
+            (path for d_str, path in path_stream),
+            chunksize=10
         )
-
+        
+        from tqdm import tqdm
         with tqdm(desc="Computing partition masks", unit=" files") as pbar:
-            while futures:
-                done_futures, _ = concurrent.futures.wait(
-                    futures,
-                    return_when=concurrent.futures.FIRST_COMPLETED,
-                )
-                for future in done_futures:
-                    d_str, path = futures.pop(future)
-                    try:
-                        result = future.result()
-                        if result is not None:
-                            basename, algo_results = result
-                            for algo_name, entry in algo_results.items():
-                                accumulated[d_str][algo_name][basename] = entry
-                            success_count += 1
-                    except Exception as exc:
-                        error_count += 1
-                        print(f"\n[ERROR] {path.name}: {exc}")
-
-                    pbar.update(1)
-
-                    # Refill: submit the next unprocessed file for each freed slot.
-                    try:
-                        next_d_str, next_path = next(path_stream)
-                        new_f = executor.submit(worker_fn, next_path)
-                        futures[new_f] = (next_d_str, next_path)
-                    except StopIteration:
-                        pass  # scan exhausted; drain remaining in-flight futures
+            for result in results_iter:
+                if result is not None:
+                    d_str, basename, algo_results = result
+                    for algo_name, entry in algo_results.items():
+                        accumulated[d_str][algo_name][basename] = entry
+                    success_count += 1
+                
+                pbar.update(1)
 
                 # Periodic checkpoint — preserve progress across SLURM kills.
                 if success_count > 0 and success_count % CHECKPOINT_EVERY == 0:
@@ -511,7 +471,7 @@ def update_existing_cache_with_masks(
 
     for d_str, algo_map in accumulated.items():
         for algo_name, index in algo_map.items():
-            idx_path = _get_index_path(Path(d_str), algo_name)
+            idx_path = _get_index_path(Path(dir_map[d_str]), algo_name)
             print(f"  {idx_path}  ({len(index)} entries)")
 
     print(
@@ -542,6 +502,12 @@ if __name__ == "__main__":
         required=True,
         help="One or more flat cache directories (or individual .pt files) to process.",
     )
+    parser.add_argument(
+        "--out-dirs",
+        nargs="+",
+        required=False,
+        help="Corresponding directories to save the index files.",
+    )
     args = parser.parse_args()
 
     if args.algorithm == "all":
@@ -559,4 +525,5 @@ if __name__ == "__main__":
         directories=args.dirs,
         algo_names=algo_names,
         seed=_seed,
+        out_directories=args.out_dirs,
     )
