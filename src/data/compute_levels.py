@@ -1,4 +1,5 @@
 import os
+import time
 import uuid
 import torch
 import functools
@@ -183,4 +184,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--dirs", nargs="+", required=True)
     args = parser.parse_args()
+    
+    start_time = time.time()
     precompute_levels(args.dirs)
+    elapsed = time.time() - start_time
+    print(f"[Levels Precomputation] Total elapsed time: {elapsed:.2f} seconds")
