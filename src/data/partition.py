@@ -6,6 +6,7 @@ import uuid
 import torch
 import functools
 import itertools
+import numpy as np
 from pathlib import Path
 
 # Prefix for index files — excluded from scanning so they are never treated
@@ -283,7 +284,7 @@ def _process_single_cache_file(
             raise ValueError(f"Unknown algorithm: {algo_name}")
 
         result[algo_name] = {
-            "mask": mask_tensor.to(dtype=torch.long, device="cpu").numpy(),
+            "mask": mask_tensor.cpu().numpy().astype(np.int8),
             "k":    k,
         }
 
@@ -455,7 +456,7 @@ def update_existing_cache_with_masks(
                     for algo_name, entry in algo_results.items():
                         accumulated[d_str][algo_name][basename] = {
                             "mask": torch.from_numpy(entry["mask"]).clone(),
-                            "k": torch.tensor([entry["k"]], dtype=torch.long, device="cpu"),
+                            "k": torch.tensor([entry["k"]], dtype=torch.int16, device="cpu"),
                         }
                     success_count += 1
                 
