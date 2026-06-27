@@ -47,7 +47,7 @@ TIER0_CACHE_DIR="/scratch-shared/$USER/aig_train_run/shared_tier0_cache"
 TIER1_CACHE_DIR="/scratch-shared/$USER/aig_train_run/shared_tier1_cache"
 
 echo "Running levels precomputation for all cache directories..."
-python -u -m data.compute_levels \
+time python -u -m data.compute_levels \
     --dirs \
         "$TIER0_CACHE_DIR" \
         "$TIER1_CACHE_DIR" 
