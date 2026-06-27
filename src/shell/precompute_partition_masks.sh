@@ -2,11 +2,10 @@
 #SBATCH --job-name=precompute_partition_masks
 #SBATCH --time=08:00:00
 #SBATCH --nodes=1
-#SBATCH --cpus-per-task=48
+#SBATCH --cpus-per-task=192
 #SBATCH --partition=genoa
-#SBATCH --array=0-3
 #SBATCH --constraint=scratch-node
-#SBATCH --output=logs/precompute_partition_%A_%a.out
+#SBATCH --output=logs/precompute_partition_%j.out
 
 # ---------------------------------------------------------------------------
 # Precompute dynamic-k partition masks for training caches.
@@ -28,18 +27,14 @@
 
 set -euo pipefail
 
-# Define our 4 partition methods
-PARTITIONS=("metis" "span_weighted_metis" "level_slicing" "random")
-
-# Select the partition algorithm for this specific array task
-PARTITION_ALGO=${PARTITIONS[$SLURM_ARRAY_TASK_ID]}
+# Define the algorithm argument (Python script supports "all" to compute them in one pass)
+PARTITION_ALGO="all"
 
 echo "=========================================="
-echo "PRECOMPUTE PARTITION MASKS JOB ARRAY ID: $SLURM_ARRAY_JOB_ID, TASK ID: $SLURM_ARRAY_TASK_ID"
+echo "PRECOMPUTE PARTITION MASKS JOB ID: $SLURM_JOB_ID"
 echo "Running on: $(hostname)"
 echo "Start time: $(date)"
 echo "CPUs available: $(nproc)"
-echo "Partition algorithm: ${PARTITION_ALGO}"
 echo "=========================================="
 
 # =========================================================
