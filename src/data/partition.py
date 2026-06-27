@@ -34,6 +34,33 @@ def _register_pyg_safe_globals() -> None:
             safe_globals.append(_cls)
     torch.serialization.add_safe_globals(safe_globals)
 
+_LEVELS_INDEX_CACHE: dict[str, dict] = {}
+
+def _get_level_for_file(cache_path: Path, data_obj) -> torch.Tensor:
+    cache_dir_str = str(cache_path.parent)
+    if cache_dir_str not in _LEVELS_INDEX_CACHE:
+        index_path = cache_path.parent / "_levels.pt"
+        if index_path.is_file():
+            try:
+                _LEVELS_INDEX_CACHE[cache_dir_str] = torch.load(
+                    index_path, map_location="cpu", weights_only=True, mmap=True
+                )
+            except TypeError:
+                _LEVELS_INDEX_CACHE[cache_dir_str] = torch.load(
+                    index_path, map_location="cpu", weights_only=True
+                )
+        else:
+            _LEVELS_INDEX_CACHE[cache_dir_str] = {}
+            
+    levels = _LEVELS_INDEX_CACHE[cache_dir_str].get(cache_path.name)
+    if levels is not None:
+        return levels
+        
+    # Fallback if not in index
+    from data.compute_levels import compute_node_levels
+    return compute_node_levels(data_obj)
+
+
 
 # =====================================================================
 # DYNAMIC K HEURISTIC
@@ -234,6 +261,11 @@ def _process_single_cache_file(
 
     with open(cache_path, "rb") as fh:
         data_obj = torch.load(fh, map_location="cpu", weights_only=True)
+
+    needs_level = any(a in ("span_weighted_metis", "level_slicing") for a in algo_names)
+    if needs_level:
+        if not hasattr(data_obj, "level") or data_obj.level is None:
+            data_obj.level = _get_level_for_file(cache_path, data_obj)
 
     k = compute_dynamic_k(data_obj.num_nodes, target_nodes, min_k, max_k)
 
