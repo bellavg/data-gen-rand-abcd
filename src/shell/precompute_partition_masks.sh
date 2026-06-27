@@ -5,6 +5,7 @@
 #SBATCH --cpus-per-task=48
 #SBATCH --partition=genoa
 #SBATCH --array=0-3
+#SBATCH --constraint=scratch-node
 #SBATCH --output=logs/precompute_partition_%A_%a.out
 
 # ---------------------------------------------------------------------------
@@ -76,10 +77,16 @@ SHARED_CACHES=(
     "/scratch-shared/$USER/aig_train_run/shared_tier1_cache"
 )
 
-# Local NVMe caches (Destination)
-LOCAL_WORKSPACE="/scratch-node/${USER}.${SLURM_JOB_ID}/aig_cache_${SLURM_JOB_ID}"
+if [[ -z "${TMPDIR:-}" ]]; then
+    export TMPDIR="/scratch-shared/$USER/tmp"
+fi
+mkdir -p "$TMPDIR"
+
+LOCAL_WORKSPACE="$(mktemp -d "$TMPDIR/aig_cache_XXXXXX")"
 echo "Creating local NVMe workspace at $LOCAL_WORKSPACE..."
-mkdir -p "$LOCAL_WORKSPACE"
+
+# Ensure cleanup on exit
+trap 'rm -rf "$LOCAL_WORKSPACE" && echo "Cleaned up $LOCAL_WORKSPACE"' EXIT
 
 for SHARED_DIR in "${SHARED_CACHES[@]}"; do
     CACHE_NAME=$(basename "$SHARED_DIR")
