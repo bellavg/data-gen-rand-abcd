@@ -283,8 +283,8 @@ def _process_single_cache_file(
             raise ValueError(f"Unknown algorithm: {algo_name}")
 
         result[algo_name] = {
-            "mask": mask_tensor.to(dtype=torch.long, device="cpu"),
-            "k":    torch.tensor([k], dtype=torch.long, device="cpu"),
+            "mask": mask_tensor.to(dtype=torch.long, device="cpu").numpy(),
+            "k":    k,
         }
 
     return str(cache_path.parent), cache_path.name, result
@@ -453,7 +453,10 @@ def update_existing_cache_with_masks(
                 if result is not None:
                     d_str, basename, algo_results = result
                     for algo_name, entry in algo_results.items():
-                        accumulated[d_str][algo_name][basename] = entry
+                        accumulated[d_str][algo_name][basename] = {
+                            "mask": torch.from_numpy(entry["mask"]).clone(),
+                            "k": torch.tensor([entry["k"]], dtype=torch.long, device="cpu"),
+                        }
                     success_count += 1
                 
                 pbar.update(1)
