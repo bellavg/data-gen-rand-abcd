@@ -2,7 +2,7 @@
 #SBATCH --job-name=precompute_levels
 #SBATCH --time=04:00:00
 #SBATCH --nodes=1
-#SBATCH --cpus-per-task=72
+#SBATCH --cpus-per-task=24
 #SBATCH --partition=genoa
 #SBATCH --output=logs/precompute_levels_%j.out
 
