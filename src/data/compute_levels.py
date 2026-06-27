@@ -62,7 +62,7 @@ def _worker_initializer() -> None:
     _register_pyg_safe_globals()
 
 
-def _process_single_cache_file(cache_path: Path) -> tuple[str, torch.Tensor] | None:
+def _process_single_cache_file(cache_path: Path) -> tuple[str, str, torch.Tensor] | None:
     if not cache_path.is_file():
         return None
 
@@ -70,20 +70,27 @@ def _process_single_cache_file(cache_path: Path) -> tuple[str, torch.Tensor] | N
         data_obj = torch.load(fh, map_location="cpu", weights_only=True)
 
     levels = compute_node_levels(data_obj)
-    return cache_path.name, levels
+    return str(cache_path.parent), cache_path.name, levels
 
 
-def precompute_levels(directories: list[str | Path]):
+def precompute_levels(directories: list[str | Path], out_directories: list[str | Path] | None = None):
     _register_pyg_safe_globals()
     
+    if out_directories is None:
+        out_directories = directories
+        
     top_dirs = [Path(d).absolute() for d in directories if Path(d).is_dir()]
+    out_dirs_list = [Path(d).absolute() for d, orig_d in zip(out_directories, directories) if Path(orig_d).is_dir()]
+    
+    dir_map = {str(d): str(o) for d, o in zip(top_dirs, out_dirs_list)}
     
     accumulated = {}
     done_by_dir = {}
     
     for top_dir in top_dirs:
         d_str = str(top_dir)
-        index_path = top_dir / _LEVELS_PREFIX
+        out_d_str = dir_map[d_str]
+        index_path = Path(out_d_str) / _LEVELS_PREFIX
         if index_path.is_file():
             try:
                 accumulated[d_str] = torch.load(index_path, map_location="cpu", weights_only=True)
@@ -95,7 +102,7 @@ def precompute_levels(directories: list[str | Path]):
             accumulated[d_str] = {}
             done_by_dir[d_str] = set()
             
-        print(f"  -> {top_dir}: {len(done_by_dir[d_str])} entries already in index")
+        print(f"  -> {out_d_str}: {len(done_by_dir[d_str])} entries already in index")
         
     def _path_stream():
         for top_dir in top_dirs:
@@ -116,7 +123,7 @@ def precompute_levels(directories: list[str | Path]):
         all_cpus = len(os.sched_getaffinity(0))
     except AttributeError:
         all_cpus = os.cpu_count() or 1
-    num_workers = min(32, max(1, int(all_cpus * 0.5)))
+    num_workers = max(1, all_cpus - 1)
     
     print(f"[Levels Precomputation] Using {num_workers} parallel workers...")
     
@@ -127,52 +134,38 @@ def precompute_levels(directories: list[str | Path]):
     def _flush_indices() -> None:
         for d_str, index in accumulated.items():
             if index:
-                index_path = Path(d_str) / _LEVELS_PREFIX
+                out_d_str = dir_map[d_str]
+                index_path = Path(out_d_str) / _LEVELS_PREFIX
                 temp_file = index_path.with_suffix(f".tmp_{uuid.uuid4().hex[:8]}")
                 torch.save(index, temp_file)
                 os.replace(temp_file, index_path)
 
-    path_stream = _path_stream()
-    PENDING_LIMIT = num_workers * 8
-
-    with concurrent.futures.ProcessPoolExecutor(
-        max_workers=num_workers,
+    path_stream = (p for p in _path_stream())
+    
+    import torch.multiprocessing as mp
+    mp_ctx = mp.get_context("spawn")
+    
+    with mp_ctx.Pool(
+        processes=num_workers,
         initializer=_worker_initializer,
-        mp_context=mp.get_context("spawn"),
-        max_tasks_per_child=50,
-    ) as executor:
-        futures = {}
-        for d_str, path in itertools.islice(path_stream, PENDING_LIMIT):
-            f = executor.submit(_process_single_cache_file, path)
-            futures[f] = (d_str, path)
-
+        maxtasksperchild=50
+    ) as pool:
+        
+        results_iter = pool.imap_unordered(
+            _process_single_cache_file, 
+            (path for d_str, path in path_stream),
+            chunksize=10
+        )
+        
         with tqdm(desc="Computing node levels", unit=" files") as pbar:
-            while futures:
-                done_futures, _ = concurrent.futures.wait(
-                    futures,
-                    return_when=concurrent.futures.FIRST_COMPLETED,
-                )
-                for future in done_futures:
-                    d_str, path = futures.pop(future)
-                    try:
-                        result = future.result()
-                        if result is not None:
-                            basename, levels = result
-                            accumulated[d_str][basename] = levels
-                            success_count += 1
-                    except Exception as exc:
-                        error_count += 1
-                        print(f"\n[ERROR] {path.name}: {exc}")
-
-                    pbar.update(1)
-
-                    try:
-                        next_d_str, next_path = next(path_stream)
-                        new_f = executor.submit(_process_single_cache_file, next_path)
-                        futures[new_f] = (next_d_str, next_path)
-                    except StopIteration:
-                        pass
-
+            for result in results_iter:
+                if result is not None:
+                    d_str, basename, levels = result
+                    accumulated[d_str][basename] = levels
+                    success_count += 1
+                
+                pbar.update(1)
+                
                 if success_count > 0 and success_count % CHECKPOINT_EVERY == 0:
                     _flush_indices()
 
@@ -183,9 +176,10 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--dirs", nargs="+", required=True)
+    parser.add_argument("--out-dirs", nargs="+", required=False, help="Corresponding directories to save the index files")
     args = parser.parse_args()
     
     start_time = time.time()
-    precompute_levels(args.dirs)
+    precompute_levels(args.dirs, out_directories=args.out_dirs)
     elapsed = time.time() - start_time
     print(f"[Levels Precomputation] Total elapsed time: {elapsed:.2f} seconds")
