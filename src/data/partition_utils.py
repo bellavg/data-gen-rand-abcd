@@ -64,30 +64,26 @@ def _get_mask_entry(
     """
     cache_key = (str(cache_dir), algo_name)
     if cache_key not in _MASK_INDEX_CACHE:
-        index_path = cache_dir / f"{_MASKS_PREFIX}{algo_name}.pt"
-        if index_path.is_file():
+        _MASK_INDEX_CACHE[cache_key] = {}
+        for index_path in cache_dir.glob(f"{_MASKS_PREFIX}{algo_name}*.pt"):
             try:
                 # mmap=True: tensor data is lazily paged from disk.
-                # Multiple workers sharing the same NFS file benefit from
-                # the OS page cache — only one physical read per page.
-                _MASK_INDEX_CACHE[cache_key] = torch.load(
+                chunk = torch.load(
                     index_path,
                     map_location="cpu",
                     weights_only=True,
                     mmap=True,
                 )
+                _MASK_INDEX_CACHE[cache_key].update(chunk)
             except TypeError:
-                # mmap kwarg not available in older PyTorch versions.
-                _MASK_INDEX_CACHE[cache_key] = torch.load(
+                chunk = torch.load(
                     index_path,
                     map_location="cpu",
                     weights_only=True,
                 )
+                _MASK_INDEX_CACHE[cache_key].update(chunk)
             except Exception as exc:
-                print(f"[partition_utils] WARNING: could not load mask index {index_path}: {exc}")
-                _MASK_INDEX_CACHE[cache_key] = {}
-        else:
-            _MASK_INDEX_CACHE[cache_key] = {}
+                print(f"[partition_utils] WARNING: could not load chunk {index_path}: {exc}")
 
     return _MASK_INDEX_CACHE[cache_key].get(basename)
 
