@@ -179,47 +179,8 @@ def run_span_weighted_metis(data_obj, num_partitions: int, alpha: float = 10.0) 
 
 # =====================================================================
 # INDEX FILE HELPERS
-# =====================================================================
-
-def _get_index_path(cache_dir: Path, algo_name: str) -> Path:
-    """Return the path of the per-directory, per-algorithm mask index file.
-
-    Index files are named ``_masks_{algo_name}.pt`` and live directly inside
-    the cache directory alongside the graph ``.pt`` files.  The leading
-    underscore distinguishes them from graph files so the scanner skips them.
-    """
-    return cache_dir / f"{_MASKS_PREFIX}{algo_name}.pt"
-
-
-def _load_mask_index(cache_dir: Path, algo_name: str) -> dict:
-    """Load an existing mask index from disk, returning an empty dict on miss/error.
-
-    Index format::
-
-        {
-            "abc123.pt": {
-                "mask": torch.Tensor,  # shape [num_nodes], dtype long
-                "k":    torch.Tensor,  # shape [1],         dtype long
-            },
-            ...
-        }
-    """
-    index_path = _get_index_path(cache_dir, algo_name)
-    if not index_path.is_file():
-        return {}
-    try:
-        return torch.load(index_path, map_location="cpu", weights_only=True)
-    except Exception as exc:
-        print(f"[WARNING] Could not load existing index {index_path}: {exc}. Starting fresh.")
-        return {}
-
-
-def _save_mask_index(cache_dir: Path, algo_name: str, index: dict) -> None:
-    """Atomically persist the mask index for one directory + algorithm."""
-    index_path = _get_index_path(cache_dir, algo_name)
-    temp_file = index_path.with_suffix(f".tmp_{uuid.uuid4().hex[:8]}")
-    torch.save(index, temp_file)
-    os.replace(temp_file, index_path)
+# ===================================================================# We now write chunked files, so a single _save_mask_index and _load_mask_index
+# is no longer used. See the inline logic in update_existing_cache_with_masks.ath)
 
 
 # =====================================================================
@@ -371,17 +332,28 @@ def update_existing_cache_with_masks(
     for top_dir in top_dirs:
         d_str = str(top_dir)
         out_d_str = dir_map[d_str]
-        accumulated[d_str] = {a: _load_mask_index(Path(out_d_str), a) for a in algo_names}
         
         # A basename is fully done only when it appears in ALL algo indices.
         if algo_names:
-            all_done = [set(accumulated[d_str][a].keys()) for a in algo_names]
-            done_by_dir[d_str] = (
-                all_done[0].intersection(*all_done[1:]) if len(all_done) > 1 else all_done[0]
-            )
+            all_done = []
+            for a in algo_names:
+                done = set()
+                # Load keys from all existing chunks
+                for index_path in Path(out_d_str).glob(f"{_MASKS_PREFIX}{a}*.pt"):
+                    try:
+                        chunk = torch.load(index_path, map_location="cpu", weights_only=True)
+                        done.update(chunk.keys())
+                    except Exception as exc:
+                        print(f"[WARNING] Could not load chunk {index_path}: {exc}")
+                all_done.append(done)
+            done_by_dir[d_str] = all_done[0].intersection(*all_done[1:]) if len(all_done) > 1 else all_done[0]
         else:
             done_by_dir[d_str] = set()
+            
         print(f"  -> {out_d_str}: {len(done_by_dir[d_str])} entries already in index")
+        
+        # Initialize empty dict for NEW files
+        accumulated[d_str] = {a: {} for a in algo_names}
 
     # ------------------------------------------------------------------
     # 2. STREAMING PATH GENERATOR
@@ -424,12 +396,17 @@ def update_existing_cache_with_masks(
     error_count   = 0
 
     def _flush_indices() -> None:
-        """Atomically write all accumulated index dicts to disk."""
+        """Atomically write all accumulated index dicts to disk as chunks and clear memory."""
+        chunk_id = int(time.time())
         for d_str, algo_map in accumulated.items():
             out_d_str = dir_map[d_str]
             for algo_name, index in algo_map.items():
                 if index:
-                    _save_mask_index(Path(out_d_str), algo_name, index)
+                    index_path = Path(out_d_str) / f"{_MASKS_PREFIX}{algo_name}_{chunk_id}_{uuid.uuid4().hex[:4]}.pt"
+                    temp_file = index_path.with_suffix(".tmp")
+                    torch.save(index, temp_file)
+                    os.replace(temp_file, index_path)
+                    index.clear()  # Clear memory!
 
     path_stream = (p for p in _path_stream())
 
@@ -470,13 +447,9 @@ def update_existing_cache_with_masks(
     # ------------------------------------------------------------------
     # 4. FINAL SAVE
     # ------------------------------------------------------------------
-    print(f"\n[Mask Precomputation] Saving final indices to disk...")
-    _flush_indices()
-
+    # Print a quick summary of what we just did
     for d_str, algo_map in accumulated.items():
-        for algo_name, index in algo_map.items():
-            idx_path = _get_index_path(Path(dir_map[d_str]), algo_name)
-            print(f"  {idx_path}  ({len(index)} entries)")
+        print(f"  {dir_map[d_str]} chunks updated.")
 
     print(
         f"\n[Mask Precomputation] Complete! "
