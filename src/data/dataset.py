@@ -443,7 +443,25 @@ class AIGGraphRegressionDataset(PyGDataset):
                     valid_paths = {
                         str(e.get("graph_path", "")) for e in manifest["entries"]
                     }
-                    result = [s for s in samples if s.graph_path in valid_paths]
+                    
+                    # Group samples: those we know exist vs those not in manifest
+                    known_valid = [s for s in samples if s.graph_path in valid_paths]
+                    unknown = [s for s in samples if s.graph_path not in valid_paths]
+                    
+                    if unknown:
+                        print(
+                            f"[dataset] Manifest found but {len(unknown)} samples are new/missing. "
+                            f"Checking their existence...",
+                            flush=True,
+                        )
+                        for s in unknown:
+                            if Path(s.graph_path).is_file():
+                                known_valid.append(s)
+                                
+                    # Preserve original relative order
+                    final_valid_paths = {s.graph_path for s in known_valid}
+                    result = [s for s in samples if s.graph_path in final_valid_paths]
+                    
                     print(
                         f"[dataset] Manifest fast-path: {len(result)} samples "
                         f"matched in {_time.monotonic() - t2:.1f}s",
