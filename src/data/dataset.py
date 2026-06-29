@@ -609,7 +609,10 @@ class AIGGraphRegressionDataset(PyGDataset):
             return None
         manifest_paths = [str(entry.get("graph_path", "")) for entry in manifest["entries"]]
         sample_paths = [sample.graph_path for sample in self.samples]
-        if Counter(manifest_paths) != Counter(sample_paths):
+        
+        # We can use direct list comparison because _build_samples guarantees
+        # deterministic ordering that matches the manifest creation order.
+        if manifest_paths != sample_paths:
             return None
         return manifest
 
