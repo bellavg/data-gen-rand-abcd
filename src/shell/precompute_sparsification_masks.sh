@@ -2,46 +2,42 @@
 #SBATCH --job-name=precompute_sparsification_masks
 #SBATCH --time=08:00:00
 #SBATCH --nodes=1
-#SBATCH --cpus-per-task=72
+#SBATCH --cpus-per-task=96
 #SBATCH --partition=genoa
-#SBATCH --array=0-2
-#SBATCH --output=logs/precompute_sparsification_%A_%a.out
+#SBATCH --constraint=scratch-node
+#SBATCH --output=logs/precompute_sparsification_%j.out
 
 # ---------------------------------------------------------------------------
 # Precompute sparsification masks for training caches.
 #
-# Runs AFTER warmup_train_cache.sh has populated the cache directories.
-# Writes one index file per (cache directory, algorithm):
-#   {cache_dir}/_sparse_{algo}.pt
-# No individual graph .pt files are modified.
+# Run this AFTER warmup_train_cache.sh has finished, since it reads the
+# existing cached graph .pt files and writes sidecar index files.
+#
+# This script runs a single unified job to process all cache directories at
+# once (including shared tier-0 and tier-1 directories). It automatically
+# deduplicates .pt files to ensure each shared graph is only processed once.
 #
 # and_gate_only is NOT precomputed here — it is applied on-the-fly in
 # dataset.get() since it is a fast deterministic transform (~1-5 ms/graph).
 #
-# Array tasks:
-#   0 = random_edge_dropout
-#   1 = spanner
-#   2 = pagerank
-#
 # Usage:
 #   sbatch src/shell/precompute_sparsification_masks.sh
 #
-# Or chain after a successful warmup job:
+# Or chain it to run automatically after a successful warmup job:
 #   WID=$(sbatch --parsable src/shell/warmup_train_cache.sh)
 #   sbatch --dependency=afterok:$WID src/shell/precompute_sparsification_masks.sh
 # ---------------------------------------------------------------------------
 
 set -euo pipefail
 
-SPARSIFICATION_ALGOS=("random_edge_dropout" "spanner" "pagerank")
-SPARSIFICATION_ALGO=${SPARSIFICATION_ALGOS[$SLURM_ARRAY_TASK_ID]}
+# Define the algorithm argument (Python script supports "all" to compute them in one pass)
+SPARSIFICATION_ALGO="all"
 
 echo "=========================================="
-echo "PRECOMPUTE SPARSIFICATION MASKS JOB ARRAY ID: $SLURM_ARRAY_JOB_ID, TASK ID: $SLURM_ARRAY_TASK_ID"
+echo "PRECOMPUTE SPARSIFICATION MASKS JOB ID: $SLURM_JOB_ID"
 echo "Running on: $(hostname)"
 echo "Start time: $(date)"
 echo "CPUs available: $(nproc)"
-echo "Sparsification algorithm: ${SPARSIFICATION_ALGO}"
 echo "=========================================="
 
 # =========================================================
@@ -62,7 +58,8 @@ unset PYTHONHOME
 export PYTHONNOUSERSITE=1
 export PYTHONPATH="$BASE_DIR/src"
 
-# Prevent PyTorch from using all cores per worker process.
+# Prevent PyTorch from using all 48 cores per worker process
+# which causes severe thread thrashing and massive slowdowns.
 export OMP_NUM_THREADS=1
 export MKL_NUM_THREADS=1
 
@@ -72,18 +69,22 @@ cd "$BASE_DIR"
 # 2. CACHE DIRECTORIES
 # =========================================================
 
-TIER0_CACHE_DIR="/scratch-shared/$USER/aig_train_run/shared_tier0_cache"
-TIER1_CACHE_DIR="/scratch-shared/$USER/aig_train_run/shared_tier1_cache"
+# Shared caches for tier-0 and tier-1 graphs (Source)
+SHARED_CACHES=(
+    "/scratch-shared/$USER/aig_train_run/shared_tier0_cache"
+    "/scratch-shared/$USER/aig_train_run/shared_tier1_cache"
+)
 
-# =========================================================
-# 3. EXECUTE PIPELINE
-# =========================================================
+for SHARED_DIR in "${SHARED_CACHES[@]}"; do
+    echo "=========================================="
+    echo "Processing $SHARED_DIR"
+    echo "=========================================="
 
-echo "Running sparsification precomputation for all cache directories..."
-python -u -m data.sparsification "$SPARSIFICATION_ALGO" \
-    --dirs \
-        "$TIER0_CACHE_DIR" \
-        "$TIER1_CACHE_DIR"
+    echo "Running sparsification precomputation directly against shared cache..."
+    time python -u -m data.sparsification "$SPARSIFICATION_ALGO" \
+        --dirs "$SHARED_DIR" \
+        --out-dirs "$SHARED_DIR"
+done
 
 echo "=========================================="
 echo "Precomputation complete."
