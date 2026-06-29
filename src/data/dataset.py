@@ -409,9 +409,50 @@ class AIGGraphRegressionDataset(PyGDataset):
         return selected_samples
 
     def _build_samples(self) -> list[GraphSample]:
+        import time as _time
+
+        t0 = _time.monotonic()
         samples = self._read_candidate_samples()
+        t1 = _time.monotonic()
+        print(
+            f"[dataset] Read {len(samples)} candidate samples from CSV in {t1 - t0:.1f}s",
+            flush=True,
+        )
+
         samples = self._apply_split(samples)
-        return [s for s in samples if Path(s.graph_path).is_file()]
+        t2 = _time.monotonic()
+        print(
+            f"[dataset] After split/filter: {len(samples)} samples in {t2 - t1:.1f}s "
+            f"(split={self.split!r})",
+            flush=True,
+        )
+
+        # File-existence check — can be very slow on shared HPC filesystems.
+        total = len(samples)
+        print(
+            f"[dataset] Checking file existence for {total} graph paths ...",
+            flush=True,
+        )
+        valid: list[GraphSample] = []
+        _REPORT_EVERY = 5000
+        for i, s in enumerate(samples):
+            if Path(s.graph_path).is_file():
+                valid.append(s)
+            if (i + 1) % _REPORT_EVERY == 0 or (i + 1) == total:
+                elapsed = _time.monotonic() - t2
+                print(
+                    f"[dataset]   checked {i + 1}/{total} "
+                    f"({len(valid)} valid) {elapsed:.1f}s",
+                    flush=True,
+                )
+        t3 = _time.monotonic()
+        dropped = total - len(valid)
+        print(
+            f"[dataset] File check done: {len(valid)} valid, "
+            f"{dropped} missing, took {t3 - t2:.1f}s",
+            flush=True,
+        )
+        return valid
 
     def _stable_graph_cache_name(self, graph_path: str) -> str:
         source = Path(graph_path)

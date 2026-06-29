@@ -155,12 +155,15 @@ def main(args):
         ),
     ]
 
+    precision = _select_precision()
+    print(f"Using {precision} Automatic Mixed Precision (AMP)", flush=True)
+
     trainer = pl.Trainer(
         max_epochs=args.max_epochs,
         accelerator="auto",
         enable_progress_bar=False,
         devices=1,
-        precision=_select_precision(),
+        precision=precision,
         callbacks=callbacks,
         logger=logger,
         gradient_clip_val=args.gradient_clip_val,
@@ -170,7 +173,8 @@ def main(args):
     )
 
     # 7. Run Training & Testing
-    print(f"--- Running Training for {args.algorithm} ---")
+    print(f"--- Running Training for {args.algorithm} ---", flush=True)
+    print("[main] Calling trainer.fit() — dataset setup begins now ...", flush=True)
     fit_start = time.monotonic()
     trainer.fit(model, datamodule=datamodule)
     print(
