@@ -444,23 +444,24 @@ class AIGGraphRegressionDataset(PyGDataset):
                         str(e.get("graph_path", "")) for e in manifest["entries"]
                     }
                     
-                    # Group samples: those we know exist vs those not in manifest
-                    known_valid = [s for s in samples if s.graph_path in valid_paths]
-                    unknown = [s for s in samples if s.graph_path not in valid_paths]
+                    # Fast-path check: does the path exist in our known manifest?
+                    # If not, it's a newly added CSV row, so we must stat() it.
+                    result = []
+                    unknown_count = 0
+                    for s in samples:
+                        if s.graph_path in valid_paths:
+                            result.append(s)
+                        else:
+                            unknown_count += 1
+                            if Path(s.graph_path).is_file():
+                                result.append(s)
                     
-                    if unknown:
+                    if unknown_count > 0:
                         print(
-                            f"[dataset] Manifest found but {len(unknown)} samples are new/missing. "
-                            f"Checking their existence...",
+                            f"[dataset] Manifest was stale. Checked {unknown_count} new "
+                            f"CSV entries via is_file().",
                             flush=True,
                         )
-                        for s in unknown:
-                            if Path(s.graph_path).is_file():
-                                known_valid.append(s)
-                                
-                    # Preserve original relative order
-                    final_valid_paths = {s.graph_path for s in known_valid}
-                    result = [s for s in samples if s.graph_path in final_valid_paths]
                     
                     print(
                         f"[dataset] Manifest fast-path: {len(result)} samples "
