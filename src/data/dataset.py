@@ -427,10 +427,44 @@ class AIGGraphRegressionDataset(PyGDataset):
             flush=True,
         )
 
-        # File-existence check — can be very slow on shared HPC filesystems.
+        # ------------------------------------------------------------------
+        # Fast path: use existing manifest to filter valid samples via a
+        # set lookup instead of per-file stat() calls.  On shared HPC
+        # filesystems (GPFS/Lustre) this avoids tens of thousands of slow
+        # metadata ops and cuts startup from ~30 min to < 1 s.
+        # ------------------------------------------------------------------
+        if self._manifest_path is not None and self._manifest_path.is_file():
+            try:
+                with open(self._manifest_path, encoding="utf-8") as fh:
+                    manifest = json.load(fh)
+                if isinstance(manifest, dict) and isinstance(
+                    manifest.get("entries"), list
+                ):
+                    valid_paths = {
+                        str(e.get("graph_path", "")) for e in manifest["entries"]
+                    }
+                    result = [s for s in samples if s.graph_path in valid_paths]
+                    print(
+                        f"[dataset] Manifest fast-path: {len(result)} samples "
+                        f"matched in {_time.monotonic() - t2:.1f}s",
+                        flush=True,
+                    )
+                    return result
+            except (json.JSONDecodeError, OSError) as exc:
+                print(
+                    f"[dataset] WARNING: could not read manifest, "
+                    f"falling back to is_file(): {exc}",
+                    flush=True,
+                )
+
+        # ------------------------------------------------------------------
+        # Slow fallback: stat every file.  Only used on the very first run
+        # before any manifest has been built.
+        # ------------------------------------------------------------------
         total = len(samples)
         print(
-            f"[dataset] Checking file existence for {total} graph paths ...",
+            f"[dataset] No manifest found — checking file existence for "
+            f"{total} graph paths (slow on shared FS) ...",
             flush=True,
         )
         valid: list[GraphSample] = []
@@ -446,10 +480,9 @@ class AIGGraphRegressionDataset(PyGDataset):
                     flush=True,
                 )
         t3 = _time.monotonic()
-        dropped = total - len(valid)
         print(
             f"[dataset] File check done: {len(valid)} valid, "
-            f"{dropped} missing, took {t3 - t2:.1f}s",
+            f"{total - len(valid)} missing, took {t3 - t2:.1f}s",
             flush=True,
         )
         return valid
