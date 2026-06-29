@@ -68,7 +68,7 @@ cd "$BASE_DIR"
 
 # Shared caches for tier-0 and tier-1 graphs (Source)
 SHARED_CACHES=(
-    "/scratch-shared/$USER/aig_train_run/shared_tier0_cache"
+    # "/scratch-shared/$USER/aig_train_run/shared_tier0_cache"
     "/scratch-shared/$USER/aig_train_run/shared_tier1_cache"
 )
 
@@ -82,9 +82,6 @@ for SHARED_DIR in "${SHARED_CACHES[@]}"; do
         --dirs "$SHARED_DIR" \
         --out-dirs "$SHARED_DIR"
 done
-
-echo "Cleaning up entire local workspace..."
-rm -rf "$LOCAL_WORKSPACE"
 
 echo "=========================================="
 echo "Precomputation complete."

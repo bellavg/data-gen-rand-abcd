@@ -445,8 +445,10 @@ def update_existing_cache_with_masks(
                     _flush_indices()
 
     # ------------------------------------------------------------------
-    # 4. FINAL SAVE
+    # 4. FINAL SAVE — flush any results accumulated since the last checkpoint
     # ------------------------------------------------------------------
+    _flush_indices()
+
     # Print a quick summary of what we just did
     for d_str, algo_map in accumulated.items():
         print(f"  {dir_map[d_str]} chunks updated.")
