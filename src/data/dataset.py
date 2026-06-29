@@ -18,6 +18,7 @@ from torch_geometric.data import Dataset as PyGDataset
 from torch_geometric.data import storage as _pyg_storage
 from torch_geometric.utils import degree
 
+from data.sparsification import precomputed_sparsification
 from models.layers.positional_encodings import get_pe_transform
 
 # Register PyG classes in the secure deserialization allowlist so torch.load
@@ -702,55 +703,16 @@ class AIGGraphRegressionDataset(PyGDataset):
 
         # --- SPARSIFICATION HANDLING SYSTEM ---
         if self.sparsification is not None:
-            if self.sparsification == "and_gate_only":
-                # Check embedded attr (backward compat with old precompute pipeline),
-                # then fall back to on-the-fly computation (fast, deterministic, ~1-5ms).
-                if hasattr(data_obj, "and_gate_only_graph") or "and_gate_only_graph" in data_obj.keys():
-                    data_obj = data_obj.and_gate_only_graph
-                else:
-                    from data.sparsification import and_gate_only_sparsification
-                    data_obj = and_gate_only_sparsification(data_obj)
-            else:
-                mask_key = f"{self.sparsification}_sparsification_mask"
-
-                # 1. Embedded attribute (backward compat with old precompute pipeline).
-                if hasattr(data_obj, mask_key) or mask_key in data_obj.keys():
-                    mask = getattr(data_obj, mask_key)
-
-                else:
-                    # 2. Per-directory index file written by the current pipeline.
-                    graph_path = sample.graph_path
-                    _cached_path: Path | None = self._graph_cache_path_map.get(graph_path)
-                    if _cached_path is not None:
-                        from data.sparsification import get_sparse_entry
-                        entry = get_sparse_entry(
-                            _cached_path.parent, self.sparsification, _cached_path.name
-                        )
-                        mask = entry["mask"] if entry is not None else None
-                    else:
-                        mask = None
-
-                    if mask is None:
-                        raise RuntimeError(
-                            f"Precomputed sparsification mask for '{self.sparsification}' not found.\n"
-                            f"  Checked embedded attribute '{mask_key}' on data_obj: not present.\n"
-                            f"  Checked index file '_sparse_{self.sparsification}.pt' in cache dir"
-                            + (f" '{_cached_path.parent}': not present." if _cached_path else
-                               ": cache_path not available (graph may not be cached yet).")
-                            + f"\nPrecompute by running:\n"
-                            f"  python -m data.sparsification {self.sparsification} --dirs <cache_dir>"
-                        )
-
-                # Apply the mask (edge mask or node mask).
-                if self.sparsification == "pagerank":
-                    data_obj = data_obj.subgraph(mask)
-                else:
-                    data_obj.edge_index = data_obj.edge_index[:, mask]
-                    if hasattr(data_obj, "edge_attr") and data_obj.edge_attr is not None:
-                        data_obj.edge_attr = data_obj.edge_attr[mask]
-                    if hasattr(data_obj, "edge_weight") and data_obj.edge_weight is not None:
-                        data_obj.edge_weight = data_obj.edge_weight[mask]
-
+            # Resolve the cache path so precomputed_sparsification can look up
+            # the per-directory mask index file (_sparse_{algo}*.pt) when the
+            # mask is not embedded directly in the graph .pt object.
+            graph_path = sample.graph_path
+            _cached_path: Path | None = self._graph_cache_path_map.get(graph_path)
+            # precomputed_sparsification checks embedded attributes first
+            # (backward compat), then falls back to the index file.
+            data_obj = precomputed_sparsification(
+                data_obj, self.sparsification, cache_path=_cached_path
+            )
 
         return data_obj
 
