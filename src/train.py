@@ -34,33 +34,22 @@ def _select_precision() -> str:
 
 
 def main(args):
-    if getattr(args, "enable_hardware_profiler", False):
-        print(
-            "[train] --enable_hardware_profiler is deprecated and ignored; "
-            "epoch timing is logged automatically and WandB captures hardware telemetry.",
-            flush=True,
-        )
-
     torch.backends.cuda.matmul.allow_tf32 = True
     if hasattr(torch.backends, "cudnn"):
         torch.backends.cudnn.allow_tf32 = True
-
     torch.set_float32_matmul_precision("high")
-
     torch.multiprocessing.set_sharing_strategy("file_system")
 
-    # 1. Validate Algorithm
     if args.algorithm not in config.VALID_ALGORITHMS:
         raise ValueError(
             f"Algorithm '{args.algorithm}' must be one of {config.VALID_ALGORITHMS}"
         )
 
-    # Set seed for reproducibility
-    pl.seed_everything(args.seed)
-
     print(f"--- Starting Final Training for Algorithm: {args.algorithm} ---")
 
-    # 2. Setup DataModule
+    # 2. Setup DataModule & load datasets EARLY (CPU work — no GPU needed)
+    #    This runs before WandB/Trainer so that slow network calls or
+    #    Lightning overhead don't burn GPU wall-clock time.
     datamodule = AIGDataModule(
         csv_paths=args.csv_paths,
         positional_encoding=args.pe_type if args.pe_type != "none" else None,
@@ -78,6 +67,21 @@ def main(args):
         dynamic_batching=getattr(args, "dynamic_batching", False),
         max_total_nodes=args.max_total_nodes_per_batch,
     )
+
+    print("[main] Loading datasets before Trainer/WandB init ...", flush=True)
+    ds_start = time.monotonic()
+    datamodule.setup("fit")
+    print(
+        f"[main] Datasets loaded in {time.monotonic() - ds_start:.1f}s",
+        flush=True,
+    )
+
+    # Seed torch RNG for reproducible weight init, dropout, and DataLoader
+    # shuffle.  Lighter than pl.seed_everything (which also seeds numpy,
+    # stdlib random, and prints to stdout).
+    torch.manual_seed(args.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(args.seed)
 
     # 3. Configure Encoder Kwargs
     encoder_kwargs = ENCODER_KWARGS_DEFAULTS.copy()
@@ -134,15 +138,19 @@ def main(args):
         check_on_train_epoch_end=True,
     )
 
-    # Use WandbLogger
+    # WandB — init AFTER datasets are loaded so network delays don't waste
+    # GPU allocation time.  WANDB_INIT_TIMEOUT caps the API handshake.
     log_dir = f"{args.log_dir}_{partition_name}"
     os.makedirs(log_dir, exist_ok=True)
+    print("[main] Initialising WandB logger ...", flush=True)
+    wandb_start = time.monotonic()
     logger = WandbLogger(
         project="AIG-SUMMARIZE",
         entity="isabella-v-gardner-university-of-amsterdam",
         name=f"train_{args.algorithm}_partition_{partition_name}",
         save_dir=log_dir,
     )
+    print(f"[main] WandB ready in {time.monotonic() - wandb_start:.1f}s", flush=True)
 
     # 6. Initialize Trainer with Improvements
     callbacks = [
@@ -174,7 +182,6 @@ def main(args):
 
     # 7. Run Training & Testing
     print(f"--- Running Training for {args.algorithm} ---", flush=True)
-    print("[main] Calling trainer.fit() — dataset setup begins now ...", flush=True)
     fit_start = time.monotonic()
     trainer.fit(model, datamodule=datamodule)
     print(
@@ -231,7 +238,6 @@ if __name__ == "__main__":
         "--scheduler_factor", type=float, default=config.SCHEDULER_FACTOR
     )
     parser.add_argument("--gradient_clip_val", type=float, default=1.0)
-    parser.add_argument("--check_val_every_n", type=float, default=0.5)
     parser.add_argument(
         "--val_check_interval",
         type=float,
@@ -249,11 +255,6 @@ if __name__ == "__main__":
     )
     parser.add_argument("--num_workers", type=int, default=4)
     parser.add_argument("--prefetch_factor", type=int, default=8)
-    parser.add_argument(
-        "--enable_hardware_profiler",
-        action="store_true",
-        help="Deprecated no-op kept for CLI compatibility; WandB already captures hardware telemetry.",
-    )
     parser.add_argument(
         "--pin_memory",
         type=lambda x: str(x).lower() in ("true", "1", "yes"),

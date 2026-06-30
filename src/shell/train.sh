@@ -61,6 +61,13 @@ export PYTHONNOUSERSITE=1
 export PYTHONPATH="$BASE_DIR/src"
 export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
 
+# Cap WandB API handshake so it doesn't hang indefinitely on HPC nodes.
+export WANDB_INIT_TIMEOUT=120
+
+# Prevent worker-thread thrashing in data-loader subprocesses.
+export OMP_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+
 cd "$BASE_DIR"
 
 
