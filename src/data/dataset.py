@@ -5,7 +5,6 @@ import json
 import os
 import random
 import uuid
-from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -57,6 +56,11 @@ _CSV_SAMPLE_CACHE: dict[tuple[str, ...], list[GraphSample]] = {}
 # Module-level cache for splits JSON (keyed by resolved cache_file path string).
 # The splits file for a given algo+num_samples tag never changes once written.
 _SPLITS_CACHE: dict[str, dict[str, object]] = {}
+
+# Module-level cache for HP-tuning splits.  The file never changes once written
+# and is read by train, val, AND test datasets — caching avoids 3× NFS reads.
+_HP_SPLITS_CACHE: dict[str, dict] = {}
+
 _SPLIT_CACHE_VERSION = 2
 _GRAPH_CACHE_CONTENT_VERSION = 2
 
@@ -69,6 +73,7 @@ def clear_dataset_global_caches() -> None:
     """
     _CSV_SAMPLE_CACHE.clear()
     _SPLITS_CACHE.clear()
+    _HP_SPLITS_CACHE.clear()
 
 
 class AIGGraphRegressionDataset(PyGDataset):
@@ -168,16 +173,27 @@ class AIGGraphRegressionDataset(PyGDataset):
         )
         self._graph_cache_path_map: dict[str, Path] = {}
         self._node_sizes: list[int] | None = None
+        # Cache the meta dict so _is_compatible_split_payload doesn't re-stat
+        # CSV files on every call (NFS stat per call × multiple checks).
+        self._cached_split_meta: dict | None = None
 
         self.pe_transform = get_pe_transform(
             pe_type=self.positional_encoding, attr_name="pos_enc"
         )
 
         self.samples = self._build_samples()
-        pyg_root = (
-            str(self._cache_meta_dir) if self._cache_meta_dir is not None else None
-        )
-        super().__init__(root=pyg_root, log=False)
+
+        # Pre-compute y tensors so get() doesn't allocate a new one each call.
+        self._y_tensors: list[torch.Tensor] = [
+            torch.tensor([[s.y_node_opt]], dtype=torch.float32)
+            for s in self.samples
+        ]
+
+        # Skip PyG Dataset.__init__ — it creates raw_dir / processed_dir and
+        # checks file existence, all of which are slow NFS metadata ops.
+        # We override every property it would use, so it's pure overhead.
+        if self._cache_meta_dir is not None:
+            self._cache_meta_dir.mkdir(parents=True, exist_ok=True)
 
         if self.cache_dir is not None:
             self.process()
@@ -227,6 +243,8 @@ class AIGGraphRegressionDataset(PyGDataset):
         return [sample for idx, sample in enumerate(samples) if idx in selected_idx]
 
     def _split_cache_meta(self) -> dict[str, object]:
+        if self._cached_split_meta is not None:
+            return self._cached_split_meta
         csv_files = []
         for csv_path in sorted(self.csv_paths):
             st = csv_path.stat()
@@ -248,7 +266,7 @@ class AIGGraphRegressionDataset(PyGDataset):
                 "mtime_ns": hp_st.st_mtime_ns,
             }
 
-        return {
+        self._cached_split_meta = {
             "version": _SPLIT_CACHE_VERSION,
             "split_by": "design",
             "seed": self.seed,
@@ -257,6 +275,7 @@ class AIGGraphRegressionDataset(PyGDataset):
             "csv_files": csv_files,
             "hp_tuning_splits_file": hp_splits_file,
         }
+        return self._cached_split_meta
 
     def _is_compatible_split_payload(self, payload: object) -> bool:
         if not isinstance(payload, dict):
@@ -385,9 +404,12 @@ class AIGGraphRegressionDataset(PyGDataset):
 
     def _apply_split(self, samples: list[GraphSample]) -> list[GraphSample]:
         if self.hp_tuning_splits_path is not None:
-            hp_path = Path(self.hp_tuning_splits_path)
-            with open(hp_path, encoding="utf-8") as fh:
-                hp_splits = json.load(fh)
+            hp_key = str(self.hp_tuning_splits_path)
+            hp_splits = _HP_SPLITS_CACHE.get(hp_key)
+            if hp_splits is None:
+                with open(self.hp_tuning_splits_path, encoding="utf-8") as fh:
+                    hp_splits = json.load(fh)
+                _HP_SPLITS_CACHE[hp_key] = hp_splits
             hp_keys = set(
                 hp_splits.get("train", [])
                 + hp_splits.get("val", [])
@@ -399,14 +421,8 @@ class AIGGraphRegressionDataset(PyGDataset):
             return self._sample_rows(samples)
 
         split_keys = self._load_or_create_split_keys(samples)
-        remaining = Counter(split_keys[self.split])
-        selected_samples = []
-        for sample in samples:
-            if remaining[sample.graph_path] < 1:
-                continue
-            selected_samples.append(sample)
-            remaining[sample.graph_path] -= 1
-        return selected_samples
+        allowed = set(split_keys[self.split])
+        return [s for s in samples if s.graph_path in allowed]
 
     def _build_samples(self) -> list[GraphSample]:
         import time as _time
@@ -533,8 +549,7 @@ class AIGGraphRegressionDataset(PyGDataset):
         )
 
     def _torch_load_graph(self, graph_path: str | Path) -> _PyGData:
-        with open(graph_path, "rb") as fh:
-            return torch.load(fh, map_location="cpu", weights_only=True)
+        return torch.load(graph_path, map_location="cpu", weights_only=True)
 
     def _prepare_cached_graph(self, data_obj: _PyGData) -> _PyGData:
         if self.normalize_edges:
@@ -784,33 +799,23 @@ class AIGGraphRegressionDataset(PyGDataset):
         sample = self.samples[idx]
         data_obj = self._load_graph_for_sample(sample)
         if not self.normalize_edges and hasattr(data_obj, "edge_weight"):
-            # Keep edge_weight in cache files, but drop it from runtime samples
-            # to avoid unnecessary batching/device transfer when disabled.
             del data_obj.edge_weight
         if self.positional_encoding is not None and getattr(data_obj, "pos_enc", None) is None:
             data_obj = self.pe_transform(data_obj)
-        # ExtractPrecomputedPE already deletes the one attr it consumed; mop up
-        # any remaining siblings that weren't used as the PE source.
         if self.positional_encoding is not None:
             for _attr in ("level", "pi_paths", "local_sp_sum"):
                 if hasattr(data_obj, _attr):
                     delattr(data_obj, _attr)
-        data_obj.y = torch.tensor([[sample.y_node_opt]], dtype=torch.float32)
-        # --- PARTITION HANDLING SYSTEM ---
+        data_obj.y = self._y_tensors[idx]
         if self.partition is not None:
-            # Resolve the cache path so precomputed_partitioning can look up
-            # the per-directory mask index file (_masks_{algo}.pt) when the
-            # mask is not embedded directly in the graph .pt object.
-            graph_path = sample.graph_path
-            _cached_path: Path | None = self._graph_cache_path_map.get(graph_path)
-            # precomputed_partitioning checks embedded attributes first
-            # (backward compat), then falls back to the index file.
+            _cached_path: Path | None = self._graph_cache_path_map.get(sample.graph_path)
             data_obj = precomputed_partitioning(
                 data_obj, self.partition, cache_path=_cached_path
             )
 
-        # Clean up any embedded partition masks from older cache versions to
-        # prevent DataLoader collate_fn KeyErrors and save memory.
+        # Clean up embedded partition masks from older cache versions.
+        # After precomputed_partitioning already extracted what it needs,
+        # leftover *_dynamic_mask attrs would cause collate KeyErrors.
         for key in list(data_obj.keys()):
             if key.endswith("_dynamic_mask") or key.endswith("_dynamic_num_partitions"):
                 delattr(data_obj, key)

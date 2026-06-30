@@ -156,9 +156,19 @@ class AIGDataModule(pl.LightningDataModule):
         )
 
     def setup(self, stage: str | None = None) -> None:
+        import time as _time
+        if stage == "fit" and hasattr(self, "train_ds") and hasattr(self, "val_ds"):
+            print("[datamodule] setup() — datasets already loaded, skipping.", flush=True)
+            return
+        print(f"[datamodule] setup(stage={stage!r}) entered", flush=True)
+        _t0 = _time.monotonic()
         if stage in ("fit", None):
+            print("[datamodule] Creating train dataset ...", flush=True)
             self.train_ds = self._make_dataset("train", self.train_num_samples)
+            print(f"[datamodule] Train dataset ready ({_time.monotonic() - _t0:.1f}s)", flush=True)
+            print("[datamodule] Creating val dataset ...", flush=True)
             self.val_ds = self._make_dataset("val", self.train_num_samples)
+            print(f"[datamodule] Val dataset ready ({_time.monotonic() - _t0:.1f}s)", flush=True)
             if self.dynamic_batching:
                 train_sizes = self.train_ds.get_num_nodes_list()
                 self._train_batch_plan: list[list[int]] = load_or_build_batch_plan(
@@ -173,7 +183,7 @@ class AIGDataModule(pl.LightningDataModule):
             self.val_ds = self._make_dataset("val", self.train_num_samples)
             self._ensure_val_plan()
 
-        if stage in ("test", None):
+        elif stage == "test":
             self.test_ds = self._make_dataset("test", self.test_num_samples)
 
     def train_dataloader(self) -> DataLoader:
