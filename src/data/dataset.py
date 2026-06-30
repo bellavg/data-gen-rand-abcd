@@ -808,6 +808,13 @@ class AIGGraphRegressionDataset(PyGDataset):
             data_obj = precomputed_partitioning(
                 data_obj, self.partition, cache_path=_cached_path
             )
+
+        # Clean up any embedded partition masks from older cache versions to
+        # prevent DataLoader collate_fn KeyErrors and save memory.
+        for key in list(data_obj.keys()):
+            if key.endswith("_dynamic_mask") or key.endswith("_dynamic_num_partitions"):
+                delattr(data_obj, key)
+
         return data_obj
 
     def get_num_nodes_list(self) -> list[int]:
