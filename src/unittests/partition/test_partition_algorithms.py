@@ -333,6 +333,7 @@ class TestDatasetPartitionFallback(unittest.TestCase):
         ds.positional_encoding = None
         ds.normalize_edges = False
         ds.samples = [MagicMock(y_node_opt=0.5)]
+        ds._y_tensors = [torch.tensor([[0.5]], dtype=torch.float32)]
         ds._load_graph_for_sample = MagicMock()
         # _graph_cache_path_map is an instance attr set in __init__; mock needs it explicitly.
         ds._graph_cache_path_map = {}
@@ -359,6 +360,7 @@ class TestDatasetPartitionFallback(unittest.TestCase):
         ds.positional_encoding = None
         ds.normalize_edges = False
         ds.samples = [MagicMock(y_node_opt=0.5)]
+        ds._y_tensors = [torch.tensor([[0.5]], dtype=torch.float32)]
         ds._load_graph_for_sample = MagicMock()
         # _graph_cache_path_map is an instance attr set in __init__; mock needs it explicitly.
         ds._graph_cache_path_map = {}
@@ -382,7 +384,7 @@ class TestUpdateExistingCacheWithMasks(unittest.TestCase):
     def test_update_existing_cache(self):
         import tempfile
         from pathlib import Path
-        from data.partition import update_existing_cache_with_masks, _get_index_path
+        from data.partition import update_existing_cache_with_masks
         from torch_geometric.data import Data
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -411,7 +413,9 @@ class TestUpdateExistingCacheWithMasks(unittest.TestCase):
             )
 
             # Masks now live in the index file, NOT embedded in the graph .pt files.
-            index_path = _get_index_path(tmp_path, "random")
+            index_files = list(tmp_path.glob("_masks_random*.pt"))
+            self.assertEqual(len(index_files), 1, "Exactly one index file should be created")
+            index_path = index_files[0]
             self.assertTrue(index_path.is_file(), "Index file should have been created")
 
             index = torch.load(index_path, map_location="cpu", weights_only=True)

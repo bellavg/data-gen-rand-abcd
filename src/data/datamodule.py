@@ -183,7 +183,7 @@ class AIGDataModule(pl.LightningDataModule):
             self.val_ds = self._make_dataset("val", self.train_num_samples)
             self._ensure_val_plan()
 
-        elif stage == "test":
+        if stage in ("test", None):
             self.test_ds = self._make_dataset("test", self.test_num_samples)
 
     def train_dataloader(self) -> DataLoader:

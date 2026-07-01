@@ -69,6 +69,8 @@ def _make_partition_graph_pt(dest: Path) -> Path:
         pi_paths=torch.tensor([[300.0], [301.0], [302.0], [303.0]], dtype=torch.float32),
         local_sp_sum=torch.tensor([[400.0], [401.0], [402.0], [403.0]], dtype=torch.float32),
         edge_weight=torch.tensor([10.0, 11.0, 12.0, 13.0, 14.0, 15.0], dtype=torch.float32),
+        random_dynamic_mask=torch.tensor([0, 1, 0, 1], dtype=torch.long),
+        random_dynamic_num_partitions=torch.tensor([2], dtype=torch.long),
     )
     dest.parent.mkdir(parents=True, exist_ok=True)
     torch.save(data, dest)
