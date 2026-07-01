@@ -45,13 +45,13 @@ echo "Activating virtual environment at: $VENV_PATH"
 source "$VENV_PATH/bin/activate"
 
 
-# Verify WandB Authentication (Fail-fast check to prevent SLURM hangs)
-echo "Checking Weights & Biases authentication..."
-if ! python -c "import wandb; exit(0) if wandb.login(anonymous='never') else exit(1)" 2>/dev/null; then
-    echo "CRITICAL ERROR: WandB is not authenticated! Run 'wandb login' in an active terminal before submitting this job." >&2
-    exit 1
-fi
-echo "WandB authentication successful."
+# # Verify WandB Authentication (Fail-fast check to prevent SLURM hangs)
+# echo "Checking Weights & Biases authentication..."
+# if ! python -c "import wandb; exit(0) if wandb.login(anonymous='never') else exit(1)" 2>/dev/null; then
+#     echo "CRITICAL ERROR: WandB is not authenticated! Run 'wandb login' in an active terminal before submitting this job." >&2
+#     exit 1
+# fi
+# echo "WandB authentication successful."
 
 # Setup Paths
 BASE_DIR="${BASE_DIR:-$HOME/data-gen-rand-abcd}"
@@ -127,8 +127,9 @@ fi
 # =========================================================
 # 4. Runtime settings
 # =========================================================
-# Number of data-loader workers (default: SLURM_CPUS_PER_TASK or 16)
-NUM_WORKERS="${NUM_WORKERS:-${SLURM_CPUS_PER_TASK:-16}}"
+# Number of data-loader workers.  Override from env or default to 8.
+# Note: this is the value passed to Python's --num_workers, NOT SLURM_CPUS_PER_TASK.
+NUM_WORKERS="${NUM_WORKERS:-8}"
 
 echo "Using NUM_WORKERS=$NUM_WORKERS for data loading."
 echo "Using PARTITION=$PARTITION partitioning."
@@ -138,7 +139,7 @@ echo "Using PARTITION=$PARTITION partitioning."
 
 echo "Starting Final Training for $ALGORITHM on GPU 0..."
 
-srun python -u -m train \
+python -u -m train \
     --algorithm         "$ALGORITHM" \
     --csv_paths         "$CSV_PATH" \
     --partition         "$PARTITION" \
@@ -149,7 +150,7 @@ srun python -u -m train \
     --tier1_cache_dir   "$TIER1_CACHE_DIR" \
     --hp_tuning_splits_path "$HP_TUNING_SPLITS" \
     --prefetch_factor   4 \
-    --num_workers       8 \
+    --num_workers       "$NUM_WORKERS" \
     --patience          10
 
 echo "=========================================="

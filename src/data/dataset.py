@@ -189,11 +189,13 @@ class AIGGraphRegressionDataset(PyGDataset):
             for s in self.samples
         ]
 
-        # Skip PyG Dataset.__init__ — it creates raw_dir / processed_dir and
-        # checks file existence, all of which are slow NFS metadata ops.
-        # We override every property it would use, so it's pure overhead.
-        if self._cache_meta_dir is not None:
-            self._cache_meta_dir.mkdir(parents=True, exist_ok=True)
+        # PyG's Dataset.__getitem__ accesses self.transform, self._indices,
+        # and other attrs set by super().__init__().  We must call it, but
+        # pass root=None when there is no cache to avoid slow NFS mkdir.
+        pyg_root = (
+            str(self._cache_meta_dir) if self._cache_meta_dir is not None else None
+        )
+        super().__init__(root=pyg_root, log=False)
 
         if self.cache_dir is not None:
             self.process()
@@ -224,7 +226,7 @@ class AIGGraphRegressionDataset(PyGDataset):
         return str(graph_path).replace("/gpfs/scratch1/shared", "/scratch-shared")
 
     def _infer_design_key(self, graph_path: str) -> str:
-        parts = Path(graph_path).parts
+        parts = graph_path.split("/")
         for marker, offset in (("designs", 1), ("tier0", 1), ("tier1", 2), ("tier2", 2)):
             try:
                 marker_idx = parts.index(marker)
@@ -304,20 +306,20 @@ class AIGGraphRegressionDataset(PyGDataset):
         ]
         df = pd.concat(frames, ignore_index=True)
 
-        samples = [
-            GraphSample(
-                graph_path=self._normalize_graph_path(str(graph_path)),
-                design_key=self._infer_design_key(
-                    self._normalize_graph_path(str(graph_path))
-                ),
-                y_node_opt=float(node_opt),
+        samples = []
+        for graph_path, node_opt in zip(
+            df["unoptimized_graph_path"].fillna(""),
+            df["optimizability"],
+            strict=False,
+        ):
+            norm_path = self._normalize_graph_path(str(graph_path))
+            samples.append(
+                GraphSample(
+                    graph_path=norm_path,
+                    design_key=self._infer_design_key(norm_path),
+                    y_node_opt=float(node_opt),
+                )
             )
-            for graph_path, node_opt in zip(
-                df["unoptimized_graph_path"].fillna(""),
-                df["optimizability"],
-                strict=False,
-            )
-        ]
 
         del df, frames
         _CSV_SAMPLE_CACHE[cache_key] = samples
