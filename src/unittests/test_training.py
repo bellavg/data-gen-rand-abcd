@@ -422,6 +422,85 @@ def test_main_falls_back_to_cpu_when_cuda_driver_init_fails(tmp_path):
     assert trainer_cls.call_args.kwargs["devices"] == 1
 
 
+def test_main_materializes_node_local_partition_cache_before_fit(tmp_path, monkeypatch):
+    csv_path = tmp_path / "dataset.csv"
+    csv_path.write_text("unoptimized_graph_path,optimizability\n/tmp/graph.pt,0.5\n")
+
+    args = SimpleNamespace(
+        algorithm="Orchestrate",
+        csv_paths=[str(csv_path)],
+        pe_type="none",
+        partition="random",
+        batch_size=2,
+        num_workers=0,
+        pin_memory=False,
+        persistent_workers=False,
+        prefetch_factor=1,
+        cache_dir=None,
+        hp_tuning_splits_path=None,
+        tier0_cache_dir=None,
+        tier1_cache_dir=None,
+        dynamic_batching=False,
+        max_total_nodes_per_batch=16,
+        num_layers=2,
+        hidden_dim=16,
+        dropout=0.0,
+        norm_type="layer",
+        jk_mode="last",
+        encoder_name="gcn",
+        heads=4,
+        pos_enc_dim=0,
+        pooling_type="mean",
+        lr=1e-3,
+        weight_decay=1e-4,
+        min_lr=1e-6,
+        warmup_steps=1,
+        warmup_start_lr=1e-6,
+        scheduler_patience=1,
+        scheduler_factor=0.5,
+        checkpoint_dir=str(tmp_path / "checkpoints"),
+        log_dir=str(tmp_path / "logs"),
+        patience=1,
+        max_batch_compute_reports=0,
+        max_epochs=1,
+        gradient_clip_val=1.0,
+        val_check_interval=1.0,
+        num_sanity_val_steps=0,
+        log_steps=1,
+        seed=42,
+    )
+    monkeypatch.setenv("TMPDIR", str(tmp_path / "tmpdir"))
+
+    with (
+        patch("train.AIGDataModule") as datamodule_cls,
+        patch("train.AIGRegressionLightningModule"),
+        patch("train.ModelCheckpoint"),
+        patch("train.PreciseEarlyStopping"),
+        patch("train.LearningRateMonitor"),
+        patch("train.TrainingStartupCallback"),
+        patch("train.WandbLogger"),
+        patch("train.pl.Trainer") as trainer_cls,
+        patch("train.torch.cuda.is_available", return_value=False),
+    ):
+        train_ds = MagicMock()
+        train_ds.materialize_partition_cache.return_value = 7
+        val_ds = MagicMock()
+        datamodule = datamodule_cls.return_value
+        datamodule.train_ds = train_ds
+        datamodule.val_ds = val_ds
+        trainer_cls.return_value.fit = MagicMock()
+
+        train.main(args)
+
+    assert datamodule_cls.call_args.kwargs["partition_cache_dir"] == str(
+        tmp_path / "tmpdir" / "aig_partition_cache"
+    )
+    datamodule.setup.assert_called_once_with("fit")
+    train_ds.materialize_partition_cache.assert_called_once_with()
+    val_ds.materialize_partition_cache.assert_called_once_with()
+    trainer_cls.return_value.fit.assert_called_once()
+
+
 def test_main_raises_when_gpu_required_but_cuda_init_fails(tmp_path, monkeypatch):
     csv_path = tmp_path / "dataset.csv"
     csv_path.write_text("unoptimized_graph_path,optimizability\n/tmp/graph.pt,0.5\n")

@@ -337,6 +337,47 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
         self.assertEqual(item.edge_index.shape[1], 6)
         torch.testing.assert_close(item.pos_enc.squeeze(-1), torch.tensor([100.0, 101.0, 102.0, 103.0]))
 
+    def test_partition_cache_materialized_once_then_loaded_locally(self):
+        partition_pt = _make_partition_graph_pt(self.root / "partition_graph_local.pt")
+        partition_csv = self.root / "partition_local.csv"
+        _write_csv(
+            partition_csv,
+            [
+                {
+                    "unoptimized_graph_path": str(partition_pt),
+                    "design": "adder",
+                    "algorithm": "Orchestrate",
+                    "tier_id": "1",
+                    "optimizability": "0.25",
+                }
+            ],
+        )
+
+        cache_dir = self.root / "shared_cache"
+        local_partition_cache = self.root / "node_local_partition_cache"
+        ds = self._make_ds(
+            csv_paths=partition_csv,
+            cache_dir=cache_dir,
+            partition="random",
+            partition_cache_dir=local_partition_cache,
+        )
+
+        created = ds.materialize_partition_cache()
+        self.assertEqual(created, 1)
+
+        cached_path = ds._graph_cache_path_map[str(partition_pt)]
+        local_path = ds._partition_cache_path(cached_path)
+        self.assertTrue(local_path.is_file())
+
+        with patch(
+            "data.dataset.precomputed_partitioning",
+            side_effect=AssertionError("runtime partitioning should be skipped when local cache exists"),
+        ):
+            item = ds[0]
+
+        self.assertTrue(hasattr(item, "partition_id"))
+        self.assertEqual(item.num_partitions.item(), 2)
+
     def test_only_pos_enc_tensor_retained_for_each_pe_mode(self):
         for pe_name in ("level", "pi_paths", "local_sp_sum"):
             with self.subTest(pe_name=pe_name):

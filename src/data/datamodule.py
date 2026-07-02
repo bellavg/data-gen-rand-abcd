@@ -25,6 +25,7 @@ class AIGDataModule(pl.LightningDataModule):
         partition: str | None = None,
         normalize_edges: bool = config.NORMALIZE_EDGES,
         cache_dir: str | Path | None = None,
+        partition_cache_dir: str | Path | None = None,
         split_ratios: tuple[float, float, float] = (0.8, 0.1, 0.1),
         seed: int = 42,
         batch_size: int = 32,
@@ -46,6 +47,7 @@ class AIGDataModule(pl.LightningDataModule):
         self.partition = partition
         self.normalize_edges = bool(normalize_edges)
         self.cache_dir = cache_dir
+        self.partition_cache_dir = partition_cache_dir
         self.split_ratios = split_ratios
         self.seed = seed
         self.batch_size = batch_size
@@ -112,6 +114,7 @@ class AIGDataModule(pl.LightningDataModule):
             normalize_edges=self.normalize_edges,
             split=split,
             cache_dir=self.cache_dir,
+            partition_cache_dir=self.partition_cache_dir,
             tier0_cache_dir=self.tier0_cache_dir,
             tier1_cache_dir=self.tier1_cache_dir,
             split_ratios=self.split_ratios,

@@ -22,6 +22,7 @@ set -euo pipefail
 
 export TEMP="$TMPDIR"
 export TMP="$TMPDIR"
+export AIG_PARTITION_CACHE_DIR="$TMPDIR/aig_partition_cache"
 
 echo "=========================================="
 echo "JOB ARRAY ID: $SLURM_ARRAY_JOB_ID, TASK ID: $SLURM_ARRAY_TASK_ID"
