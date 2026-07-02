@@ -1,17 +1,25 @@
 from __future__ import annotations
 
 import unittest
+
 import torch
 from torch_geometric.data import Data
-from data.partition import run_metis, run_span_weighted_metis, run_level_slicing, run_random, compute_dynamic_k
+
+from data.partition import (
+    compute_dynamic_k,
+    run_level_slicing,
+    run_metis,
+    run_random,
+    run_span_weighted_metis,
+)
 
 
 class TestRunMetis(unittest.TestCase):
     def test_basic(self):
         # Symmetrized graph with 6 nodes; run_metis handles symmetrization internally.
         edge_index = torch.tensor(
-            [[0, 1, 1, 2, 2, 3, 3, 4, 4, 5],
-             [1, 0, 2, 1, 3, 2, 4, 3, 5, 4]], dtype=torch.long
+            [[0, 1, 1, 2, 2, 3, 3, 4, 4, 5], [1, 0, 2, 1, 3, 2, 4, 3, 5, 4]],
+            dtype=torch.long,
         )
         data = Data(edge_index=edge_index, num_nodes=6)
 
@@ -33,8 +41,8 @@ class TestRunSpanWeightedMetis(unittest.TestCase):
     def test_basic(self):
         # Symmetrized graph with 6 nodes and levels attribute.
         edge_index = torch.tensor(
-            [[0, 1, 1, 2, 2, 3, 3, 4, 4, 5],
-             [1, 0, 2, 1, 3, 2, 4, 3, 5, 4]], dtype=torch.long
+            [[0, 1, 1, 2, 2, 3, 3, 4, 4, 5], [1, 0, 2, 1, 3, 2, 4, 3, 5, 4]],
+            dtype=torch.long,
         )
         level = torch.tensor([0, 1, 2, 3, 4, 5], dtype=torch.long)
         data = Data(edge_index=edge_index, level=level, num_nodes=6)
@@ -54,8 +62,7 @@ class TestRunSpanWeightedMetis(unittest.TestCase):
     def test_span_weighted_differs_from_unweighted(self):
         # Create a 4-node cycle: 0-1, 1-3, 3-2, 2-0
         edge_index = torch.tensor(
-            [[0, 1, 1, 3, 3, 2, 2, 0],
-             [1, 0, 3, 1, 2, 3, 0, 2]], dtype=torch.long
+            [[0, 1, 1, 3, 3, 2, 2, 0], [1, 0, 3, 1, 2, 3, 0, 2]], dtype=torch.long
         )
         # Assign levels: 0 and 2 are 0, 1 and 3 are 100.
         # This makes edges (0,1) and (2,3) have huge span (100),
@@ -131,7 +138,6 @@ class TestRunLevelSlicing(unittest.TestCase):
         min_level_part1 = level[mask == 1].min().item()
         self.assertLessEqual(max_level_part0, min_level_part1)
 
-
     def test_four_partitions(self):
         # 12 nodes, 4 equal buckets → exactly 3 each.
         level = torch.arange(12, dtype=torch.long)
@@ -160,7 +166,6 @@ class TestRunLevelSlicing(unittest.TestCase):
 
         mask = run_level_slicing(data, num_partitions=2)
         self.assertEqual(mask.shape, (0,))
-
 
     def test_dynamic_k_heuristic(self):
         """compute_dynamic_k clamps correctly at min/max boundaries."""
@@ -215,21 +220,27 @@ class TestRunRandom(unittest.TestCase):
 class TestPrecomputedPartitioning(unittest.TestCase):
     def test_direct_lookup(self):
         from data.partition_utils import precomputed_partitioning
+
         data = Data(
             x=torch.randn(10, 4),
             edge_index=torch.zeros((2, 0), dtype=torch.long),
             num_nodes=10,
         )
         # Use the new dynamic-key format written by the precompute pipeline
-        data.metis_dynamic_mask = torch.tensor([0, 0, 1, 1, 2, 2, 3, 3, 0, 1], dtype=torch.long)
+        data.metis_dynamic_mask = torch.tensor(
+            [0, 0, 1, 1, 2, 2, 3, 3, 0, 1], dtype=torch.long
+        )
         data.metis_dynamic_num_partitions = torch.tensor([4], dtype=torch.long)
 
         part_data = precomputed_partitioning(data, "metis")
         self.assertEqual(part_data.num_partitions.item(), 4)
-        self.assertTrue(torch.equal(part_data.partition_id, torch.sort(data.metis_dynamic_mask)[0]))
+        self.assertTrue(
+            torch.equal(part_data.partition_id, torch.sort(data.metis_dynamic_mask)[0])
+        )
 
     def test_missing_mask_raises_attribute_error(self):
         from data.partition_utils import precomputed_partitioning
+
         data = Data(
             x=torch.randn(10, 4),
             edge_index=torch.zeros((2, 0), dtype=torch.long),
@@ -245,8 +256,12 @@ class TestPrecomputedPartitioning(unittest.TestCase):
         """Full round-trip: precompute writes index → precomputed_partitioning reads it via cache_path."""
         import tempfile
         from pathlib import Path
+
         from data.partition import update_existing_cache_with_masks
-        from data.partition_utils import precomputed_partitioning, clear_mask_index_cache
+        from data.partition_utils import (
+            clear_mask_index_cache,
+            precomputed_partitioning,
+        )
 
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
@@ -270,8 +285,10 @@ class TestPrecomputedPartitioning(unittest.TestCase):
 
             # graph.pt must still have no embedded mask.
             reloaded = torch.load(cache_path, map_location="cpu", weights_only=False)
-            self.assertFalse(hasattr(reloaded, "random_dynamic_mask"),
-                             "graph.pt should not be modified")
+            self.assertFalse(
+                hasattr(reloaded, "random_dynamic_mask"),
+                "graph.pt should not be modified",
+            )
 
             # Clear the in-process cache so the lookup reads from disk.
             clear_mask_index_cache()
@@ -280,7 +297,9 @@ class TestPrecomputedPartitioning(unittest.TestCase):
             result = precomputed_partitioning(reloaded, "random", cache_path=cache_path)
 
             self.assertEqual(result.num_nodes, 8)
-            self.assertEqual(result.num_partitions.item(), 2)  # 8 nodes / 10000 → k=2 (min_k)
+            self.assertEqual(
+                result.num_partitions.item(), 2
+            )  # 8 nodes / 10000 → k=2 (min_k)
             self.assertEqual(result.partition_id.shape, (8,))
             self.assertTrue((result.partition_id >= 0).all())
             self.assertTrue((result.partition_id < 2).all())
@@ -289,7 +308,11 @@ class TestPrecomputedPartitioning(unittest.TestCase):
         """Embedded attributes are used first; the index file is not consulted."""
         import tempfile
         from pathlib import Path
-        from data.partition_utils import precomputed_partitioning, clear_mask_index_cache, _get_mask_entry
+
+        from data.partition_utils import (
+            clear_mask_index_cache,
+            precomputed_partitioning,
+        )
 
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
@@ -299,7 +322,7 @@ class TestPrecomputedPartitioning(unittest.TestCase):
             index = {
                 "graph.pt": {
                     "mask": torch.tensor([0, 1, 2, 3, 0, 1, 2, 3], dtype=torch.long),
-                    "k":    torch.tensor([4], dtype=torch.long),
+                    "k": torch.tensor([4], dtype=torch.long),
                 }
             }
             torch.save(index, tmp_path / "_masks_random.pt")
@@ -312,12 +335,69 @@ class TestPrecomputedPartitioning(unittest.TestCase):
                 num_nodes=8,
             )
             # Embedded mask says k=2 — should win over the index's k=4.
-            graph.random_dynamic_mask = torch.tensor([0, 1, 0, 1, 0, 1, 0, 1], dtype=torch.long)
+            graph.random_dynamic_mask = torch.tensor(
+                [0, 1, 0, 1, 0, 1, 0, 1], dtype=torch.long
+            )
             graph.random_dynamic_num_partitions = torch.tensor([2], dtype=torch.long)
 
             result = precomputed_partitioning(graph, "random", cache_path=cache_path)
-            self.assertEqual(result.num_partitions.item(), 2,
-                             "Embedded attr (k=2) should take precedence over index (k=4)")
+            self.assertEqual(
+                result.num_partitions.item(),
+                2,
+                "Embedded attr (k=2) should take precedence over index (k=4)",
+            )
+
+    def test_index_lookup_is_thread_safe_during_first_load(self):
+        """Concurrent first access should not observe a partially populated index."""
+        import tempfile
+        import time
+        from concurrent.futures import ThreadPoolExecutor
+        from pathlib import Path
+        from unittest.mock import patch
+
+        import data.partition_utils as partition_utils
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            torch.save(
+                {
+                    "graph.pt": {
+                        "mask": torch.tensor([0, 1, 0, 1], dtype=torch.long),
+                        "k": torch.tensor([2], dtype=torch.long),
+                    }
+                },
+                tmp_path / "_masks_random.pt",
+            )
+
+            partition_utils.clear_mask_index_cache()
+            real_torch_load = partition_utils.torch.load
+
+            def slow_load(*args, **kwargs):
+                time.sleep(0.1)
+                return real_torch_load(*args, **kwargs)
+
+            with patch("data.partition_utils.torch.load", side_effect=slow_load):
+                with ThreadPoolExecutor(max_workers=2) as executor:
+                    future0 = executor.submit(
+                        partition_utils._get_mask_entry,
+                        tmp_path,
+                        "random",
+                        "graph.pt",
+                    )
+                    time.sleep(0.02)
+                    future1 = executor.submit(
+                        partition_utils._get_mask_entry,
+                        tmp_path,
+                        "random",
+                        "graph.pt",
+                    )
+
+                    entry0 = future0.result()
+                    entry1 = future1.result()
+
+            self.assertIsNotNone(entry0)
+            self.assertIsNotNone(entry1)
+            self.assertEqual(int(entry1["k"].item()), 2)
 
 
 class TestDatasetPartitionFallback(unittest.TestCase):
@@ -325,8 +405,9 @@ class TestDatasetPartitionFallback(unittest.TestCase):
     mask is missing — dynamic on-the-fly computation is no longer supported."""
 
     def test_missing_mask_raises_runtime_error(self):
-        from data.dataset import AIGGraphRegressionDataset
         from unittest.mock import MagicMock
+
+        from data.dataset import AIGGraphRegressionDataset
 
         ds = MagicMock(spec=AIGGraphRegressionDataset)
         ds.partition = "level_slicing"
@@ -353,8 +434,9 @@ class TestDatasetPartitionFallback(unittest.TestCase):
 
     def test_precomputed_random_mask_is_applied(self):
         """random is now an offline algorithm; the precomputed dynamic mask should be used."""
-        from data.dataset import AIGGraphRegressionDataset
         from unittest.mock import MagicMock
+
+        from data.dataset import AIGGraphRegressionDataset
 
         ds = MagicMock(spec=AIGGraphRegressionDataset)
         ds.partition = "random"
@@ -373,7 +455,9 @@ class TestDatasetPartitionFallback(unittest.TestCase):
             edge_index=torch.zeros((2, 0), dtype=torch.long),
             num_nodes=6,
         )
-        mock_graph.random_dynamic_mask = torch.tensor([0, 1, 0, 1, 0, 1], dtype=torch.long)
+        mock_graph.random_dynamic_mask = torch.tensor(
+            [0, 1, 0, 1, 0, 1], dtype=torch.long
+        )
         mock_graph.random_dynamic_num_partitions = torch.tensor([2], dtype=torch.long)
         ds._load_graph_for_sample.return_value = mock_graph
 
@@ -385,15 +469,25 @@ class TestUpdateExistingCacheWithMasks(unittest.TestCase):
     def test_update_existing_cache(self):
         import tempfile
         from pathlib import Path
-        from data.partition import update_existing_cache_with_masks
+
         from torch_geometric.data import Data
+
+        from data.partition import update_existing_cache_with_masks
 
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
 
             # Flat cache dir — scandir is non-recursive (matches production layout).
-            data1 = Data(x=torch.randn(10, 4), edge_index=torch.zeros((2, 0), dtype=torch.long), num_nodes=10)
-            data2 = Data(x=torch.randn(5, 4), edge_index=torch.zeros((2, 0), dtype=torch.long), num_nodes=5)
+            data1 = Data(
+                x=torch.randn(10, 4),
+                edge_index=torch.zeros((2, 0), dtype=torch.long),
+                num_nodes=10,
+            )
+            data2 = Data(
+                x=torch.randn(5, 4),
+                edge_index=torch.zeros((2, 0), dtype=torch.long),
+                num_nodes=5,
+            )
             data1.level = torch.zeros(10, dtype=torch.long)
             data2.level = torch.zeros(5, dtype=torch.long)
 
@@ -415,7 +509,9 @@ class TestUpdateExistingCacheWithMasks(unittest.TestCase):
 
             # Masks now live in the index file, NOT embedded in the graph .pt files.
             index_files = list(tmp_path.glob("_masks_random*.pt"))
-            self.assertEqual(len(index_files), 1, "Exactly one index file should be created")
+            self.assertEqual(
+                len(index_files), 1, "Exactly one index file should be created"
+            )
             index_path = index_files[0]
             self.assertTrue(index_path.is_file(), "Index file should have been created")
 
@@ -430,10 +526,14 @@ class TestUpdateExistingCacheWithMasks(unittest.TestCase):
             # Graph .pt files must NOT have been modified.
             updated1 = torch.load(file1, map_location="cpu", weights_only=False)
             updated2 = torch.load(file2, map_location="cpu", weights_only=False)
-            self.assertFalse(hasattr(updated1, "random_dynamic_mask"),
-                             "Graph .pt should not have embedded masks")
-            self.assertFalse(hasattr(updated2, "random_dynamic_mask"),
-                             "Graph .pt should not have embedded masks")
+            self.assertFalse(
+                hasattr(updated1, "random_dynamic_mask"),
+                "Graph .pt should not have embedded masks",
+            )
+            self.assertFalse(
+                hasattr(updated2, "random_dynamic_mask"),
+                "Graph .pt should not have embedded masks",
+            )
 
             # Non-.pt file must be untouched.
             with open(file_other) as f:

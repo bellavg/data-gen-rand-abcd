@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import threading
 
 import torch
 from torch_geometric.data import Data as _PyGData
@@ -45,6 +46,7 @@ class PartitionedData(_PyGData):
 
 # Key: (str(cache_dir), algo_name) → index dict
 _MASK_INDEX_CACHE: dict[tuple[str, str], dict] = {}
+_MASK_INDEX_CACHE_LOCK = threading.Lock()
 
 _MASKS_PREFIX = "_masks_"
 
@@ -65,28 +67,31 @@ def _get_mask_entry(
     """
     cache_key = (str(cache_dir), algo_name)
     if cache_key not in _MASK_INDEX_CACHE:
-        _MASK_INDEX_CACHE[cache_key] = {}
-        for index_path in cache_dir.glob(f"{_MASKS_PREFIX}{algo_name}*.pt"):
-            try:
-                # mmap=True: tensor data is lazily paged from disk.
-                chunk = torch.load(
-                    index_path,
-                    map_location="cpu",
-                    weights_only=True,
-                    mmap=True,
-                )
-                _MASK_INDEX_CACHE[cache_key].update(chunk)
-            except TypeError:
-                chunk = torch.load(
-                    index_path,
-                    map_location="cpu",
-                    weights_only=True,
-                )
-                _MASK_INDEX_CACHE[cache_key].update(chunk)
-            except Exception as exc:
-                print(
-                    f"[partition_utils] WARNING: could not load chunk {index_path}: {exc}"
-                )
+        with _MASK_INDEX_CACHE_LOCK:
+            if cache_key not in _MASK_INDEX_CACHE:
+                loaded_index: dict = {}
+                for index_path in cache_dir.glob(f"{_MASKS_PREFIX}{algo_name}*.pt"):
+                    try:
+                        # mmap=True: tensor data is lazily paged from disk.
+                        chunk = torch.load(
+                            index_path,
+                            map_location="cpu",
+                            weights_only=True,
+                            mmap=True,
+                        )
+                        loaded_index.update(chunk)
+                    except TypeError:
+                        chunk = torch.load(
+                            index_path,
+                            map_location="cpu",
+                            weights_only=True,
+                        )
+                        loaded_index.update(chunk)
+                    except Exception as exc:
+                        print(
+                            f"[partition_utils] WARNING: could not load chunk {index_path}: {exc}"
+                        )
+                _MASK_INDEX_CACHE[cache_key] = loaded_index
 
     return _MASK_INDEX_CACHE[cache_key].get(basename)
 
