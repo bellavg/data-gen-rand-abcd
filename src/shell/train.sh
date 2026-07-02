@@ -60,6 +60,7 @@ unset PYTHONHOME
 export PYTHONNOUSERSITE=1
 export PYTHONPATH="$BASE_DIR/src"
 export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
+export AIG_REQUIRE_GPU=1
 
 # Cap WandB API handshake so it doesn't hang indefinitely on HPC nodes.
 export WANDB_INIT_TIMEOUT=120
@@ -133,13 +134,15 @@ NUM_WORKERS="${NUM_WORKERS:-8}"
 
 echo "Using NUM_WORKERS=$NUM_WORKERS for data loading."
 echo "Using PARTITION=$PARTITION partitioning."
+echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-<unset>}"
+nvidia-smi -L
 # =========================================================
 # 5. EXECUTE TRAINING
 # =========================================================
 
 echo "Starting Final Training for $ALGORITHM on GPU 0..."
 
-python -u -m train \
+srun python -u -m train \
     --algorithm         "$ALGORITHM" \
     --csv_paths         "$CSV_PATH" \
     --partition         "$PARTITION" \
