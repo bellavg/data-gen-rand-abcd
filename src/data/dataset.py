@@ -798,15 +798,20 @@ class AIGGraphRegressionDataset(PyGDataset):
         return False
 
     def _load_graph_for_sample(self, sample: GraphSample) -> _PyGData:
+        cached_path = self._cached_path_for_sample(sample)
+        return self._torch_load_graph(cached_path)
+
+    def _cached_path_for_sample(self, sample: GraphSample) -> Path:
         graph_path = sample.graph_path
-        if self.cache_dir is not None:
-            cached_path = self._graph_cache_path_map.get(graph_path)
-            if cached_path is None:
-                rebuilt, _ = self._cache_single_graph(graph_path)
-                cached_path = Path(rebuilt)
-                self._graph_cache_path_map[graph_path] = cached_path
-            return self._torch_load_graph(cached_path)
-        return self._torch_load_graph(graph_path)
+        if self.cache_dir is None:
+            return Path(graph_path)
+
+        cached_path = self._graph_cache_path_map.get(graph_path)
+        if cached_path is None:
+            rebuilt, _ = self._cache_single_graph(graph_path)
+            cached_path = Path(rebuilt)
+            self._graph_cache_path_map[graph_path] = cached_path
+        return cached_path
 
     def _partition_cache_path(self, cached_path: Path) -> Path:
         if self.partition_cache_dir is None or self.partition is None:
@@ -820,15 +825,44 @@ class AIGGraphRegressionDataset(PyGDataset):
         if self.partition is None or self.partition_cache_dir is None:
             return None, None
 
-        cached_path = self._graph_cache_path_map.get(sample.graph_path)
-        if cached_path is None:
-            return None, None
+        cached_path = self._cached_path_for_sample(sample)
 
         local_path = self._partition_cache_path(cached_path)
         if not local_path.is_file():
             return None, cached_path
 
         return self._torch_load_graph(local_path), cached_path
+
+    def _write_partition_cached_graph(
+        self,
+        cached_path: Path,
+        data_obj: _PyGData,
+    ) -> None:
+        out_path = self._partition_cache_path(cached_path)
+        if out_path.is_file():
+            return
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = out_path.with_suffix(f".tmp_{uuid.uuid4().hex[:8]}")
+        torch.save(data_obj, tmp_path)
+        os.replace(tmp_path, out_path)
+
+    def _materialize_partition_cached_graph(self, cached_path: Path) -> _PyGData:
+        local_path = self._partition_cache_path(cached_path)
+        if local_path.is_file():
+            return self._torch_load_graph(local_path)
+
+        data_obj = self._torch_load_graph(cached_path)
+        data_obj = precomputed_partitioning(
+            data_obj,
+            self.partition,
+            cache_path=cached_path,
+        )
+        for key in list(data_obj.keys()):
+            if key.endswith("_dynamic_mask") or key.endswith("_dynamic_num_partitions"):
+                delattr(data_obj, key)
+
+        self._write_partition_cached_graph(cached_path, data_obj)
+        return data_obj
 
     def materialize_partition_cache(self) -> int:
         if self.partition is None or self.partition_cache_dir is None:
@@ -858,30 +892,15 @@ class AIGGraphRegressionDataset(PyGDataset):
         )
 
         def _materialize_one(graph_path: str) -> int:
-            cached_path = self._graph_cache_path_map.get(graph_path)
-            if cached_path is None:
-                rebuilt, _ = self._cache_single_graph(graph_path)
-                cached_path = Path(rebuilt)
-                self._graph_cache_path_map[graph_path] = cached_path
+            cached_path = self._cached_path_for_sample(
+                GraphSample(graph_path=graph_path, design_key="", y_node_opt=0.0)
+            )
 
             out_path = self._partition_cache_path(cached_path)
             if out_path.is_file():
                 return 0
 
-            data_obj = self._torch_load_graph(cached_path)
-            data_obj = precomputed_partitioning(
-                data_obj,
-                self.partition,
-                cache_path=cached_path,
-            )
-            for key in list(data_obj.keys()):
-                if key.endswith("_dynamic_mask") or key.endswith("_dynamic_num_partitions"):
-                    delattr(data_obj, key)
-
-            out_path.parent.mkdir(parents=True, exist_ok=True)
-            tmp_path = out_path.with_suffix(f".tmp_{uuid.uuid4().hex[:8]}")
-            torch.save(data_obj, tmp_path)
-            os.replace(tmp_path, out_path)
+            self._materialize_partition_cached_graph(cached_path)
             return 1
 
         created = 0
@@ -904,7 +923,11 @@ class AIGGraphRegressionDataset(PyGDataset):
         sample = self.samples[idx]
         data_obj, cached_path = self._load_partition_cached_graph(sample)
         if data_obj is None:
-            data_obj = self._load_graph_for_sample(sample)
+            if self.partition is not None and self.partition_cache_dir is not None:
+                cached_path = self._cached_path_for_sample(sample)
+                data_obj = self._materialize_partition_cached_graph(cached_path)
+            else:
+                data_obj = self._load_graph_for_sample(sample)
         if not self.normalize_edges and hasattr(data_obj, "edge_weight"):
             del data_obj.edge_weight
         if (

@@ -116,16 +116,6 @@ def main(args):
         f"[main] Datasets loaded in {time.monotonic() - ds_start:.1f}s",
         flush=True,
     )
-    if args.partition is not None:
-        print("[main] Materializing node-local partition cache ...", flush=True)
-        partition_cache_start = time.monotonic()
-        created = datamodule.train_ds.materialize_partition_cache()
-        datamodule.val_ds.materialize_partition_cache()
-        print(
-            f"[main] Node-local partition cache ready in {time.monotonic() - partition_cache_start:.1f}s "
-            f"({created} train graphs newly written)",
-            flush=True,
-        )
 
     # Seed torch RNG for reproducible weight init, dropout, and DataLoader
     # shuffle.  Lighter than pl.seed_everything (which also seeds numpy,
