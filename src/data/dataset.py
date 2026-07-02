@@ -17,7 +17,7 @@ from torch_geometric.data import Dataset as PyGDataset
 from torch_geometric.data import storage as _pyg_storage
 from torch_geometric.utils import degree
 
-from data.partition_utils import PartitionedData, precomputed_partitioning, partition_by_assignment
+from data.partition_utils import PartitionedData, precomputed_partitioning
 from models.layers.positional_encodings import get_pe_transform
 
 # Register PyG classes in the secure deserialization allowlist so torch.load
@@ -146,8 +146,12 @@ class AIGGraphRegressionDataset(PyGDataset):
         self.normalize_edges = bool(normalize_edges)
         self.split = split
         self.cache_dir = Path(cache_dir) if cache_dir is not None else None
-        self._tier0_cache_dir = Path(tier0_cache_dir) if tier0_cache_dir is not None else None
-        self._tier1_cache_dir = Path(tier1_cache_dir) if tier1_cache_dir is not None else None
+        self._tier0_cache_dir = (
+            Path(tier0_cache_dir) if tier0_cache_dir is not None else None
+        )
+        self._tier1_cache_dir = (
+            Path(tier1_cache_dir) if tier1_cache_dir is not None else None
+        )
         self.split_ratios = split_ratios
         self.seed = seed
         self.num_samples = num_samples
@@ -185,8 +189,7 @@ class AIGGraphRegressionDataset(PyGDataset):
 
         # Pre-compute y tensors so get() doesn't allocate a new one each call.
         self._y_tensors: list[torch.Tensor] = [
-            torch.tensor([[s.y_node_opt]], dtype=torch.float32)
-            for s in self.samples
+            torch.tensor([[s.y_node_opt]], dtype=torch.float32) for s in self.samples
         ]
 
         # PyG's Dataset.__getitem__ accesses self.transform, self._indices,
@@ -227,7 +230,12 @@ class AIGGraphRegressionDataset(PyGDataset):
 
     def _infer_design_key(self, graph_path: str) -> str:
         parts = graph_path.split("/")
-        for marker, offset in (("designs", 1), ("tier0", 1), ("tier1", 2), ("tier2", 2)):
+        for marker, offset in (
+            ("designs", 1),
+            ("tier0", 1),
+            ("tier1", 2),
+            ("tier2", 2),
+        ):
             try:
                 marker_idx = parts.index(marker)
             except ValueError:
@@ -379,14 +387,9 @@ class AIGGraphRegressionDataset(PyGDataset):
             n_train = 1
         n_val = min(n_val, n - n_train)
 
-        design_to_split = {
-            design_key: "train" for design_key in design_keys[:n_train]
-        }
+        design_to_split = {design_key: "train" for design_key in design_keys[:n_train]}
         design_to_split.update(
-            {
-                design_key: "val"
-                for design_key in design_keys[n_train : n_train + n_val]
-            }
+            {design_key: "val" for design_key in design_keys[n_train : n_train + n_val]}
         )
         design_to_split.update(
             {design_key: "test" for design_key in design_keys[n_train + n_val :]}
@@ -461,7 +464,7 @@ class AIGGraphRegressionDataset(PyGDataset):
                     valid_paths = {
                         str(e.get("graph_path", "")) for e in manifest["entries"]
                     }
-                    
+
                     # Fast-path check: does the path exist in our known manifest?
                     # If not, it's a newly added CSV row, so we must stat() it.
                     result = []
@@ -473,14 +476,14 @@ class AIGGraphRegressionDataset(PyGDataset):
                             unknown_count += 1
                             if Path(s.graph_path).is_file():
                                 result.append(s)
-                    
+
                     if unknown_count > 0:
                         print(
                             f"[dataset] Manifest was stale. Checked {unknown_count} new "
                             f"CSV entries via is_file().",
                             flush=True,
                         )
-                    
+
                     print(
                         f"[dataset] Manifest fast-path: {len(result)} samples "
                         f"matched in {_time.monotonic() - t2:.1f}s",
@@ -569,7 +572,10 @@ class AIGGraphRegressionDataset(PyGDataset):
                 else:
                     data_obj.edge_weight = torch.empty((0,), dtype=data_obj.x.dtype)
 
-        if self._cache_precomputed_level_pe and getattr(data_obj, "pos_enc", None) is None:
+        if (
+            self._cache_precomputed_level_pe
+            and getattr(data_obj, "pos_enc", None) is None
+        ):
             data_obj = self.pe_transform(data_obj)
             # pe_transform (ExtractPrecomputedPE) already deleted 'level'; drop
             # the unused siblings so they are not persisted in the cache file.
@@ -584,11 +590,10 @@ class AIGGraphRegressionDataset(PyGDataset):
         if cache_path.is_file():
             obj = self._torch_load_graph(cache_path)
             needs_refresh = (
-                (self.normalize_edges and getattr(obj, "edge_weight", None) is None)
-                or (
-                    self._cache_precomputed_level_pe
-                    and getattr(obj, "pos_enc", None) is None
-                )
+                self.normalize_edges and getattr(obj, "edge_weight", None) is None
+            ) or (
+                self._cache_precomputed_level_pe
+                and getattr(obj, "pos_enc", None) is None
             )
             if needs_refresh:
                 obj = self._prepare_cached_graph(obj)
@@ -625,9 +630,11 @@ class AIGGraphRegressionDataset(PyGDataset):
             manifest.get("entries"), list
         ):
             return None
-        manifest_paths = [str(entry.get("graph_path", "")) for entry in manifest["entries"]]
+        manifest_paths = [
+            str(entry.get("graph_path", "")) for entry in manifest["entries"]
+        ]
         sample_paths = [sample.graph_path for sample in self.samples]
-        
+
         # We can use direct list comparison because _build_samples guarantees
         # deterministic ordering that matches the manifest creation order.
         if manifest_paths != sample_paths:
@@ -802,7 +809,10 @@ class AIGGraphRegressionDataset(PyGDataset):
         data_obj = self._load_graph_for_sample(sample)
         if not self.normalize_edges and hasattr(data_obj, "edge_weight"):
             del data_obj.edge_weight
-        if self.positional_encoding is not None and getattr(data_obj, "pos_enc", None) is None:
+        if (
+            self.positional_encoding is not None
+            and getattr(data_obj, "pos_enc", None) is None
+        ):
             data_obj = self.pe_transform(data_obj)
         if self.positional_encoding is not None:
             for _attr in ("level", "pi_paths", "local_sp_sum"):
@@ -810,7 +820,9 @@ class AIGGraphRegressionDataset(PyGDataset):
                     delattr(data_obj, _attr)
         data_obj.y = self._y_tensors[idx]
         if self.partition is not None:
-            _cached_path: Path | None = self._graph_cache_path_map.get(sample.graph_path)
+            _cached_path: Path | None = self._graph_cache_path_map.get(
+                sample.graph_path
+            )
             data_obj = precomputed_partitioning(
                 data_obj, self.partition, cache_path=_cached_path
             )

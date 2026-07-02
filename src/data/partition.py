@@ -1,18 +1,18 @@
 from __future__ import annotations
 
+import functools
 import os
 import time
 import uuid
-import torch
-import functools
-import itertools
-import numpy as np
 from pathlib import Path
+
+import numpy as np
+import torch
 
 # Prefix for index files — excluded from scanning so they are never treated
 # as graph cache files.
 _MASKS_PREFIX = "_masks_"
-CHECKPOINT_EVERY = 50_000   # atomic index save cadence (number of completed files)
+CHECKPOINT_EVERY = 50_000  # atomic index save cadence (number of completed files)
 
 
 def _register_pyg_safe_globals() -> None:
@@ -23,9 +23,10 @@ def _register_pyg_safe_globals() -> None:
     workers all imported simultaneously.
     """
     import torch.serialization
-    from torch_geometric.data import Data
     import torch_geometric.data.data as _pyg_data_mod
     import torch_geometric.data.storage as _pyg_storage
+    from torch_geometric.data import Data
+
     from data.partition_utils import PartitionedData
 
     safe_globals: list = [Data, _pyg_storage.GlobalStorage, PartitionedData]
@@ -35,7 +36,9 @@ def _register_pyg_safe_globals() -> None:
             safe_globals.append(_cls)
     torch.serialization.add_safe_globals(safe_globals)
 
+
 _LEVELS_INDEX_CACHE: dict[str, dict] = {}
+
 
 def _get_level_for_file(cache_path: Path, data_obj) -> torch.Tensor:
     cache_dir_str = str(cache_path.parent)
@@ -52,20 +55,21 @@ def _get_level_for_file(cache_path: Path, data_obj) -> torch.Tensor:
                 )
         else:
             _LEVELS_INDEX_CACHE[cache_dir_str] = {}
-            
+
     levels = _LEVELS_INDEX_CACHE[cache_dir_str].get(cache_path.name)
     if levels is not None:
         return levels
-        
+
     # Fallback if not in index
     from data.compute_levels import compute_node_levels
-    return compute_node_levels(data_obj)
 
+    return compute_node_levels(data_obj)
 
 
 # =====================================================================
 # DYNAMIC K HEURISTIC
 # =====================================================================
+
 
 def compute_dynamic_k(
     num_nodes: int,
@@ -99,6 +103,7 @@ def compute_dynamic_k(
 # decide k themselves.
 # =====================================================================
 
+
 def run_metis(data_obj, num_partitions: int) -> torch.Tensor:
     """Computes standard METIS partitions using pymetis."""
     import pymetis
@@ -107,12 +112,10 @@ def run_metis(data_obj, num_partitions: int) -> torch.Tensor:
     num_nodes = data_obj.num_nodes
     undirected_edges = to_undirected(data_obj.edge_index, num_nodes=num_nodes)
     adj_sparse = to_scipy_sparse_matrix(
-        edge_index=undirected_edges,
-        num_nodes=num_nodes
+        edge_index=undirected_edges, num_nodes=num_nodes
     ).tocsr()
     adjacency = pymetis.CSRAdjacency(
-        adj_starts=adj_sparse.indptr,
-        adjacent=adj_sparse.indices
+        adj_starts=adj_sparse.indptr, adjacent=adj_sparse.indices
     )
     _, part_labels = pymetis.part_graph(nparts=num_partitions, adjacency=adjacency)
     return torch.tensor(part_labels, dtype=torch.long, device="cpu")
@@ -146,10 +149,14 @@ def run_random(data_obj, num_partitions: int, seed: int = 0) -> torch.Tensor:
     num_nodes = data_obj.num_nodes
     generator = torch.Generator()
     generator.manual_seed(seed)
-    return torch.randint(0, num_partitions, (num_nodes,), dtype=torch.long, generator=generator)
+    return torch.randint(
+        0, num_partitions, (num_nodes,), dtype=torch.long, generator=generator
+    )
 
 
-def run_span_weighted_metis(data_obj, num_partitions: int, alpha: float = 10.0) -> torch.Tensor:
+def run_span_weighted_metis(
+    data_obj, num_partitions: int, alpha: float = 10.0
+) -> torch.Tensor:
     """Computes a Span-Aware METIS partition by penalizing cuts on long edges."""
     import pymetis
     from torch_geometric.utils import to_scipy_sparse_matrix, to_undirected
@@ -161,18 +168,13 @@ def run_span_weighted_metis(data_obj, num_partitions: int, alpha: float = 10.0) 
     spans = torch.abs(levels[src] - levels[dst])
     edge_weights = (1 + alpha * spans).to(torch.int32)
     adj_sparse = to_scipy_sparse_matrix(
-        edge_index=undirected_edges,
-        edge_attr=edge_weights,
-        num_nodes=num_nodes
+        edge_index=undirected_edges, edge_attr=edge_weights, num_nodes=num_nodes
     ).tocsr()
     adjacency = pymetis.CSRAdjacency(
-        adj_starts=adj_sparse.indptr,
-        adjacent=adj_sparse.indices
+        adj_starts=adj_sparse.indptr, adjacent=adj_sparse.indices
     )
     _, part_labels = pymetis.part_graph(
-        nparts=num_partitions,
-        adjacency=adjacency,
-        eweights=adj_sparse.data.astype(int)
+        nparts=num_partitions, adjacency=adjacency, eweights=adj_sparse.data.astype(int)
     )
     return torch.tensor(part_labels, dtype=torch.long, device="cpu")
 
@@ -187,6 +189,7 @@ def run_span_weighted_metis(data_obj, num_partitions: int, alpha: float = 10.0) 
 # WORKER TASK FOR PARALLEL EXECUTION
 # =====================================================================
 
+
 def _worker_initializer() -> None:
     """Called once per worker process at pool startup.
 
@@ -196,6 +199,7 @@ def _worker_initializer() -> None:
       spawned processes to help on its own).
     """
     import torch as _torch
+
     _torch.set_num_threads(1)
     _register_pyg_safe_globals()
 
@@ -246,7 +250,7 @@ def _process_single_cache_file(
 
         result[algo_name] = {
             "mask": mask_tensor.cpu().numpy().astype(np.int8),
-            "k":    k,
+            "k": k,
         }
 
     return str(cache_path.parent), cache_path.name, result
@@ -255,6 +259,7 @@ def _process_single_cache_file(
 # =====================================================================
 # CORE UPDATE PIPELINE
 # =====================================================================
+
 
 def update_existing_cache_with_masks(
     directories: list[str | Path],
@@ -297,13 +302,12 @@ def update_existing_cache_with_masks(
         seed:        RNG seed forwarded to ``run_random``.
     """
     import config as _cfg
-    import concurrent.futures
 
     _register_pyg_safe_globals()
 
     target_nodes = getattr(_cfg, "TARGET_NODES_PER_PART", 10_000)
-    min_k        = getattr(_cfg, "MIN_K", 2)
-    max_k        = getattr(_cfg, "MAX_K", 32)
+    min_k = getattr(_cfg, "MIN_K", 2)
+    max_k = getattr(_cfg, "MAX_K", 32)
 
     print(
         f"[Mask Precomputation] Dynamic-k heuristic: "
@@ -323,7 +327,7 @@ def update_existing_cache_with_masks(
         out_dirs_list = [Path(d).absolute() for d in out_directories]
         if len(top_dirs) != len(out_dirs_list):
             raise ValueError("--dirs and --out-dirs must have the same length")
-    
+
     dir_map = {str(d): str(o) for d, o in zip(top_dirs, out_dirs_list)}
 
     accumulated: dict[str, dict[str, dict]] = {}
@@ -332,7 +336,7 @@ def update_existing_cache_with_masks(
     for top_dir in top_dirs:
         d_str = str(top_dir)
         out_d_str = dir_map[d_str]
-        
+
         # A basename is fully done only when it appears in ALL algo indices.
         if algo_names:
             all_done = []
@@ -341,17 +345,23 @@ def update_existing_cache_with_masks(
                 # Load keys from all existing chunks
                 for index_path in Path(out_d_str).glob(f"{_MASKS_PREFIX}{a}*.pt"):
                     try:
-                        chunk = torch.load(index_path, map_location="cpu", weights_only=True)
+                        chunk = torch.load(
+                            index_path, map_location="cpu", weights_only=True
+                        )
                         done.update(chunk.keys())
                     except Exception as exc:
                         print(f"[WARNING] Could not load chunk {index_path}: {exc}")
                 all_done.append(done)
-            done_by_dir[d_str] = all_done[0].intersection(*all_done[1:]) if len(all_done) > 1 else all_done[0]
+            done_by_dir[d_str] = (
+                all_done[0].intersection(*all_done[1:])
+                if len(all_done) > 1
+                else all_done[0]
+            )
         else:
             done_by_dir[d_str] = set()
-            
+
         print(f"  -> {out_d_str}: {len(done_by_dir[d_str])} entries already in index")
-        
+
         # Initialize empty dict for NEW files
         accumulated[d_str] = {a: {} for a in algo_names}
 
@@ -360,15 +370,17 @@ def update_existing_cache_with_masks(
     # ------------------------------------------------------------------
     def _path_stream():
         for top_dir in top_dirs:
-            d_str    = str(top_dir)
+            d_str = str(top_dir)
             done_set = done_by_dir[d_str]
             try:
                 with os.scandir(str(top_dir)) as scanner:
                     for entry in scanner:
-                        if (entry.is_file(follow_symlinks=False)
-                                and entry.name.endswith(".pt")
-                                and not entry.name.startswith(_MASKS_PREFIX)
-                                and entry.name not in done_set):
+                        if (
+                            entry.is_file(follow_symlinks=False)
+                            and entry.name.endswith(".pt")
+                            and not entry.name.startswith(_MASKS_PREFIX)
+                            and entry.name not in done_set
+                        ):
                             yield d_str, Path(entry.path)
             except PermissionError as exc:
                 print(f"[WARNING] Cannot scan {top_dir}: {exc}")
@@ -381,7 +393,9 @@ def update_existing_cache_with_masks(
     except AttributeError:
         all_cpus = os.cpu_count() or 1
     num_workers = max(1, all_cpus - 1)
-    print(f"[Mask Precomputation] Using {num_workers}/{all_cpus} parallel worker processes...")
+    print(
+        f"[Mask Precomputation] Using {num_workers}/{all_cpus} parallel worker processes..."
+    )
 
     worker_fn = functools.partial(
         _process_single_cache_file,
@@ -393,7 +407,7 @@ def update_existing_cache_with_masks(
     )
 
     success_count = 0
-    error_count   = 0
+    error_count = 0
 
     def _flush_indices() -> None:
         """Atomically write all accumulated index dicts to disk as chunks and clear memory."""
@@ -402,7 +416,10 @@ def update_existing_cache_with_masks(
             out_d_str = dir_map[d_str]
             for algo_name, index in algo_map.items():
                 if index:
-                    index_path = Path(out_d_str) / f"{_MASKS_PREFIX}{algo_name}_{chunk_id}_{uuid.uuid4().hex[:4]}.pt"
+                    index_path = (
+                        Path(out_d_str)
+                        / f"{_MASKS_PREFIX}{algo_name}_{chunk_id}_{uuid.uuid4().hex[:4]}.pt"
+                    )
                     temp_file = index_path.with_suffix(".tmp")
                     torch.save(index, temp_file)
                     os.replace(temp_file, index_path)
@@ -411,21 +428,18 @@ def update_existing_cache_with_masks(
     path_stream = (p for p in _path_stream())
 
     import torch.multiprocessing as mp
+
     mp_ctx = mp.get_context("spawn")
 
     with mp_ctx.Pool(
-        processes=num_workers,
-        initializer=_worker_initializer,
-        maxtasksperchild=50
+        processes=num_workers, initializer=_worker_initializer, maxtasksperchild=50
     ) as pool:
-        
         results_iter = pool.imap_unordered(
-            worker_fn, 
-            (path for d_str, path in path_stream),
-            chunksize=10
+            worker_fn, (path for d_str, path in path_stream), chunksize=10
         )
-        
+
         from tqdm import tqdm
+
         with tqdm(desc="Computing partition masks", unit=" files") as pbar:
             for result in results_iter:
                 if result is not None:
@@ -433,10 +447,12 @@ def update_existing_cache_with_masks(
                     for algo_name, entry in algo_results.items():
                         accumulated[d_str][algo_name][basename] = {
                             "mask": torch.from_numpy(entry["mask"]).clone(),
-                            "k": torch.tensor([entry["k"]], dtype=torch.int16, device="cpu"),
+                            "k": torch.tensor(
+                                [entry["k"]], dtype=torch.int16, device="cpu"
+                            ),
                         }
                     success_count += 1
-                
+
                 pbar.update(1)
 
                 # Periodic checkpoint — preserve progress across SLURM kills.
@@ -462,6 +478,7 @@ def update_existing_cache_with_masks(
 
 if __name__ == "__main__":
     import argparse
+
     import config
 
     _seed = getattr(config, "PARTITION_SEED", 0)

@@ -33,6 +33,33 @@ def _select_precision() -> str:
         return "32-true"
 
 
+def _select_accelerator_and_devices() -> tuple[str, int]:
+    require_gpu = str(os.environ.get("AIG_REQUIRE_GPU", "")).lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+    try:
+        if torch.cuda.is_available():
+            torch.cuda.get_device_properties(0)
+            return "gpu", 1
+    except (AssertionError, RuntimeError) as exc:
+        if require_gpu:
+            raise RuntimeError(
+                "GPU was requested but CUDA could not be initialized. "
+                "On SLURM this usually means the Python process was not launched "
+                "inside a GPU job step, CUDA_VISIBLE_DEVICES is wrong, or the node "
+                "driver is unhealthy. Try launching with srun and check nvidia-smi."
+            ) from exc
+        return "cpu", 1
+    if require_gpu:
+        raise RuntimeError(
+            "GPU was requested but torch.cuda.is_available() is False. "
+            "Check the SLURM GPU allocation, CUDA_VISIBLE_DEVICES, and nvidia-smi output."
+        )
+    return "cpu", 1
+
+
 def main(args):
     torch.backends.cuda.matmul.allow_tf32 = True
     if hasattr(torch.backends, "cudnn"):
@@ -117,7 +144,9 @@ def main(args):
 
     # 5. Define Callbacks and Logger
     partition_name = args.partition or "none"
-    algo_checkpoint_dir = os.path.join(args.checkpoint_dir, f"{args.algorithm}_{partition_name}")
+    algo_checkpoint_dir = os.path.join(
+        args.checkpoint_dir, f"{args.algorithm}_{partition_name}"
+    )
     os.makedirs(algo_checkpoint_dir, exist_ok=True)
 
     checkpoint_cb = ModelCheckpoint(
@@ -164,13 +193,15 @@ def main(args):
     ]
 
     precision = _select_precision()
+    accelerator, devices = _select_accelerator_and_devices()
     print(f"Using {precision} Automatic Mixed Precision (AMP)", flush=True)
+    print(f"Using accelerator={accelerator}, devices={devices}", flush=True)
 
     trainer = pl.Trainer(
         max_epochs=args.max_epochs,
-        accelerator="auto",
+        accelerator=accelerator,
         enable_progress_bar=False,
-        devices=1,
+        devices=devices,
         precision=precision,
         callbacks=callbacks,
         logger=logger,
@@ -228,9 +259,7 @@ if __name__ == "__main__":
     parser.add_argument("--patience", type=int, default=config.PATIENCE)
     parser.add_argument("--min_lr", type=float, default=config.MIN_LR)
     parser.add_argument("--warmup_steps", type=int, default=config.WARMUP_STEPS)
-    parser.add_argument(
-        "--warmup_start_lr", type=float, default=config.WARMUP_START_LR
-    )
+    parser.add_argument("--warmup_start_lr", type=float, default=config.WARMUP_START_LR)
     parser.add_argument(
         "--scheduler_patience", type=int, default=config.SCHEDULER_PATIENCE
     )

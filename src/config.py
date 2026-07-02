@@ -38,8 +38,8 @@ EDGE_ATTR_DIM = 2  # [normal edge, primary output edge]
 NORMALIZE_EDGES = False
 # Dynamic partitioning heuristic: k = max(MIN_K, min(MAX_K, num_nodes // TARGET_NODES_PER_PART))
 TARGET_NODES_PER_PART = 10_000  # target number of nodes per partition
-MIN_K = 2                        # minimum number of partitions
-MAX_K = 32                       # maximum number of partitions
+MIN_K = 2  # minimum number of partitions
+MAX_K = 32  # maximum number of partitions
 PARTITION_SEED = 42
 
 # VALID_ALGORITHMS = {"Orchestrate", "Deepsyn", "Syn4", "C2RS"}
