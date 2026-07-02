@@ -69,12 +69,17 @@ class TestRandomPartitioning(unittest.TestCase):
         # Edge count is <= original (cross-partition edges removed)
         self.assertLessEqual(data.edge_index.shape[1], 32)
 
-    def test_partition_id_is_sorted_and_contiguous(self):
-        """Verify that partition_id values are grouped contiguously in non-decreasing order."""
+    def test_original_node_order_is_preserved(self):
+        """Random partitioning should not permute nodes away from source order."""
+        torch.manual_seed(42)
         g = _make_graph(num_nodes=30)
+        original_x = g.x.clone()
+        original_pos_enc = g.pos_enc.clone()
+
         data = random_partitioning(g)
-        # A sorted tensor will always have a non-negative diff between successive entries
-        self.assertTrue(torch.all(data.partition_id[:-1] <= data.partition_id[1:]))
+
+        torch.testing.assert_close(data.x, original_x)
+        torch.testing.assert_close(data.pos_enc, original_pos_enc)
 
     def test_edge_attr_always_present_and_in_sync(self):
         """edge_attr is always present and must stay aligned with edge_index."""

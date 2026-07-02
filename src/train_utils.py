@@ -37,6 +37,21 @@ class TrainingStartupCallback(pl.Callback):
         self._max_batch_compute_reports = max(0, int(max_batch_compute_reports))
         self._batch_compute_reports_emitted = 0
 
+    @staticmethod
+    def _batch_size(batch) -> int:
+        num_graphs = getattr(batch, "num_graphs", None)
+        if num_graphs is not None:
+            return int(num_graphs)
+
+        if isinstance(batch, (list, tuple)):
+            return len(batch)
+
+        y = getattr(batch, "y", None)
+        if y is not None and getattr(y, "dim", lambda: 0)() > 0:
+            return int(y.size(0))
+
+        return 1
+
     def _elapsed(self) -> float:
         if self._fit_start_time is None:
             return 0.0
@@ -85,12 +100,14 @@ class TrainingStartupCallback(pl.Callback):
             pl_module.log(
                 "train_step_time_s",
                 step_time,
+                batch_size=self._batch_size(batch),
                 on_step=True,
                 on_epoch=True,
             )
             if (
                 (batch_idx + 1) % self._report_every_n_steps == 0
-                and self._batch_compute_reports_emitted < self._max_batch_compute_reports
+                and self._batch_compute_reports_emitted
+                < self._max_batch_compute_reports
             ):
                 print(
                     f"[train] Batch compute: idx={batch_idx} step_s={step_time:.3f}",
@@ -103,5 +120,10 @@ class TrainingStartupCallback(pl.Callback):
 
     def on_train_epoch_end(self, trainer, pl_module):
         if self._epoch_start_time is not None:
-            pl_module.log("epoch_time_seconds", time.monotonic() - self._epoch_start_time)
-
+            pl_module.log(
+                "epoch_time_seconds",
+                time.monotonic() - self._epoch_start_time,
+                batch_size=1,
+                on_step=False,
+                on_epoch=True,
+            )

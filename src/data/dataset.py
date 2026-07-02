@@ -17,7 +17,10 @@ from torch_geometric.data import Dataset as PyGDataset
 from torch_geometric.data import storage as _pyg_storage
 from torch_geometric.utils import degree
 
-from data.partition_utils import PartitionedData, precomputed_partitioning
+from data.partition_utils import (
+    PartitionedData,
+    precomputed_partitioning,
+)
 from models.layers.positional_encodings import get_pe_transform
 
 # Register PyG classes in the secure deserialization allowlist so torch.load
@@ -128,6 +131,7 @@ class AIGGraphRegressionDataset(PyGDataset):
         normalize_edges: bool = False,
         split: str | None = None,
         cache_dir: str | Path | None = None,
+        partition_cache_dir: str | Path | None = None,
         tier0_cache_dir: str | Path | None = None,
         tier1_cache_dir: str | Path | None = None,
         split_ratios: tuple[float, float, float] = (0.8, 0.1, 0.1),
@@ -146,6 +150,9 @@ class AIGGraphRegressionDataset(PyGDataset):
         self.normalize_edges = bool(normalize_edges)
         self.split = split
         self.cache_dir = Path(cache_dir) if cache_dir is not None else None
+        self.partition_cache_dir = (
+            Path(partition_cache_dir) if partition_cache_dir is not None else None
+        )
         self._tier0_cache_dir = (
             Path(tier0_cache_dir) if tier0_cache_dir is not None else None
         )
@@ -801,12 +808,103 @@ class AIGGraphRegressionDataset(PyGDataset):
             return self._torch_load_graph(cached_path)
         return self._torch_load_graph(graph_path)
 
+    def _partition_cache_path(self, cached_path: Path) -> Path:
+        if self.partition_cache_dir is None or self.partition is None:
+            raise RuntimeError("partition cache path requested without partition cache configured")
+        return self.partition_cache_dir / self.partition / cached_path.name
+
+    def _load_partition_cached_graph(
+        self,
+        sample: GraphSample,
+    ) -> tuple[_PyGData | None, Path | None]:
+        if self.partition is None or self.partition_cache_dir is None:
+            return None, None
+
+        cached_path = self._graph_cache_path_map.get(sample.graph_path)
+        if cached_path is None:
+            return None, None
+
+        local_path = self._partition_cache_path(cached_path)
+        if not local_path.is_file():
+            return None, cached_path
+
+        return self._torch_load_graph(local_path), cached_path
+
+    def materialize_partition_cache(self) -> int:
+        if self.partition is None or self.partition_cache_dir is None:
+            return 0
+
+        unique_graph_paths = sorted({sample.graph_path for sample in self.samples})
+        if not unique_graph_paths:
+            return 0
+
+        cpu_limit = (
+            len(os.sched_getaffinity(0))
+            if hasattr(os, "sched_getaffinity")
+            else (os.cpu_count() or 1)
+        )
+        n_threads = max(
+            1,
+            min(
+                self.num_workers if self.num_workers > 0 else cpu_limit,
+                cpu_limit,
+            ),
+        )
+
+        print(
+            f"[partition-cache] Materializing {len(unique_graph_paths)} graphs "
+            f"for partition={self.partition} using {n_threads} threads -> {self.partition_cache_dir}",
+            flush=True,
+        )
+
+        def _materialize_one(graph_path: str) -> int:
+            cached_path = self._graph_cache_path_map.get(graph_path)
+            if cached_path is None:
+                rebuilt, _ = self._cache_single_graph(graph_path)
+                cached_path = Path(rebuilt)
+                self._graph_cache_path_map[graph_path] = cached_path
+
+            out_path = self._partition_cache_path(cached_path)
+            if out_path.is_file():
+                return 0
+
+            data_obj = self._torch_load_graph(cached_path)
+            data_obj = precomputed_partitioning(
+                data_obj,
+                self.partition,
+                cache_path=cached_path,
+            )
+            for key in list(data_obj.keys()):
+                if key.endswith("_dynamic_mask") or key.endswith("_dynamic_num_partitions"):
+                    delattr(data_obj, key)
+
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp_path = out_path.with_suffix(f".tmp_{uuid.uuid4().hex[:8]}")
+            torch.save(data_obj, tmp_path)
+            os.replace(tmp_path, out_path)
+            return 1
+
+        created = 0
+        total = len(unique_graph_paths)
+        with ThreadPoolExecutor(max_workers=n_threads) as executor:
+            for idx, written in enumerate(executor.map(_materialize_one, unique_graph_paths), start=1):
+                created += int(written)
+                if idx % 1000 == 0 or idx == total:
+                    print(
+                        f"[partition-cache] {idx}/{total} graphs ready ({created} newly written)",
+                        flush=True,
+                    )
+
+        return created
+
     def len(self) -> int:
         return len(self.samples)
 
     def get(self, idx: int) -> _PyGData:
         sample = self.samples[idx]
-        data_obj = self._load_graph_for_sample(sample)
+        data_obj, cached_path = self._load_partition_cached_graph(sample)
+        if data_obj is None:
+            data_obj = self._load_graph_for_sample(sample)
         if not self.normalize_edges and hasattr(data_obj, "edge_weight"):
             del data_obj.edge_weight
         if (
@@ -819,12 +917,11 @@ class AIGGraphRegressionDataset(PyGDataset):
                 if hasattr(data_obj, _attr):
                     delattr(data_obj, _attr)
         data_obj.y = self._y_tensors[idx]
-        if self.partition is not None:
-            _cached_path: Path | None = self._graph_cache_path_map.get(
-                sample.graph_path
-            )
+        if self.partition is not None and not hasattr(data_obj, "partition_id"):
+            if cached_path is None:
+                cached_path = self._graph_cache_path_map.get(sample.graph_path)
             data_obj = precomputed_partitioning(
-                data_obj, self.partition, cache_path=_cached_path
+                data_obj, self.partition, cache_path=cached_path
             )
 
         # Clean up embedded partition masks from older cache versions.

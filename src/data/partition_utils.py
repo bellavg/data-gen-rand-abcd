@@ -108,38 +108,28 @@ def partition_by_assignment(
 
     Returns:
         A ``PartitionedData`` object with all original attributes but with:
-        * Nodes sorted so that partitions are contiguous.
-        * Node-level attributes permuted to match the sorted node order.
+        * Original node order preserved.
         * Cross-partition edges removed/zeroed out.
         * ``partition_id`` and ``num_partitions`` added/updated.
     """
     result = PartitionedData(**{k: v for k, v in data_obj})
 
     n = data_obj.num_nodes
-    device = data_obj.x.device  # Ensure strict device consistency
-    
-    # 1. Sort partition IDs to ensure contiguous partitions
-    sort_idx = torch.argsort(partition_id)
-    sorted_partition_id = partition_id[sort_idx]
-    
-    # 2. Map old node indices to new contiguous indices (Canonical Permutation Inversion)
-    map_tensor = torch.empty(n, dtype=torch.long, device=device)
-    map_tensor[sort_idx] = torch.arange(n, device=device)
-    
-    # 3. Update all node-level attributes safely using PyG's native inspection
-    for key, value in result:
-        if result.is_node_attr(key) and torch.is_tensor(value) and value.size(0) == n:
-            result[key] = value[sort_idx]
-            
-    result.partition_id = sorted_partition_id
+    device = data_obj.x.device
+
+    if not isinstance(partition_id, torch.Tensor):
+        partition_id = torch.tensor(partition_id, dtype=torch.long, device=device)
+    else:
+        partition_id = partition_id.to(dtype=torch.long, device=device)
+
+    result.partition_id = partition_id.view(n)
     result.num_partitions = torch.tensor([num_partitions], dtype=torch.long, device=device)
 
-    # 4. Map and filter edges (removing cross-partition edges)
-    mapped_edge_index = map_tensor[result.edge_index]
-    src, dst = mapped_edge_index
+    # Keep original node order and only retain intra-partition edges.
+    src, dst = result.edge_index
     intra_mask = result.partition_id[src] == result.partition_id[dst]
-    
-    result.edge_index = mapped_edge_index[:, intra_mask]
+
+    result.edge_index = result.edge_index[:, intra_mask]
     if "edge_attr" in result and result.edge_attr is not None:
         result.edge_attr = result.edge_attr[intra_mask]
     if hasattr(result, "edge_weight") and result.edge_weight is not None:
@@ -154,9 +144,10 @@ def random_partitioning(
 ) -> PartitionedData:
     """Label each node with a random partition assignment.
 
-    All nodes and edges are **retained** (no filtering).  Each node receives
-    a partition label in ``{0, …, num_partitions - 1}`` stored in the
-    ``partition_id`` attribute (shape ``[num_nodes]``, dtype long).
+    All nodes are retained in their original order. Cross-partition edges are
+    removed. Each node receives a partition label in
+    ``{0, …, num_partitions - 1}`` stored in the ``partition_id`` attribute
+    (shape ``[num_nodes]``, dtype long).
 
     Because ``PartitionedData`` overrides ``__inc__``, calling
     ``Batch.from_data_list`` on a list of these objects produces a batch
@@ -173,6 +164,7 @@ def random_partitioning(
         * ``partition_id``   – shape ``[num_nodes]``, long, values in
                                 ``{0, …, num_partitions - 1}``.
         * ``num_partitions`` – shape ``[1]``, long.
+        * ``edge_index`` / ``edge_attr`` filtered to intra-partition edges.
     """
     n = data_obj.num_nodes
     device = data_obj.x.device  # Ensure strict device consistency
@@ -210,7 +202,7 @@ def precomputed_partitioning(
                      to be present (e.g. in unit tests).
 
     Returns:
-        A ``PartitionedData`` object with partition-contiguous nodes and
+        A ``PartitionedData`` object with original node order preserved and
         cross-partition edges removed.
 
     Raises:
