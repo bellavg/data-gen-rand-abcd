@@ -335,6 +335,7 @@ class TestDatasetPartitionFallback(unittest.TestCase):
         ds.samples = [MagicMock(y_node_opt=0.5)]
         ds._y_tensors = [torch.tensor([[0.5]], dtype=torch.float32)]
         ds._load_graph_for_sample = MagicMock()
+        ds._load_partition_cached_graph = MagicMock(return_value=(None, None))
         # _graph_cache_path_map is an instance attr set in __init__; mock needs it explicitly.
         ds._graph_cache_path_map = {}
 

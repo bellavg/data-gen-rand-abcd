@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import torch
 from pathlib import Path
+
+import torch
 from torch_geometric.data import Data as _PyGData
 
 
@@ -83,7 +84,9 @@ def _get_mask_entry(
                 )
                 _MASK_INDEX_CACHE[cache_key].update(chunk)
             except Exception as exc:
-                print(f"[partition_utils] WARNING: could not load chunk {index_path}: {exc}")
+                print(
+                    f"[partition_utils] WARNING: could not load chunk {index_path}: {exc}"
+                )
 
     return _MASK_INDEX_CACHE[cache_key].get(basename)
 
@@ -123,7 +126,9 @@ def partition_by_assignment(
         partition_id = partition_id.to(dtype=torch.long, device=device)
 
     result.partition_id = partition_id.view(n)
-    result.num_partitions = torch.tensor([num_partitions], dtype=torch.long, device=device)
+    result.num_partitions = torch.tensor(
+        [num_partitions], dtype=torch.long, device=device
+    )
 
     # Keep original node order and only retain intra-partition edges.
     src, dst = result.edge_index
@@ -168,10 +173,12 @@ def random_partitioning(
     """
     n = data_obj.num_nodes
     device = data_obj.x.device  # Ensure strict device consistency
-    
+
     # Assign partition IDs randomly
-    partition_id = torch.randint(0, num_partitions, (n,), dtype=torch.long, device=device)
-    
+    partition_id = torch.randint(
+        0, num_partitions, (n,), dtype=torch.long, device=device
+    )
+
     return partition_by_assignment(data_obj, partition_id, num_partitions)
 
 
@@ -209,17 +216,17 @@ def precomputed_partitioning(
         AttributeError: If neither embedded attributes nor the index file
                         contain a mask for this graph + algorithm.
     """
-    key     = f"{algo_name}_dynamic_mask"
+    key = f"{algo_name}_dynamic_mask"
     num_key = f"{algo_name}_dynamic_num_partitions"
 
     partition_id: torch.Tensor | None = None
-    num_partitions: int | None        = None
+    num_partitions: int | None = None
 
     # ------------------------------------------------------------------
     # 1. Try embedded attributes (backward compat with old pipeline)
     # ------------------------------------------------------------------
     if hasattr(data_obj, key) or key in data_obj.keys():
-        partition_id   = data_obj[key]
+        partition_id = data_obj[key]
         num_partitions = int(data_obj[num_key].item())
 
     # ------------------------------------------------------------------
@@ -229,15 +236,26 @@ def precomputed_partitioning(
         p = Path(cache_path)
         entry = _get_mask_entry(p.parent, algo_name, p.name)
         if entry is not None:
-            partition_id   = entry["mask"]
+            partition_id = entry["mask"]
             num_partitions = int(entry["k"].item())
 
     if partition_id is None:
+        index_detail = ": cache_path not provided."
+        if cache_path is not None:
+            p = Path(cache_path)
+            index_paths = sorted(p.parent.glob(f"{_MASKS_PREFIX}{algo_name}*.pt"))
+            if index_paths:
+                index_detail = (
+                    f" '{p.parent}': index file(s) exist, but basename '{p.name}' "
+                    f"was not present in them."
+                )
+            else:
+                index_detail = f" '{p.parent}': no index files found."
         raise AttributeError(
             f"Precomputed partition mask for algorithm '{algo_name}' not found.\n"
             f"  Checked embedded attribute '{key}' on data_obj: not present.\n"
             f"  Checked index file '_masks_{algo_name}.pt' in cache directory"
-            + (f" '{Path(cache_path).parent}': not present." if cache_path else ": cache_path not provided.")
+            + index_detail
             + f"\nPrecompute masks by running:\n"
             f"  python -m data.partition {algo_name} --dirs <cache_dir>"
         )
