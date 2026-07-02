@@ -66,16 +66,27 @@ cd "$BASE_DIR"
 # 2. CACHE DIRECTORIES
 # =========================================================
 
-# Shared caches for tier-0 and tier-1 graphs (Source)
-SHARED_CACHES=(
-    # "/scratch-shared/$USER/aig_train_run/shared_tier0_cache"
+# Only cover the cache roots that Orchestrate training can read from:
+# - shared tier-0 cache
+# - shared tier-1 cache
+# - Orchestrate workspace cache (tier-2 / non-tiered graphs)
+CACHE_DIRS=(
+    "/scratch-shared/$USER/aig_train_run/shared_tier0_cache"
     "/scratch-shared/$USER/aig_train_run/shared_tier1_cache"
+    "/scratch-shared/$USER/aig_train_run/Orchestrate/cache"
 )
 
-for SHARED_DIR in "${SHARED_CACHES[@]}"; do
+for SHARED_DIR in "${CACHE_DIRS[@]}"; do
     echo "=========================================="
     echo "Processing $SHARED_DIR"
     echo "=========================================="
+
+    mkdir -p "$SHARED_DIR"
+
+    if ! find "$SHARED_DIR" -maxdepth 1 -name '*.pt' -print -quit | grep -q .; then
+        echo "No cached .pt graphs found in $SHARED_DIR yet. Skipping."
+        continue
+    fi
     
     echo "Running partition precomputation directly against shared cache..."
     time python -u -m data.partition "$PARTITION_ALGO" \
