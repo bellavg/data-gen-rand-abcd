@@ -422,7 +422,9 @@ def test_main_falls_back_to_cpu_when_cuda_driver_init_fails(tmp_path):
     assert trainer_cls.call_args.kwargs["devices"] == 1
 
 
-def test_main_materializes_node_local_partition_cache_before_fit(tmp_path, monkeypatch):
+def test_main_does_not_materialize_node_local_partition_cache_before_fit(
+    tmp_path, monkeypatch
+):
     csv_path = tmp_path / "dataset.csv"
     csv_path.write_text("unoptimized_graph_path,optimizability\n/tmp/graph.pt,0.5\n")
 
@@ -483,7 +485,6 @@ def test_main_materializes_node_local_partition_cache_before_fit(tmp_path, monke
         patch("train.torch.cuda.is_available", return_value=False),
     ):
         train_ds = MagicMock()
-        train_ds.materialize_partition_cache.return_value = 7
         val_ds = MagicMock()
         datamodule = datamodule_cls.return_value
         datamodule.train_ds = train_ds
@@ -496,8 +497,8 @@ def test_main_materializes_node_local_partition_cache_before_fit(tmp_path, monke
         tmp_path / "tmpdir" / "aig_partition_cache"
     )
     datamodule.setup.assert_called_once_with("fit")
-    train_ds.materialize_partition_cache.assert_called_once_with()
-    val_ds.materialize_partition_cache.assert_called_once_with()
+    train_ds.materialize_partition_cache.assert_not_called()
+    val_ds.materialize_partition_cache.assert_not_called()
     trainer_cls.return_value.fit.assert_called_once()
 
 

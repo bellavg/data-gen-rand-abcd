@@ -337,7 +337,7 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
         self.assertEqual(item.edge_index.shape[1], 6)
         torch.testing.assert_close(item.pos_enc.squeeze(-1), torch.tensor([100.0, 101.0, 102.0, 103.0]))
 
-    def test_partition_cache_materialized_once_then_loaded_locally(self):
+    def test_partition_cache_fills_lazily_then_loads_locally(self):
         partition_pt = _make_partition_graph_pt(self.root / "partition_graph_local.pt")
         partition_csv = self.root / "partition_local.csv"
         _write_csv(
@@ -362,12 +362,13 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
             partition_cache_dir=local_partition_cache,
         )
 
-        created = ds.materialize_partition_cache()
-        self.assertEqual(created, 1)
-
         cached_path = ds._graph_cache_path_map[str(partition_pt)]
         local_path = ds._partition_cache_path(cached_path)
+        self.assertFalse(local_path.is_file())
+
+        first_item = ds[0]
         self.assertTrue(local_path.is_file())
+        self.assertTrue(hasattr(first_item, "partition_id"))
 
         with patch(
             "data.dataset.precomputed_partitioning",
