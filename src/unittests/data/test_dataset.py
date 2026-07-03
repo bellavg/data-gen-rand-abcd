@@ -66,9 +66,15 @@ def _make_partition_graph_pt(dest: Path) -> Path:
         ),
         pos_enc=torch.tensor([[100.0], [101.0], [102.0], [103.0]], dtype=torch.float32),
         level=torch.tensor([[200.0], [201.0], [202.0], [203.0]], dtype=torch.float32),
-        pi_paths=torch.tensor([[300.0], [301.0], [302.0], [303.0]], dtype=torch.float32),
-        local_sp_sum=torch.tensor([[400.0], [401.0], [402.0], [403.0]], dtype=torch.float32),
-        edge_weight=torch.tensor([10.0, 11.0, 12.0, 13.0, 14.0, 15.0], dtype=torch.float32),
+        pi_paths=torch.tensor(
+            [[300.0], [301.0], [302.0], [303.0]], dtype=torch.float32
+        ),
+        local_sp_sum=torch.tensor(
+            [[400.0], [401.0], [402.0], [403.0]], dtype=torch.float32
+        ),
+        edge_weight=torch.tensor(
+            [10.0, 11.0, 12.0, 13.0, 14.0, 15.0], dtype=torch.float32
+        ),
         random_dynamic_mask=torch.tensor([0, 1, 0, 1], dtype=torch.long),
         random_dynamic_num_partitions=torch.tensor([2], dtype=torch.long),
     )
@@ -335,9 +341,11 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
         self.assertFalse(hasattr(item, "partition_id"))
         self.assertFalse(hasattr(item, "num_partitions"))
         self.assertEqual(item.edge_index.shape[1], 6)
-        torch.testing.assert_close(item.pos_enc.squeeze(-1), torch.tensor([100.0, 101.0, 102.0, 103.0]))
+        torch.testing.assert_close(
+            item.pos_enc.squeeze(-1), torch.tensor([100.0, 101.0, 102.0, 103.0])
+        )
 
-    def test_partition_cache_fills_lazily_then_loads_locally(self):
+    def test_partition_is_applied_on_repeated_access(self):
         partition_pt = _make_partition_graph_pt(self.root / "partition_graph_local.pt")
         partition_csv = self.root / "partition_local.csv"
         _write_csv(
@@ -354,27 +362,16 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
         )
 
         cache_dir = self.root / "shared_cache"
-        local_partition_cache = self.root / "node_local_partition_cache"
         ds = self._make_ds(
             csv_paths=partition_csv,
             cache_dir=cache_dir,
             partition="random",
-            partition_cache_dir=local_partition_cache,
         )
 
-        cached_path = ds._graph_cache_path_map[str(partition_pt)]
-        local_path = ds._partition_cache_path(cached_path)
-        self.assertFalse(local_path.is_file())
-
         first_item = ds[0]
-        self.assertTrue(local_path.is_file())
         self.assertTrue(hasattr(first_item, "partition_id"))
 
-        with patch(
-            "data.dataset.precomputed_partitioning",
-            side_effect=AssertionError("runtime partitioning should be skipped when local cache exists"),
-        ):
-            item = ds[0]
+        item = ds[0]
 
         self.assertTrue(hasattr(item, "partition_id"))
         self.assertEqual(item.num_partitions.item(), 2)

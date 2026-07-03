@@ -25,7 +25,6 @@ class AIGDataModule(pl.LightningDataModule):
         partition: str | None = None,
         normalize_edges: bool = config.NORMALIZE_EDGES,
         cache_dir: str | Path | None = None,
-        partition_cache_dir: str | Path | None = None,
         split_ratios: tuple[float, float, float] = (0.8, 0.1, 0.1),
         seed: int = 42,
         batch_size: int = 32,
@@ -47,7 +46,6 @@ class AIGDataModule(pl.LightningDataModule):
         self.partition = partition
         self.normalize_edges = bool(normalize_edges)
         self.cache_dir = cache_dir
-        self.partition_cache_dir = partition_cache_dir
         self.split_ratios = split_ratios
         self.seed = seed
         self.batch_size = batch_size
@@ -114,7 +112,6 @@ class AIGDataModule(pl.LightningDataModule):
             normalize_edges=self.normalize_edges,
             split=split,
             cache_dir=self.cache_dir,
-            partition_cache_dir=self.partition_cache_dir,
             tier0_cache_dir=self.tier0_cache_dir,
             tier1_cache_dir=self.tier1_cache_dir,
             split_ratios=self.split_ratios,
@@ -160,18 +157,27 @@ class AIGDataModule(pl.LightningDataModule):
 
     def setup(self, stage: str | None = None) -> None:
         import time as _time
+
         if stage == "fit" and hasattr(self, "train_ds") and hasattr(self, "val_ds"):
-            print("[datamodule] setup() — datasets already loaded, skipping.", flush=True)
+            print(
+                "[datamodule] setup() — datasets already loaded, skipping.", flush=True
+            )
             return
         print(f"[datamodule] setup(stage={stage!r}) entered", flush=True)
         _t0 = _time.monotonic()
         if stage in ("fit", None):
             print("[datamodule] Creating train dataset ...", flush=True)
             self.train_ds = self._make_dataset("train", self.train_num_samples)
-            print(f"[datamodule] Train dataset ready ({_time.monotonic() - _t0:.1f}s)", flush=True)
+            print(
+                f"[datamodule] Train dataset ready ({_time.monotonic() - _t0:.1f}s)",
+                flush=True,
+            )
             print("[datamodule] Creating val dataset ...", flush=True)
             self.val_ds = self._make_dataset("val", self.train_num_samples)
-            print(f"[datamodule] Val dataset ready ({_time.monotonic() - _t0:.1f}s)", flush=True)
+            print(
+                f"[datamodule] Val dataset ready ({_time.monotonic() - _t0:.1f}s)",
+                flush=True,
+            )
             if self.dynamic_batching:
                 train_sizes = self.train_ds.get_num_nodes_list()
                 self._train_batch_plan: list[list[int]] = load_or_build_batch_plan(

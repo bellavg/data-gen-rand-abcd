@@ -22,7 +22,7 @@ set -euo pipefail
 
 export TEMP="$TMPDIR"
 export TMP="$TMPDIR"
-export AIG_PARTITION_CACHE_DIR="$TMPDIR/aig_partition_cache"
+
 
 echo "=========================================="
 echo "JOB ARRAY ID: $SLURM_ARRAY_JOB_ID, TASK ID: $SLURM_ARRAY_TASK_ID"
@@ -132,9 +132,12 @@ fi
 # Number of data-loader workers.  Override from env or default to 8.
 # Note: this is the value passed to Python's --num_workers, NOT SLURM_CPUS_PER_TASK.
 NUM_WORKERS="${NUM_WORKERS:-8}"
+PREFETCH_FACTOR="${PREFETCH_FACTOR:-4}"
 
 echo "Using NUM_WORKERS=$NUM_WORKERS for data loading."
+echo "Using PREFETCH_FACTOR=$PREFETCH_FACTOR."
 echo "Using PARTITION=$PARTITION partitioning."
+echo "Using in-memory application of precomputed partition masks."
 echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-<unset>}"
 nvidia-smi -L
 # =========================================================
@@ -153,9 +156,9 @@ srun python -u -m train \
     --tier0_cache_dir   "$TIER0_CACHE_DIR" \
     --tier1_cache_dir   "$TIER1_CACHE_DIR" \
     --hp_tuning_splits_path "$HP_TUNING_SPLITS" \
-    --prefetch_factor   4 \
+    --prefetch_factor   "$PREFETCH_FACTOR" \
     --num_workers       "$NUM_WORKERS" \
-    --patience          10
+    --patience          4
 
 echo "=========================================="
 echo "Task $SLURM_ARRAY_TASK_ID for $ALGORITHM complete."

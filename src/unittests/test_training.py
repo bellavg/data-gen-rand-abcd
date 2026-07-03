@@ -471,8 +471,6 @@ def test_main_does_not_materialize_node_local_partition_cache_before_fit(
         log_steps=1,
         seed=42,
     )
-    monkeypatch.setenv("TMPDIR", str(tmp_path / "tmpdir"))
-
     with (
         patch("train.AIGDataModule") as datamodule_cls,
         patch("train.AIGRegressionLightningModule"),
@@ -493,12 +491,7 @@ def test_main_does_not_materialize_node_local_partition_cache_before_fit(
 
         train.main(args)
 
-    assert datamodule_cls.call_args.kwargs["partition_cache_dir"] == str(
-        tmp_path / "tmpdir" / "aig_partition_cache"
-    )
     datamodule.setup.assert_called_once_with("fit")
-    train_ds.materialize_partition_cache.assert_not_called()
-    val_ds.materialize_partition_cache.assert_not_called()
     trainer_cls.return_value.fit.assert_called_once()
 
 
