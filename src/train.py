@@ -1,7 +1,6 @@
 import argparse
 import os
 import time
-from pathlib import Path
 
 import pytorch_lightning as pl
 import torch
@@ -21,18 +20,6 @@ from train_utils import PreciseEarlyStopping, TrainingStartupCallback
 torch.set_num_threads(1)
 
 ENCODER_KWARGS_DEFAULTS = config.ENCODER_KWARGS_DEFAULTS
-
-
-def _partition_cache_dir_from_env(partition: str | None) -> str | None:
-    if partition is None:
-        return None
-    partition_cache_dir = os.environ.get("AIG_PARTITION_CACHE_DIR")
-    if partition_cache_dir:
-        return partition_cache_dir
-    tmpdir = os.environ.get("TMPDIR")
-    if not tmpdir:
-        return None
-    return str(Path(tmpdir) / "aig_partition_cache")
 
 
 def _select_precision() -> str:
@@ -101,7 +88,6 @@ def main(args):
         persistent_workers=args.persistent_workers,
         prefetch_factor=args.prefetch_factor,
         cache_dir=args.cache_dir if args.cache_dir else None,
-        partition_cache_dir=_partition_cache_dir_from_env(args.partition),
         hp_tuning_splits_path=args.hp_tuning_splits_path,
         tier0_cache_dir=args.tier0_cache_dir,
         tier1_cache_dir=args.tier1_cache_dir,
