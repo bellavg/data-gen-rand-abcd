@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytorch_lightning as pl
 import torch
 from torch_geometric.data import Batch, Data
 from torch_geometric.loader import DataLoader
+from torch_geometric.nn import global_mean_pool as pyg_global_mean_pool
 
 # Import your models and layers
 from models.base_model import UnifiedGraphBaseModel
@@ -71,6 +72,7 @@ class TestUnifiedGraphBaseModel(unittest.TestCase):
             batch=batch.batch,
             edge_attr=data.edge_attr,
             pos_enc=None,
+            num_graphs=1,
         )
         self.assertEqual(out.shape, (1, OUT_DIM))
 
@@ -100,6 +102,7 @@ class TestUnifiedGraphBaseModel(unittest.TestCase):
             batch=batch.batch,
             edge_attr=data.edge_attr,
             pos_enc=data.pos_enc,
+            num_graphs=1,
         )
         self.assertEqual(out.shape, (1, OUT_DIM))
 
@@ -128,6 +131,7 @@ class TestUnifiedGraphBaseModel(unittest.TestCase):
             batch=batch.batch,
             edge_attr=data.edge_attr,
             pos_enc=data.pos_enc,
+            num_graphs=1,
         )
         self.assertEqual(out.shape, (1, OUT_DIM))
 
@@ -280,6 +284,7 @@ class TestPositionalEncodingCompatibility(unittest.TestCase):
             batch=batch.batch,
             edge_attr=getattr(batch, "edge_attr", None),
             pos_enc=getattr(batch, "pos_enc", None),
+            num_graphs=int(batch.num_graphs),
         )
 
         self.assertTrue(
@@ -309,6 +314,33 @@ class TestPositionalEncodingCompatibility(unittest.TestCase):
         lm.trainer = MagicMock()
         loss = lm.training_step(batch, 0)
         self.assertIsInstance(loss, torch.Tensor)
+
+    def test_lightning_mean_pool_receives_explicit_size(self):
+        data = _make_aig_data(seed=7)
+        batch = Batch.from_data_list([data, data])
+
+        lm = AIGRegressionLightningModule(
+            encoder_name="gcn",
+            hidden_dim=HIDDEN_DIM,
+            encoder_kwargs={"num_layers": 2, "hid_dim": HIDDEN_DIM},
+            node_input_dim=IN_DIM,
+            edge_attr_dim=EDGE_DIM,
+            task_out_dim=OUT_DIM,
+            pooling_type="mean",
+            compile_model=False,
+        )
+        lm.trainer = MagicMock()
+
+        with patch(
+            "models.base_model.global_mean_pool",
+            wraps=pyg_global_mean_pool,
+        ) as mocked_mean_pool:
+            loss = lm.training_step(batch, 0)
+
+        self.assertIsInstance(loss, torch.Tensor)
+        self.assertGreater(mocked_mean_pool.call_count, 0)
+        for call in mocked_mean_pool.call_args_list:
+            self.assertEqual(call.kwargs.get("size"), int(batch.num_graphs))
 
 
 class TestEncoderKwargsPropagation(unittest.TestCase):

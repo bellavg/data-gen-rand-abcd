@@ -26,7 +26,13 @@ import torch
 import torch.nn as nn
 from torchmetrics import MeanSquaredError, R2Score
 
-from config import MIN_LR, SCHEDULER_FACTOR, SCHEDULER_PATIENCE, WARMUP_START_LR, WARMUP_STEPS
+from config import (
+    MIN_LR,
+    SCHEDULER_FACTOR,
+    SCHEDULER_PATIENCE,
+    WARMUP_START_LR,
+    WARMUP_STEPS,
+)
 from constants import EDGE_ATTR_DIM, NODE_INPUT_DIM, TASK_OUT_DIM
 from models.base_model import UnifiedGraphBaseModel
 
@@ -87,6 +93,7 @@ class AIGRegressionLightningModule(pl.LightningModule):
         warmup_start_lr: float = WARMUP_START_LR,
         scheduler_patience: int = SCHEDULER_PATIENCE,
         scheduler_factor: float = SCHEDULER_FACTOR,
+        compile_model: bool = True,
         loss_fn: nn.Module | None = None,
     ) -> None:
         super().__init__()
@@ -98,20 +105,22 @@ class AIGRegressionLightningModule(pl.LightningModule):
         # ------------------------------------------------------------------ #
         # Core model                                                           #
         # ------------------------------------------------------------------ #
-        self.model = torch.compile(
-            UnifiedGraphBaseModel(
-                encoder_name=self.hparams.encoder_name,
-                hidden_dim=self.hparams.hidden_dim,
-                node_input_dim=self.hparams.node_input_dim,
-                edge_attr_dim=self.hparams.edge_attr_dim,
-                task_out_dim=self.hparams.task_out_dim,
-                pe_type=self.hparams.pe_type,
-                pos_enc_dim=self.hparams.pos_enc_dim,
-                pooling_type=self.hparams.pooling_type,
-                head_dropout=self.hparams.head_dropout,
-                encoder_kwargs=self.hparams.encoder_kwargs,
-            ),
-            dynamic=True,
+        base_model = UnifiedGraphBaseModel(
+            encoder_name=self.hparams.encoder_name,
+            hidden_dim=self.hparams.hidden_dim,
+            node_input_dim=self.hparams.node_input_dim,
+            edge_attr_dim=self.hparams.edge_attr_dim,
+            task_out_dim=self.hparams.task_out_dim,
+            pe_type=self.hparams.pe_type,
+            pos_enc_dim=self.hparams.pos_enc_dim,
+            pooling_type=self.hparams.pooling_type,
+            head_dropout=self.hparams.head_dropout,
+            encoder_kwargs=self.hparams.encoder_kwargs,
+        )
+        self.model = (
+            torch.compile(base_model, dynamic=True)
+            if bool(self.hparams.compile_model)
+            else base_model
         )
 
         # ------------------------------------------------------------------ #
@@ -192,6 +201,7 @@ class AIGRegressionLightningModule(pl.LightningModule):
         # Collate if batch is a list or tuple of Data objects
         if isinstance(batch, (list, tuple)):
             from torch_geometric.data import Batch
+
             batch = Batch.from_data_list(batch)
 
         preds: torch.Tensor = self.forward(batch).squeeze(-1)

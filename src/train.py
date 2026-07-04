@@ -139,6 +139,7 @@ def main(args):
         warmup_start_lr=args.warmup_start_lr,
         scheduler_patience=args.scheduler_patience,
         scheduler_factor=args.scheduler_factor,
+        compile_model=args.torch_compile,
         loss_fn=nn.SmoothL1Loss(beta=0.01),
     )
 
@@ -282,8 +283,8 @@ if __name__ == "__main__":
         default=0,
         help="Lightning sanity-validation batches before training. Default 0 for final-train startup.",
     )
-    parser.add_argument("--num_workers", type=int, default=4)
-    parser.add_argument("--prefetch_factor", type=int, default=8)
+    parser.add_argument("--num_workers", type=int, default=config.NUM_WORKERS)
+    parser.add_argument("--prefetch_factor", type=int, default=config.PREFETCH_FACTOR)
     parser.add_argument(
         "--pin_memory",
         type=lambda x: str(x).lower() in ("true", "1", "yes"),
@@ -293,6 +294,11 @@ if __name__ == "__main__":
         "--persistent_workers",
         type=lambda x: str(x).lower() in ("true", "1", "yes"),
         default=config.PERSISTENT_WORKERS,
+    )
+    parser.add_argument(
+        "--torch_compile",
+        type=lambda x: str(x).lower() in ("true", "1", "yes"),
+        default=config.TORCH_COMPILE,
     )
     parser.add_argument("--log_steps", type=int, default=config.LOG_EVERY_N_STEPS)
     parser.add_argument(
