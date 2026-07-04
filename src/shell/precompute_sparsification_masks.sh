@@ -40,7 +40,7 @@ VENV_PATH="${VENV_PATH:-/scratch-shared/$USER/.venv}"
 source "$VENV_PATH/bin/activate"
 
 # BASE_DIR matches the repo root, just like in training
-BASE_DIR="${BASE_DIR:-$HOME/data-gen-rand-abcd}"
+BASE_DIR="${BASE_DIR:-$HOME/data-gen-sparsification}"
 unset PYTHONPATH
 unset PYTHONHOME
 export PYTHONNOUSERSITE=1
