@@ -62,7 +62,7 @@ echo "Processing manifests in $MANIFEST_DIR"
 echo "=========================================="
 
 # Call the updated python script with --manifest-dirs
-time python -u -m data.sparsification "$SPARSIFICATION_ALGO" \
+time python -W ignore -u -m data.sparsification "$SPARSIFICATION_ALGO" \
     --manifest-dirs "$MANIFEST_DIR" \
     --replace-path "/scratch-shared/$USER/aig_train_run" "/scratch-shared/$USER/aig_mask_cache"
 
