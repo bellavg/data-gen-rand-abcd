@@ -299,6 +299,7 @@ def update_from_manifests(
     keep_ratio: float = 0.8,
     alpha: float = 0.85,
     seed: int = 42,
+    replace_path: tuple[str, str] | None = None,
 ) -> None:
     """
     Computes sparsification masks based on JSON manifests rather than scanning dirs.
@@ -343,6 +344,8 @@ def update_from_manifests(
                 seen_cache_paths.add(abs_cache_path)
                 
                 out_dir_str = str(c_path.parent)
+                if replace_path is not None:
+                    out_dir_str = out_dir_str.replace(replace_path[0], replace_path[1])
                 tasks.append((g_path, out_dir_str, c_path.name))
                 out_dir_cache_keys[out_dir_str].add(c_path.name)
 
@@ -560,6 +563,11 @@ if __name__ == "__main__":
         required=False,
         help="Corresponding directories to save the index files (only valid with --dirs).",
     )
+    parser.add_argument(
+        "--replace-path",
+        nargs=2,
+        help="Redirect output paths by replacing a prefix string with a new one.",
+    )
     args = parser.parse_args()
 
     algo_names = ["random_edge_dropout", "spanner", "pagerank", "and_gate_only"] if args.algorithm == "all" else [args.algorithm]
@@ -578,6 +586,7 @@ if __name__ == "__main__":
             keep_ratio=_keep_ratio,
             alpha=_alpha,
             seed=_seed,
+            replace_path=args.replace_path,
         )
     else:
         update_existing_cache_with_masks(
