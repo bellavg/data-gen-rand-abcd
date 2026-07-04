@@ -129,13 +129,19 @@ fi
 # =========================================================
 # 4. Runtime settings
 # =========================================================
-# Number of data-loader workers.  Override from env or default to 8.
+# Number of data-loader workers.  Override from env or default to 12.
 # Note: this is the value passed to Python's --num_workers, NOT SLURM_CPUS_PER_TASK.
-NUM_WORKERS="${NUM_WORKERS:-8}"
+NUM_WORKERS="${NUM_WORKERS:-12}"
 PREFETCH_FACTOR="${PREFETCH_FACTOR:-4}"
+PIN_MEMORY="${PIN_MEMORY:-true}"
+PERSISTENT_WORKERS="${PERSISTENT_WORKERS:-true}"
+TORCH_COMPILE="${TORCH_COMPILE:-true}"
 
 echo "Using NUM_WORKERS=$NUM_WORKERS for data loading."
 echo "Using PREFETCH_FACTOR=$PREFETCH_FACTOR."
+echo "Using PIN_MEMORY=$PIN_MEMORY."
+echo "Using PERSISTENT_WORKERS=$PERSISTENT_WORKERS."
+echo "Using TORCH_COMPILE=$TORCH_COMPILE."
 echo "Using PARTITION=$PARTITION partitioning."
 echo "Using in-memory application of precomputed partition masks."
 echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-<unset>}"
@@ -158,6 +164,9 @@ srun python -u -m train \
     --hp_tuning_splits_path "$HP_TUNING_SPLITS" \
     --prefetch_factor   "$PREFETCH_FACTOR" \
     --num_workers       "$NUM_WORKERS" \
+    --pin_memory        "$PIN_MEMORY" \
+    --persistent_workers "$PERSISTENT_WORKERS" \
+    --torch_compile     "$TORCH_COMPILE" \
     --patience          4
 
 echo "=========================================="
