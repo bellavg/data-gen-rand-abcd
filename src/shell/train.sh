@@ -6,7 +6,8 @@
 #SBATCH --partition=gpu_h100
 #SBATCH --gpus=1
 #SBATCH --constraint=scratch-node
-#SBATCH --output=logs/train_%J.out
+#SBATCH --array=0-3
+#SBATCH --output=logs/train_sparsification_%A_%a.out    # %A is the array master job ID, %a is the task index
 #
 # Recommended: pre-warm the dataset cache on a CPU node before submitting this
 # job so the GPU is not idle during graph loading.  Chain with warmup_cache.sh:
@@ -23,7 +24,7 @@ export TEMP="$TMPDIR"
 export TMP="$TMPDIR"
 
 echo "=========================================="
-echo "JOB ID: $SLURM_JOB_ID"
+echo "JOB ARRAY ID: $SLURM_ARRAY_JOB_ID, TASK ID: $SLURM_ARRAY_TASK_ID"
 echo "Running on: $(hostname)"
 echo "Start time: $(date)"
 echo "=========================================="
@@ -59,6 +60,14 @@ unset PYTHONHOME
 export PYTHONNOUSERSITE=1
 export PYTHONPATH="$BASE_DIR/src"
 export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
+export AIG_REQUIRE_GPU=1
+
+# Cap WandB API handshake so it doesn't hang indefinitely on HPC nodes.
+export WANDB_INIT_TIMEOUT=120
+
+# Prevent worker-thread thrashing in data-loader subprocesses.
+export OMP_NUM_THREADS=1
+export MKL_NUM_THREADS=1
 
 cd "$BASE_DIR"
 
@@ -70,9 +79,16 @@ cd "$BASE_DIR"
 # Hardcode algorithm to Orchestrate
 ALGORITHM="Orchestrate"
 
+# Define our 5 sparsification methods
+SPARSIFICATIONS=("and_gate_only" "random_edge_dropout" "spanner" "pagerank")
+
+# Select the sparsification method for this specific array task
+SPARSIFICATION_ALGO=${SPARSIFICATIONS[$SLURM_ARRAY_TASK_ID]}
+
 # Set the CSV path dynamically based on the chosen algorithm
 CSV_PATH="$BASE_DIR/data/designs/design_metadata/algo_${ALGORITHM}_ml.csv"
 
+echo "Task $SLURM_ARRAY_TASK_ID assigned to SPARSIFICATION_ALGO: $SPARSIFICATION_ALGO"
 echo "Using ALGORITHM: $ALGORITHM"
 echo "Using CSV dataset: $CSV_PATH"
 
@@ -113,9 +129,20 @@ fi
 # 4. Runtime settings
 # =========================================================
 # Number of data-loader workers (default: SLURM_CPUS_PER_TASK or 16)
-NUM_WORKERS="${NUM_WORKERS:-${SLURM_CPUS_PER_TASK:-16}}"
+NUM_WORKERS="${NUM_WORKERS:-12}"
+PREFETCH_FACTOR="${PREFETCH_FACTOR:-4}"
+PIN_MEMORY="${PIN_MEMORY:-true}"
+PERSISTENT_WORKERS="${PERSISTENT_WORKERS:-true}"
+TORCH_COMPILE="${TORCH_COMPILE:-true}"
 
 echo "Using NUM_WORKERS=$NUM_WORKERS for data loading."
+echo "Using PREFETCH_FACTOR=$PREFETCH_FACTOR."
+echo "Using PIN_MEMORY=$PIN_MEMORY."
+echo "Using PERSISTENT_WORKERS=$PERSISTENT_WORKERS."
+echo "Using TORCH_COMPILE=$TORCH_COMPILE."
+echo "Using SPARSIFICATION_ALGO=$SPARSIFICATION_ALGO."
+echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-<unset>}"
+nvidia-smi -L
 # =========================================================
 # 5. EXECUTE TRAINING
 # =========================================================
@@ -124,6 +151,7 @@ echo "Starting Final Training for $ALGORITHM on GPU 0..."
 
 srun python -u -m train \
     --algorithm         "$ALGORITHM" \
+    --sparsification    "$SPARSIFICATION_ALGO" \
     --csv_paths         "$CSV_PATH" \
     --checkpoint_dir    "$CHECKPOINT_DIR" \
     --log_dir           "$LOG_DIR" \
@@ -131,10 +159,12 @@ srun python -u -m train \
     --tier0_cache_dir   "$TIER0_CACHE_DIR" \
     --tier1_cache_dir   "$TIER1_CACHE_DIR" \
     --hp_tuning_splits_path "$HP_TUNING_SPLITS" \
-    --prefetch_factor   4 \
-    --num_workers       8 \
-    --patience          10
+    --prefetch_factor   "$PREFETCH_FACTOR" \
+    --num_workers       "$NUM_WORKERS" \
+    --pin_memory        "$PIN_MEMORY" \
+    --persistent_workers "$PERSISTENT_WORKERS" \
+    --patience          4
 
 echo "=========================================="
-echo "Training for $ALGORITHM complete."
+echo "Task $SLURM_ARRAY_TASK_ID Training for $ALGORITHM ($SPARSIFICATION_ALGO) complete."
 echo "End time: $(date)"

@@ -55,12 +55,9 @@ def main(args):
             f"Algorithm '{args.algorithm}' must be one of {config.VALID_ALGORITHMS}"
         )
 
-    # Set seed for reproducibility
-    pl.seed_everything(args.seed)
-
-    print(f"--- Starting Final Training for Algorithm: {args.algorithm} ---")
-
-    # 2. Setup DataModule
+    # 2. Setup DataModule & load datasets EARLY (CPU work — no GPU needed)
+    #    This runs before WandB/Trainer so that slow network calls or
+    #    Lightning overhead don't burn GPU wall-clock time.
     datamodule = AIGDataModule(
         csv_paths=args.csv_paths,
         positional_encoding=args.pe_type if args.pe_type != "none" else None,
@@ -78,6 +75,21 @@ def main(args):
         dynamic_batching=getattr(args, "dynamic_batching", False),
         max_total_nodes=args.max_total_nodes_per_batch,
     )
+
+    print("[main] Loading datasets before Trainer/WandB init ...", flush=True)
+    ds_start = time.monotonic()
+    datamodule.setup("fit")
+    print(
+        f"[main] Datasets loaded in {time.monotonic() - ds_start:.1f}s",
+        flush=True,
+    )
+
+    # Seed torch RNG for reproducible weight init, dropout, and DataLoader
+    # shuffle.  Lighter than pl.seed_everything (which also seeds numpy,
+    # stdlib random, and prints to stdout).
+    torch.manual_seed(args.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(args.seed)
 
     # 3. Configure Encoder Kwargs
     encoder_kwargs = ENCODER_KWARGS_DEFAULTS.copy()
@@ -135,14 +147,19 @@ def main(args):
     )
 
     # Use WandbLogger
+    # WandB — init AFTER datasets are loaded so network delays don't waste
+    # GPU allocation time.  WANDB_INIT_TIMEOUT caps the API handshake.
     log_dir = f"{args.log_dir}_{sparsification_name}"
     os.makedirs(log_dir, exist_ok=True)
+    print("[main] Initialising WandB logger ...", flush=True)
+    wandb_start = time.monotonic()
     logger = WandbLogger(
         project="AIG-SUMMARIZE",
         entity="isabella-v-gardner-university-of-amsterdam",
-        name=f"train_{args.algorithm}_{sparsification_name}",
+        name=f"train_{args.algorithm}_sparsification_{sparsification_name}",
         save_dir=log_dir,
     )
+    print(f"[main] WandB ready in {time.monotonic() - wandb_start:.1f}s", flush=True)
 
     # 6. Initialize Trainer with Improvements
     callbacks = [

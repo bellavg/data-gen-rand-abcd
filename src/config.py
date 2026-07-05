@@ -13,9 +13,12 @@ HEAD_DROPOUT = 0.3
 POS_ENC_DIM = 32
 NORM_TYPE = "layer"
 DYNAMIC_BATCHING = True
-MAX_TOTAL_NODES_PER_BATCH = 2_000_000
+MAX_TOTAL_NODES_PER_BATCH = 3_000_000
 PIN_MEMORY = True
 PERSISTENT_WORKERS = True
+NUM_WORKERS = 12
+PREFETCH_FACTOR = 4
+TORCH_COMPILE = True
 MIN_LR = 1e-6
 PATIENCE = 3
 
@@ -42,6 +45,13 @@ SPARSIFICATION_SPANNER_STRETCH = 3.0      # stretch factor for the spanner algor
 SPARSIFICATION_PAGERANK_KEEP_RATIO = 0.8  # fraction of nodes to keep (0.0 to 1.0)
 SPARSIFICATION_PAGERANK_ALPHA = 0.85      # damping factor for PageRank
 SPARSIFICATION_SEED = 42
+
+import os
+_user = os.environ.get("USER", "")
+SPARSIFICATION_REPLACE_PATH = (
+    f"/scratch-shared/{_user}/aig_train_run", 
+    f"/scratch-shared/{_user}/aig_mask_cache"
+)
 
 # VALID_ALGORITHMS = {"Orchestrate", "Deepsyn", "Syn4", "C2RS"}
 VALID_ALGORITHMS = {"Orchestrate"}

@@ -109,6 +109,7 @@ class AIGDataModule(pl.LightningDataModule):
             self.csv_paths,
             positional_encoding=self.positional_encoding,
             sparsification=self.sparsification,
+            sparsification_replace_path=getattr(config, "SPARSIFICATION_REPLACE_PATH", None),
             normalize_edges=self.normalize_edges,
             split=split,
             cache_dir=self.cache_dir,
@@ -156,9 +157,28 @@ class AIGDataModule(pl.LightningDataModule):
         )
 
     def setup(self, stage: str | None = None) -> None:
+        import time as _time
+
+        if stage == "fit" and hasattr(self, "train_ds") and hasattr(self, "val_ds"):
+            print(
+                "[datamodule] setup() — datasets already loaded, skipping.", flush=True
+            )
+            return
+        print(f"[datamodule] setup(stage={stage!r}) entered", flush=True)
+        _t0 = _time.monotonic()
         if stage in ("fit", None):
+            print("[datamodule] Creating train dataset ...", flush=True)
             self.train_ds = self._make_dataset("train", self.train_num_samples)
+            print(
+                f"[datamodule] Train dataset ready ({_time.monotonic() - _t0:.1f}s)",
+                flush=True,
+            )
+            print("[datamodule] Creating val dataset ...", flush=True)
             self.val_ds = self._make_dataset("val", self.train_num_samples)
+            print(
+                f"[datamodule] Val dataset ready ({_time.monotonic() - _t0:.1f}s)",
+                flush=True,
+            )
             if self.dynamic_batching:
                 train_sizes = self.train_ds.get_num_nodes_list()
                 self._train_batch_plan: list[list[int]] = load_or_build_batch_plan(
