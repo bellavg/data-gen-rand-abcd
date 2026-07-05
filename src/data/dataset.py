@@ -120,6 +120,7 @@ class AIGGraphRegressionDataset(PyGDataset):
         *,
         positional_encoding: str | None = None,
         sparsification: str | None = None,
+        sparsification_replace_path: tuple[str, str] | None = None,
         normalize_edges: bool = False,
         split: str | None = None,
         cache_dir: str | Path | None = None,
@@ -138,6 +139,7 @@ class AIGGraphRegressionDataset(PyGDataset):
 
         self.positional_encoding = positional_encoding
         self.sparsification = sparsification
+        self.sparsification_replace_path = sparsification_replace_path
         self.normalize_edges = bool(normalize_edges)
         self.split = split
         self.cache_dir = Path(cache_dir) if cache_dir is not None else None
@@ -687,6 +689,18 @@ class AIGGraphRegressionDataset(PyGDataset):
     def get(self, idx: int) -> _PyGData:
         sample = self.samples[idx]
         data_obj = self._load_graph_for_sample(sample)
+        
+        if self.sparsification is not None:
+            cached_path = self._graph_cache_path_map.get(sample.graph_path)
+            sparse_cache_path = cached_path
+            if sparse_cache_path is not None and self.sparsification_replace_path is not None:
+                old_p, new_p = self.sparsification_replace_path
+                sparse_cache_path = Path(str(sparse_cache_path).replace(old_p, new_p))
+            
+            data_obj = precomputed_sparsification(
+                data_obj, self.sparsification, cache_path=sparse_cache_path
+            )
+
         if not self.normalize_edges and hasattr(data_obj, "edge_weight"):
             # Keep edge_weight in cache files, but drop it from runtime samples
             # to avoid unnecessary batching/device transfer when disabled.
@@ -701,18 +715,10 @@ class AIGGraphRegressionDataset(PyGDataset):
                     delattr(data_obj, _attr)
         data_obj.y = torch.tensor([[sample.y_node_opt]], dtype=torch.float32)
 
-        # --- SPARSIFICATION HANDLING SYSTEM ---
-        if self.sparsification is not None:
-            # Resolve the cache path so precomputed_sparsification can look up
-            # the per-directory mask index file (_sparse_{algo}*.pt) when the
-            # mask is not embedded directly in the graph .pt object.
-            graph_path = sample.graph_path
-            _cached_path: Path | None = self._graph_cache_path_map.get(graph_path)
-            # precomputed_sparsification checks embedded attributes first
-            # (backward compat), then falls back to the index file.
-            data_obj = precomputed_sparsification(
-                data_obj, self.sparsification, cache_path=_cached_path
-            )
+        # Clean up embedded masks from older cache versions just in case.
+        for key in list(data_obj.keys()):
+            if key.endswith("_dynamic_mask") or key.endswith("_dynamic_num_partitions"):
+                delattr(data_obj, key)
 
         return data_obj
 
