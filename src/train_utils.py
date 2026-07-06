@@ -46,7 +46,7 @@ class TrainingStartupCallback(pl.Callback):
         self._batch_compute_reports_emitted = 0
 
     def _should_report_batch(self, batch_idx: int) -> bool:
-        return batch_idx == 0 or ((batch_idx + 1) % self._report_every_n_steps == 0)
+        return batch_idx < 5 or ((batch_idx + 1) % self._report_every_n_steps == 0)
 
     def _can_emit_batch_compute_report(self) -> bool:
         return self._batch_compute_reports_emitted < self._max_batch_compute_reports

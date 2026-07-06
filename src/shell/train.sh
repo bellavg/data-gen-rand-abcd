@@ -133,7 +133,7 @@ NUM_WORKERS="${NUM_WORKERS:-12}"
 PREFETCH_FACTOR="${PREFETCH_FACTOR:-4}"
 PIN_MEMORY="${PIN_MEMORY:-true}"
 PERSISTENT_WORKERS="${PERSISTENT_WORKERS:-true}"
-TORCH_COMPILE="${TORCH_COMPILE:-true}"
+TORCH_COMPILE="${TORCH_COMPILE:-false}"
 
 echo "Using NUM_WORKERS=$NUM_WORKERS for data loading."
 echo "Using PREFETCH_FACTOR=$PREFETCH_FACTOR."
@@ -163,6 +163,7 @@ srun python -u -m train \
     --num_workers       "$NUM_WORKERS" \
     --pin_memory        "$PIN_MEMORY" \
     --persistent_workers "$PERSISTENT_WORKERS" \
+    --torch_compile     "$TORCH_COMPILE" \
     --patience          4
 
 echo "=========================================="

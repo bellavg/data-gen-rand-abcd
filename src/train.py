@@ -120,6 +120,7 @@ def main(args):
         warmup_start_lr=args.warmup_start_lr,
         scheduler_patience=args.scheduler_patience,
         scheduler_factor=args.scheduler_factor,
+        compile_model=args.torch_compile,
         loss_fn=nn.SmoothL1Loss(beta=0.01),
     )
 
@@ -276,6 +277,11 @@ if __name__ == "__main__":
         "--persistent_workers",
         type=lambda x: str(x).lower() in ("true", "1", "yes"),
         default=config.PERSISTENT_WORKERS,
+    )
+    parser.add_argument(
+        "--torch_compile",
+        type=lambda x: str(x).lower() in ("true", "1", "yes"),
+        default=config.TORCH_COMPILE,
     )
     parser.add_argument("--log_steps", type=int, default=config.LOG_EVERY_N_STEPS)
     parser.add_argument(

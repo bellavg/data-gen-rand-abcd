@@ -87,6 +87,7 @@ class AIGRegressionLightningModule(pl.LightningModule):
         warmup_start_lr: float = WARMUP_START_LR,
         scheduler_patience: int = SCHEDULER_PATIENCE,
         scheduler_factor: float = SCHEDULER_FACTOR,
+        compile_model: bool = True,
         loss_fn: nn.Module | None = None,
     ) -> None:
         super().__init__()
@@ -98,20 +99,22 @@ class AIGRegressionLightningModule(pl.LightningModule):
         # ------------------------------------------------------------------ #
         # Core model                                                           #
         # ------------------------------------------------------------------ #
-        self.model = torch.compile(
-            UnifiedGraphBaseModel(
-                encoder_name=self.hparams.encoder_name,
-                hidden_dim=self.hparams.hidden_dim,
-                node_input_dim=self.hparams.node_input_dim,
-                edge_attr_dim=self.hparams.edge_attr_dim,
-                task_out_dim=self.hparams.task_out_dim,
-                pe_type=self.hparams.pe_type,
-                pos_enc_dim=self.hparams.pos_enc_dim,
-                pooling_type=self.hparams.pooling_type,
-                head_dropout=self.hparams.head_dropout,
-                encoder_kwargs=self.hparams.encoder_kwargs,
-            ),
-            dynamic=True,
+        base_model = UnifiedGraphBaseModel(
+            encoder_name=self.hparams.encoder_name,
+            hidden_dim=self.hparams.hidden_dim,
+            node_input_dim=self.hparams.node_input_dim,
+            edge_attr_dim=self.hparams.edge_attr_dim,
+            task_out_dim=self.hparams.task_out_dim,
+            pe_type=self.hparams.pe_type,
+            pos_enc_dim=self.hparams.pos_enc_dim,
+            pooling_type=self.hparams.pooling_type,
+            head_dropout=self.hparams.head_dropout,
+            encoder_kwargs=self.hparams.encoder_kwargs,
+        )
+        self.model = (
+            torch.compile(base_model, dynamic=True)
+            if bool(self.hparams.compile_model)
+            else base_model
         )
 
         # ------------------------------------------------------------------ #
