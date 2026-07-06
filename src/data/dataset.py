@@ -411,9 +411,82 @@ class AIGGraphRegressionDataset(PyGDataset):
         return selected_samples
 
     def _build_samples(self) -> list[GraphSample]:
+        import time as _time
+
+        t0 = _time.monotonic()
         samples = self._read_candidate_samples()
+        t1 = _time.monotonic()
+        print(
+            f"[dataset] Read {len(samples)} candidate samples from CSV in {t1 - t0:.1f}s",
+            flush=True,
+        )
+
         samples = self._apply_split(samples)
-        return [s for s in samples if Path(s.graph_path).is_file()]
+        t2 = _time.monotonic()
+        print(
+            f"[dataset] After split/filter: {len(samples)} samples in {t2 - t1:.1f}s "
+            f"(split={self.split!r})",
+            flush=True,
+        )
+
+        # ------------------------------------------------------------------
+        # Fast path: use existing manifest to filter valid samples via a
+        # set lookup instead of per-file stat() calls.
+        # ------------------------------------------------------------------
+        if self._manifest_path is not None and self._manifest_path.is_file():
+            try:
+                with open(self._manifest_path, encoding="utf-8") as fh:
+                    manifest = json.load(fh)
+                if isinstance(manifest, dict) and isinstance(manifest.get("entries"), list):
+                    valid_paths = {str(e.get("graph_path", "")) for e in manifest["entries"]}
+
+                    result = []
+                    unknown_samples = []
+                    for s in samples:
+                        if s.graph_path in valid_paths:
+                            result.append(s)
+                        else:
+                            unknown_samples.append(s)
+
+                    if unknown_samples:
+                        print(
+                            f"[dataset] Manifest was stale. Checking {len(unknown_samples)} new "
+                            f"CSV entries via is_file() threadpool...",
+                            flush=True,
+                        )
+                        with ThreadPoolExecutor(max_workers=32) as executor:
+                            is_file_mask = list(executor.map(os.path.isfile, (s.graph_path for s in unknown_samples)))
+                            result.extend([s for s, valid in zip(unknown_samples, is_file_mask, strict=False) if valid])
+
+                    print(
+                        f"[dataset] Manifest fast-path: {len(result)} samples "
+                        f"matched in {_time.monotonic() - t2:.1f}s",
+                        flush=True,
+                    )
+                    return result
+            except (json.JSONDecodeError, OSError) as exc:
+                print(
+                    f"[dataset] WARNING: could not read manifest, "
+                    f"falling back to ThreadPool is_file(): {exc}",
+                    flush=True,
+                )
+
+        print(
+            f"[dataset] No manifest found — checking file existence for "
+            f"{len(samples)} graph paths (using ThreadPool) ...",
+            flush=True,
+        )
+        valid_samples = []
+        with ThreadPoolExecutor(max_workers=32) as executor:
+            is_file_mask = list(executor.map(os.path.isfile, (s.graph_path for s in samples)))
+            valid_samples = [s for s, valid in zip(samples, is_file_mask, strict=False) if valid]
+            
+        print(
+            f"[dataset] File check done: {len(valid_samples)} valid, "
+            f"{len(samples) - len(valid_samples)} missing, took {_time.monotonic() - t2:.1f}s",
+            flush=True,
+        )
+        return valid_samples
 
     def _stable_graph_cache_name(self, graph_path: str) -> str:
         source = Path(graph_path)
