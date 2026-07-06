@@ -1,11 +1,10 @@
 import torch
-from torch_geometric.data import Data
-from src.data.sparsification import and_gate_only_sparsification as orig
+from torch_geometric.data import Data, Batch
 
-def and_gate_only_sparsification_vec(data_obj) -> Data:
-    x = data_obj.x
-    edge_index = data_obj.edge_index
-    edge_attr = data_obj.edge_attr
+def and_gate_only_sparsification_vec(batch: Batch) -> Batch:
+    x = batch.x
+    edge_index = batch.edge_index
+    edge_attr = batch.edge_attr
     device = x.device
 
     is_pi = x[:, 1] == 1.0
@@ -74,51 +73,32 @@ def and_gate_only_sparsification_vec(data_obj) -> Data:
         new_edge_index = torch.empty((2, 0), dtype=torch.long, device=device)
         new_edge_attr = torch.empty((0, edge_attr.size(1)), dtype=edge_attr.dtype, device=device)
 
-    out = Data(x=new_x, edge_index=new_edge_index, edge_attr=new_edge_attr)
-    out.num_nodes = len(kept)
-    out.num_edges = new_edge_index.size(1)
-
-    for key in data_obj.keys():
-        if key in ("x", "edge_index", "edge_attr", "num_nodes", "num_edges", "edge_weight"):
+    # We must properly rebuild the batch structures!
+    # PyG Batch relies on batch.batch to map nodes to graphs
+    if hasattr(batch, 'batch') and batch.batch is not None:
+        new_batch_idx = batch.batch[kept]
+    else:
+        new_batch_idx = None
+        
+    out = Batch(x=new_x, edge_index=new_edge_index, edge_attr=new_edge_attr, batch=new_batch_idx)
+    
+    # We also need to recalculate ptr if it exists
+    if hasattr(batch, 'ptr') and batch.ptr is not None:
+        # ptr is the cumulative sum of nodes per graph
+        # We can recompute it from new_batch_idx using torch.bincount
+        if new_batch_idx is not None:
+            counts = torch.bincount(new_batch_idx, minlength=batch.num_graphs)
+            out.ptr = torch.cat([torch.tensor([0], device=device), counts.cumsum(0)])
+    
+    # Copy other attributes correctly
+    n_orig = x.size(0)
+    for key in batch.keys():
+        if key in ("x", "edge_index", "edge_attr", "num_nodes", "num_edges", "batch", "ptr"):
             continue
-        val = data_obj[key]
-        if isinstance(val, torch.Tensor) and val.dim() > 0 and val.size(0) == n:
+        val = batch[key]
+        if isinstance(val, torch.Tensor) and val.dim() > 0 and val.size(0) == n_orig:
             setattr(out, key, val[kept])
         else:
             setattr(out, key, val)
 
     return out
-
-import time
-# mock graph
-x = torch.zeros((10000, 5))
-# make some PI and PO
-x[0:1000, 1] = 1.0 # PI
-x[9000:10000, 3] = 1.0 # PO
-
-# edges
-# 20k edges PI->kept
-src1 = torch.randint(0, 1000, (20000,))
-dst1 = torch.randint(1000, 9000, (20000,))
-# 20k edges kept->PO
-src2 = torch.randint(1000, 9000, (20000,))
-dst2 = torch.randint(9000, 10000, (20000,))
-# 50k edges kept->kept
-src3 = torch.randint(1000, 9000, (50000,))
-dst3 = torch.randint(1000, 9000, (50000,))
-
-edge_index = torch.cat([torch.stack([src1, dst1]), torch.stack([src2, dst2]), torch.stack([src3, dst3])], dim=1)
-edge_attr = torch.randn((90000, 4))
-data = Data(x=x, edge_index=edge_index, edge_attr=edge_attr)
-
-t0 = time.time()
-out_orig = orig(data)
-t1 = time.time()
-out_vec = and_gate_only_sparsification_vec(data)
-t2 = time.time()
-
-print(f"Orig: {t1-t0:.4f}s")
-print(f"Vec:  {t2-t1:.4f}s")
-
-print(out_orig.num_nodes, out_vec.num_nodes)
-print(out_orig.num_edges, out_vec.num_edges)

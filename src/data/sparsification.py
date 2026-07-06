@@ -199,7 +199,8 @@ def precomputed_sparsification(
     if algo_name == "and_gate_only":
         if hasattr(data_obj, "and_gate_only_graph") or "and_gate_only_graph" in data_obj.keys():
             return data_obj.and_gate_only_graph
-        return and_gate_only_sparsification(data_obj)
+        data_obj.apply_and_gate_only = True
+        return data_obj
 
     mask_key = f"{algo_name}_sparsification_mask"
     mask: torch.Tensor | None = None
@@ -228,13 +229,9 @@ def precomputed_sparsification(
         mask = mask.to(dtype=torch.bool, device=device)
 
     if algo_name == "pagerank":
-        data_obj = data_obj.subgraph(mask)
+        data_obj.node_sparsification_mask = mask
     else:
-        data_obj.edge_index = data_obj.edge_index[:, mask]
-        if hasattr(data_obj, "edge_attr") and data_obj.edge_attr is not None:
-            data_obj.edge_attr = data_obj.edge_attr[mask]
-        if hasattr(data_obj, "edge_weight") and data_obj.edge_weight is not None:
-            data_obj.edge_weight = data_obj.edge_weight[mask]
+        data_obj.edge_sparsification_mask = mask
 
     return data_obj
 
@@ -599,3 +596,188 @@ if __name__ == "__main__":
             seed=_seed,
             out_directories=args.out_dirs,
         )
+
+def apply_sparsification_on_gpu(batch):
+    """
+    Applies the sparsification masks or topology changes dynamically on the GPU.
+    This avoids creating new tensors in the CPU dataloader workers, completely bypassing
+    the IPC shared-memory bottleneck.
+    """
+    # 0. Real-time random edge dropout (generated on-GPU, no precomputed mask)
+    if getattr(batch, "apply_random_edge_dropout", False):
+        from config import SPARSIFICATION_RANDOM_DROPOUT_RATE as _dropout_rate
+        num_edges = batch.edge_index.size(1)
+        if num_edges > 0:
+            edge_mask = torch.rand(num_edges, device=batch.edge_index.device) >= _dropout_rate
+            batch.edge_index = batch.edge_index[:, edge_mask]
+            if hasattr(batch, "edge_attr") and batch.edge_attr is not None:
+                batch.edge_attr = batch.edge_attr[edge_mask]
+            if hasattr(batch, "edge_weight") and batch.edge_weight is not None:
+                batch.edge_weight = batch.edge_weight[edge_mask]
+
+            # Trim isolated nodes (no remaining edges) — they carry no
+            # structural information after dropout and waste compute.
+            n = batch.x.size(0)
+            referenced = torch.zeros(n, dtype=torch.bool, device=batch.x.device)
+            if batch.edge_index.size(1) > 0:
+                referenced[batch.edge_index[0]] = True
+                referenced[batch.edge_index[1]] = True
+
+            if not referenced.all():
+                kept = referenced.nonzero(as_tuple=True)[0]
+                old_to_new = torch.full((n,), -1, dtype=torch.long, device=batch.x.device)
+                old_to_new[kept] = torch.arange(len(kept), dtype=torch.long, device=batch.x.device)
+
+                batch.edge_index = old_to_new[batch.edge_index]
+                batch.x = batch.x[kept]
+
+                for key in list(batch.keys()):
+                    if key in ("x", "edge_index", "edge_attr", "edge_weight",
+                               "batch", "ptr", "apply_random_edge_dropout"):
+                        continue
+                    val = batch[key]
+                    if isinstance(val, torch.Tensor) and val.dim() > 0 and val.size(0) == n:
+                        setattr(batch, key, val[kept])
+
+                if hasattr(batch, "batch") and batch.batch is not None:
+                    batch.batch = batch.batch[kept]
+                    if hasattr(batch, "ptr") and batch.ptr is not None:
+                        counts = torch.bincount(batch.batch, minlength=batch.num_graphs)
+                        batch.ptr = torch.cat([
+                            torch.tensor([0], device=batch.x.device),
+                            counts.cumsum(0),
+                        ])
+
+    # 1. Edge sparsification (e.g. random_edge_dropout, spanner)
+    if hasattr(batch, "edge_sparsification_mask"):
+        mask = batch.edge_sparsification_mask
+        batch.edge_index = batch.edge_index[:, mask]
+        if hasattr(batch, "edge_attr") and batch.edge_attr is not None:
+            batch.edge_attr = batch.edge_attr[mask]
+        if hasattr(batch, "edge_weight") and batch.edge_weight is not None:
+            batch.edge_weight = batch.edge_weight[mask]
+            
+    # 2. Node sparsification (e.g. pagerank)
+    if hasattr(batch, "node_sparsification_mask"):
+        mask = batch.node_sparsification_mask
+        # For a PyG Batch, slicing x and edge_index requires updating batch and ptr
+        kept = mask.nonzero(as_tuple=True)[0]
+        n = batch.x.size(0)
+        old_to_new = torch.full((n,), -1, dtype=torch.long, device=batch.x.device)
+        old_to_new[kept] = torch.arange(len(kept), dtype=torch.long, device=batch.x.device)
+        
+        u, v = batch.edge_index
+        edge_mask = mask[u] & mask[v]
+        
+        batch.edge_index = torch.stack([old_to_new[u[edge_mask]], old_to_new[v[edge_mask]]], dim=0)
+        if hasattr(batch, "edge_attr") and batch.edge_attr is not None:
+            batch.edge_attr = batch.edge_attr[edge_mask]
+        if hasattr(batch, "edge_weight") and batch.edge_weight is not None:
+            batch.edge_weight = batch.edge_weight[edge_mask]
+            
+        # Update node attributes
+        for key in batch.keys():
+            if key in ("x", "edge_index", "edge_attr", "edge_weight", "batch", "ptr", "node_sparsification_mask"):
+                continue
+            val = batch[key]
+            if isinstance(val, torch.Tensor) and val.dim() > 0 and val.size(0) == n:
+                setattr(batch, key, val[kept])
+                
+        batch.x = batch.x[kept]
+        
+        if hasattr(batch, "batch") and batch.batch is not None:
+            batch.batch = batch.batch[kept]
+            if hasattr(batch, "ptr") and batch.ptr is not None:
+                counts = torch.bincount(batch.batch, minlength=batch.num_graphs)
+                batch.ptr = torch.cat([torch.tensor([0], device=batch.x.device), counts.cumsum(0)])
+                
+    # 3. Dynamic and_gate_only sparsification (vectorized for speed)
+    if getattr(batch, "apply_and_gate_only", False):
+        batch = _and_gate_only_sparsification_batch(batch)
+        
+    return batch
+
+
+def _and_gate_only_sparsification_batch(batch):
+    x = batch.x
+    edge_index = batch.edge_index
+    edge_attr = batch.edge_attr
+    device = x.device
+
+    is_pi = x[:, 1] == 1.0
+    is_po = x[:, 3] == 1.0
+    removed_mask = is_pi | is_po
+    kept_mask = ~removed_mask
+    
+    n = x.size(0)
+    kept = kept_mask.nonzero(as_tuple=True)[0]
+    
+    old_to_new = torch.full((n,), -1, dtype=torch.long, device=device)
+    old_to_new[kept] = torch.arange(len(kept), dtype=torch.long, device=device)
+    
+    u = edge_index[0]
+    v = edge_index[1]
+    
+    mask_pi_to_kept = is_pi[u] & kept_mask[v]
+    mask_kept_to_po = kept_mask[u] & is_po[v]
+    mask_kept_to_kept = kept_mask[u] & kept_mask[v]
+    
+    sl_mask = mask_pi_to_kept | mask_kept_to_po
+    if sl_mask.any():
+        sl_nodes = torch.where(mask_pi_to_kept, v, u)[sl_mask]
+        sl_attr = edge_attr[sl_mask]
+        
+        sl_cat = torch.cat([sl_nodes.unsqueeze(1).to(sl_attr.dtype), sl_attr], dim=1)
+        sl_cat = torch.unique(sl_cat, dim=0)
+        
+        sl_nodes_unique = sl_cat[:, 0].long()
+        sl_attr_unique = sl_cat[:, 1:]
+        
+        sl_nodes_new = old_to_new[sl_nodes_unique]
+        
+        new_src_sl = sl_nodes_new
+        new_dst_sl = sl_nodes_new
+        new_attr_sl = sl_attr_unique
+    else:
+        new_src_sl = torch.empty((0,), dtype=torch.long, device=device)
+        new_dst_sl = torch.empty((0,), dtype=torch.long, device=device)
+        new_attr_sl = torch.empty((0, edge_attr.size(1)), dtype=edge_attr.dtype, device=device)
+
+    if mask_kept_to_kept.any():
+        new_src_kk = old_to_new[u[mask_kept_to_kept]]
+        new_dst_kk = old_to_new[v[mask_kept_to_kept]]
+        new_attr_kk = edge_attr[mask_kept_to_kept]
+    else:
+        new_src_kk = torch.empty((0,), dtype=torch.long, device=device)
+        new_dst_kk = torch.empty((0,), dtype=torch.long, device=device)
+        new_attr_kk = torch.empty((0, edge_attr.size(1)), dtype=edge_attr.dtype, device=device)
+        
+    new_src = torch.cat([new_src_sl, new_src_kk])
+    new_dst = torch.cat([new_dst_sl, new_dst_kk])
+    new_attr = torch.cat([new_attr_sl, new_attr_kk])
+    
+    batch.x = x[kept]
+    
+    if new_src.numel() > 0:
+        batch.edge_index = torch.stack([new_src, new_dst], dim=0)
+        batch.edge_attr = new_attr
+    else:
+        batch.edge_index = torch.empty((2, 0), dtype=torch.long, device=device)
+        batch.edge_attr = torch.empty((0, edge_attr.size(1)), dtype=edge_attr.dtype, device=device)
+
+    # Rebuild batch tracking structures for PyG Batch
+    if hasattr(batch, 'batch') and batch.batch is not None:
+        batch.batch = batch.batch[kept]
+        if hasattr(batch, 'ptr') and batch.ptr is not None:
+            counts = torch.bincount(batch.batch, minlength=batch.num_graphs)
+            batch.ptr = torch.cat([torch.tensor([0], device=device), counts.cumsum(0)])
+            
+    for key in list(batch.keys()):
+        if key in ("x", "edge_index", "edge_attr", "batch", "ptr", "apply_and_gate_only"):
+            continue
+        val = batch[key]
+        if isinstance(val, torch.Tensor) and val.dim() > 0 and val.size(0) == n:
+            setattr(batch, key, val[kept])
+            
+    return batch
+
