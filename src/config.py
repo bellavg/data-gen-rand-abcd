@@ -40,7 +40,7 @@ NODE_INPUT_DIM = 4  # [constant, pi, and_gate, po]
 EDGE_ATTR_DIM = 2  # [normal edge, primary output edge]
 NORMALIZE_EDGES = False
 # Sparsification configuration
-SPARSIFICATION_RANDOM_DROPOUT_RATE = 0.5  # target percentage of edges to drop
+SPARSIFICATION_RANDOM_DROPOUT_RATE = 0.2  # target percentage of edges to drop
 SPARSIFICATION_SPANNER_STRETCH = 3.0      # stretch factor for the spanner algorithm
 SPARSIFICATION_PAGERANK_KEEP_RATIO = 0.8  # fraction of nodes to keep (0.0 to 1.0)
 SPARSIFICATION_PAGERANK_ALPHA = 0.85      # damping factor for PageRank
