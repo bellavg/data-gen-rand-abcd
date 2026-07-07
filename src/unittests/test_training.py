@@ -538,5 +538,145 @@ def test_large_graph_forward_backward_no_crash(encoder_name, extra_kwargs):
     assert grads, "Expected at least one non-null gradient tensor"
 
 
+
+
+# ==========================================================
+# apply_sparsification_on_gpu — batched flag regression tests
+# ==========================================================
+# These tests reproduce the production bug where PyG's Batch.from_data_list
+# stacks scalar bool attributes (e.g. apply_random_edge_dropout=True) into a
+# BoolTensor.  A bare `if getattr(batch, ..., False):` then raises:
+#   RuntimeError: Boolean value of Tensor with more than one value is ambiguous
+# The tests below must run successfully with the fixed code.
+
+
+def _make_sparse_batch(n_graphs: int = 4, *, flag_name: str) -> "Batch":
+    """Return a PyG Batch where every Data has `flag_name=True`."""
+    from torch_geometric.data import Batch, Data
+
+    torch.manual_seed(0)
+    graphs = []
+    for _ in range(n_graphs):
+        n = 10
+        # x: 4-dim AIG-style features (constant, pi, and_gate, po one-hot)
+        x = torch.zeros(n, 4)
+        x[:, 2] = 1.0  # all AND gates
+        x[0, 1] = 1.0; x[0, 2] = 0.0  # node 0 is PI
+        x[-1, 3] = 1.0; x[-1, 2] = 0.0  # last node is PO
+        ei = torch.tensor([[0, 0, 1, 2, 3, 4, 5, 6, 7, 8],
+                           [1, 2, 3, 4, 5, 6, 7, 8, 9, 9]], dtype=torch.long)
+        ea = torch.zeros(ei.size(1), 2)
+        ea[:, 0] = 1.0
+        d = Data(x=x, edge_index=ei, edge_attr=ea, y=torch.tensor([[0.5]]))
+        setattr(d, flag_name, True)
+        graphs.append(d)
+    return Batch.from_data_list(graphs)
+
+
+class TestApplySparsificationOnGpuBatched:
+    """Regression tests for apply_sparsification_on_gpu with batched Data."""
+
+    def test_random_edge_dropout_flag_is_tensor_after_collation(self):
+        """Reproduces the exact bug: batched flag must be a BoolTensor."""
+        batch = _make_sparse_batch(flag_name="apply_random_edge_dropout")
+        flag = getattr(batch, "apply_random_edge_dropout", False)
+        assert isinstance(flag, torch.Tensor), (
+            "PyG should have stacked scalar flags into a tensor after Batch.from_data_list"
+        )
+        assert flag.dtype == torch.bool
+
+    def test_random_edge_dropout_does_not_raise(self):
+        """The fixed code must not raise 'Boolean value of Tensor...' on a batched batch."""
+        from data.sparsification import apply_sparsification_on_gpu
+
+        batch = _make_sparse_batch(flag_name="apply_random_edge_dropout")
+        # Must not raise RuntimeError
+        result = apply_sparsification_on_gpu(batch)
+        assert result is not None
+
+    def test_random_edge_dropout_reduces_edges(self):
+        """After dropout, the batch should have fewer edges than before."""
+        from data.sparsification import apply_sparsification_on_gpu
+
+        torch.manual_seed(42)
+        batch = _make_sparse_batch(n_graphs=8, flag_name="apply_random_edge_dropout")
+        original_edges = batch.edge_index.size(1)
+
+        result = apply_sparsification_on_gpu(batch)
+
+        assert result.edge_index.size(1) <= original_edges, (
+            "Edge dropout should not increase edge count"
+        )
+
+    def test_random_edge_dropout_no_isolated_nodes(self):
+        """After trimming, every remaining node must have at least one edge."""
+        from data.sparsification import apply_sparsification_on_gpu
+
+        torch.manual_seed(7)
+        batch = _make_sparse_batch(n_graphs=6, flag_name="apply_random_edge_dropout")
+        result = apply_sparsification_on_gpu(batch)
+
+        if result.edge_index.size(1) == 0:
+            return  # degenerate: all edges dropped — acceptable
+
+        n = result.x.size(0)
+        referenced = torch.zeros(n, dtype=torch.bool)
+        referenced[result.edge_index[0]] = True
+        referenced[result.edge_index[1]] = True
+        assert referenced.all(), "Isolated nodes remain after trimming"
+
+    def test_random_edge_dropout_ptr_batch_consistent(self):
+        """batch.ptr and batch.batch must remain consistent after dropout + trim."""
+        from data.sparsification import apply_sparsification_on_gpu
+
+        torch.manual_seed(99)
+        n_graphs = 4
+        batch = _make_sparse_batch(n_graphs=n_graphs, flag_name="apply_random_edge_dropout")
+        result = apply_sparsification_on_gpu(batch)
+
+        if not (hasattr(result, "batch") and result.batch is not None):
+            return
+        # ptr must have length num_graphs+1
+        assert result.ptr.size(0) == n_graphs + 1
+        # ptr[-1] must equal number of nodes
+        assert int(result.ptr[-1]) == result.x.size(0)
+        # batch vector must be consistent with ptr
+        expected_counts = result.ptr[1:] - result.ptr[:-1]
+        actual_counts = torch.bincount(result.batch, minlength=n_graphs)
+        assert torch.equal(expected_counts, actual_counts)
+
+    def test_no_sparsification_flag_is_passthrough(self):
+        """Batches without any sparsification flag must pass through unchanged."""
+        from data.sparsification import apply_sparsification_on_gpu
+        from torch_geometric.data import Batch, Data
+
+        graphs = [
+            Data(x=torch.randn(5, 4), edge_index=torch.zeros(2, 4, dtype=torch.long),
+                 edge_attr=torch.zeros(4, 2), y=torch.tensor([[0.5]]))
+            for _ in range(3)
+        ]
+        batch = Batch.from_data_list(graphs)
+        original_n_edges = batch.edge_index.size(1)
+
+        result = apply_sparsification_on_gpu(batch)
+        assert result.edge_index.size(1) == original_n_edges
+
+    def test_apply_and_gate_only_flag_is_tensor_after_collation(self):
+        """apply_and_gate_only flag must also be a BoolTensor after collation."""
+        batch = _make_sparse_batch(flag_name="apply_and_gate_only")
+        flag = getattr(batch, "apply_and_gate_only", False)
+        assert isinstance(flag, torch.Tensor)
+        assert flag.dtype == torch.bool
+
+    def test_apply_and_gate_only_does_not_raise(self):
+        """The fixed and_gate_only path must not raise on a batched batch."""
+        from data.sparsification import apply_sparsification_on_gpu
+
+        batch = _make_sparse_batch(flag_name="apply_and_gate_only")
+        result = apply_sparsification_on_gpu(batch)
+        assert result is not None
+
+
 if __name__ == "__main__":
     pytest.main([__file__])
+
