@@ -792,6 +792,10 @@ class AIGGraphRegressionDataset(PyGDataset):
                     delattr(data_obj, _attr)
         data_obj.y = torch.tensor([[sample.y_node_opt]], dtype=torch.float32)
 
+        # Clean up embedded masks from older cache versions just in case.
+        for key in list(data_obj.keys()):
+            if key.endswith("_dynamic_mask") or key.endswith("_dynamic_num_partitions"):
+                delattr(data_obj, key)
 
         return data_obj
 
