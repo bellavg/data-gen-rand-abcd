@@ -604,7 +604,10 @@ def apply_sparsification_on_gpu(batch):
     the IPC shared-memory bottleneck.
     """
     # 0. Real-time random edge dropout (generated on-GPU, no precomputed mask)
-    if getattr(batch, "apply_random_edge_dropout", False):
+    # NOTE: PyG Batch.from_data_list stacks scalar bool attrs into a BoolTensor,
+    # so we must use .any().item() instead of a bare truthiness check.
+    _red = getattr(batch, "apply_random_edge_dropout", False)
+    if ((_red.any().item() if isinstance(_red, torch.Tensor) else bool(_red))):
         from config import SPARSIFICATION_RANDOM_DROPOUT_RATE as _dropout_rate
         num_edges = batch.edge_index.size(1)
         if num_edges > 0:
@@ -692,7 +695,8 @@ def apply_sparsification_on_gpu(batch):
                 batch.ptr = torch.cat([torch.tensor([0], device=batch.x.device), counts.cumsum(0)])
                 
     # 3. Dynamic and_gate_only sparsification (vectorized for speed)
-    if getattr(batch, "apply_and_gate_only", False):
+    _ago = getattr(batch, "apply_and_gate_only", False)
+    if (_ago.any().item() if isinstance(_ago, torch.Tensor) else bool(_ago)):
         batch = _and_gate_only_sparsification_batch(batch)
         
     return batch
