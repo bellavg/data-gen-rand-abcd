@@ -3,7 +3,7 @@
 #SBATCH --time=04:00:00
 #SBATCH -N 1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=72
+#SBATCH --cpus-per-task=24
 #SBATCH --partition=genoa
 #SBATCH --output=logs/strip_stale_masks_%j.out
 
@@ -11,15 +11,10 @@
 # strip_stale_mask_keys.sh
 #
 # One-time cleanup: removes leftover _dynamic_mask / _dynamic_num_partitions
-# attributes from all cached .pt graph files.  These were written by a failed
-# partitioning run and cause KeyError in Batch.from_data_list when only SOME
-# graphs in a batch carry the attribute.
+# attributes from cached .pt graph files in shared_tier0_cache.
 #
 # Submit with:
 #   sbatch src/shell/strip_stale_mask_keys.sh
-#
-# Or run interactively (set CACHE_ROOT override if needed):
-#   bash src/shell/strip_stale_mask_keys.sh
 # ===========================================================================
 
 set -euo pipefail
@@ -38,10 +33,12 @@ if command -v module > /dev/null 2>&1; then
     module load Python/3.13.1-GCCcore-14.2.0 || true
 fi
 
-BASE_DIR="${BASE_DIR:-$HOME/data-gen-rand-abcd}"
 VENV_PATH="${VENV_PATH:-/scratch-shared/$USER/.venv}"
-CACHE_ROOT="${CACHE_ROOT:-/scratch-shared/$USER/aig_train_run}"
-WORKERS="${WORKERS:-${SLURM_CPUS_PER_TASK:-8}}"
+# Only scan tier0 cache — that's where the stale keys were found.
+CACHE_ROOT="${CACHE_ROOT:-/scratch-shared/$USER/aig_train_run/shared_tier0_cache}"
+# 8 threads is enough for scratch-shared I/O; ThreadPoolExecutor shares memory
+# so there is no per-worker fork-copy — this avoids the OOM from ProcessPoolExecutor.
+WORKERS="${WORKERS:-8}"
 
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 if [[ -x "$VENV_PATH/bin/python" ]]; then
@@ -61,8 +58,8 @@ echo "  PYTHON_BIN=$PYTHON_BIN"
 echo ""
 
 # ---- Count files -----------------------------------------------------------
-N=$(find "$CACHE_ROOT" -name "*.pt" | wc -l)
-echo "Found $N .pt files to scan."
+N=$(find "$CACHE_ROOT" -maxdepth 1 -name "*.pt" | wc -l)
+echo "Found $N .pt files to scan in $CACHE_ROOT"
 
 if [[ "$N" -eq 0 ]]; then
     echo "Nothing to clean. Exiting."
@@ -70,12 +67,13 @@ if [[ "$N" -eq 0 ]]; then
 fi
 
 # ---- Inline Python cleanup script ------------------------------------------
+# Uses ThreadPoolExecutor: all threads share one process memory space.
+# No fork = no copy-on-write duplication of parent memory = no OOM.
 "$PYTHON_BIN" -u - "$CACHE_ROOT" "$WORKERS" << 'PYEOF'
 import sys, os, glob
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import torch, torch.serialization
 
-# Register PyG safe globals so weights_only=True works on cached Data objects.
 try:
     from torch_geometric.data import Data
     from torch_geometric.data import storage as _s
@@ -95,7 +93,6 @@ STALE_SUFFIXES = ("_dynamic_mask", "_dynamic_num_partitions")
 
 
 def clean_file(path: str) -> tuple:
-    """Load, strip stale attrs, save atomically. Returns (path, changed, removed_keys)."""
     try:
         try:
             obj = torch.load(path, map_location="cpu", weights_only=True, mmap=False)
@@ -112,7 +109,7 @@ def clean_file(path: str) -> tuple:
         if removed:
             tmp = path + ".tmp_strip"
             torch.save(obj, tmp)
-            os.replace(tmp, path)  # atomic on POSIX
+            os.replace(tmp, path)
             return path, True, removed
 
         return path, False, []
@@ -121,12 +118,16 @@ def clean_file(path: str) -> tuple:
 
 
 def main(cache_root: str, n_workers: int) -> None:
-    paths = list(glob.glob(os.path.join(cache_root, "**", "*.pt"), recursive=True))
+    # Only scan direct children — tier0 cache is flat (no subdirs).
+    paths = [
+        str(p) for p in __import__("pathlib").Path(cache_root).iterdir()
+        if p.suffix == ".pt"
+    ]
     total = len(paths)
-    print(f"Processing {total} files with {n_workers} workers ...", flush=True)
+    print(f"Processing {total} files with {n_workers} threads ...", flush=True)
 
     changed = errors = 0
-    with ProcessPoolExecutor(max_workers=n_workers) as ex:
+    with ThreadPoolExecutor(max_workers=n_workers) as ex:
         futs = {ex.submit(clean_file, p): p for p in paths}
         for i, fut in enumerate(as_completed(futs), 1):
             path, was_changed, keys = fut.result()
@@ -143,9 +144,7 @@ def main(cache_root: str, n_workers: int) -> None:
 
 
 if __name__ == "__main__":
-    cache_root = sys.argv[1]
-    n_workers = int(sys.argv[2])
-    main(cache_root, n_workers)
+    main(sys.argv[1], int(sys.argv[2]))
 PYEOF
 
 echo "=========================================="
