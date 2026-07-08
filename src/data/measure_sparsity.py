@@ -200,13 +200,14 @@ def process_single_graph(pt_path: Path):
     # And-gate-only
     try:
         t0 = time.perf_counter()
-        is_pi = (data.x[:, 1] == 1.0)
-        is_po = (data.x[:, 3] == 1.0)
-        n_removed = (is_pi | is_po).sum().item()
-        nodes_kept_ago = n_nodes - n_removed
-        out = and_gate_only_sparsification(data)
+        mask_ago = and_gate_only_sparsification(data)
         t1 = time.perf_counter()
-        edges_kept_ago = out.edge_index.size(1)
+        
+        nodes_kept_ago = mask_ago.sum().item()
+        src_kept = mask_ago[data.edge_index[0]]
+        dst_kept = mask_ago[data.edge_index[1]]
+        edges_kept_ago = (src_kept & dst_kept).sum().item()
+        
         local_stats["and_gate_only"] = {
             "graph_id": pt_path.name,
             "edge_retention": edges_kept_ago / n_edges,
