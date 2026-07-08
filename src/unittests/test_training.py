@@ -608,22 +608,23 @@ class TestApplySparsificationOnGpuBatched:
             "Edge dropout should not increase edge count"
         )
 
-    def test_random_edge_dropout_no_isolated_nodes(self):
-        """After trimming, every remaining node must have at least one edge."""
+    def test_random_edge_dropout_preserves_node_count(self):
+        """After dropout (without trimming), node count must be unchanged.
+
+        Isolated-node trimming was removed to eliminate a CPU-GPU sync
+        barrier that caused barcode GPU utilization.  Nodes are kept even
+        if all their edges were dropped.
+        """
         from data.sparsification import apply_sparsification_on_gpu
 
         torch.manual_seed(7)
         batch = _make_sparse_batch(n_graphs=6, flag_name="apply_random_edge_dropout")
+        original_nodes = batch.x.size(0)
         result = apply_sparsification_on_gpu(batch)
 
-        if result.edge_index.size(1) == 0:
-            return  # degenerate: all edges dropped — acceptable
-
-        n = result.x.size(0)
-        referenced = torch.zeros(n, dtype=torch.bool)
-        referenced[result.edge_index[0]] = True
-        referenced[result.edge_index[1]] = True
-        assert referenced.all(), "Isolated nodes remain after trimming"
+        assert result.x.size(0) == original_nodes, (
+            "Node count must remain unchanged after edge-only dropout"
+        )
 
     def test_random_edge_dropout_ptr_batch_consistent(self):
         """batch.ptr and batch.batch must remain consistent after dropout + trim."""
