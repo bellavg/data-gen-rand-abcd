@@ -74,20 +74,16 @@ echo "PYTHON_BIN=$PYTHON_BIN"
 echo ""
 
 # 3. Run measurement
-# Prefer precomputed masks (fast); fall back to on-the-fly graph measurement.
-if [[ -d "$MASK_CACHE_DIR" ]]; then
-    echo "Mode: scanning precomputed mask index files in $MASK_CACHE_DIR"
-    "$PYTHON_BIN" -u "$BASE_DIR/src/data/measure_sparsity.py" \
-        --mask-cache-dirs "$MASK_CACHE_DIR" \
-        --max-samples "$MAX_SAMPLES"
-elif [[ -d "$GRAPH_DIR" ]]; then
+# Force on-the-fly measurement from raw graph files to get accurate timing
+# and to ensure we test the currently implemented algorithms.
+if [[ -d "$GRAPH_DIR" ]]; then
     echo "Mode: computing masks on-the-fly from graph files in $GRAPH_DIR"
     "$PYTHON_BIN" -u "$BASE_DIR/src/data/measure_sparsity.py" \
         --graph-dir "$GRAPH_DIR" \
         --max-samples "$MAX_SAMPLES"
 else
-    echo "ERROR: Neither MASK_CACHE_DIR ($MASK_CACHE_DIR) nor GRAPH_DIR ($GRAPH_DIR) exist." >&2
-    echo "Set one of them to a valid path and resubmit." >&2
+    echo "ERROR: GRAPH_DIR ($GRAPH_DIR) does not exist." >&2
+    echo "Set it to a valid path containing .pt graph files and resubmit." >&2
     exit 1
 fi
 
