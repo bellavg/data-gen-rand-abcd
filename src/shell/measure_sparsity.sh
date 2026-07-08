@@ -3,7 +3,7 @@
 #SBATCH --time=04:00:00
 #SBATCH -N 1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=16
+#SBATCH --cpus-per-task=24
 #SBATCH --partition=genoa
 #SBATCH --output=logs/measure_sparsity_%j.out
 
