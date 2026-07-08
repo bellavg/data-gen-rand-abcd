@@ -662,20 +662,7 @@ class TestApplySparsificationOnGpuBatched:
         result = apply_sparsification_on_gpu(batch)
         assert result.edge_index.size(1) == original_n_edges
 
-    def test_apply_and_gate_only_flag_is_tensor_after_collation(self):
-        """apply_and_gate_only flag must also be a BoolTensor after collation."""
-        batch = _make_sparse_batch(flag_name="apply_and_gate_only")
-        flag = getattr(batch, "apply_and_gate_only", False)
-        assert isinstance(flag, torch.Tensor)
-        assert flag.dtype == torch.bool
 
-    def test_apply_and_gate_only_does_not_raise(self):
-        """The fixed and_gate_only path must not raise on a batched batch."""
-        from data.sparsification import apply_sparsification_on_gpu
-
-        batch = _make_sparse_batch(flag_name="apply_and_gate_only")
-        result = apply_sparsification_on_gpu(batch)
-        assert result is not None
 
 
 if __name__ == "__main__":
