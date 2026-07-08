@@ -68,6 +68,7 @@ TIER1_DIR="/scratch-shared/$USER/aig_train_run/shared_tier1_cache"
 
 echo "TIER0_DIR=$TIER0_DIR"
 echo "TIER1_DIR=$TIER1_DIR"
+MAX_SAMPLES="${MAX_SAMPLES:-50000}"
 echo "MAX_SAMPLES=$MAX_SAMPLES"
 echo "PYTHON_BIN=$PYTHON_BIN"
 echo ""
