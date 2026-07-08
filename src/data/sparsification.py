@@ -218,6 +218,8 @@ def _process_single_cache_file(
             mask = spanning_forest_sparsification(data_obj, seed=seed)
         elif algo_name == "pagerank":
             mask = pagerank_sparsification(data_obj, keep_ratio=keep_ratio, alpha=alpha)
+        elif algo_name == "and_gate_only":
+            mask = and_gate_only_sparsification(data_obj)
         else:
             raise ValueError(f"Unknown algorithm for precompute: '{algo_name}'")
 
