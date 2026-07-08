@@ -120,6 +120,7 @@ def get_sparse_entry(
                     index_path,
                     map_location="cpu",
                     weights_only=True,
+                    mmap=True,
                 )
                 _SPARSE_INDEX_CACHE[cache_key].update(chunk)
             except TypeError:
