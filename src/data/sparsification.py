@@ -615,32 +615,6 @@ def apply_sparsification_on_gpu(batch):
     This avoids creating new tensors in the CPU dataloader workers, completely bypassing
     the IPC shared-memory bottleneck.
     """
-    # 0. Real-time random edge dropout (generated on-GPU, no precomputed mask)
-    # NOTE: PyG Batch.from_data_list stacks scalar bool attrs into a BoolTensor,
-    # so we must use .any().item() instead of a bare truthiness check.
-    _red = getattr(batch, "apply_random_edge_dropout", False)
-    if ((_red.any().item() if isinstance(_red, torch.Tensor) else bool(_red))):
-        from config import SPARSIFICATION_RANDOM_DROPOUT_RATE as _dropout_rate
-        num_edges = batch.edge_index.size(1)
-        if num_edges > 0:
-            edge_mask = torch.rand(num_edges, device=batch.edge_index.device) >= _dropout_rate
-            batch.edge_index = batch.edge_index[:, edge_mask]
-            if hasattr(batch, "edge_attr") and batch.edge_attr is not None:
-                batch.edge_attr = batch.edge_attr[edge_mask]
-            if hasattr(batch, "edge_weight") and batch.edge_weight is not None:
-                batch.edge_weight = batch.edge_weight[edge_mask]
-
-            # NOTE: Isolated-node trimming was removed intentionally.
-            # At low dropout rates (e.g. 0.2), very few nodes become fully
-            # isolated, so the compute saved by trimming them is negligible.
-            # However, the `referenced.all()` check required a CPU-GPU sync
-            # barrier every step, which flushes the CUDA pipeline and prevents
-            # overlap between the current step's compute and the next batch's
-            # data loading — causing the classic "barcode" GPU utilization
-            # pattern.  Keeping all nodes (including the rare isolated ones)
-            # avoids that sync and keeps tensor shapes constant, which also
-            # benefits torch.compile.
-
     # 1. Edge sparsification (e.g. random_edge_dropout, spanning_forest)
     if hasattr(batch, "edge_sparsification_mask"):
         mask = batch.edge_sparsification_mask
