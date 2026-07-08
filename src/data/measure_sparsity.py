@@ -37,19 +37,55 @@ def measure_from_precomputed_masks(mask_cache_dirs: list[Path], max_samples: int
     """Scan precomputed mask index files and report retention stats."""
     stats: dict[str, list[float]] = defaultdict(list)
 
+    KNOWN_ALGOS = ("random_edge_dropout", "spanner", "pagerank")
+
+    # Collect all index files across all cache dirs
+    all_index_files: list[Path] = []
     for cache_dir in mask_cache_dirs:
         if not cache_dir.is_dir():
+            print(f"  [skip] Directory does not exist: {cache_dir}")
             continue
-        for index_path in sorted(cache_dir.rglob(f"{_SPARSE_PREFIX}*.pt")):
-            algo_name = index_path.stem.split("_")[1]  # _sparse_{algo}_{chunk}.pt
-            # Determine algo from filename
-            for candidate in ("random_edge_dropout", "spanner", "pagerank"):
-                if candidate in index_path.stem:
-                    algo_name = candidate
-                    break
-            else:
-                continue
+        found = sorted(cache_dir.rglob(f"{_SPARSE_PREFIX}*.pt"))
+        print(f"  Found {len(found)} mask index files in {cache_dir}")
+        all_index_files.extend(found)
 
+    if not all_index_files:
+        print("  No mask index files found in any directory!")
+        return stats
+
+    # Group files by algorithm
+    algo_files: dict[str, list[Path]] = defaultdict(list)
+    unrecognized: list[str] = []
+    for index_path in all_index_files:
+        fname = index_path.stem  # e.g. _sparse_spanner_1720000000_abcd
+        matched = False
+        for candidate in KNOWN_ALGOS:
+            # Check if the filename contains the algo name after the prefix
+            # Files are named: _sparse_{algo_name}_{chunk_id}_{uuid}.pt
+            if f"{_SPARSE_PREFIX}{candidate}" in index_path.name:
+                algo_files[candidate].append(index_path)
+                matched = True
+                break
+        if not matched:
+            unrecognized.append(index_path.name)
+
+    print(f"\n  Files per algorithm:")
+    for algo in KNOWN_ALGOS:
+        print(f"    {algo}: {len(algo_files[algo])} index files")
+    if unrecognized:
+        print(f"    unrecognized: {len(unrecognized)} files (e.g. {unrecognized[0]})")
+    print()
+
+    # Process each algorithm
+    for algo_name in KNOWN_ALGOS:
+        files = algo_files[algo_name]
+        if not files:
+            print(f"  [{algo_name}] No precomputed mask files found — skipping.")
+            continue
+
+        for index_path in files:
+            if len(stats[algo_name]) >= max_samples:
+                break
             try:
                 chunk = torch.load(index_path, map_location="cpu", weights_only=True)
             except Exception as exc:
@@ -57,20 +93,18 @@ def measure_from_precomputed_masks(mask_cache_dirs: list[Path], max_samples: int
                 continue
 
             for basename, entry in chunk.items():
+                if len(stats[algo_name]) >= max_samples:
+                    break
                 mask = entry["mask"]
                 if isinstance(mask, np.ndarray):
                     mask = torch.from_numpy(mask)
                 total = mask.numel()
-                kept = mask.sum().item()
+                kept = int(mask.sum())
                 if total > 0:
                     retention = kept / total
                     stats[algo_name].append(retention)
-                    if len(stats[algo_name]) >= max_samples:
-                        break
 
-            # Stop early if we have enough samples for all algos
-            if all(len(v) >= max_samples for v in stats.values()):
-                break
+        print(f"  [{algo_name}] Collected {len(stats[algo_name])} mask samples.")
 
     return stats
 
@@ -187,11 +221,16 @@ def print_stats(stats: dict):
         else:
             # Simple retention ratios from precomputed masks
             arr = np.array(entries)
-            print(f"\n  {algo} ({len(entries)} masks):")
-            print(f"    Retention: mean={arr.mean():.1%}  "
+            # Pagerank masks are node masks; the others are edge masks.
+            mask_type = "NODE" if algo == "pagerank" else "EDGE"
+            print(f"\n  {algo} ({len(entries)} masks, {mask_type} mask):")
+            print(f"    {mask_type.capitalize()} retention: mean={arr.mean():.1%}  "
                   f"std={arr.std():.1%}  "
                   f"min={arr.min():.1%}  max={arr.max():.1%}")
-            print(f"    → Effective REDUCTION: ~{1 - arr.mean():.1%}")
+            print(f"    → Effective {mask_type} REDUCTION: ~{1 - arr.mean():.1%}")
+            if algo == "pagerank":
+                print(f"    NOTE: This is node retention. Actual edge reduction is higher")
+                print(f"          (removing a node also removes all its incident edges).")
 
     print("\n" + "=" * 70)
 
