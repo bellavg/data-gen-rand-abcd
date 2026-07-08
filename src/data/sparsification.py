@@ -120,7 +120,6 @@ def get_sparse_entry(
                     index_path,
                     map_location="cpu",
                     weights_only=True,
-                    mmap=True,
                 )
                 _SPARSE_INDEX_CACHE[cache_key].update(chunk)
             except TypeError:
@@ -562,8 +561,9 @@ def apply_sparsification_on_gpu(batch):
         # For a PyG Batch, slicing x and edge_index requires updating batch and ptr
         kept = mask.nonzero(as_tuple=True)[0]
         n = batch.x.size(0)
-        old_to_new = torch.full((n,), -1, dtype=torch.long, device=batch.x.device)
-        old_to_new[kept] = torch.arange(len(kept), dtype=torch.long, device=batch.x.device)
+        
+        # Avoid CUDA synchronization by using cumsum instead of len(kept)
+        old_to_new = torch.cumsum(mask.long(), dim=0) - 1
         
         u, v = batch.edge_index
         edge_mask = mask[u] & mask[v]

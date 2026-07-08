@@ -515,7 +515,7 @@ class AIGGraphRegressionDataset(PyGDataset):
         )
 
     def _torch_load_graph(self, graph_path: str | Path) -> _PyGData:
-        return torch.load(str(graph_path), map_location="cpu", weights_only=True, mmap=True)
+        return torch.load(str(graph_path), map_location="cpu", weights_only=True)
 
     def _prepare_cached_graph(self, data_obj: _PyGData) -> _PyGData:
         if self.normalize_edges:
