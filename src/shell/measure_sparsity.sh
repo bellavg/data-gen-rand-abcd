@@ -63,12 +63,11 @@ export PYTHONPATH="$BASE_DIR/src"
 
 # 2. Paths
 MASK_CACHE_DIR="${MASK_CACHE_DIR:-/scratch-shared/$USER/aig_mask_cache}"
-GRAPH_DIR="${GRAPH_DIR:-/scratch-shared/$USER/aig_train_run/shared_tier0_cache}"
-MAX_SAMPLES="${MAX_SAMPLES:-200}"
+TIER0_DIR="/scratch-shared/$USER/aig_train_run/shared_tier0_cache"
+TIER1_DIR="/scratch-shared/$USER/aig_train_run/shared_tier1_cache"
 
-echo "BASE_DIR=$BASE_DIR"
-echo "MASK_CACHE_DIR=$MASK_CACHE_DIR"
-echo "GRAPH_DIR=$GRAPH_DIR"
+echo "TIER0_DIR=$TIER0_DIR"
+echo "TIER1_DIR=$TIER1_DIR"
 echo "MAX_SAMPLES=$MAX_SAMPLES"
 echo "PYTHON_BIN=$PYTHON_BIN"
 echo ""
@@ -76,14 +75,14 @@ echo ""
 # 3. Run measurement
 # Force on-the-fly measurement from raw graph files to get accurate timing
 # and to ensure we test the currently implemented algorithms.
-if [[ -d "$GRAPH_DIR" ]]; then
-    echo "Mode: computing masks on-the-fly from graph files in $GRAPH_DIR"
+if [[ -d "$TIER0_DIR" || -d "$TIER1_DIR" ]]; then
+    echo "Mode: computing masks on-the-fly from graph files across multiple tiers"
     "$PYTHON_BIN" -u "$BASE_DIR/src/data/measure_sparsity.py" \
-        --graph-dir "$GRAPH_DIR" \
+        --graph-dirs "$TIER0_DIR" "$TIER1_DIR" \
         --max-samples "$MAX_SAMPLES"
 else
-    echo "ERROR: GRAPH_DIR ($GRAPH_DIR) does not exist." >&2
-    echo "Set it to a valid path containing .pt graph files and resubmit." >&2
+    echo "ERROR: Neither TIER0_DIR nor TIER1_DIR exist." >&2
+    echo "Set them to valid paths containing .pt graph files and resubmit." >&2
     exit 1
 fi
 

@@ -109,15 +109,33 @@ def measure_from_precomputed_masks(mask_cache_dirs: list[Path], max_samples: int
     return stats
 
 
-def measure_from_graphs(graph_dir: Path, max_samples: int = 100):
+def measure_from_graphs(graph_dirs: list[Path], max_samples: int = 100):
     """Load actual graph .pt files and compute masks on-the-fly."""
     import config
     import time
+    import random
+    import csv
+    import os
 
     stats: dict[str, list[dict]] = defaultdict(list)
-    pt_files = sorted(graph_dir.rglob("*.pt"))[:max_samples]
+    
+    all_files: list[Path] = []
+    for gdir in graph_dirs:
+        if not gdir.is_dir():
+            print(f"  [skip] Graph directory does not exist: {gdir}")
+            continue
+        all_files.extend(gdir.rglob("*.pt"))
+    
+    all_files = sorted(all_files)
+    
+    # Deterministic seeded random sampling for thesis integrity
+    rng = random.Random(42)
+    if len(all_files) > max_samples:
+        pt_files = rng.sample(all_files, max_samples)
+    else:
+        pt_files = all_files
 
-    print(f"Measuring sparsity on {len(pt_files)} graph files...")
+    print(f"Measuring sparsity on {len(pt_files)} randomly sampled graph files (seeded) from {len(graph_dirs)} directories...")
 
     for i, pt_path in enumerate(pt_files):
         try:
@@ -136,9 +154,11 @@ def measure_from_graphs(graph_dir: Path, max_samples: int = 100):
 
         # Random edge dropout
         t0 = time.perf_counter()
+        # Seeded locally within the method call for deterministic dropout
         mask_re = random_edge_dropout(data, dropout_rate=config.SPARSIFICATION_RANDOM_DROPOUT_RATE, seed=42)
         t1 = time.perf_counter()
         stats["random_edge_dropout"].append({
+            "graph_id": pt_path.name,
             "edge_retention": mask_re.sum().item() / n_edges,
             "node_retention": 1.0,  # all nodes kept
             "n_nodes": n_nodes,
@@ -149,9 +169,11 @@ def measure_from_graphs(graph_dir: Path, max_samples: int = 100):
         # Spanning Forest
         try:
             t0 = time.perf_counter()
+            # Seeded locally within the method call for deterministic forest generation
             mask_sf = spanning_forest_sparsification(data, seed=42)
             t1 = time.perf_counter()
             stats["spanning_forest"].append({
+                "graph_id": pt_path.name,
                 "edge_retention": mask_sf.sum().item() / n_edges,
                 "node_retention": 1.0,
                 "n_nodes": n_nodes,
@@ -176,6 +198,7 @@ def measure_from_graphs(graph_dir: Path, max_samples: int = 100):
             dst_kept = mask_pr[data.edge_index[1]]
             edges_kept = (src_kept & dst_kept).sum().item()
             stats["pagerank"].append({
+                "graph_id": pt_path.name,
                 "edge_retention": edges_kept / n_edges,
                 "node_retention": nodes_kept / n_nodes,
                 "n_nodes": n_nodes,
@@ -196,6 +219,7 @@ def measure_from_graphs(graph_dir: Path, max_samples: int = 100):
             t1 = time.perf_counter()
             edges_kept_ago = out.edge_index.size(1)
             stats["and_gate_only"].append({
+                "graph_id": pt_path.name,
                 "edge_retention": edges_kept_ago / n_edges,
                 "node_retention": nodes_kept_ago / n_nodes,
                 "n_nodes": n_nodes,
@@ -207,6 +231,22 @@ def measure_from_graphs(graph_dir: Path, max_samples: int = 100):
 
         if (i + 1) % 20 == 0:
             print(f"  Processed {i + 1}/{len(pt_files)} graphs")
+
+    # Export to CSV for formal offline analysis
+    os.makedirs("logs", exist_ok=True)
+    for algo, entries in stats.items():
+        if not entries:
+            continue
+        csv_path = f"logs/sparsification_stats_{algo}.csv"
+        try:
+            with open(csv_path, mode="w", newline="") as f:
+                # Use the keys from the first entry as column headers
+                writer = csv.DictWriter(f, fieldnames=entries[0].keys())
+                writer.writeheader()
+                writer.writerows(entries)
+            print(f"  [CSV EXPORT] Saved offline analysis data to {csv_path}")
+        except Exception as exc:
+            print(f"  [CSV EXPORT] Failed to save {csv_path}: {exc}")
 
     return stats
 
@@ -258,34 +298,30 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Measure sparsification retention")
     parser.add_argument("--mask-cache-dirs", nargs="*",
                         help="Directories containing precomputed _sparse_*.pt index files")
-    parser.add_argument("--graph-dir",
-                        help="Directory containing graph .pt files to measure on-the-fly")
-    parser.add_argument("--max-samples", type=int, default=200)
+    parser.add_argument("--graph-dirs", nargs="*",
+                        help="Directories containing the actual .pt graph files to compute masks on the fly")
+    parser.add_argument("--max-samples", type=int, default=100,
+                        help="Maximum number of files to sample (applies per algo for masks, or totally for graphs)")
     args = parser.parse_args()
 
-    user = os.environ.get("USER", "")
-
-    if args.graph_dir:
-        stats = measure_from_graphs(Path(args.graph_dir), max_samples=args.max_samples)
-        print_stats(stats)
-    elif args.mask_cache_dirs:
-        dirs = [Path(d) for d in args.mask_cache_dirs]
-        stats = measure_from_precomputed_masks(dirs, max_samples=args.max_samples)
-        print_stats(stats)
-    else:
-        # Default: try the standard mask cache location
-        default_dirs = [
-            Path(f"/scratch-shared/{user}/aig_mask_cache"),
-            Path(f"/scratch-shared/{user}/aig_train_run/shared_tier0_cache"),
-            Path(f"/scratch-shared/{user}/aig_train_run/shared_tier1_cache"),
-        ]
-        existing = [d for d in default_dirs if d.is_dir()]
-        if existing:
-            print(f"Scanning precomputed masks in: {[str(d) for d in existing]}")
-            stats = measure_from_precomputed_masks(existing, max_samples=args.max_samples)
+    if args.mask_cache_dirs:
+        dirs = [Path(d) for d in args.mask_cache_dirs if d.strip()]
+        if dirs:
+            print(f"Mode: scanning precomputed mask index files in {dirs}")
+            stats = measure_from_precomputed_masks(dirs, max_samples=args.max_samples)
             print_stats(stats)
-        else:
-            print("No mask cache or graph directory found.")
-            print("Usage:")
-            print("  python measure_sparsity.py --graph-dir /path/to/cached/graphs")
-            print("  python measure_sparsity.py --mask-cache-dirs /path/to/mask/cache")
+            exit()
+
+    if args.graph_dirs:
+        dirs = [Path(d) for d in args.graph_dirs if d.strip()]
+        if dirs:
+            print(f"Mode: computing masks on-the-fly from graph files in {dirs}")
+            stats = measure_from_graphs(dirs, max_samples=args.max_samples)
+            print_stats(stats)
+            exit()
+
+    # Default: fallback if no arguments provided
+    print("No mask cache or graph directory found.")
+    print("Usage:")
+    print("  python measure_sparsity.py --graph-dirs /path/to/tier0 /path/to/tier1")
+    print("  python measure_sparsity.py --mask-cache-dirs /path/to/mask/cache")
