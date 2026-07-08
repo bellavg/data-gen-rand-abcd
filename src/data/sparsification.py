@@ -92,74 +92,11 @@ def pagerank_sparsification(data_obj, keep_ratio: float = 0.8, alpha: float = 0.
     return node_mask
 
 
-def and_gate_only_sparsification(data_obj) -> Data:
-    x = data_obj.x
-    edge_index = data_obj.edge_index
-    edge_attr = data_obj.edge_attr
-
-    is_pi = x[:, 1] == 1.0
-    is_po = x[:, 3] == 1.0
-
-    pi_set: set[int] = set(is_pi.nonzero(as_tuple=True)[0].tolist())
-    po_set: set[int] = set(is_po.nonzero(as_tuple=True)[0].tolist())
-    removed: set[int] = pi_set | po_set
-
-    n = x.size(0)
-    kept: list[int] = [i for i in range(n) if i not in removed]
-    old_to_new: dict[int, int] = {old: new for new, old in enumerate(kept)}
-
-    src_list = edge_index[0].tolist()
-    dst_list = edge_index[1].tolist()
-    attr_list = edge_attr.tolist()
-
-    new_src: list[int] = []
-    new_dst: list[int] = []
-    new_attr: list[list[float]] = []
-    self_loop_seen: set[tuple] = set()
-
-    for u, v, ea in zip(src_list, dst_list, attr_list):
-        u_pi = u in pi_set
-        v_po = v in po_set
-
-        if u_pi and v not in removed:
-            v_new = old_to_new[v]
-            key = (v_new, tuple(ea))
-            if key not in self_loop_seen:
-                new_src.append(v_new); new_dst.append(v_new); new_attr.append(ea)
-                self_loop_seen.add(key)
-        elif not u_pi and u not in removed and v_po:
-            u_new = old_to_new[u]
-            key = (u_new, tuple(ea))
-            if key not in self_loop_seen:
-                new_src.append(u_new); new_dst.append(u_new); new_attr.append(ea)
-                self_loop_seen.add(key)
-        elif u not in removed and v not in removed:
-            new_src.append(old_to_new[u]); new_dst.append(old_to_new[v]); new_attr.append(ea)
-
-    kept_t = torch.tensor(kept, dtype=torch.long)
-    new_x = x[kept_t]
-
-    if new_src:
-        new_edge_index = torch.tensor([new_src, new_dst], dtype=torch.long)
-        new_edge_attr = torch.tensor(new_attr, dtype=edge_attr.dtype)
-    else:
-        new_edge_index = torch.empty((2, 0), dtype=torch.long)
-        new_edge_attr = torch.empty((0, edge_attr.size(1)), dtype=edge_attr.dtype)
-
-    out = Data(x=new_x, edge_index=new_edge_index, edge_attr=new_edge_attr)
-    out.num_nodes = len(kept)
-    out.num_edges = new_edge_index.size(1)
-
-    for key in data_obj.keys():
-        if key in ("x", "edge_index", "edge_attr", "num_nodes", "num_edges", "edge_weight"):
-            continue
-        val = data_obj[key]
-        if isinstance(val, torch.Tensor) and val.dim() > 0 and val.size(0) == n:
-            setattr(out, key, val[kept_t])
-        else:
-            setattr(out, key, val)
-
-    return out
+def and_gate_only_sparsification(data_obj) -> torch.Tensor:
+    """Returns a bool node mask (True = keep node, False = drop PI/PO)."""
+    is_pi = data_obj.x[:, 1] == 1.0
+    is_po = data_obj.x[:, 3] == 1.0
+    return ~(is_pi | is_po)
 
 
 # =====================================================================
@@ -208,11 +145,6 @@ def precomputed_sparsification(
     algo_name: str,
     cache_path: str | Path | None = None,
 ) -> Data:
-    if algo_name == "and_gate_only":
-        if hasattr(data_obj, "and_gate_only_graph") or "and_gate_only_graph" in data_obj.keys():
-            return data_obj.and_gate_only_graph
-        data_obj.apply_and_gate_only = True
-        return data_obj
 
     mask_key = f"{algo_name}_sparsification_mask"
     mask: torch.Tensor | None = None
@@ -240,7 +172,7 @@ def precomputed_sparsification(
     else:
         mask = mask.to(dtype=torch.bool, device=device)
 
-    if algo_name == "pagerank":
+    if algo_name in ("pagerank", "and_gate_only"):
         data_obj.node_sparsification_mask = mask
     else:
         data_obj.edge_sparsification_mask = mask
@@ -315,7 +247,7 @@ def update_from_manifests(
     """
     _register_pyg_safe_globals()
 
-    precompute_algos = [a for a in algo_names if a != "and_gate_only"]
+    precompute_algos = algo_names
     if not precompute_algos:
         print("[Mask Precomputation] No precomputable algorithms requested. Nothing to do.")
         return
@@ -460,7 +392,7 @@ def update_from_manifests(
 def update_existing_cache_with_masks(directories: list[str | Path], algo_names: list[str], **kwargs) -> None:
     """Original directory-scanning implementation (kept for backward compatibility)."""
     _register_pyg_safe_globals()
-    precompute_algos = [a for a in algo_names if a != "and_gate_only"]
+    precompute_algos = algo_names
     if not precompute_algos: return
     
     top_dirs = [Path(d).absolute() for d in directories]
@@ -658,94 +590,5 @@ def apply_sparsification_on_gpu(batch):
                 counts = torch.bincount(batch.batch, minlength=batch.num_graphs)
                 batch.ptr = torch.cat([torch.tensor([0], device=batch.x.device), counts.cumsum(0)])
                 
-    # 3. Dynamic and_gate_only sparsification (vectorized for speed)
-    _ago = getattr(batch, "apply_and_gate_only", False)
-    if (_ago.any().item() if isinstance(_ago, torch.Tensor) else bool(_ago)):
-        batch = _and_gate_only_sparsification_batch(batch)
-        
-    return batch
-
-
-def _and_gate_only_sparsification_batch(batch):
-    x = batch.x
-    edge_index = batch.edge_index
-    edge_attr = batch.edge_attr
-    device = x.device
-
-    is_pi = x[:, 1] == 1.0
-    is_po = x[:, 3] == 1.0
-    removed_mask = is_pi | is_po
-    kept_mask = ~removed_mask
-    
-    n = x.size(0)
-    kept = kept_mask.nonzero(as_tuple=True)[0]
-    
-    old_to_new = torch.full((n,), -1, dtype=torch.long, device=device)
-    old_to_new[kept] = torch.arange(len(kept), dtype=torch.long, device=device)
-    
-    u = edge_index[0]
-    v = edge_index[1]
-    
-    mask_pi_to_kept = is_pi[u] & kept_mask[v]
-    mask_kept_to_po = kept_mask[u] & is_po[v]
-    mask_kept_to_kept = kept_mask[u] & kept_mask[v]
-    
-    sl_mask = mask_pi_to_kept | mask_kept_to_po
-    if sl_mask.any():
-        sl_nodes = torch.where(mask_pi_to_kept, v, u)[sl_mask]
-        sl_attr = edge_attr[sl_mask]
-        
-        sl_cat = torch.cat([sl_nodes.unsqueeze(1).to(sl_attr.dtype), sl_attr], dim=1)
-        sl_cat = torch.unique(sl_cat, dim=0)
-        
-        sl_nodes_unique = sl_cat[:, 0].long()
-        sl_attr_unique = sl_cat[:, 1:]
-        
-        sl_nodes_new = old_to_new[sl_nodes_unique]
-        
-        new_src_sl = sl_nodes_new
-        new_dst_sl = sl_nodes_new
-        new_attr_sl = sl_attr_unique
-    else:
-        new_src_sl = torch.empty((0,), dtype=torch.long, device=device)
-        new_dst_sl = torch.empty((0,), dtype=torch.long, device=device)
-        new_attr_sl = torch.empty((0, edge_attr.size(1)), dtype=edge_attr.dtype, device=device)
-
-    if mask_kept_to_kept.any():
-        new_src_kk = old_to_new[u[mask_kept_to_kept]]
-        new_dst_kk = old_to_new[v[mask_kept_to_kept]]
-        new_attr_kk = edge_attr[mask_kept_to_kept]
-    else:
-        new_src_kk = torch.empty((0,), dtype=torch.long, device=device)
-        new_dst_kk = torch.empty((0,), dtype=torch.long, device=device)
-        new_attr_kk = torch.empty((0, edge_attr.size(1)), dtype=edge_attr.dtype, device=device)
-        
-    new_src = torch.cat([new_src_sl, new_src_kk])
-    new_dst = torch.cat([new_dst_sl, new_dst_kk])
-    new_attr = torch.cat([new_attr_sl, new_attr_kk])
-    
-    batch.x = x[kept]
-    
-    if new_src.numel() > 0:
-        batch.edge_index = torch.stack([new_src, new_dst], dim=0)
-        batch.edge_attr = new_attr
-    else:
-        batch.edge_index = torch.empty((2, 0), dtype=torch.long, device=device)
-        batch.edge_attr = torch.empty((0, edge_attr.size(1)), dtype=edge_attr.dtype, device=device)
-
-    # Rebuild batch tracking structures for PyG Batch
-    if hasattr(batch, 'batch') and batch.batch is not None:
-        batch.batch = batch.batch[kept]
-        if hasattr(batch, 'ptr') and batch.ptr is not None:
-            counts = torch.bincount(batch.batch, minlength=batch.num_graphs)
-            batch.ptr = torch.cat([torch.tensor([0], device=device), counts.cumsum(0)])
-            
-    for key in list(batch.keys()):
-        if key in ("x", "edge_index", "edge_attr", "batch", "ptr", "apply_and_gate_only"):
-            continue
-        val = batch[key]
-        if isinstance(val, torch.Tensor) and val.dim() > 0 and val.size(0) == n:
-            setattr(batch, key, val[kept])
-            
     return batch
 

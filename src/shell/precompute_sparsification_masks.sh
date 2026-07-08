@@ -14,7 +14,8 @@
 set -euo pipefail
 
 # Define the algorithm argument
-SPARSIFICATION_ALGO="all"
+SPARSIFICATION_ALGO="and_gate_only"
+
 
 # Match the workspace targeted in train.sh
 ALGORITHM="${ALGORITHM:-Orchestrate}"
