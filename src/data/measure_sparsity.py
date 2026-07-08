@@ -109,13 +109,126 @@ def measure_from_precomputed_masks(mask_cache_dirs: list[Path], max_samples: int
     return stats
 
 
+def process_single_graph(pt_path: Path):
+    import time
+    import config
+    import torch
+    from data.sparsification import (
+        random_edge_dropout,
+        spanning_forest_sparsification,
+        pagerank_sparsification,
+        and_gate_only_sparsification,
+    )
+    
+    try:
+        data = torch.load(pt_path, map_location="cpu", weights_only=True)
+    except Exception:
+        return None
+
+    if not hasattr(data, "edge_index") or not hasattr(data, "x"):
+        return None
+
+    n_nodes = data.x.size(0)
+    n_edges = data.edge_index.size(1)
+
+    if n_edges == 0 or n_nodes == 0:
+        return None
+
+    local_stats = {
+        "random_edge_dropout": None,
+        "spanning_forest": None,
+        "pagerank": None,
+        "and_gate_only": None
+    }
+
+    # Random edge dropout
+    t0 = time.perf_counter()
+    # Seeded locally within the method call for deterministic dropout
+    mask_re = random_edge_dropout(data, dropout_rate=config.SPARSIFICATION_RANDOM_DROPOUT_RATE, seed=42)
+    t1 = time.perf_counter()
+    local_stats["random_edge_dropout"] = {
+        "graph_id": pt_path.name,
+        "edge_retention": mask_re.sum().item() / n_edges,
+        "node_retention": 1.0,  # all nodes kept
+        "n_nodes": n_nodes,
+        "n_edges": n_edges,
+        "time_s": t1 - t0,
+    }
+
+    # Spanning Forest
+    try:
+        t0 = time.perf_counter()
+        # Seeded locally within the method call for deterministic forest generation
+        mask_sf = spanning_forest_sparsification(data, seed=42)
+        t1 = time.perf_counter()
+        local_stats["spanning_forest"] = {
+            "graph_id": pt_path.name,
+            "edge_retention": mask_sf.sum().item() / n_edges,
+            "node_retention": 1.0,
+            "n_nodes": n_nodes,
+            "n_edges": n_edges,
+            "time_s": t1 - t0,
+        }
+    except Exception as exc:
+        local_stats["spanning_forest"] = str(exc)
+
+    # PageRank
+    try:
+        t0 = time.perf_counter()
+        mask_pr = pagerank_sparsification(
+            data,
+            keep_ratio=config.SPARSIFICATION_PAGERANK_KEEP_RATIO,
+            alpha=config.SPARSIFICATION_PAGERANK_ALPHA,
+        )
+        t1 = time.perf_counter()
+        nodes_kept = mask_pr.sum().item()
+        # Estimate edge retention: edges where both src and dst are kept
+        src_kept = mask_pr[data.edge_index[0]]
+        dst_kept = mask_pr[data.edge_index[1]]
+        edges_kept = (src_kept & dst_kept).sum().item()
+        local_stats["pagerank"] = {
+            "graph_id": pt_path.name,
+            "edge_retention": edges_kept / n_edges,
+            "node_retention": nodes_kept / n_nodes,
+            "n_nodes": n_nodes,
+            "n_edges": n_edges,
+            "time_s": t1 - t0,
+        }
+    except Exception as exc:
+        local_stats["pagerank"] = str(exc)
+
+    # And-gate-only
+    try:
+        t0 = time.perf_counter()
+        is_pi = (data.x[:, 1] == 1.0)
+        is_po = (data.x[:, 3] == 1.0)
+        n_removed = (is_pi | is_po).sum().item()
+        nodes_kept_ago = n_nodes - n_removed
+        out = and_gate_only_sparsification(data)
+        t1 = time.perf_counter()
+        edges_kept_ago = out.edge_index.size(1)
+        local_stats["and_gate_only"] = {
+            "graph_id": pt_path.name,
+            "edge_retention": edges_kept_ago / n_edges,
+            "node_retention": nodes_kept_ago / n_nodes,
+            "n_nodes": n_nodes,
+            "n_edges": n_edges,
+            "time_s": t1 - t0,
+        }
+    except Exception as exc:
+        local_stats["and_gate_only"] = str(exc)
+        
+    return local_stats
+
+
 def measure_from_graphs(graph_dirs: list[Path], max_samples: int = 100):
     """Load actual graph .pt files and compute masks on-the-fly."""
-    import config
     import time
     import random
     import csv
     import os
+    import multiprocessing
+    import concurrent.futures
 
     stats: dict[str, list[dict]] = defaultdict(list)
     
@@ -135,102 +248,27 @@ def measure_from_graphs(graph_dirs: list[Path], max_samples: int = 100):
     else:
         pt_files = all_files
 
+    num_workers = int(os.environ.get("SLURM_CPUS_PER_TASK", min(multiprocessing.cpu_count(), 24)))
     print(f"Measuring sparsity on {len(pt_files)} randomly sampled graph files (seeded) from {len(graph_dirs)} directories...")
+    print(f"Running in parallel with {num_workers} workers...")
 
-    for i, pt_path in enumerate(pt_files):
-        try:
-            data = torch.load(pt_path, map_location="cpu", weights_only=True)
-        except Exception:
-            continue
-
-        if not hasattr(data, "edge_index") or not hasattr(data, "x"):
-            continue
-
-        n_nodes = data.x.size(0)
-        n_edges = data.edge_index.size(1)
-
-        if n_edges == 0 or n_nodes == 0:
-            continue
-
-        # Random edge dropout
-        t0 = time.perf_counter()
-        # Seeded locally within the method call for deterministic dropout
-        mask_re = random_edge_dropout(data, dropout_rate=config.SPARSIFICATION_RANDOM_DROPOUT_RATE, seed=42)
-        t1 = time.perf_counter()
-        stats["random_edge_dropout"].append({
-            "graph_id": pt_path.name,
-            "edge_retention": mask_re.sum().item() / n_edges,
-            "node_retention": 1.0,  # all nodes kept
-            "n_nodes": n_nodes,
-            "n_edges": n_edges,
-            "time_s": t1 - t0,
-        })
-
-        # Spanning Forest
-        try:
-            t0 = time.perf_counter()
-            # Seeded locally within the method call for deterministic forest generation
-            mask_sf = spanning_forest_sparsification(data, seed=42)
-            t1 = time.perf_counter()
-            stats["spanning_forest"].append({
-                "graph_id": pt_path.name,
-                "edge_retention": mask_sf.sum().item() / n_edges,
-                "node_retention": 1.0,
-                "n_nodes": n_nodes,
-                "n_edges": n_edges,
-                "time_s": t1 - t0,
-            })
-        except Exception as exc:
-            print(f"  Spanning Forest failed on {pt_path.name}: {exc}")
-
-        # PageRank
-        try:
-            t0 = time.perf_counter()
-            mask_pr = pagerank_sparsification(
-                data,
-                keep_ratio=config.SPARSIFICATION_PAGERANK_KEEP_RATIO,
-                alpha=config.SPARSIFICATION_PAGERANK_ALPHA,
-            )
-            t1 = time.perf_counter()
-            nodes_kept = mask_pr.sum().item()
-            # Estimate edge retention: edges where both src and dst are kept
-            src_kept = mask_pr[data.edge_index[0]]
-            dst_kept = mask_pr[data.edge_index[1]]
-            edges_kept = (src_kept & dst_kept).sum().item()
-            stats["pagerank"].append({
-                "graph_id": pt_path.name,
-                "edge_retention": edges_kept / n_edges,
-                "node_retention": nodes_kept / n_nodes,
-                "n_nodes": n_nodes,
-                "n_edges": n_edges,
-                "time_s": t1 - t0,
-            })
-        except Exception as exc:
-            print(f"  PageRank failed on {pt_path.name}: {exc}")
-
-        # And-gate-only
-        try:
-            t0 = time.perf_counter()
-            is_pi = (data.x[:, 1] == 1.0)
-            is_po = (data.x[:, 3] == 1.0)
-            n_removed = (is_pi | is_po).sum().item()
-            nodes_kept_ago = n_nodes - n_removed
-            out = and_gate_only_sparsification(data)
-            t1 = time.perf_counter()
-            edges_kept_ago = out.edge_index.size(1)
-            stats["and_gate_only"].append({
-                "graph_id": pt_path.name,
-                "edge_retention": edges_kept_ago / n_edges,
-                "node_retention": nodes_kept_ago / n_nodes,
-                "n_nodes": n_nodes,
-                "n_edges": n_edges,
-                "time_s": t1 - t0,
-            })
-        except Exception as exc:
-            print(f"  And-gate-only failed on {pt_path.name}: {exc}")
-
-        if (i + 1) % 20 == 0:
-            print(f"  Processed {i + 1}/{len(pt_files)} graphs")
+    with concurrent.futures.ProcessPoolExecutor(max_workers=num_workers) as executor:
+        futures = {executor.submit(process_single_graph, pt_path): pt_path for pt_path in pt_files}
+        for i, future in enumerate(concurrent.futures.as_completed(futures)):
+            pt_path = futures[future]
+            try:
+                res = future.result()
+                if res is not None:
+                    for algo, s in res.items():
+                        if isinstance(s, dict):
+                            stats[algo].append(s)
+                        elif isinstance(s, str):
+                            print(f"  {algo} failed on {pt_path.name}: {s}")
+            except Exception as exc:
+                print(f"  Worker failed on {pt_path.name}: {exc}")
+                
+            if (i + 1) % max(1, len(pt_files) // 20) == 0:
+                print(f"  Processed {i + 1}/{len(pt_files)} graphs")
 
     # Export to CSV for formal offline analysis
     os.makedirs("logs", exist_ok=True)
