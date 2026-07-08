@@ -618,38 +618,16 @@ def apply_sparsification_on_gpu(batch):
             if hasattr(batch, "edge_weight") and batch.edge_weight is not None:
                 batch.edge_weight = batch.edge_weight[edge_mask]
 
-            # Trim isolated nodes (no remaining edges) — they carry no
-            # structural information after dropout and waste compute.
-            n = batch.x.size(0)
-            referenced = torch.zeros(n, dtype=torch.bool, device=batch.x.device)
-            if batch.edge_index.size(1) > 0:
-                referenced[batch.edge_index[0]] = True
-                referenced[batch.edge_index[1]] = True
-
-            if not referenced.all():
-                kept = referenced.nonzero(as_tuple=True)[0]
-                old_to_new = torch.full((n,), -1, dtype=torch.long, device=batch.x.device)
-                old_to_new[kept] = torch.arange(len(kept), dtype=torch.long, device=batch.x.device)
-
-                batch.edge_index = old_to_new[batch.edge_index]
-                batch.x = batch.x[kept]
-
-                for key in list(batch.keys()):
-                    if key in ("x", "edge_index", "edge_attr", "edge_weight",
-                               "batch", "ptr", "apply_random_edge_dropout"):
-                        continue
-                    val = batch[key]
-                    if isinstance(val, torch.Tensor) and val.dim() > 0 and val.size(0) == n:
-                        setattr(batch, key, val[kept])
-
-                if hasattr(batch, "batch") and batch.batch is not None:
-                    batch.batch = batch.batch[kept]
-                    if hasattr(batch, "ptr") and batch.ptr is not None:
-                        counts = torch.bincount(batch.batch, minlength=batch.num_graphs)
-                        batch.ptr = torch.cat([
-                            torch.tensor([0], device=batch.x.device),
-                            counts.cumsum(0),
-                        ])
+            # NOTE: Isolated-node trimming was removed intentionally.
+            # At low dropout rates (e.g. 0.2), very few nodes become fully
+            # isolated, so the compute saved by trimming them is negligible.
+            # However, the `referenced.all()` check required a CPU-GPU sync
+            # barrier every step, which flushes the CUDA pipeline and prevents
+            # overlap between the current step's compute and the next batch's
+            # data loading — causing the classic "barcode" GPU utilization
+            # pattern.  Keeping all nodes (including the rare isolated ones)
+            # avoids that sync and keeps tensor shapes constant, which also
+            # benefits torch.compile.
 
     # 1. Edge sparsification (e.g. random_edge_dropout, spanner)
     if hasattr(batch, "edge_sparsification_mask"):
