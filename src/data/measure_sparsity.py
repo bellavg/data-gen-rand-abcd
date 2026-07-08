@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from data.sparsification import (
     _SPARSE_PREFIX,
     random_edge_dropout,
-    spanner_sparsification,
+    spanning_forest_sparsification,
     pagerank_sparsification,
     and_gate_only_sparsification,
 )
@@ -37,7 +37,7 @@ def measure_from_precomputed_masks(mask_cache_dirs: list[Path], max_samples: int
     """Scan precomputed mask index files and report retention stats."""
     stats: dict[str, list[float]] = defaultdict(list)
 
-    KNOWN_ALGOS = ("random_edge_dropout", "spanner", "pagerank")
+    KNOWN_ALGOS = ("random_edge_dropout", "spanning_forest", "pagerank")
 
     # Collect all index files across all cache dirs
     all_index_files: list[Path] = []
@@ -57,7 +57,7 @@ def measure_from_precomputed_masks(mask_cache_dirs: list[Path], max_samples: int
     algo_files: dict[str, list[Path]] = defaultdict(list)
     unrecognized: list[str] = []
     for index_path in all_index_files:
-        fname = index_path.stem  # e.g. _sparse_spanner_1720000000_abcd
+        fname = index_path.stem  # e.g. _sparse_spanning_forest_1720000000_abcd
         matched = False
         for candidate in KNOWN_ALGOS:
             # Check if the filename contains the algo name after the prefix
@@ -112,6 +112,7 @@ def measure_from_precomputed_masks(mask_cache_dirs: list[Path], max_samples: int
 def measure_from_graphs(graph_dir: Path, max_samples: int = 100):
     """Load actual graph .pt files and compute masks on-the-fly."""
     import config
+    import time
 
     stats: dict[str, list[dict]] = defaultdict(list)
     pt_files = sorted(graph_dir.rglob("*.pt"))[:max_samples]
@@ -134,33 +135,41 @@ def measure_from_graphs(graph_dir: Path, max_samples: int = 100):
             continue
 
         # Random edge dropout
+        t0 = time.perf_counter()
         mask_re = random_edge_dropout(data, dropout_rate=config.SPARSIFICATION_RANDOM_DROPOUT_RATE, seed=42)
+        t1 = time.perf_counter()
         stats["random_edge_dropout"].append({
             "edge_retention": mask_re.sum().item() / n_edges,
             "node_retention": 1.0,  # all nodes kept
             "n_nodes": n_nodes,
             "n_edges": n_edges,
+            "time_s": t1 - t0,
         })
 
-        # Spanner
+        # Spanning Forest
         try:
-            mask_sp = spanner_sparsification(data, stretch=config.SPARSIFICATION_SPANNER_STRETCH, seed=42)
-            stats["spanner"].append({
-                "edge_retention": mask_sp.sum().item() / n_edges,
+            t0 = time.perf_counter()
+            mask_sf = spanning_forest_sparsification(data, seed=42)
+            t1 = time.perf_counter()
+            stats["spanning_forest"].append({
+                "edge_retention": mask_sf.sum().item() / n_edges,
                 "node_retention": 1.0,
                 "n_nodes": n_nodes,
                 "n_edges": n_edges,
+                "time_s": t1 - t0,
             })
         except Exception as exc:
-            print(f"  Spanner failed on {pt_path.name}: {exc}")
+            print(f"  Spanning Forest failed on {pt_path.name}: {exc}")
 
         # PageRank
         try:
+            t0 = time.perf_counter()
             mask_pr = pagerank_sparsification(
                 data,
                 keep_ratio=config.SPARSIFICATION_PAGERANK_KEEP_RATIO,
                 alpha=config.SPARSIFICATION_PAGERANK_ALPHA,
             )
+            t1 = time.perf_counter()
             nodes_kept = mask_pr.sum().item()
             # Estimate edge retention: edges where both src and dst are kept
             src_kept = mask_pr[data.edge_index[0]]
@@ -171,23 +180,27 @@ def measure_from_graphs(graph_dir: Path, max_samples: int = 100):
                 "node_retention": nodes_kept / n_nodes,
                 "n_nodes": n_nodes,
                 "n_edges": n_edges,
+                "time_s": t1 - t0,
             })
         except Exception as exc:
             print(f"  PageRank failed on {pt_path.name}: {exc}")
 
         # And-gate-only
         try:
+            t0 = time.perf_counter()
             is_pi = (data.x[:, 1] == 1.0)
             is_po = (data.x[:, 3] == 1.0)
             n_removed = (is_pi | is_po).sum().item()
             nodes_kept_ago = n_nodes - n_removed
             out = and_gate_only_sparsification(data)
+            t1 = time.perf_counter()
             edges_kept_ago = out.edge_index.size(1)
             stats["and_gate_only"].append({
                 "edge_retention": edges_kept_ago / n_edges,
                 "node_retention": nodes_kept_ago / n_nodes,
                 "n_nodes": n_nodes,
                 "n_edges": n_edges,
+                "time_s": t1 - t0,
             })
         except Exception as exc:
             print(f"  And-gate-only failed on {pt_path.name}: {exc}")
@@ -210,6 +223,7 @@ def print_stats(stats: dict):
         if isinstance(entries[0], dict):
             edge_rets = [e["edge_retention"] for e in entries]
             node_rets = [e["node_retention"] for e in entries]
+            times = [e.get("time_s", 0) for e in entries]
             print(f"\n  {algo} ({len(entries)} graphs):")
             print(f"    Edge retention: mean={np.mean(edge_rets):.1%}  "
                   f"std={np.std(edge_rets):.1%}  "
@@ -218,6 +232,8 @@ def print_stats(stats: dict):
                   f"std={np.std(node_rets):.1%}  "
                   f"min={np.min(node_rets):.1%}  max={np.max(node_rets):.1%}")
             print(f"    → Effective edge REDUCTION: ~{1 - np.mean(edge_rets):.1%}")
+            if sum(times) > 0:
+                print(f"    Avg time per graph: {np.mean(times)*1000:.2f} ms")
         else:
             # Simple retention ratios from precomputed masks
             arr = np.array(entries)

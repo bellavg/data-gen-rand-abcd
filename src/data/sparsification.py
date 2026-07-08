@@ -49,21 +49,33 @@ def random_edge_dropout(data_obj, dropout_rate: float = 0.5, seed: int = 0) -> t
     return torch.rand(num_edges, generator=generator) >= dropout_rate
 
 
-def spanner_sparsification(data_obj, stretch: float = 3.0, seed: int = 0) -> torch.Tensor:
-    """Returns a bool edge mask via NetworkX spanner."""
-    G = to_networkx(data_obj, to_undirected=True)
-    H = nx.spanner(G, stretch=stretch, seed=seed)
+def spanning_forest_sparsification(data_obj, seed: int = 0) -> torch.Tensor:
+    """Returns a bool edge mask using a random Spanning Forest.
     
-    h_edges: set[tuple[int, int]] = set()
-    for u, v in H.edges():
-        h_edges.add((min(u, v), max(u, v)))
+    This replaces the spanner algorithm, which was ineffective on AIGs due to
+    their lack of dense cyclic redundancy. The spanning forest preserves the
+    connectivity backbone while aggressively breaking all reconvergent paths.
+    """
+    import random
+    G = to_networkx(data_obj, to_undirected=True)
+    
+    # Assign random weights to get a random spanning forest rather than a deterministic one
+    rand = random.Random(seed)
+    for u, v in G.edges():
+        G[u][v]['weight'] = rand.random()
+        
+    # Minimum spanning tree/forest on random weights yields a random spanning forest
+    F = nx.minimum_spanning_tree(G, weight='weight')
+    
+    f_edges: set[tuple[int, int]] = set()
+    for u, v in F.edges():
+        f_edges.add((min(u, v), max(u, v)))
         
     num_edges = data_obj.edge_index.shape[1]
     mask = torch.zeros(num_edges, dtype=torch.bool)
     
     for i, (u, v) in enumerate(data_obj.edge_index.t().tolist()):
-        # FIX: Normalize the queried edge to match the canonical set representation
-        if (min(u, v), max(u, v)) in h_edges:
+        if (min(u, v), max(u, v)) in f_edges:
             mask[i] = True
             
     return mask
@@ -270,8 +282,8 @@ def _process_single_cache_file(
     for algo_name in algo_names:
         if algo_name == "random_edge_dropout":
             mask = random_edge_dropout(data_obj, dropout_rate=dropout_rate, seed=seed)
-        elif algo_name == "spanner":
-            mask = spanner_sparsification(data_obj, stretch=stretch, seed=seed)
+        elif algo_name == "spanning_forest":
+            mask = spanning_forest_sparsification(data_obj, seed=seed)
         elif algo_name == "pagerank":
             mask = pagerank_sparsification(data_obj, keep_ratio=keep_ratio, alpha=alpha)
         else:
@@ -538,7 +550,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "algorithm",
         type=str,
-        choices=["random_edge_dropout", "spanner", "pagerank", "and_gate_only", "all"],
+        choices=["random_edge_dropout", "spanning_forest", "pagerank", "and_gate_only", "all"],
         help="Sparsification algorithm to run, or 'all'.",
     )
     
@@ -567,7 +579,7 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    algo_names = ["random_edge_dropout", "spanner", "pagerank", "and_gate_only"] if args.algorithm == "all" else [args.algorithm]
+    algo_names = ["random_edge_dropout", "spanning_forest", "pagerank", "and_gate_only"] if args.algorithm == "all" else [args.algorithm]
 
     print(
         f"[sparsification.py] Running for algorithm(s)={sorted(algo_names)}\n"
@@ -629,7 +641,7 @@ def apply_sparsification_on_gpu(batch):
             # avoids that sync and keeps tensor shapes constant, which also
             # benefits torch.compile.
 
-    # 1. Edge sparsification (e.g. random_edge_dropout, spanner)
+    # 1. Edge sparsification (e.g. random_edge_dropout, spanning_forest)
     if hasattr(batch, "edge_sparsification_mask"):
         mask = batch.edge_sparsification_mask
         batch.edge_index = batch.edge_index[:, mask]
