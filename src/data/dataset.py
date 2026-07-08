@@ -763,20 +763,15 @@ class AIGGraphRegressionDataset(PyGDataset):
         data_obj = self._load_graph_for_sample(sample)
         
         if self.sparsification is not None:
-            if self.sparsification == "random_edge_dropout":
-                # Real-time GPU dropout: skip mask I/O, just flag the object.
-                # The actual dropout is applied on-GPU in apply_sparsification_on_gpu().
-                data_obj.apply_random_edge_dropout = True
-            else:
-                cached_path = self._graph_cache_path_map.get(sample.graph_path)
-                sparse_cache_path = cached_path
-                if sparse_cache_path is not None and self.sparsification_replace_path is not None:
-                    old_p, new_p = self.sparsification_replace_path
-                    sparse_cache_path = Path(str(sparse_cache_path).replace(old_p, new_p))
+            cached_path = self._graph_cache_path_map.get(sample.graph_path)
+            sparse_cache_path = cached_path
+            if sparse_cache_path is not None and self.sparsification_replace_path is not None:
+                old_p, new_p = self.sparsification_replace_path
+                sparse_cache_path = Path(str(sparse_cache_path).replace(old_p, new_p))
 
-                data_obj = precomputed_sparsification(
-                    data_obj, self.sparsification, cache_path=sparse_cache_path
-                )
+            data_obj = precomputed_sparsification(
+                data_obj, self.sparsification, cache_path=sparse_cache_path
+            )
 
         if not self.normalize_edges and hasattr(data_obj, "edge_weight"):
             # Keep edge_weight in cache files, but drop it from runtime samples
