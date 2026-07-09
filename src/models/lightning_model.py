@@ -28,7 +28,6 @@ from torchmetrics import MeanSquaredError, R2Score
 
 from config import MIN_LR, SCHEDULER_FACTOR, SCHEDULER_PATIENCE, WARMUP_START_LR, WARMUP_STEPS
 from constants import EDGE_ATTR_DIM, NODE_INPUT_DIM, TASK_OUT_DIM
-from data.sparsification import apply_sparsification_on_gpu
 from models.base_model import UnifiedGraphBaseModel
 
 # Ordered tuple of all stages; used to build metric ModuleDicts.
@@ -133,8 +132,6 @@ class AIGRegressionLightningModule(pl.LightningModule):
             {f"s_{stage}": R2Score() for stage in ("val", "test")}
         )
 
-    def on_after_batch_transfer(self, batch: Any, dataloader_idx: int) -> Any:
-        return apply_sparsification_on_gpu(batch)
 
     # ---------------------------------------------------------------------- #
     # Forward                                                                  #

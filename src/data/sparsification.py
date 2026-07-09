@@ -140,17 +140,86 @@ def clear_sparse_index_cache() -> None:
     _SPARSE_INDEX_CACHE.clear()
 
 
+def _apply_mask_to_data(data_obj: Data, algo_name: str, mask: torch.Tensor) -> Data:
+    """Apply a precomputed sparsification mask to *data_obj* in-place and return it.
+
+    Edge-based algorithms (random_edge_dropout, spanning_forest): the mask is a
+    bool tensor of shape [num_edges]; True means keep that edge.
+
+    Node-based algorithms (pagerank, and_gate_only): the mask is a bool tensor
+    of shape [num_nodes]; True means keep that node.  All incident edges where
+    *either* endpoint is dropped are also removed, and node indices are
+    compacted so that the result has no gaps.
+    """
+    mask = mask.bool()
+
+    if algo_name in ("pagerank", "and_gate_only"):
+        # ------------------------------------------------------------------ #
+        # Node mask — compact nodes and remap edge indices
+        # ------------------------------------------------------------------ #
+        n = data_obj.x.size(0)
+        old_to_new = torch.cumsum(mask.long(), dim=0) - 1
+        kept = mask.nonzero(as_tuple=True)[0]
+
+        u, v = data_obj.edge_index
+        edge_mask = mask[u] & mask[v]
+
+        data_obj.edge_index = torch.stack(
+            [old_to_new[u[edge_mask]], old_to_new[v[edge_mask]]], dim=0
+        )
+        if getattr(data_obj, "edge_attr", None) is not None:
+            data_obj.edge_attr = data_obj.edge_attr[edge_mask]
+        if getattr(data_obj, "edge_weight", None) is not None:
+            data_obj.edge_weight = data_obj.edge_weight[edge_mask]
+
+        # Filter every other node-level tensor generically (covers pos_enc etc.)
+        _skip = {"edge_index", "edge_attr", "edge_weight"}
+        for key in list(data_obj.keys()):
+            if key in _skip:
+                continue
+            val = data_obj[key]
+            if isinstance(val, torch.Tensor) and val.dim() > 0 and val.size(0) == n:
+                setattr(data_obj, key, val[kept])
+    else:
+        # ------------------------------------------------------------------ #
+        # Edge mask — filter edges only (node count unchanged)
+        # ------------------------------------------------------------------ #
+        data_obj.edge_index = data_obj.edge_index[:, mask]
+        if getattr(data_obj, "edge_attr", None) is not None:
+            data_obj.edge_attr = data_obj.edge_attr[mask]
+        if getattr(data_obj, "edge_weight", None) is not None:
+            data_obj.edge_weight = data_obj.edge_weight[mask]
+
+    return data_obj
+
+
 def precomputed_sparsification(
     data_obj: Data,
     algo_name: str,
     cache_path: str | Path | None = None,
 ) -> Data:
+    """Look up a precomputed mask and apply it directly to *data_obj*.
 
+    The mask is looked up in this order:
+    1. Embedded as an attribute on *data_obj* (legacy cache files).
+    2. From the flat index file ``_sparse_{algo_name}*.pt`` in the same
+       directory as *cache_path*.
+
+    Once the mask is found it is applied immediately via :func:`_apply_mask_to_data`
+    so that the returned graph is already sparsified — no mask attribute is left
+    on the object.  This keeps the samples flowing through DataLoader workers as
+    small as possible and makes node counts accurate for dynamic batch planning.
+    """
     mask_key = f"{algo_name}_sparsification_mask"
     mask: torch.Tensor | None = None
 
     if hasattr(data_obj, mask_key) or mask_key in data_obj.keys():
         mask = getattr(data_obj, mask_key)
+        # Remove the embedded attribute so it is not passed downstream.
+        try:
+            delattr(data_obj, mask_key)
+        except AttributeError:
+            pass
 
     if mask is None and cache_path is not None:
         p = Path(cache_path)
@@ -166,18 +235,12 @@ def precomputed_sparsification(
             + (f" '{Path(cache_path).parent}': not present." if cache_path else ": cache_path not provided.")
         )
 
-    device = data_obj.x.device
     if not isinstance(mask, torch.Tensor):
-        mask = torch.tensor(mask, dtype=torch.bool, device=device)
+        mask = torch.tensor(mask, dtype=torch.bool)
     else:
-        mask = mask.to(dtype=torch.bool, device=device)
+        mask = mask.to(dtype=torch.bool)
 
-    if algo_name in ("pagerank", "and_gate_only"):
-        data_obj.node_sparsification_mask = mask
-    else:
-        data_obj.edge_sparsification_mask = mask
-
-    return data_obj
+    return _apply_mask_to_data(data_obj, algo_name, mask)
 
 
 # =====================================================================
@@ -545,9 +608,13 @@ if __name__ == "__main__":
 
 def apply_sparsification_on_gpu(batch):
     """
+    .. deprecated::
+        Sparsification is now applied in ``dataset.get()`` on the CPU worker side
+        via :func:`precomputed_sparsification` / :func:`_apply_mask_to_data`.
+        This function is kept only for backward compatibility with existing unit
+        tests and should not be called from the training loop.
+
     Applies the sparsification masks or topology changes dynamically on the GPU.
-    This avoids creating new tensors in the CPU dataloader workers, completely bypassing
-    the IPC shared-memory bottleneck.
     """
     # 1. Edge sparsification (e.g. random_edge_dropout, spanning_forest)
     if hasattr(batch, "edge_sparsification_mask"):

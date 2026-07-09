@@ -80,7 +80,7 @@ cd "$BASE_DIR"
 ALGORITHM="Orchestrate"
 
 # Define our 5 sparsification methods
-SPARSIFICATIONS=("and_gate_only" "random_edge_dropout" "spanner" "pagerank")
+SPARSIFICATIONS=("and_gate_only" "random_edge_dropout" "spanning_forest" "pagerank")
 
 # Select the sparsification method for this specific array task
 SPARSIFICATION_ALGO=${SPARSIFICATIONS[$SLURM_ARRAY_TASK_ID]}
