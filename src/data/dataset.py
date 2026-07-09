@@ -18,7 +18,7 @@ from torch_geometric.data import Dataset as PyGDataset
 from torch_geometric.data import storage as _pyg_storage
 from torch_geometric.utils import degree
 
-from data.sparsification import precomputed_sparsification
+from data.sparsification import get_sparse_entry, precomputed_sparsification
 from models.layers.positional_encodings import get_pe_transform
 
 # Register PyG classes in the secure deserialization allowlist so torch.load
@@ -798,19 +798,70 @@ class AIGGraphRegressionDataset(PyGDataset):
         if self._node_sizes is not None:
             return self._node_sizes
 
+        # ------------------------------------------------------------------
+        # Build a map from graph_path -> original node count (manifest fast-path)
+        # ------------------------------------------------------------------
+        base_size_map: dict[str, int] | None = None
         if self._manifest_path is not None:
             manifest = self._load_manifest()
             if manifest is not None:
-                self._node_sizes = [int(e["num_nodes"]) for e in manifest["entries"]]
-                return self._node_sizes
+                base_size_map = {
+                    str(e["graph_path"]): int(e["num_nodes"])
+                    for e in manifest["entries"]
+                }
 
-        seen: dict[str, int] = {}
+        if base_size_map is None:
+            # Slowest fallback: load every graph from disk
+            base_size_map = {}
+            for s in self.samples:
+                if s.graph_path not in base_size_map:
+                    obj = self._torch_load_graph(s.graph_path)
+                    base_size_map[s.graph_path] = int(obj.x.shape[0])
+
+        if self.sparsification not in ("pagerank", "and_gate_only"):
+            # Edge-based sparsification (or no sparsification): node count is
+            # unchanged after masking, so the manifest values are correct.
+            self._node_sizes = [base_size_map[s.graph_path] for s in self.samples]
+            return self._node_sizes
+
+        # ------------------------------------------------------------------
+        # Node-based sparsification: look up each mask and count True entries.
+        # get_sparse_entry() loads the entire chunk index once per (dir, algo)
+        # pair into a module-level dict, so each sample lookup is O(1) after
+        # the first call.  This runs in the main process, not in workers.
+        # ------------------------------------------------------------------
+        print(
+            f"[dataset] Computing post-sparsification node counts for "
+            f"{len(self.samples)} samples (algo={self.sparsification!r}) ...",
+            flush=True,
+        )
         sizes = []
         for s in self.samples:
-            if s.graph_path not in seen:
-                obj = self._torch_load_graph(s.graph_path)
-                seen[s.graph_path] = int(obj.x.shape[0])
-            sizes.append(seen[s.graph_path])
+            cached_path = self._graph_cache_path_map.get(s.graph_path)
+            sparse_cache_path = cached_path
+            if sparse_cache_path is not None and self.sparsification_replace_path is not None:
+                old_p, new_p = self.sparsification_replace_path
+                sparse_cache_path = Path(str(sparse_cache_path).replace(old_p, new_p))
+
+            mask: torch.Tensor | None = None
+            if sparse_cache_path is not None:
+                entry = get_sparse_entry(
+                    sparse_cache_path.parent,
+                    self.sparsification,
+                    sparse_cache_path.name,
+                )
+                if entry is not None:
+                    m = entry["mask"]
+                    if not isinstance(m, torch.Tensor):
+                        m = torch.tensor(m, dtype=torch.bool)
+                    mask = m
+
+            if mask is not None:
+                sizes.append(int(mask.sum().item()))
+            else:
+                # Mask not precomputed for this graph — fall back to original size.
+                sizes.append(base_size_map.get(s.graph_path, 1))
+
         self._node_sizes = sizes
         return sizes
 
