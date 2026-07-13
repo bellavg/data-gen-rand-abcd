@@ -140,6 +140,32 @@ def clear_sparse_index_cache() -> None:
     _SPARSE_INDEX_CACHE.clear()
 
 
+def preload_sparse_index(cache_dir: Path | str, algo_name: str) -> None:
+    """Preload all chunk index files for this cache directory and algorithm."""
+    cache_dir_path = Path(cache_dir)
+    cache_key = (str(cache_dir_path), algo_name)
+    if cache_key not in _SPARSE_INDEX_CACHE:
+        _SPARSE_INDEX_CACHE[cache_key] = {}
+        for index_path in cache_dir_path.glob(f"{_SPARSE_PREFIX}{algo_name}*.pt"):
+            try:
+                chunk = torch.load(
+                    index_path,
+                    map_location="cpu",
+                    weights_only=True,
+                    mmap=True,
+                )
+                _SPARSE_INDEX_CACHE[cache_key].update(chunk)
+            except TypeError:
+                chunk = torch.load(
+                    index_path,
+                    map_location="cpu",
+                    weights_only=True,
+                )
+                _SPARSE_INDEX_CACHE[cache_key].update(chunk)
+            except Exception as exc:
+                print(f"[sparsification] WARNING: could not preload chunk {index_path}: {exc}")
+
+
 def _apply_mask_to_data(data_obj: Data, algo_name: str, mask: torch.Tensor) -> Data:
     """Apply a precomputed sparsification mask to *data_obj* in-place and return it.
 
@@ -180,6 +206,15 @@ def _apply_mask_to_data(data_obj: Data, algo_name: str, mask: torch.Tensor) -> D
             val = data_obj[key]
             if isinstance(val, torch.Tensor) and val.dim() > 0 and val.size(0) == n:
                 setattr(data_obj, key, val[kept])
+                
+        # CRITICAL: PyG relies on num_nodes being correctly explicitly tracked
+        if hasattr(data_obj, "num_nodes"):
+            try:
+                data_obj.num_nodes = kept.size(0)
+            except Exception:
+                pass
+        elif hasattr(data_obj, "_num_nodes") and getattr(data_obj, "_num_nodes", None) is not None:
+            data_obj._num_nodes = kept.size(0)
     else:
         # ------------------------------------------------------------------ #
         # Edge mask — filter edges only (node count unchanged)

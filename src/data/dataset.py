@@ -724,6 +724,21 @@ class AIGGraphRegressionDataset(PyGDataset):
                 )
         self._node_sizes = [int(e["num_nodes"]) for e in manifest["entries"]]
 
+    def _preload_all_sparse_indexes(self) -> None:
+        if self.sparsification is None:
+            return
+        roots = []
+        if self._cache_graph_dir is not None:
+            roots.append(self._cache_graph_dir)
+        if self._tier0_cache_dir is not None:
+            roots.append(self._tier0_cache_dir)
+        if self._tier1_cache_dir is not None:
+            roots.append(self._tier1_cache_dir)
+            
+        from data.sparsification import preload_sparse_index
+        for root in roots:
+            preload_sparse_index(root, self.sparsification)
+
     def process(self) -> bool:
         """Load or build the graph cache manifest.
 
@@ -739,9 +754,11 @@ class AIGGraphRegressionDataset(PyGDataset):
             tmp.write_text(json.dumps(manifest, indent=2, sort_keys=True))
             tmp.replace(self._manifest_path)
             self._apply_manifest(manifest)
+            self._preload_all_sparse_indexes()
             return True
 
         self._apply_manifest(manifest)
+        self._preload_all_sparse_indexes()
         return False
 
     def _load_graph_for_sample(self, sample: GraphSample) -> _PyGData:
@@ -776,7 +793,10 @@ class AIGGraphRegressionDataset(PyGDataset):
         if not self.normalize_edges and hasattr(data_obj, "edge_weight"):
             # Keep edge_weight in cache files, but drop it from runtime samples
             # to avoid unnecessary batching/device transfer when disabled.
-            del data_obj.edge_weight
+            try:
+                delattr(data_obj, "edge_weight")
+            except AttributeError:
+                pass
         if self.positional_encoding is not None and getattr(data_obj, "pos_enc", None) is None:
             data_obj = self.pe_transform(data_obj)
         # ExtractPrecomputedPE already deletes the one attr it consumed; mop up
