@@ -79,7 +79,7 @@ cd "$BASE_DIR"
 # Hardcode algorithm to Orchestrate
 ALGORITHM="Orchestrate"
 
-# Define our 5 sparsification methods
+# Define our 4 sparsification methods
 SPARSIFICATIONS=("and_gate_only" "random_edge_dropout" "spanning_forest" "pagerank")
 
 # Select the sparsification method for this specific array task
