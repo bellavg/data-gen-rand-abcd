@@ -45,26 +45,15 @@ refresh_dir() {
         return
     fi
     local count
-    count=$(find "$dir" -type f | wc -l)
-    echo "[refresh] touching $count files in $dir ($label) ..."
+    count=$(find "$dir" | wc -l)
+    echo "[refresh] touching $count files and directories in $dir ($label) ..."
     # Use find + touch in batches via xargs for speed.
-    find "$dir" -type f -print0 | xargs -0 -P 4 touch --
+    find "$dir" -print0 | xargs -0 -P 4 touch --
     echo "[refresh] done: $dir"
 }
 
-# Preprocessed PyG graphs (the most critical — these take hours to rebuild).
-refresh_dir "$SCRATCH_ROOT/graphs" "PyG .pt graphs"
-
-# Dataset cache (split JSONs, node-size cache, warmup sentinel files).
-refresh_dir "$SCRATCH_ROOT/big_optuna_run/shared_dataset_cache" "warmup dataset cache"
-
-# Optuna run workspaces (stage 1 + 2 DBs for all workers).
-for stage_dir in "$SCRATCH_ROOT"/big_optuna_run_s*; do
-    [[ -d "$stage_dir" ]] && refresh_dir "$stage_dir" "optuna workspace $(basename "$stage_dir")"
-done
-
-# Virtual environment.
-refresh_dir "$SCRATCH_ROOT/.venv" "python venv"
+# Refresh everything in the scratch directory.
+refresh_dir "$SCRATCH_ROOT" "all scratch files"
 
 echo "=========================================="
 echo "SCRATCH REFRESH complete."
