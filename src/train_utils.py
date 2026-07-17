@@ -45,8 +45,8 @@ class TrainingStartupCallback(pl.Callback):
         self._max_batch_compute_reports = max(0, int(max_batch_compute_reports))
         self._batch_compute_reports_emitted = 0
 
-    def _should_report_batch(self, batch_idx: int) -> bool:
-        return batch_idx < 5 or ((batch_idx + 1) % self._report_every_n_steps == 0)
+    def _should_report_batch(self, trainer, batch_idx: int) -> bool:
+        return trainer.current_epoch == 0 and batch_idx < 3
 
     def _can_emit_batch_compute_report(self) -> bool:
         return self._batch_compute_reports_emitted < self._max_batch_compute_reports
@@ -128,7 +128,7 @@ class TrainingStartupCallback(pl.Callback):
         self._train_edge_count += num_edges
 
         if self._first_batch_reported or batch_idx != 0:
-            if self._should_report_batch(batch_idx):
+            if self._should_report_batch(trainer, batch_idx):
                 print(
                     "[train] Batch stats: "
                     f"idx={batch_idx} graphs={num_graphs} nodes={num_nodes} "
@@ -165,7 +165,7 @@ class TrainingStartupCallback(pl.Callback):
                 prog_bar=True,
             )
 
-            if self._should_report_batch(batch_idx) and self._can_emit_batch_compute_report():
+            if self._should_report_batch(trainer, batch_idx) and self._can_emit_batch_compute_report():
                 print(
                     f"[train] Batch compute: idx={batch_idx} step_s={step_time:.3f}",
                     flush=True,
