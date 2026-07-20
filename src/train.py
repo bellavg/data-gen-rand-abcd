@@ -125,8 +125,17 @@ def main(args):
     )
 
     # 5. Define Callbacks and Logger
-    sparsification_name = args.sparsification or "none"
-    algo_checkpoint_dir = os.path.join(args.checkpoint_dir, f"{args.algorithm}_{sparsification_name}")
+    # When sparsification is None (no-sparsification run) use just the algorithm
+    # name so checkpoints, logs, and WandB runs are named "Orchestrate" etc.
+    # When a sparsification method is active, append it as a suffix.
+    if args.sparsification is None:
+        run_label = args.algorithm
+        wandb_run_name = f"train_{args.algorithm}"
+    else:
+        run_label = f"{args.algorithm}_{args.sparsification}"
+        wandb_run_name = f"train_{args.algorithm}_sparsification_{args.sparsification}"
+
+    algo_checkpoint_dir = os.path.join(args.checkpoint_dir, run_label)
     os.makedirs(algo_checkpoint_dir, exist_ok=True)
 
     checkpoint_cb = ModelCheckpoint(
@@ -150,14 +159,14 @@ def main(args):
     # Use WandbLogger
     # WandB — init AFTER datasets are loaded so network delays don't waste
     # GPU allocation time.  WANDB_INIT_TIMEOUT caps the API handshake.
-    log_dir = f"{args.log_dir}_{sparsification_name}"
+    log_dir = f"{args.log_dir}_{run_label}"
     os.makedirs(log_dir, exist_ok=True)
     print("[main] Initialising WandB logger ...", flush=True)
     wandb_start = time.monotonic()
     logger = WandbLogger(
         project="AIG-SUMMARIZE",
         entity="isabella-v-gardner-university-of-amsterdam",
-        name=f"train_{args.algorithm}_sparsification_{sparsification_name}",
+        name=wandb_run_name,
         save_dir=log_dir,
     )
     print(f"[main] WandB ready in {time.monotonic() - wandb_start:.1f}s", flush=True)
