@@ -1,7 +1,6 @@
 import torch
 from torch_geometric.data import Data
 from pathlib import Path
-import os
 import shutil
 
 # Create dummy directories

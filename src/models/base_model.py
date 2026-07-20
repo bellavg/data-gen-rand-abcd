@@ -11,8 +11,8 @@ from torch_geometric.nn import (
     global_max_pool,
 )
 
-from constants import ENCODER_REGISTRY
-from constants import MAX_DEPTH
+from config import ENCODER_REGISTRY
+from config import MAX_DEPTH
 from models.layers.positional_encodings import get_pos_enc_layer
 from models.model_utils import get_batch_positional_encoding
 
@@ -81,7 +81,7 @@ class UnifiedGraphBaseModel(nn.Module):
             self.pe_encoder = nn.Identity()
 
         # Update output_dim for Jumping Knowledge/Pooling based on jk_mode
-        from constants import get_output_dim_for_encoder
+        from config import get_output_dim_for_encoder
         encoder_out_dim = get_output_dim_for_encoder(self.encoder_name, self.kwargs)
         self.kwargs["output_dim"] = encoder_out_dim
 

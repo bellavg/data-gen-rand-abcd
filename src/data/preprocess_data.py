@@ -14,9 +14,8 @@ from typing import Dict, List, Tuple
 
 from tqdm import tqdm
 
+from config import KNOWN_ALGORITHMS as VALID_ALGORITHMS
 from data.data_utils import default_workers, parse_aig_name
-
-VALID_ALGORITHMS = {"Orchestrate", "Deepsyn", "Syn4", "C2RS"}
 
 
 @dataclass(frozen=True)

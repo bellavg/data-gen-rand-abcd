@@ -470,7 +470,7 @@ class TestApplyNorm(unittest.TestCase):
 
 class TestGetOutputDimForEncoder(unittest.TestCase):
     def test_jk_cat_multiplies_layers(self):
-        from constants import get_output_dim_for_encoder
+        from config import get_output_dim_for_encoder
 
         # cat mode: hid_dim * (num_layers + 1)
         result = get_output_dim_for_encoder(
@@ -479,7 +479,7 @@ class TestGetOutputDimForEncoder(unittest.TestCase):
         self.assertEqual(result, 32 * 4)
 
     def test_jk_last_returns_hid_dim(self):
-        from constants import get_output_dim_for_encoder
+        from config import get_output_dim_for_encoder
 
         result = get_output_dim_for_encoder(
             "gcn", {"hid_dim": 64, "num_layers": 3, "jk_mode": "last"}
@@ -487,7 +487,7 @@ class TestGetOutputDimForEncoder(unittest.TestCase):
         self.assertEqual(result, 64)
 
     def test_jk_mean_returns_hid_dim(self):
-        from constants import get_output_dim_for_encoder
+        from config import get_output_dim_for_encoder
 
         result = get_output_dim_for_encoder(
             "gcn", {"hid_dim": 128, "num_layers": 2, "jk_mode": "mean"}
@@ -496,7 +496,7 @@ class TestGetOutputDimForEncoder(unittest.TestCase):
 
     def test_default_jk_mode_is_cat(self):
         """No jk_mode key defaults to 'cat'."""
-        from constants import get_output_dim_for_encoder
+        from config import get_output_dim_for_encoder
 
         result = get_output_dim_for_encoder("gcn", {"hid_dim": 16, "num_layers": 2})
         self.assertEqual(result, 16 * 3)

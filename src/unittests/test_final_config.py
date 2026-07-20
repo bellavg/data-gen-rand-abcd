@@ -57,7 +57,7 @@ def test_final_gcn_config_values():
 
     assert config.PE_TYPE == "level"
     assert config.POS_ENC_DIM == 32
-    assert config.MAX_TOTAL_NODES_PER_BATCH == 2_000_000
+    assert config.MAX_TOTAL_NODES_PER_BATCH == 3_000_000
 
 
 def _mock_dataset(tmp_path: Path, algorithm: str) -> Path:

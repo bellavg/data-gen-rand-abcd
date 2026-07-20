@@ -1,7 +1,7 @@
 """Tests for the sparsification module.
 
 Tests cover:
-- Algorithm correctness (random_edge_dropout, spanner, pagerank, and_gate_only)
+- Algorithm correctness (random_edge_dropout, spanning_forest, pagerank, and_gate_only)
 - Chunked index file writing and reading (get_sparse_entry with glob)
 - precomputed_sparsification() lookup (embedded attrs, index files, and_gate_only)
 - Worker function returns 3-tuple (cache_dir_str, basename, results)
@@ -10,9 +10,7 @@ Tests cover:
 """
 from __future__ import annotations
 
-import os
 import uuid
-import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -20,22 +18,17 @@ import pytest
 import torch
 from torch_geometric.data import Data
 
-# We need to set PYTHONPATH-equivalent so imports resolve.
-import sys
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
 from data.sparsification import (
     _SPARSE_PREFIX,
+    _process_single_cache_file,
+    _register_pyg_safe_globals,
     and_gate_only_sparsification,
     clear_sparse_index_cache,
     get_sparse_entry,
     pagerank_sparsification,
     precomputed_sparsification,
     random_edge_dropout,
-    spanner_sparsification,
-    _process_single_cache_file,
-    _register_pyg_safe_globals,
+    spanning_forest_sparsification,
 )
 
 
@@ -134,15 +127,15 @@ class TestRandomEdgeDropout:
         assert not mask.any()
 
 
-class TestSpannerSparsification:
+class TestSpanningForestSparsification:
     def test_returns_bool_mask(self, simple_graph):
-        mask = spanner_sparsification(simple_graph, stretch=3.0, seed=0)
+        mask = spanning_forest_sparsification(simple_graph, seed=0)
         assert mask.dtype == torch.bool
         assert mask.shape == (simple_graph.edge_index.shape[1],)
 
     def test_keeps_some_edges(self, simple_graph):
-        mask = spanner_sparsification(simple_graph, stretch=3.0, seed=0)
-        assert mask.any(), "Spanner should keep at least some edges"
+        mask = spanning_forest_sparsification(simple_graph, seed=0)
+        assert mask.any(), "Spanning forest should keep at least some edges"
 
 
 class TestPageRankSparsification:
@@ -163,20 +156,15 @@ class TestPageRankSparsification:
 
 class TestAndGateOnly:
     def test_removes_pi_and_po(self, aig_graph):
-        result = and_gate_only_sparsification(aig_graph)
+        mask = and_gate_only_sparsification(aig_graph)
         # Only AND gates should remain (nodes 2 and 3 from original)
-        assert result.num_nodes == 2
-        # All remaining nodes should be AND type
-        assert (result.x[:, 2] == 1.0).all()
+        assert mask.sum().item() == 2
+        assert (aig_graph.x[mask][:, 2] == 1.0).all()
 
-    def test_preserves_node_attrs(self, aig_graph):
-        result = and_gate_only_sparsification(aig_graph)
-        assert hasattr(result, "level")
-        assert result.level.shape[0] == result.num_nodes
-
-    def test_returns_data_object(self, aig_graph):
-        result = and_gate_only_sparsification(aig_graph)
-        assert isinstance(result, Data)
+    def test_returns_bool_node_mask(self, aig_graph):
+        mask = and_gate_only_sparsification(aig_graph)
+        assert mask.dtype == torch.bool
+        assert mask.shape == (aig_graph.num_nodes,)
 
 
 # =====================================================================
@@ -209,11 +197,11 @@ class TestChunkedIndexFiles:
         clear_sparse_index_cache()
         mask1 = torch.tensor([True, True], dtype=torch.bool)
         mask2 = torch.tensor([False, True, False], dtype=torch.bool)
-        self._write_chunk(cache_dir, "spanner", {"a.pt": {"mask": mask1}}, tag="0001")
-        self._write_chunk(cache_dir, "spanner", {"b.pt": {"mask": mask2}}, tag="0002")
+        self._write_chunk(cache_dir, "spanning_forest", {"a.pt": {"mask": mask1}}, tag="0001")
+        self._write_chunk(cache_dir, "spanning_forest", {"b.pt": {"mask": mask2}}, tag="0002")
 
-        r1 = get_sparse_entry(cache_dir, "spanner", "a.pt")
-        r2 = get_sparse_entry(cache_dir, "spanner", "b.pt")
+        r1 = get_sparse_entry(cache_dir, "spanning_forest", "a.pt")
+        r2 = get_sparse_entry(cache_dir, "spanning_forest", "b.pt")
         assert r1 is not None and torch.equal(r1["mask"], mask1)
         assert r2 is not None and torch.equal(r2["mask"], mask2)
 
@@ -237,10 +225,10 @@ class TestChunkedIndexFiles:
         mask_r = torch.tensor([True, False], dtype=torch.bool)
         mask_s = torch.tensor([False, True, True], dtype=torch.bool)
         self._write_chunk(cache_dir, "random_edge_dropout", {"g.pt": {"mask": mask_r}}, tag="a")
-        self._write_chunk(cache_dir, "spanner", {"g.pt": {"mask": mask_s}}, tag="b")
+        self._write_chunk(cache_dir, "spanning_forest", {"g.pt": {"mask": mask_s}}, tag="b")
 
         r = get_sparse_entry(cache_dir, "random_edge_dropout", "g.pt")
-        s = get_sparse_entry(cache_dir, "spanner", "g.pt")
+        s = get_sparse_entry(cache_dir, "spanning_forest", "g.pt")
         assert torch.equal(r["mask"], mask_r)
         assert torch.equal(s["mask"], mask_s)
 
@@ -275,7 +263,7 @@ class TestWorkerFunction:
         torch.save(simple_graph, cache_path)
 
         result = _process_single_cache_file(
-            cache_path,
+            (cache_path, str(tmp_path), "test_graph.pt"),
             algo_names=["random_edge_dropout"],
             dropout_rate=0.5,
             stretch=3.0,
@@ -297,7 +285,7 @@ class TestWorkerFunction:
         torch.save(simple_graph, cache_path)
 
         result = _process_single_cache_file(
-            cache_path,
+            (cache_path, str(tmp_path), "test_graph.pt"),
             algo_names=["random_edge_dropout"],
             dropout_rate=0.5,
             stretch=3.0,
@@ -316,8 +304,8 @@ class TestWorkerFunction:
         torch.save(simple_graph, cache_path)
 
         result = _process_single_cache_file(
-            cache_path,
-            algo_names=["random_edge_dropout", "spanner", "pagerank"],
+            (cache_path, str(tmp_path), "test_graph.pt"),
+            algo_names=["random_edge_dropout", "spanning_forest", "pagerank"],
             dropout_rate=0.5,
             stretch=3.0,
             keep_ratio=0.8,
@@ -325,11 +313,11 @@ class TestWorkerFunction:
             seed=42,
         )
         _, _, algo_results = result
-        assert set(algo_results.keys()) == {"random_edge_dropout", "spanner", "pagerank"}
+        assert set(algo_results.keys()) == {"random_edge_dropout", "spanning_forest", "pagerank"}
 
     def test_missing_file_returns_none(self, tmp_path):
         result = _process_single_cache_file(
-            tmp_path / "nonexistent.pt",
+            (tmp_path / "nonexistent.pt", str(tmp_path), "nonexistent.pt"),
             algo_names=["random_edge_dropout"],
             dropout_rate=0.5,
             stretch=3.0,
@@ -346,7 +334,7 @@ class TestWorkerFunction:
         torch.save(simple_graph, cache_path)
 
         result = _process_single_cache_file(
-            cache_path,
+            (cache_path, str(tmp_path), "test_graph.pt"),
             algo_names=["random_edge_dropout"],
             dropout_rate=0.5,
             stretch=3.0,
@@ -415,20 +403,15 @@ class TestPrecomputedSparsification:
         with pytest.raises(AttributeError, match="not found"):
             precomputed_sparsification(simple_graph, "random_edge_dropout")
 
-    def test_and_gate_only_on_the_fly(self, aig_graph):
-        """and_gate_only uses on-the-fly computation, no precomputed mask."""
+    def test_and_gate_only_embedded_mask(self, aig_graph):
+        """and_gate_only mask embedded directly on data_obj (no on-the-fly path)."""
+        mask = and_gate_only_sparsification(aig_graph)
+        aig_graph.and_gate_only_sparsification_mask = mask
+
         result = precomputed_sparsification(aig_graph, "and_gate_only")
         # Should have only AND gates (2 nodes)
         assert result.num_nodes == 2
         assert (result.x[:, 2] == 1.0).all()
-
-    def test_and_gate_only_embedded_attr(self, aig_graph):
-        """and_gate_only with embedded backward-compat attribute."""
-        precomputed = and_gate_only_sparsification(aig_graph)
-        aig_graph.and_gate_only_graph = precomputed
-
-        result = precomputed_sparsification(aig_graph, "and_gate_only")
-        assert result.num_nodes == precomputed.num_nodes
 
     def test_edge_attr_filtered_with_mask(self, simple_graph, cache_dir):
         """Edge attributes should be filtered along with edge_index."""
@@ -442,8 +425,8 @@ class TestPrecomputedSparsification:
         mask[0] = False
         mask[3] = False
         chunk = {"g.pt": {"mask": mask}}
-        torch.save(chunk, cache_dir / f"{_SPARSE_PREFIX}spanner_1_a.pt")
+        torch.save(chunk, cache_dir / f"{_SPARSE_PREFIX}spanning_forest_1_a.pt")
 
-        result = precomputed_sparsification(simple_graph, "spanner", cache_path=graph_file)
+        result = precomputed_sparsification(simple_graph, "spanning_forest", cache_path=graph_file)
         assert result.edge_index.shape[1] == mask.sum().item()
         assert result.edge_attr.shape[0] == mask.sum().item()

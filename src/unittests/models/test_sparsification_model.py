@@ -1,15 +1,10 @@
 import pytest
 import torch
 from torch_geometric.data import Data, Batch
-import sys
-from pathlib import Path
-
-# Add src to path
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from data.sparsification import (
     random_edge_dropout,
-    spanner_sparsification,
+    spanning_forest_sparsification,
     pagerank_sparsification,
     and_gate_only_sparsification,
     precomputed_sparsification,
@@ -70,6 +65,7 @@ def model():
         node_input_dim=4,
         edge_attr_dim=2,
         task_out_dim=1,
+        compile_model=False,
     )
 
 def test_random_edge_dropout_forward(dummy_graphs, model):
@@ -78,30 +74,30 @@ def test_random_edge_dropout_forward(dummy_graphs, model):
         mask = random_edge_dropout(g, dropout_rate=0.5, seed=42)
         g.random_edge_dropout_sparsification_mask = mask
         sg = precomputed_sparsification(g, "random_edge_dropout")
-        
+
         # Verify continuous node IDs check
         assert sg.edge_index.max() < sg.num_nodes, "Edge index out of bounds!"
         assert sg.num_nodes == g.num_nodes, "Edge dropout should not remove nodes"
-        
+
         sparsified_graphs.append(sg)
-        
+
     batch = Batch.from_data_list(sparsified_graphs)
     out = model(batch)
     assert out.shape == (2, 1), f"Expected shape (2, 1), got {out.shape}"
     assert not torch.isnan(out).any(), "Output contains NaNs"
 
-def test_spanner_forward(dummy_graphs, model):
+def test_spanning_forest_forward(dummy_graphs, model):
     sparsified_graphs = []
     for g in dummy_graphs:
-        mask = spanner_sparsification(g, stretch=3.0, seed=42)
-        g.spanner_sparsification_mask = mask
-        sg = precomputed_sparsification(g, "spanner")
-        
+        mask = spanning_forest_sparsification(g, seed=42)
+        g.spanning_forest_sparsification_mask = mask
+        sg = precomputed_sparsification(g, "spanning_forest")
+
         assert sg.edge_index.max() < sg.num_nodes if sg.edge_index.numel() > 0 else True
         assert sg.num_nodes == g.num_nodes
-        
+
         sparsified_graphs.append(sg)
-        
+
     batch = Batch.from_data_list(sparsified_graphs)
     out = model(batch)
     assert out.shape == (2, 1)
@@ -113,15 +109,15 @@ def test_pagerank_forward(dummy_graphs, model):
         mask = pagerank_sparsification(g, keep_ratio=0.5)
         g.pagerank_sparsification_mask = mask
         sg = precomputed_sparsification(g, "pagerank")
-        
+
         # Node removal!
         # subgraph() reindexes automatically
         assert sg.num_nodes <= g.num_nodes
         if sg.edge_index.numel() > 0:
             assert sg.edge_index.max() < sg.num_nodes, "Node IDs are NOT continuous!"
-        
+
         sparsified_graphs.append(sg)
-        
+
     batch = Batch.from_data_list(sparsified_graphs)
     out = model(batch)
     assert out.shape == (2, 1)
@@ -130,15 +126,19 @@ def test_pagerank_forward(dummy_graphs, model):
 def test_and_gate_only_forward(aig_graphs, model):
     sparsified_graphs = []
     for g in aig_graphs:
+        orig_num_nodes = g.num_nodes
+        mask = and_gate_only_sparsification(g)
+        g.and_gate_only_sparsification_mask = mask
         sg = precomputed_sparsification(g, "and_gate_only")
-        
-        # Node removal AND specific logic
-        assert sg.num_nodes < g.num_nodes
+
+        # Node removal AND specific logic (precomputed_sparsification mutates
+        # in place, so compare against the count captured before the call).
+        assert sg.num_nodes < orig_num_nodes
         if sg.edge_index.numel() > 0:
             assert sg.edge_index.max() < sg.num_nodes, "Node IDs are NOT continuous!"
-        
+
         sparsified_graphs.append(sg)
-        
+
     batch = Batch.from_data_list(sparsified_graphs)
     out = model(batch)
     assert out.shape == (2, 1)

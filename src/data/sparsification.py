@@ -493,8 +493,9 @@ def update_existing_cache_with_masks(directories: list[str | Path], algo_names: 
     """Original directory-scanning implementation (kept for backward compatibility)."""
     _register_pyg_safe_globals()
     precompute_algos = algo_names
-    if not precompute_algos: return
-    
+    if not precompute_algos:
+        return
+
     top_dirs = [Path(d).absolute() for d in directories]
     out_dirs_list = kwargs.pop("out_directories", None) or top_dirs
     dir_map = {str(d): str(o) for d, o in zip(top_dirs, out_dirs_list)}
@@ -507,8 +508,10 @@ def update_existing_cache_with_masks(directories: list[str | Path], algo_names: 
         for a in precompute_algos:
             done = set()
             for index_path in Path(out_d_str).glob(f"{_SPARSE_PREFIX}{a}*.pt"):
-                try: done.update(torch.load(index_path, map_location="cpu", weights_only=True).keys())
-                except Exception: pass
+                try:
+                    done.update(torch.load(index_path, map_location="cpu", weights_only=True).keys())
+                except Exception:
+                    pass
             all_done.append(done)
         done_by_dir[d_str] = all_done[0].intersection(*all_done[1:]) if len(all_done) > 1 else (all_done[0] if all_done else set())
 
@@ -529,7 +532,8 @@ def update_existing_cache_with_masks(directories: list[str | Path], algo_names: 
                 print(f"[WARNING] Cannot scan {top_dir}: {exc}")
 
     tasks = list(_path_stream())
-    if not tasks: return
+    if not tasks:
+        return
 
     accumulated: dict[str, dict[str, dict]] = defaultdict(lambda: defaultdict(dict))
     
@@ -558,7 +562,8 @@ def update_existing_cache_with_masks(directories: list[str | Path], algo_names: 
                 for algo_name, entry in algo_results.items():
                     accumulated[out_d_str][algo_name][basename] = {"mask": torch.from_numpy(entry["mask"]).clone()}
                 success_count += 1
-                if success_count % CHECKPOINT_EVERY == 0: _flush_indices()
+                if success_count % CHECKPOINT_EVERY == 0:
+                    _flush_indices()
 
     _flush_indices()
 

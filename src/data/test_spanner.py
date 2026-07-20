@@ -1,7 +1,6 @@
 import torch
 from torch_geometric.data import Data
 from data.sparsification import spanning_forest_sparsification
-import networkx as nx
 
 # Create a simple DAG with some redundant paths
 # 0 -> 1 -> 3
