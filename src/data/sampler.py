@@ -6,6 +6,8 @@ import random
 from collections import deque
 from pathlib import Path
 
+import config
+
 _DYNAMIC_BATCH_PLAN_CACHE: dict[str, list[list[int]]] = {}
 _NODE_BUDGET_PLAN_VERSION = "node_budget_v3"
 
@@ -37,7 +39,7 @@ class BalancedDynamicBatchSampler:
         batch_size: int,
         shuffle: bool,
         seed: int,
-        max_total_nodes: int = 1000000,
+        max_total_nodes: int = config.MAX_TOTAL_NODES_PER_BATCH,
         precomputed_batches: list[list[int]] | None = None,
     ) -> None:
         self.shuffle = shuffle

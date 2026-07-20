@@ -33,27 +33,51 @@ def _select_precision() -> str:
         return "32-true"
 
 
-def main(args):
-    if getattr(args, "enable_hardware_profiler", False):
-        print(
-            "[train] --enable_hardware_profiler is deprecated and ignored; "
-            "epoch timing is logged automatically and WandB captures hardware telemetry.",
-            flush=True,
+def _select_accelerator_and_devices() -> tuple[str, int]:
+    require_gpu = str(os.environ.get("AIG_REQUIRE_GPU", "")).lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+    try:
+        if torch.cuda.is_available():
+            torch.cuda.get_device_properties(0)
+            return "gpu", 1
+    except (AssertionError, RuntimeError) as exc:
+        if require_gpu:
+            raise RuntimeError(
+                "GPU was requested but CUDA could not be initialized. "
+                "On SLURM this usually means the Python process was not launched "
+                "inside a GPU job step, CUDA_VISIBLE_DEVICES is wrong, or the node "
+                "driver is unhealthy. Try launching with srun and check nvidia-smi."
+            ) from exc
+        return "cpu", 1
+    if require_gpu:
+        raise RuntimeError(
+            "GPU was requested but torch.cuda.is_available() is False. "
+            "Check the SLURM GPU allocation, CUDA_VISIBLE_DEVICES, and nvidia-smi output."
         )
+    return "cpu", 1
 
+
+def main(args):
     torch.backends.cuda.matmul.allow_tf32 = True
     if hasattr(torch.backends, "cudnn"):
         torch.backends.cudnn.allow_tf32 = True
-
     torch.set_float32_matmul_precision("high")
-
     torch.multiprocessing.set_sharing_strategy("file_system")
 
-    # 1. Validate Algorithm
     if args.algorithm not in config.VALID_ALGORITHMS:
         raise ValueError(
             f"Algorithm '{args.algorithm}' must be one of {config.VALID_ALGORITHMS}"
         )
+
+    if args.sparsification is not None and args.partition is not None:
+        raise ValueError(
+            "--sparsification and --partition are mutually exclusive; set only one."
+        )
+
+    print(f"--- Starting Final Training for Algorithm: {args.algorithm} ---")
 
     # 2. Setup DataModule & load datasets EARLY (CPU work — no GPU needed)
     #    This runs before WandB/Trainer so that slow network calls or
@@ -62,6 +86,7 @@ def main(args):
         csv_paths=args.csv_paths,
         positional_encoding=args.pe_type if args.pe_type != "none" else None,
         sparsification=args.sparsification,
+        partition=args.partition,
         batch_size=args.batch_size,
         split_ratios=(0.8, 0.1, 0.1),
         num_workers=args.num_workers,
@@ -125,15 +150,19 @@ def main(args):
     )
 
     # 5. Define Callbacks and Logger
-    # When sparsification is None (no-sparsification run) use just the algorithm
-    # name so checkpoints, logs, and WandB runs are named "Orchestrate" etc.
-    # When a sparsification method is active, append it as a suffix.
-    if args.sparsification is None:
-        run_label = args.algorithm
-        wandb_run_name = f"train_{args.algorithm}"
-    else:
+    # When neither sparsification nor partitioning is active, use just the
+    # algorithm name so checkpoints, logs, and WandB runs are named
+    # "Orchestrate" etc. Otherwise append whichever one is active as a
+    # suffix (they are mutually exclusive, enforced above).
+    if args.sparsification is not None:
         run_label = f"{args.algorithm}_{args.sparsification}"
         wandb_run_name = f"train_{args.algorithm}_sparsification_{args.sparsification}"
+    elif args.partition is not None:
+        run_label = f"{args.algorithm}_{args.partition}"
+        wandb_run_name = f"train_{args.algorithm}_partition_{args.partition}"
+    else:
+        run_label = args.algorithm
+        wandb_run_name = f"train_{args.algorithm}"
 
     algo_checkpoint_dir = os.path.join(args.checkpoint_dir, run_label)
     os.makedirs(algo_checkpoint_dir, exist_ok=True)
@@ -156,7 +185,6 @@ def main(args):
         check_on_train_epoch_end=True,
     )
 
-    # Use WandbLogger
     # WandB — init AFTER datasets are loaded so network delays don't waste
     # GPU allocation time.  WANDB_INIT_TIMEOUT caps the API handshake.
     log_dir = f"{args.log_dir}_{run_label}"
@@ -182,12 +210,17 @@ def main(args):
         ),
     ]
 
+    precision = _select_precision()
+    accelerator, devices = _select_accelerator_and_devices()
+    print(f"Using {precision} Automatic Mixed Precision (AMP)", flush=True)
+    print(f"Using accelerator={accelerator}, devices={devices}", flush=True)
+
     trainer = pl.Trainer(
         max_epochs=args.max_epochs,
-        accelerator="auto",
+        accelerator=accelerator,
         enable_progress_bar=False,
-        devices=1,
-        precision=_select_precision(),
+        devices=devices,
+        precision=precision,
         callbacks=callbacks,
         logger=logger,
         gradient_clip_val=args.gradient_clip_val,
@@ -197,7 +230,7 @@ def main(args):
     )
 
     # 7. Run Training & Testing
-    print(f"--- Running Training for {args.algorithm} ---")
+    print(f"--- Running Training for {args.algorithm} ---", flush=True)
     fit_start = time.monotonic()
     trainer.fit(model, datamodule=datamodule)
     print(
@@ -244,9 +277,7 @@ if __name__ == "__main__":
     parser.add_argument("--patience", type=int, default=config.PATIENCE)
     parser.add_argument("--min_lr", type=float, default=config.MIN_LR)
     parser.add_argument("--warmup_steps", type=int, default=config.WARMUP_STEPS)
-    parser.add_argument(
-        "--warmup_start_lr", type=float, default=config.WARMUP_START_LR
-    )
+    parser.add_argument("--warmup_start_lr", type=float, default=config.WARMUP_START_LR)
     parser.add_argument(
         "--scheduler_patience", type=int, default=config.SCHEDULER_PATIENCE
     )
@@ -254,7 +285,6 @@ if __name__ == "__main__":
         "--scheduler_factor", type=float, default=config.SCHEDULER_FACTOR
     )
     parser.add_argument("--gradient_clip_val", type=float, default=1.0)
-    parser.add_argument("--check_val_every_n", type=float, default=0.5)
     parser.add_argument(
         "--val_check_interval",
         type=float,
@@ -270,13 +300,8 @@ if __name__ == "__main__":
         default=0,
         help="Lightning sanity-validation batches before training. Default 0 for final-train startup.",
     )
-    parser.add_argument("--num_workers", type=int, default=4)
-    parser.add_argument("--prefetch_factor", type=int, default=8)
-    parser.add_argument(
-        "--enable_hardware_profiler",
-        action="store_true",
-        help="Deprecated no-op kept for CLI compatibility; WandB already captures hardware telemetry.",
-    )
+    parser.add_argument("--num_workers", type=int, default=config.NUM_WORKERS)
+    parser.add_argument("--prefetch_factor", type=int, default=config.PREFETCH_FACTOR)
     parser.add_argument(
         "--pin_memory",
         type=lambda x: str(x).lower() in ("true", "1", "yes"),
@@ -323,6 +348,13 @@ if __name__ == "__main__":
         type=lambda x: x.lower() if x.lower() != "none" else None,
         default=None,
         help="Sparsification algorithm to apply (e.g. 'random_edge_dropout'). Pass 'none' to disable.",
+    )
+    parser.add_argument(
+        "--partition",
+        type=lambda x: x.lower() if x.lower() != "none" else None,
+        default=None,
+        help="Graph partitioning algorithm to apply (e.g. 'metis'). Pass 'none' to disable. "
+        "Mutually exclusive with --sparsification.",
     )
 
     args = parser.parse_args()

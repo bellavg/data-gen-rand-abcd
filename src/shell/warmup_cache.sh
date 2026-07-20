@@ -96,6 +96,7 @@ warm_cache() {
     python -u - <<PYEOF
 import sys
 sys.path.insert(0, "$BASE_DIR/src")
+import config
 from data.datamodule import AIGDataModule
 
 dm = AIGDataModule(
@@ -106,6 +107,7 @@ dm = AIGDataModule(
     cache_dir="$SHARED_CACHE",
     train_num_samples=${n_samples},
     num_workers=${N_IO_WORKERS},
+    pin_memory=config.PIN_MEMORY,
     # Enable dynamic_batching so setup() also calls get_num_nodes_list() and
     # writes the node-sizes JSON cache.  Subsequent HP trials read this in < 1 s
     # instead of computing it from scratch.

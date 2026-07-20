@@ -23,15 +23,16 @@ class AIGDataModule(pl.LightningDataModule):
         *,
         positional_encoding: str | None = None,
         sparsification: str | None = None,
+        partition: str | None = None,
         normalize_edges: bool = config.NORMALIZE_EDGES,
         cache_dir: str | Path | None = None,
         split_ratios: tuple[float, float, float] = (0.8, 0.1, 0.1),
         seed: int = 42,
         batch_size: int = 32,
-        num_workers: int = 6,
-        persistent_workers: bool = False,
-        pin_memory: bool = False,
-        prefetch_factor: int = 1,
+        num_workers: int = config.NUM_WORKERS,
+        persistent_workers: bool = config.PERSISTENT_WORKERS,
+        pin_memory: bool = config.PIN_MEMORY,
+        prefetch_factor: int = config.PREFETCH_FACTOR,
         dynamic_batching: bool = False,
         max_total_nodes: int = config.MAX_TOTAL_NODES_PER_BATCH,
         train_num_samples: int | None = None,
@@ -44,6 +45,7 @@ class AIGDataModule(pl.LightningDataModule):
         self.csv_paths = csv_paths
         self.positional_encoding = positional_encoding
         self.sparsification = sparsification
+        self.partition = partition
         self.normalize_edges = bool(normalize_edges)
         self.cache_dir = cache_dir
         self.split_ratios = split_ratios
@@ -108,6 +110,7 @@ class AIGDataModule(pl.LightningDataModule):
             positional_encoding=self.positional_encoding,
             sparsification=self.sparsification,
             sparsification_replace_path=getattr(config, "SPARSIFICATION_REPLACE_PATH", None),
+            partition=self.partition,
             normalize_edges=self.normalize_edges,
             split=split,
             cache_dir=self.cache_dir,
