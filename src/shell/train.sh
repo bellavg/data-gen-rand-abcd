@@ -23,6 +23,7 @@ set -euo pipefail
 export TEMP="$TMPDIR"
 export TMP="$TMPDIR"
 
+
 echo "=========================================="
 echo "JOB ARRAY ID: $SLURM_ARRAY_JOB_ID, TASK ID: $SLURM_ARRAY_TASK_ID"
 echo "Running on: $(hostname)"
@@ -45,13 +46,13 @@ echo "Activating virtual environment at: $VENV_PATH"
 source "$VENV_PATH/bin/activate"
 
 
-# Verify WandB Authentication (Fail-fast check to prevent SLURM hangs)
-echo "Checking Weights & Biases authentication..."
-if ! python -c "import wandb; exit(0) if wandb.login(anonymous='never') else exit(1)" 2>/dev/null; then
-    echo "CRITICAL ERROR: WandB is not authenticated! Run 'wandb login' in an active terminal before submitting this job." >&2
-    exit 1
-fi
-echo "WandB authentication successful."
+# # Verify WandB Authentication (Fail-fast check to prevent SLURM hangs)
+# echo "Checking Weights & Biases authentication..."
+# if ! python -c "import wandb; exit(0) if wandb.login(anonymous='never') else exit(1)" 2>/dev/null; then
+#     echo "CRITICAL ERROR: WandB is not authenticated! Run 'wandb login' in an active terminal before submitting this job." >&2
+#     exit 1
+# fi
+# echo "WandB authentication successful."
 
 # Setup Paths
 BASE_DIR="${BASE_DIR:-$HOME/data-gen-rand-abcd}"
@@ -128,7 +129,8 @@ fi
 # =========================================================
 # 4. Runtime settings
 # =========================================================
-# Number of data-loader workers (default: SLURM_CPUS_PER_TASK or 16)
+# Number of data-loader workers.  Override from env or default to 12.
+# Note: this is the value passed to Python's --num_workers, NOT SLURM_CPUS_PER_TASK.
 NUM_WORKERS="${NUM_WORKERS:-12}"
 PREFETCH_FACTOR="${PREFETCH_FACTOR:-4}"
 PIN_MEMORY="${PIN_MEMORY:-true}"

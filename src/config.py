@@ -48,6 +48,12 @@ SPARSIFICATION_PAGERANK_KEEP_RATIO = 0.8  # fraction of nodes to keep (0.0 to 1.
 SPARSIFICATION_PAGERANK_ALPHA = 0.85      # damping factor for PageRank
 SPARSIFICATION_SEED = 42
 
+# Dynamic partitioning heuristic: k = max(MIN_K, min(MAX_K, num_nodes // TARGET_NODES_PER_PART))
+TARGET_NODES_PER_PART = 10_000  # target number of nodes per partition
+MIN_K = 2  # minimum number of partitions
+MAX_K = 32  # maximum number of partitions
+PARTITION_SEED = 42
+
 _user = os.environ.get("USER", "")
 SPARSIFICATION_REPLACE_PATH = (
     f"/scratch-shared/{_user}/aig_train_run",

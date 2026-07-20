@@ -204,6 +204,7 @@ class AIGRegressionLightningModule(pl.LightningModule):
         # Collate if batch is a list or tuple of Data objects
         if isinstance(batch, (list, tuple)):
             from torch_geometric.data import Batch
+
             batch = Batch.from_data_list(batch)
 
         preds: torch.Tensor = self.forward(batch).squeeze(-1)
