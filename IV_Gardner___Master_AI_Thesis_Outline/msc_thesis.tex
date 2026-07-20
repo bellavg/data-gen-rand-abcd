@@ -1,0 +1,77 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% For the use of University of Amsterdam
+% Master of AI thesis
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\documentclass[license]{mscaithesis}  % Can print or not a license
+% The license is very optional and its definition easy to edit in mscaithesis.cls
+
+\usepackage{mwe}  % Only for the example
+
+\usepackage{amssymb} % Math packages are (on purpose) not included in the class document
+\usepackage{amsfonts}
+\usepackage{amsmath}
+\usepackage{amsthm}
+
+\usepackage{natbib}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% DOCUMENT METADATA
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% Thesis related entries
+\title{Master AI thesis template:\\ A tale of computers}
+% \subtitle{A tale of computers}
+
+% Date on which your thesis is submitted
+\date{2026/06/19}
+
+\author{Student \textsc{van Naam}}
+\studentnumber{314159265}
+\period{2026/01/05 -- 2026/06/19}
+\credits{36 ECTS}
+\examiner{Pr. E. Xaminer}
+\dailysupervisor{M. Entor}
+\uvasupervisor{Dr U. Vasupervisor}  % Only if different from daily supervisor, leave empty otherwise
+\addsupervisor{Ir. E. N. Gineer}  % Optional
+
+\begin{document}
+\maketitle
+
+\frontmatter
+        \chapter*{Abstract}
+                \begin{adjustwidth}{4cm}{4cm}
+                        Officia ex pariatur consectetur duis do aute do veniam ut consequat eu et do reprehenderit consequat est in ullamco proident aute minim sit qui sint dolor dolore ullamco quis fugiat fugiat irure occaecat anim amet aute minim ut nostrud eu officia sunt in anim dolore deserunt excepteur eiusmod deserunt laboris irure nulla tempor deserunt consectetur eu sit aliquip exercitation dolor ex proident aute tempor fugiat elit dolore amet sunt elit dolore sed labore excepteur quis proident laboris duis cupidatat do laborum in excepteur dolore excepteur ad laborum consectetur minim mollit anim occaecat commodo excepteur laborum sunt ad et minim deserunt excepteur mollit aliquip velit quis deserunt in exercitation ut non est in occaecat sunt ut culpa ut incididunt veniam eiusmod non ad sint deserunt anim tempor magna quis enim commodo adipisicing fugiat tempor officia sit non dolore tempor excepteur ea enim do ullamco non duis consequat consequat qui culpa amet nisi excepteur sunt pariatur consectetur laborum aute laborum cupidatat id magna sit consequat consequat mollit proident nostrud est dolor nostrud anim proident deserunt velit tempor velit ut in minim adipisicing id anim esse mollit et fugiat elit enim sunt dolor et aute ea adipisicing do consectetur nulla sit.
+                \end{adjustwidth}
+
+\tableofcontents
+
+\listoffigures
+
+\listoftables
+
+\setlength{\parskip}{5pt}
+
+\include{sections/0-list-symbols}
+
+
+\twocolumn
+\mainmatter
+        \include{sections/1-introduction}
+        \include{sections/2-related-work}
+        \include{sections/3-methodology}
+        \include{sections/4-results}
+        \include{sections/5-discussion}
+        \include{sections/6-conclusion}
+
+\bibliographystyle{ACM-Reference-Format}
+\bibliography{bibliographies/references}
+
+% \newpage
+\appendix
+        \include{sections/7-appendix}
+
+\end{document}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%

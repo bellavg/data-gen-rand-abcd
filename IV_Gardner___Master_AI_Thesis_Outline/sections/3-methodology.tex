@@ -1,0 +1,71 @@
+\chapter{Methodology}
+\label{sec:methodology}
+
+\section{Architecture}
+
+\section{Graph Reduction}
+\subsection{Partitioning}
+\subsection{Sparsification}
+\subsection{Summarization \& Coarsening}
+
+\section{Data}
+
+\section{Experiment}
+
+
+% Focus on what you add to the existing method. Explain what you will do and why (and how). Do not forget to characterize your research design. There should be a sub-section on the evaluation. 
+%For DS students, this normally means using manually labelled or ground truth data. For IS students, it is not always needed to have a separate methodology section. You can also integrate the approach with the results in one section. It depends on your type of research what is best fitting.
+% Write about your methodology here. Focus on your own contribution. Indicate exactly how you will assess your work in terms of evaluation.
+
+% % It is possible to use a separate section for the Experimental Setup, which then focuses on all settings used in your experiments. It also possible to address the settings in a sub-section under Methodology. 
+% \section{Equations}
+%         We estimate the deformable template parameters~$\theta_t$ and the deformation fields for every data point using maximum likelihood. Letting~$\mathcal{V} = \{\boldsymbol{v}_i\}$ and~$\mathcal{A} = \{a_i\}$,
+%         %
+%         \begin{align}
+%                 \hat{\theta_t}, \hat{\mathcal{V}} &= \arg \max_{\theta_t, \mathcal{V}} \log p_{\theta_t}(\mathcal{V} | \mathcal{X},  \mathcal{A}) \nonumber \\
+%                 &= \arg \max_{\theta_t, \mathcal{V}} \log p_{\theta_t}(\mathcal{X} | \mathcal{V}; \mathcal{A}) + \log p(\mathcal{V}),
+%                 \label{eq:logpost}
+%         \end{align}
+%         %
+%         where the first term captures the likelihood of the data and deformations, and the second term controls a prior over the deformation fields.
+
+%         \begin{proof}
+%                 Awesome proof.
+%         \end{proof}
+
+% \section{Long equations in two columns}
+%         Note that equations can fill the width pretty quickly when there are two columns.
+%         Different mathemtical environments, beyond the basic \verb|\begin{equation}| may be of use. Taking as an example the binomial formula which overflows in Eq. \eqref{binom:eq}:
+%         \begin{equation}
+%                 \label{binom:eq}
+%                 (1+x)^n = \underbrace{(1+x)\times...\times(1+x)}_{n \text{ times}} = \sum_{k=0}^n \binom{n}{k}x^k = \sum_{k=0}^n\frac{n!}{k!(n-k)!}x^k .
+%         \end{equation}
+
+%         The \verb|\begin{multline}| environment is an easy although crude fix:
+%         \begin{multline}
+%                 (1+x)^n = \underbrace{(1+x)\times...\times(1+x)}_{n \text{ times}} \\
+%                 = \sum_{k=0}^n \binom{n}{k}x^k \\
+%                 = \sum_{k=0}^n\frac{n!}{k!(n-k)!}x^k .
+%         \end{multline}
+%         \verb|\begin{align}| tends to give the most control over the final result:
+%         \begin{align}
+%                 (1+x)^n &= \underbrace{(1+x)\times...\times(1+x)}_{n \text{ times}} \nonumber\\
+%                         &= \sum_{k=0}^n \binom{n}{k}x^k \nonumber\\
+%                         &= \sum_{k=0}^n\frac{n!}{k!(n-k)!}x^k .
+%         \end{align}
+
+
+% \section{Math styles}
+%         Different font styles can be used for equations:
+%         \begin{itemize}
+%                 \item \verb|$a b c A B C 1 2 3$|: $ a b c A B C 1 2 3 $
+%                 \item \verb|$\mathbf{a b c A B C 1 2 3}$|: $ \mathbf{a b c A B C 1 2 3} $
+%                 \item \verb|$\mathfrak{a b c A B C 1 2 3}$|: $ \mathfrak{a b c A B C 1 2 3} $
+%                 \item \verb|$\mathcal{ABC}$|: $ \mathcal{ABC} $
+%                 \item \verb|$\mathbb{ABC}$|: $ \mathbb{ABC} $
+%                 \item \verb|$\mathsf{ABC}$|: $ \mathsf{ABC} $
+%                 \item \verb|$\mathtt{ABC}$|: $ \mathtt{ABC} $
+%         \end{itemize}
+
+%         Text and names in equations should be dealt with the \verb|\text| command, for instance:\\
+%         \verb|$\mathcal L_{\text{SuperLoss}}$|: $\mathcal L_{\text{SuperLoss}}$ and not $\mathcal L_{SuperLoss}$.

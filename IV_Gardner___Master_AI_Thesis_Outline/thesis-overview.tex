@@ -1,0 +1,539 @@
+
+\documentclass[paper=a4, fontsize=11pt]{scrartcl} % A4 paper and 11pt font size
+
+\usepackage[T1]{fontenc} % Use 8-bit encoding that has 256 glyphs
+\usepackage{fourier} % Use the Adobe Utopia font for the document - comment this line to return to the LaTeX default
+\usepackage[english]{babel} % English language/hyphenation
+\usepackage{amsmath,amsfonts,amsthm} % Math packages
+\usepackage{todonotes}
+\usepackage{lipsum} % Used for inserting dummy 'Lorem ipsum' text into the template
+\usepackage{url}
+\usepackage{booktabs} % For \toprule, \midrule, \bottomrule in tables
+
+\usepackage{sectsty} % Allows customizing section commands
+\allsectionsfont{\centering \normalfont\scshape} % Make all sections centered, the default font and small caps
+
+\usepackage{fancyhdr} % Custom headers and footers
+\pagestyle{fancyplain} % Makes all pages in the document conform to the custom headers and footers
+\fancyhead{} % No page header - if you want one, create it in the same way as the footers below
+\fancyfoot[L]{} % Empty left footer
+\fancyfoot[C]{} % Empty center footer
+\fancyfoot[R]{\thepage} % Page numbering for right footer
+\renewcommand{\headrulewidth}{0pt} % Remove header underlines
+\renewcommand{\footrulewidth}{0pt} % Remove footer underlines
+\setlength{\headheight}{13.6pt} % Customize the height of the header
+
+\numberwithin{equation}{section} % Number equations within sections (i.e. 1.1, 1.2, 2.1, 2.2 instead of 1, 2, 3, 4)
+\numberwithin{figure}{section} % Number figures within sections (i.e. 1.1, 1.2, 2.1, 2.2 instead of 1, 2, 3, 4)
+\numberwithin{table}{section} % Number tables within sections (i.e. 1.1, 1.2, 2.1, 2.2 instead of 1, 2, 3, 4)
+
+\setlength\parindent{0pt} % Removes all indentation from paragraphs - comment this line for an assignment with lots of text
+
+%----------------------------------------------------------------------------------------
+%	TITLE SECTION
+%----------------------------------------------------------------------------------------
+
+\newcommand{\horrule}[1]{\rule{\linewidth}{#1}} % Create horizontal rule command with 1 argument of height
+
+\title{	
+\normalfont \normalsize 
+\textsc{} \\ [25pt] % Your university, school and/or department name(s)
+\horrule{0.5pt} \\[0.4cm] % Thin top horizontal rule
+\huge MSc Thesis: Graph Reduction Techniques for Scalable AIG Optimizability Prediction \\ % The assignment title
+\horrule{2pt} \\[0.5cm] % Thick bottom horizontal rule
+}
+
+\author{I.V. Gardner} % Your name
+
+\date{\normalsize\today} % Today's date or a custom date
+
+\begin{document}
+
+\maketitle % Print the title
+
+\todo{CUDA too direct, need to be more abstract}
+\section{Motivation and RQ}
+\subsection{Motivation}
+Logic synthesis is a critical phase in the Electronic Design Automation (EDA) flow, relying heavily on structural representations like And-Inverter Graphs (AIGs), a special form of Directed Acyclic Graph (DAG), to optimize circuits for area, power, and delay. However, crafting an optimal sequence of synthesis algorithms (a "script" or "pipeline") for a given circuit is a highly expensive, heuristic-driven trial-and-error process. 
+
+Structural representations such as AIGs provide a foundation for applying ML to address a multitude of complex challenges in logic synthesis. With ML, one could predict a circuit's theoretical "optimizability" if subjected to certain optimization algorithms, therefore circumventing the trial-and-error phase by facilitating data-driven script generation. However, industrial-sized AIGs scale to millions or billions of nodes. Training advanced GNNs directly on these massive structures causes severe memory bottlenecks (e.g., CUDA OOM) and intractable training times, actively preventing the field from exploring these diverse applications and scaling to more capable models. 
+
+Consequently, to bypass OOM crashes and make execution tractable, researchers must restrict model size and parameters (adopting sub-par architectures), rely on massive multi-GPU clusters, or deploy resource-heavy distributed training setups.  AIGs can still be too large for single-device memory, and if using a distributed system, this necessitates partitioning. 
+
+
+While generic graph reduction techniques (partitioning, sparsification, and summarization) are widely used on other graphs, they have never been systematically evaluated or adapted for AIGs. Additionally, standard methods could potentially degrade predictive (ML) performance on logic graphs because they blindly sever strict causal cones, obscure logical depth, and break the longest paths, therefore altering the underlying logic function and destroying the structural features necessary for accurate prediction. This necessitates the development of domain-aware reduction techniques.
+
+
+To enable further ML applications in EDA and solve the OOM bottleneck, this thesis proposes a comprehensive three-part methodology:
+\begin{itemize}
+    \item \textbf{Domain-Aware AIG Reduction Framework:} First, this thesis contrasts generic graph reduction techniques with targeted, AIG-specific heuristics (such as level-aware span weighting and structural coarsening). The objective is to effectively compress massive logic graphs (reducing memory footprint and computation time) while preserving the causal logic and structural information required for predictive accuracy. This yields a domain-aware reduction methodology and a dataset of compressed graphs that can be readily applied to unblock other ML avenues in EDA.
+    \item \textbf{Deep-Dive Optimizability Prediction:} Second, these reduction techniques are applied and rigorously validated on a high-value regression task: predicting circuit optimizability for a complex target synthesis algorithm. By focusing deeply on a single target algorithm, this approach provides a robust benchmark to measure exactly how well different reduction methods (generic vs. AIG-specific) retain critical structural features without the confounding variables of cross-algorithm comparisons.
+    \item \textbf{Cross-Structural Generalization:} Finally, to guarantee practical applicability in production environments, this thesis evaluates cross-state inference. The objective is to determine if a model trained exclusively on memory-friendly compressed AIGs (to explicitly bypass OOM bottlenecks) can successfully generalize and accurately predict optimizability when queried with normal, full-sized AIGs during inference.
+\end{itemize}
+
+In conclusion, while machine learning could eliminate costly trial-and-error in logic synthesis, the massive scale of AIGs creates severe OOM bottlenecks. To overcome this, this thesis systematically evaluates generic reductions against domain-informed adaptations tailored for AIGs. By successfully compressing these massive structures while preserving their predictive power across structural states, this work enables efficient, scalable predictions for logic optimization.
+
+
+% \begin{itemize}
+%     \item \textbf{The Cost of Logic Synthesis:} Crafting a well-suited AIG optimization script requires expensive trial-and-error, insight required into the circuit, and too many variables. 
+%     \begin{itemize}
+%         \item Instantly predicting circuit ``optimizability'' (relative node shrinkage) bypasses this computational overhead. 
+%         \item Separate models per algorithm; querying all models with a single AIG allows comparison. Allows for next step prediction to give Later avenues for structural bias investigation. M: this is already a little too deep in the details. General structure for a motivation section would be as follows: 1. set the context, 2. name the problem, 3. mention that/why related work fails at this, 4. propose a solution. All very high-level. The details of all these go in the later sections (Prelims, Related Work, Main Contribution). 
+%     \end{itemize}
+%     \item \textbf{The Scale Bottleneck:} AIGs of industrial-sized circuits can have sizes up to millions/billions of nodes, continually getting larger and more complex. Training GNNs on such massive structures causes severe memory bottlenecks CUDA OOM and intractable training times.
+%     \item \textbf{Complications of Graph Reductions to be solved:} While graph partitioning and edge sparsification are standard workarounds for scaling massive graphs, they may critically struggle with AIGs. 
+%     \begin{itemize}
+%         \item Severs strict causal cones, risks breaking the longest paths and overall logical depth of the circuit, Breaks logic function, obscures depth, breaks longest paths (indicator often for some properties).
+%     % \end{itemize}
+%     \item \textbf{Proposed Paradigm:} This thesis empirically and theoretically explores graph reduction techniques for AIGs (evaluating partitioning, sparsification, and summarization) while simultaneously applying them to a practical, graph-level regression task: predicting circuit optimizability. M: I think we got it the wrong way around. Currently, it reads like the reduction techniques are the important motivation whereas the application to circuit optimizatbility is just a nice side effect. I'd turn it around: You tackle circuit optimization (specifically, script/pipeline crafting, as discussed), and to that end, you employ the following methods ... with the following goals ... The objective is to determine if compressed logic graphs can maintain their original predictive power while reducing memory footprint and computation time. M: Since this is the motivation, you may tease the results here already: An experimental evaluation of the proposed methodology reveals that ... \% improvement over ... etc. etc. 
+% % \end{itemize}
+
+
+% \subsection{Research Questions (RQs)}
+% \begin{itemize}
+%     \item \textbf{RQ1 (Task Feasibility \& Baseline):} Can Graph Neural Networks accurately predict the theoretical optimizability of a circuit directly from its full, unreduced AIG representation?
+%     \item \textbf{RQ2 (Reduction Efficiency):} How do different graph reduction techniques (partitioning, sparsification, and exact summarization/coarsening) compare in terms of graph shrinkage rates, peak memory (VRAM) usage, and improvements to training and inference speeds?
+%     \item \textbf{RQ3 (Predictive Retention \& Trade-offs):} To what extent do models trained on reduced AIGs retain the predictive accuracy (measured via Smooth L1 Loss, RMSE, and $R^2$) and algorithm-ranking ability (Spearman correlation) compared to the full-graph baselines established in RQ1?
+%     \item \textbf{RQ4 (Structural Generalization):} Can a model trained exclusively on reduced (summarized and/or partitioned) AIGs be successfully queried on normal, full-sized AIGs during inference, and does it retain accurate predictive capabilities across these structural state changes? 
+% \end{itemize}
+\subsection*{Research Questions (RQs)}
+\begin{itemize}
+    \item \textbf{RQ1 (Task Feasibility \& Baseline):} Can Graph Neural Networks accurately predict the theoretical optimizability of a circuit directly from its full, unreduced AIG representation?
+    
+    \item \textbf{RQ2 (Reduction Efficiency):} How do generic graph reduction techniques compare to domain-informed adaptations (across partitioning, sparsification, and summarization/coarsening) in terms of graph shrinkage rates, peak memory (VRAM) usage, and improvements to training and inference speeds?
+    
+    \item \textbf{RQ3 (Predictive Retention \& Trade-offs):} To what extent do models trained on reduced AIGs retain the predictive accuracy (measured via Smooth L1 Loss, RMSE, and $R^2$) and circuit-ranking ability (Spearman correlation) compared to the full-graph baselines established in RQ1, and do domain-informed adaptations offer better predictive retention than generic techniques?
+    
+    \item \textbf{RQ4 (Reduced to Unreduced? Generalization):} Can a model trained exclusively on reduced AIGs (partitioned, sparsified, or summarized) be successfully queried on normal, full-sized AIGs during inference, and does it retain accurate predictive capabilities across these structural state changes? 
+    \todo{inference works why inference would work grads. inference on cpu. less intensive - motivation}
+\end{itemize}
+\todo{naming?}
+
+\section{Graph Reduction} 
+This section outlines the diverse reduction methods integrated and tested in this framework for compressing AIGs. The primary objective of applying these reductions is to mitigate severe memory bottlenecks (such as GPU OOM errors) and accelerate training, all while attempting to preserve the structural features necessary for accurate optimizability prediction.
+
+
+\subsection{Partitioning}
+Partitioning methods divide massive AIGs into smaller, distinct subgraphs to manage memory constraints. This process retains all original nodes, only the edges that span between different partitions are cut. The number of partitions, k, is determined dynamically for each graph by dividing the total number of nodes by a target partition size, and then clamping the result to fall within a predefined minimum and maximum range.
+
+\subsubsection{Random Hashing}
+This method uniformly assigns nodes to partitions at random, serving as a naive baseline for evaluating the efficiency and performance of more complex partitioning algorithms.
+
+\subsubsection{METIS}
+Implemented via PyTorch Geometric, this approach utilizes the classic METIS algorithm [TODO Citation?: Karypis \& Kumar, 1997] to create balanced graph partitions while explicitly minimizing the overall number of edge cuts.
+
+\subsubsection{Naive Level Slicing}
+This technique partitions the graph strictly by topological depth (e.g., grouping top-level and bottom-level nodes together). While naive, it helps preserve the circuit's directed logical flow better than random assignment.
+
+
+\subsubsection{Span-Weighted METIS (Domain-Informed)}
+This is a targeted, domain-aware adaptation of METIS. In AIGs, cutting edges that span across multiple topological levels breaks the longest causal chains. To prevent this, edges are assigned weights proportional to their span length (i.e., a large weight to long edges spanning multiple levels, and a small weight to short edges). METIS is then forced to minimize the \textit{weighted} cut, actively discouraging the severing of logic paths.
+
+
+\subsection{Sparsification}
+Sparsification reduces graph density by selectively removing edges or nodes while attempting to preserve overall structural properties.
+
+
+\subsubsection{Random Edge Dropout}
+This naive baseline uniformly drops a specified random percentage ($N\%$) of edges across the graph, acting as a control for structural degradation.
+
+
+\subsubsection{And-Gate Only}
+This domain-specific method reduces the graph by dropping all Primary Input (PI) and Primary Output (PO) nodes. It preserves only the internal AND logic gates, which constitute the exclusively optimizable portion of the circuit, since PI and PO boundaries remain structurally fixed during synthesis.
+
+
+\subsubsection{Random Minimum Spanning Tree (MST) Sparsity}
+This method extracts a sparse connectivity backbone by computing a minimum spanning tree over randomized edge weights, effectively eliminating dense reconvergent paths while ensuring the core connectivity of the AIG remains intact. 
+
+% https://www.sciencedirect.com/science/article/pii/S0169743925002473
+
+
+\subsubsection{PageRank Node Pruning}
+This centrality-based approach computes the PageRank score for all nodes to determine their structural importance. It retains only the top $N\%$ of nodes, implicitly dropping all edges incident to the removed, low-centrality nodes.
+
+
+\subsection{Graph Summarization and Coarsening (Noted on what is possible - undecided}
+These methods compress the graph by merging structurally or semantically similar nodes into super-nodes.
+
+% Issue with AIG-specific summarization most coarsening overlaps with optimization 
+
+
+\subsubsection{SNAP} (Strict Semantic)
+Implemented via NetworkX, the Summarization by Grouping Nodes on Attributes and Pairwise edges (SNAP) algorithm aggregates nodes based on matching attributes and connectivity patterns. \\
+
+HOW TO DEAL WITH: Depth, not optimizing, not removing parts that will be optimized. 
+
+
+\begin{itemize}
+    \item \textbf{SNAP (Strict Semantic):} Aggregates nodes based on matching attributes and connectivity patterns (implemented via NetworkX).
+    \begin{itemize}
+        \item \textit{Positional Encodings (PE):} Mean-pool 32D PEs of merged nodes to maintain strict 32D dimensionality, ensuring compatibility with fixed feature spaces during Cross-State Inference (RQ4).
+        \item \textit{Boundary Constraints:} Explicitly forbid merging Primary Input (PI) or Primary Output (PO) nodes to preserve valid logic cones.
+    \end{itemize}
+
+    \todo{k to infinity}
+
+    \item \textbf{Approximate $k$-bisimulation (Relaxed Semantic):} Merges nodes sharing similar structural neighborhoods up to $k$ hops.
+    \begin{itemize}
+        \item \textit{Depth Alignment:} Neighborhood radius $k$ must strictly match target GNN message-passing depth ($d$) to prevent receptive field overshoot.
+        \item \textit{Compression Collapse:} High $k$ values in deep feed-forward circuits cause vanishing compression ratios; empirical tuning required.
+        \item \textit{Edge Parity:} Modify bisimulation to treat inverted/non-inverted edges as distinct relations to avoid merging logically distinct subgraphs.
+    \end{itemize}
+
+    \item \textbf{Heavy Edge (HE) Contraction (Local Structural):} Iteratively contracts edges with highest weights or topological importance.
+    \begin{itemize}
+        \item DAG Cycle Risk
+        \item \textit{Critical Path Erasure:} Contracting low-traffic logic.
+        \item \textit{Edge Attribute Pooling:} Resolving conflicting edge polarities during merges requires careful handling to prevent boolean function distortion.
+    \end{itemize}
+
+
+    \item \textbf{Level-Bounded Reconvergence Coarsening (Custom AIG Method):} Restricts merging to gates on tightly bounded topological depths (e.g., $\pm 1$) sharing a common immediate dominator node.
+    \begin{itemize}
+        \item \textit{Causal Preservation:} Compresses parallel width while locking critical path depth. This perfectly preserves strict causal cones and ensures the 32D Level PE remains highly accurate.
+    \end{itemize}
+\end{itemize}
+
+
+\begin{itemize}
+    \item \textit{Pairwise Aggregation / Edge Collapsing:} Coalesces adjacent nodes based on nearness or similarity.
+    \item \textit{Heavy-Edge Matching (HEM):} Greedy algorithm matching nodes with their largest off-diagonal neighbor.
+    \item \textit{Local Variation (LV):} Provides spectral/cut guarantees to preserve global structure during reduction.
+\end{itemize}
+
+\begin{itemize}
+    \item \textit{Independent Set Coarsening:} Forms coarse graphs using maximal independent sets of non-adjacent nodes.
+    \item \textit{Node Grouping / Supernodes:} Aggregates tailored by structural/attribute similarities.
+    \item \textit{Attributes / IO Summary:} Partitions nodes sharing equivalent incoming/outgoing attribute sets.
+\end{itemize}
+
+
+\begin{itemize}
+    \item \textit{Strict Bisimulation:} Aggregates nodes only if they share identical outgoing paths.
+    \item \textit{Forward ($k$)-bisimulation:} Stratified bisimulation restricted to maximum path length $k$.
+    \item \textit{Color Refinement (1D WL):} Evaluates if nodes are indistinguishable to a GNN up to layer depth $d$.
+    \item \textit{$d$-reduction / $d$-substitution:} Collapses all nodes sharing exact color refinement classes (up to depth $d$).
+\end{itemize}
+
+\begin{itemize}
+    \item \textbf{Maximum Fanout Free Cone (MFFC) Contraction:} Collapses local structural cones where internal paths pass through a single root gate.
+    \begin{itemize}
+        \item \textit{Optimizability Risk:} MFFCs are prime targets for synthesis rewriting. Merging them might obscure the exact optimizability features the model must regress.
+    \end{itemize}
+    \item \textbf{$K$-Feasible Cut Enumeration (LUT Mapping):} Subdivides AIGs into bounded logic cones.
+\end{itemize}
+
+
+% How to deal with the positional encoding??
+% Options a vector [Min_Level, Max_Level, Mean_Level, Level_Variance] rounded for matching ease? per super node MORE EFFICIENT?
+% Appending it to the node attribute? STRICTER 
+
+
+% \subsubsection{Approximate k-bisimulation} 
+% (Relaxed Semantic) 
+% This relaxed semantic approach merges nodes that share similar structural neighborhoods up to $k$ hops, allowing for better compression rates than strict equivalence, plus approximate with whatever tricks are in this repo. \\
+% \url{https://github.com/R-van-Bakel/Multi-Summaries/tree/main}
+
+% \subsubsection{Heavy Edge (HE) Contraction} 
+% (Local Structural) adapted
+% This local structural method iteratively contracts edges with the highest weights or topological importance, preserving dense local communities during the coarsening process.
+% With weights in regard to logical flow? Like local sp sum? Paths through from in to out = weight? 
+
+% \subsubsection{Algebraic Distance (AD) Coarsening (Global Structural)}
+% Utilizing networkit, this approach determines the ``closeness'' of nodes based on algebraic relaxation procedures (such as Jacobi overrelaxation) rather than direct structural edges. By measuring how quickly nodes converge during these iterations, it extracts an ``algebraic distance'' to identify and aggregate strongly connected variables, effectively preserving the global structural layout and spectral properties of the original graph.
+
+% % networkit.coarsening.AlgebraicDistanceCoarsening (Explicitly Spectral)  
+
+% \subsubsection{AIG Specific - Level Coarsening - Own}
+% TBD
+
+
+\section{Final Architecture}
+Based on GNNPlus: \url{https://github.com/LUOyk1999/GNNPlus}.
+Based on literature and HP tuning. Used for unreduced graphs, sparsified graphs, and summarized graphs. 
+
+\begin{itemize}
+    \item \textbf{Model Type:} Edge-Aware Graph Convolutional Network (GCN+) for AIGs
+    \item \textbf{Input Representation \& Encodings}
+    \begin{itemize}
+        \item \textit{Node Features:} 4-dimensional one-hot vector (Constant, Primary Input, AND Gate, Primary Output)
+        \item \textit{Edge Attributes:} 2-dimensional one-hot vector (Standard connection, Inverted signal)
+        \item \textit{Positional Encoding:} Level-based, 32-dimensional space
+        \item \textit{Pre-Encoder Integration:} 4D nodes linearly projected to 128D $\rightarrow$ concatenated with 32D PE $\rightarrow$ 160D vector $\rightarrow$ stabilized via \texttt{GraphNorm}
+    \end{itemize}
+
+    \item \textbf{Core Architecture Scale}
+    \begin{itemize}
+        \item Depth: 4 stacked message-passing layers
+        \item Width/Hidden Dimension ($d_h$): 128 (consistent across layers)
+    \end{itemize}
+
+    \item \textbf{Edge-Aware Message Passing}
+    \begin{itemize}
+        \item Dynamic integration of edge attributes directly into message formulation
+        \item Linear projection of edge features $\rightarrow$ fuse with neighbor features $\rightarrow$ LeakyReLU - from GNNPlus
+        \item Symmetric degree normalization: Disabled in final configuration - Worked better GNNPlus found the same out...
+    \end{itemize}
+
+    \item \textbf{Layer Block Composition (Per Layer)}
+    \begin{itemize}
+        \item Activation \& Regularization: LeakyReLU + Dropout ($p = 0.15$)
+        \item Residuals: Skip-connections added post-message passing
+        \item Feed-Forward Network (FFN): Two-layer linear expansion ($128 \rightarrow 256 \rightarrow 128$)
+        \item Normalization: \texttt{LayerNorm} applied before and after FFN
+    \end{itemize}
+
+    \item \textbf{Graph-Level Readout \& Aggregation}
+    \begin{itemize}
+        \item \textit{Jumping Knowledge (JK):} \texttt{"sum"} aggregation across all 4 layers (maintains $d_{out} = 128$) 
+        \item \textit{Global Pooling:} Mean pooling down to single graph-level embedding
+        \item \textit{Regression Head Setup:}
+        \begin{itemize}
+            \item MLP architecture bridging graph embedding to final prediction
+            \item Intermediate compression: Linear layer ($128 \rightarrow 64$) + \texttt{ReLU} + Dropout
+            \item Final projection: Linear layer ($64 \rightarrow 1$)
+            \item Output bounding: Terminal \texttt{Sigmoid} activation constrains prediction to $[0, 1]$ range (mapping directly to the optimizability percentage)
+        \end{itemize}
+    \end{itemize}
+\end{itemize}
+
+
+\subsection{Partitioning Graphs}
+Partition graphs in dataset offline. Removes edges between partitions.
+
+\begin{itemize}
+  \item GNN encoder (applied on intra-partition edges only)
+  \item Pooling from node representations to partition representations
+  \item Pooling from partition representations to a single graph representation
+  \item Prediction head applied to the graph representation to produce the output $\hat{y}$
+\end{itemize}
+
+
+
+\subsection{Baselines for Optimizability Prediction}
+\todo{some optimizability baselines from pre-existing? }
+
+\section{Experiment Methodology}
+
+\subsection{Task Definition \& Data}
+
+
+\begin{itemize}
+    \item Target Label ("Optimizability"): The relative percentage of node reduction achieved by a synthesis algorithm (formulated as a regression task bound between 0 and 1).
+    \item Dataset Volume: Over 3.9 million total unique AIGs. This originates from 55 designs randomly transformed into 231,055  base graphs (Tier-0). Applying the 4 distinct target synthesis algorithms (Orchestrate, Deepsyn, Syn4, C2RS) to these base graphs yields exactly 231,055 primary (Tier-1) samples per algorithm. In Tier-2, each resulting graph from Tier 1 is then optimized by Orchestrate. A smaller, balanced (between Tier 0,1 and 2) subset of 50,000 graphs was used exclusively for the initial hyperparameter tuning and then excluded from the rest.
+    \item Input Features: PyTorch Geometric graphs utilizing 1-hot node types (Constants, PI, AND, PO), 1-hot encoded edge polarity (regular connection or inverted signal), and topological depth encodings.
+\end{itemize}
+
+
+\subsection{Experimental Setup}
+
+\begin{itemize}
+    \item \textbf{Data Splitting:} An 80/10/10 volume split and a functional design level split. This prevents data leakage, ensuring the model never sees structurally identical circuits in different optimization states across the train/test sets.
+    \item \textbf{Hardware Mitigation:} Dynamic batching is employed by setting a maximum number of nodes per batch and using a greedy bin-packing algorithm to prevent CUDA Out-Of-Memory errors on massive AIGs.
+    \item \textbf{Graph Scale and Tractability}: The dataset is bounded to a specific node/edge threshold (e.g., max X,000 nodes per AIG). This intermediate scale guarantees that a single, unreduced graph can fit into GPU VRAM, making the ground-truth baseline in RQ1 computationally tractable, while still providing sufficient structural complexity to rigorously stress-test the reduction methods.
+    \item \textbf{Predictive Model:} An Edge-Aware Graph Convolutional Network (GCN+) is trained to predict the optimizability of a circuit when subjected to the Orchestrate synthesis script.
+\end{itemize}
+
+
+\subsection{Experiments}
+\begin{enumerate}
+    \item \textbf{Phase 1 (Baseline):} Train the GNN on full, unreduced AIGs to establish predictive accuracy and baseline hardware overhead (VRAM, training time).
+    \item \textbf{Phase 2 (Offline Reduction):} Apply and measure the offline computational cost and shrinkage achieved by the three reduction categories: Partitioning, Sparsification, and Coarsening/Summarization.
+    \item \textbf{Phase 3 (Trade-off Analysis):} Train models on the newly reduced datasets and compare their performance against the Phase 1 baseline to establish a Pareto front (predictive degradation vs. memory/speed gains).
+    \item \textbf{Phase 4 (Cross-State Generalization):} Query the models trained exclusively on reduced graphs using normal, full-sized graphs during inference to evaluate structural generalization capabilities or model graph indistinguishability.
+\end{enumerate}
+
+\section{Results and Comparisons to Collect and Analyze}
+
+\subsection{Baseline Predictive Performance on Full AIGs (Answers RQ1)}
+
+\subsubsection{Predictive Accuracy Metrics}
+\begin{itemize}
+    \item \textbf{Inference Data Collected (Test Set = Full AIGs):}
+    \begin{itemize}
+        \item \textbf{Accuracy Metrics:} Tabular presentation of Smooth L1 Loss, RMSE, and $R^2$ for the Edge-Aware GCN+ predicting Orchestrate optimizability.
+        \item \textbf{Ranking Efficacy:} Spearman correlation coefficients.
+    \end{itemize}
+\end{itemize}
+
+\subsubsection{Hardware Baselines and Training Bottlenecks}
+\begin{itemize}
+    \item \textbf{Baseline Data Collected:}
+    \begin{itemize}
+        \item Base training times tracked via W\&B (\texttt{train\_step\_time\_s\_step} and \texttt{train\_step\_time\_s\_epoch}).
+        \item Peak VRAM allocation (\texttt{GPU Memory Allocated}).
+        \item \textbf{Throughput:} Baseline inference speed measured in graphs processed per second.
+    \end{itemize}
+\end{itemize}
+
+
+
+\subsection{Efficiency Profile of Graph Reduction Techniques (Answers RQ2)}
+
+
+\subsubsection{Graph Reduction Offline Profile}
+\begin{itemize}
+    \item \textbf{Offline Processing Data Collected:} 
+    \begin{itemize}
+        \item Statistical summary of node and edge reduction ratios achieved by Partitioning, Sparsification, and Exact Summarization.
+        \item Computational wall-clock time required to execute these reduction algorithms offline.
+    \end{itemize}
+\end{itemize}
+
+\subsubsection{Training Memory Dynamics and Compute Efficiency}
+\begin{itemize}
+    \item \textbf{VRAM Footprint:} Bar charts comparing peak \texttt{GPU Memory Allocated (Bytes)} and \texttt{GPU Memory Allocated (\%)} 
+    \item \textbf{Host Memory Bottlenecks:} \texttt{Process Memory In Use (MB)} and \texttt{System Memory Utilization (\%)}  (MAYBE)
+    \item \textbf{Compute Efficiency:} \texttt{GPU Utilization (\%)} and \texttt{GPU DRAM Active (\%)} 
+\end{itemize}
+
+
+\subsubsection{Throughput and Training Speedup}
+\begin{itemize}
+    \item \textbf{Temporal Gains:} 
+    \begin{itemize}
+        \item Comparison of \texttt{train\_step\_time\_s\_step} and \texttt{train\_step\_time\_s\_epoch} against the full-graph baseline.
+        \item Inference throughput improvements (graphs processed per second) over the baseline.
+    \end{itemize}
+\end{itemize}
+
+
+\subsection{Predictive Retention and Performance Trade-offs (Answers RQ3)}
+
+\subsubsection{Accuracy Degradation and Ranking Preservation}
+\begin{itemize}
+    \item \textbf{Inference Data Collected (Test Set = Reduced AIGs):}
+    \begin{itemize}
+        \item \textbf{Accuracy Degradation:} Grouped bar charts comparing the RMSE and $R^2$ of models trained and tested on reduced graphs against the RQ1 full-graph baseline.
+    \end{itemize}
+\end{itemize}
+
+\subsubsection{The Pareto Front (Trade-Off Analysis)}
+\begin{itemize}
+    \item \textbf{Derived Trade-Offs:}
+    \begin{itemize}
+        \item Scatter plots visualizing Accuracy (y-axis) vs. Memory/Speed Gains (x-axis) to identify the optimal graph reduction technique, bridging RQ2 and RQ3.
+    \end{itemize}
+\end{itemize}
+
+% \begin{table}[htbp]
+% \centering
+% \caption{Sparsification Retention Statistics over 10,000 Graphs}
+% \label{tab:sparsification_stats}
+% \small
+% \begin{tabular}{llccccr}
+% \toprule
+% \textbf{Method} & \textbf{Metric} & \textbf{Mean (\%)} & \textbf{Std (\%)} & \textbf{Min (\%)} & \textbf{Max (\%)} & \textbf{Avg Time (ms)} \\
+% \midrule
+% and\_gate\_only & Edge Retention & 73.3 & 13.0 & 48.9 & 99.1 & 91.85 \\
+%                 & Node Retention & 82.1 & 11.4 & 63.3 & 99.9 & \\
+%                 & Edge Reduction & 26.7 & --   & --   & --   & \\
+% \midrule
+% pagerank        & Edge Retention & 62.7 & 6.3  & 41.5 & 76.8 & 1,832.14 \\
+%                 & Node Retention & 80.0 & 0.0  & 79.8 & 80.0 & \\
+%                 & Edge Reduction & 37.3 & --   & --   & --   & \\
+% \midrule
+% random\_edge\_dropout & Edge Retention & 69.7 & 0.6  & 66.7 & 70.3 & 26.44 \\
+%                       & Node Retention & 100.0& 0.0  & 100.0& 100.0& \\
+%                       & Edge Reduction & 30.3 & --   & --   & --   & \\
+% \midrule
+% spanning\_forest       & Edge Retention & 58.1 & 5.3  & 50.0 & 70.0 & 3,519.05 \\
+%                       & Node Retention & 100.0& 0.0  & 100.0& 100.0& \\
+%                       & Edge Reduction & 41.9 & --   & --   & --   & \\
+% \bottomrule
+% \end{tabular}
+% \end{table}
+
+
+\subsection{Cross-Structural Generalization (Answers RQ4)}
+
+\begin{itemize}
+    \item \textbf{Inference Data Collected (Test Set = Full AIGs):}
+    \begin{itemize}
+        \item \textbf{Accuracy:} Smooth L1 Loss, RMSE, and $R^2$ metrics from testing a model (which was trained exclusively on reduced AIGs via partitioning, sparsification, or summarization) directly on normal, full-sized AIGs.
+        \item \textbf{Zero-Shot Ranking:} Spearman correlation.
+    \end{itemize}
+    \item \textbf{Derived Structural Analysis:} 
+    \begin{itemize}
+        \item Comparison measuring the performance drop-off between matched-state testing (Reduced $\rightarrow$ Reduced) vs. cross-state testing (Reduced $\rightarrow$ Full).
+    \end{itemize}
+\end{itemize}
+
+%----------------------------------------------------------------------------------------
+%	SCHEDULE AND PROGRESS TRACKING
+%----------------------------------------------------------------------------------------
+\section{Project Schedule and Progress Tracking}
+This section outlines the completed milestones and upcoming tasks for the remainder of the thesis project, categorized into logical implementation phases to track progress.
+
+\begin{table}[htbp]
+\centering
+\caption{Thesis Progress and Task Schedule}
+\label{tab:progress}
+\begin{tabular}{@{}llp{8.5cm}@{}}
+\toprule
+\textbf{Phase / Task} & \textbf{Status} & \textbf{Notes} \\
+\midrule
+\textbf{Phase 1: Foundation \& Setup} & & \\
+Dataset Creation & \textbf{Done} & Generated and processed. \\
+Model Architecture Implementation & \textbf{Done} & Edge-Aware GCN+ built and configured. \\
+Thesis Direction Overview & \textbf{Done} & Current document (Motivation, RQ, Methodology). \\
+Thesis Outline & \textit{Started} & Currently structuring the main sections. \\
+\midrule
+\textbf{Phase 2: Implementation \& Experiments} & & \\
+Base Training & \textbf{Done} & Code complete and fully executed on unreduced AIGs. \\
+Partitioning & \textbf{Done} & Code complete and fully executed. \\
+Sparsification & \textbf{Done} & Code complete and fully executed. \\
+Summarization: Method Selection & \textit{Started} & Need to finalize which coarsening/summarization techniques to use. \\
+Summarization: Code Implementation & \textbf{To Do} & Dependent on final method selection. \\
+Summarization: Execution & \textbf{To Do} & Training and running summarization experiments. \\
+\midrule
+\textbf{Phase 3: Evaluation \& Analysis} & & \\
+Offline Sparsification Measurement & \textbf{Done} & Investigated reduction stats (e.g., graph shrinkage). \\
+Evaluate Base, Partition, Sparsify & \textbf{To Do} & Analyze hardware metrics, accuracy drop, and generate plots. \\
+Evaluate Summarization & \textbf{To Do} & Dependent on completing Phase 2 summarization tasks. \\
+Cross-Structural Evaluation & \textbf{To Do} & Inference on full graphs from reduced state models. \\
+\midrule
+\textbf{Phase 4: Writing \& Finalization} & & \\
+Drafting Full Thesis Document & \textbf{To Do} & Expand outline into full chapters, writing the paper. \\
+Final Review and Polish & \textbf{To Do} & \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+
+% To mention in meeting 
+% due date when? End of August 
+
+
+
+
+\vspace{1cm} % Add some space between the tables
+
+\begin{table}[htbp]
+\centering
+\caption{Weekly Timeline for Remaining Tasks}
+\label{tab:timeline}
+\begin{tabular}{@{}lp{8.0cm}p{4.0cm}@{}}
+\toprule
+\textbf{Timeframe} & \textbf{Planned Tasks} & \textbf{Key Notes \& Deadlines} \\
+\midrule
+\textbf{Until July 19th} & Choose Summarization Methods. & \\
+\addlinespace
+\textbf{July 20th -- 26th} & Summarization Code implementation \& debugging; Run Summarization Training. & \\
+\addlinespace
+\textbf{July 27th -- Aug 2nd} & Make inference testing script for all models; Run testing script; Finish detailed outline. & \textbf{Turn in outline (Aug 1st).} \\
+\addlinespace
+\textbf{August 3rd -- 9th} & Writing from outline. & \textbf{Initial focus:} Methodology (AIG Adaptations) \& Experimental Setup. \\
+\addlinespace
+\textbf{August 10th -- 16th} & Writing from outline. & \textbf{Submit halfway draft (Aug 15th).} \\
+\addlinespace
+\textbf{August 17th -- 23rd} & Finish 1st draft. & \\
+\addlinespace
+\textbf{August 24th -- 30th} & Finish writing. & \textbf{Submit Final (Aug 31st?).} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+
+
+\end{document}
