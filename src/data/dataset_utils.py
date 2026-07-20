@@ -3,10 +3,10 @@ from __future__ import annotations
 import re
 from pathlib import Path
 from typing import Dict, Optional
-from constants import VALID_ALGORITHMS
+from config import KNOWN_ALGORITHMS
 
 
-_ALGO_ALT = "|".join(sorted(VALID_ALGORITHMS))
+_ALGO_ALT = "|".join(sorted(KNOWN_ALGORITHMS))
 _TIER0_STEM_RE = re.compile(r"^(?P<design>.+?)_syn[0-9X]+_step\d+$")
 _TIER1_STEM_RE = re.compile(
     rf"^(?P<design>.+?)_(?P<algorithm>{_ALGO_ALT})_tier1_(?P<suffix>.+)$"
@@ -38,9 +38,9 @@ def normalize_algorithm(value: Optional[str]) -> Optional[str]:
     text = clean_str(value)
     if text == "" or text.lower() == "all":
         return None
-    if text not in VALID_ALGORITHMS:
+    if text not in KNOWN_ALGORITHMS:
         raise ValueError(
-            f"algorithm must be one of {sorted(VALID_ALGORITHMS)} or None/'all'. "
+            f"algorithm must be one of {sorted(KNOWN_ALGORITHMS)} or None/'all'. "
             f"Got: {text}"
         )
     return text

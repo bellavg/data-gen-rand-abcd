@@ -1,3 +1,5 @@
+import os
+
 BATCH_SIZE = 32
 WEIGHT_DECAY = 0.00396
 ENCODER_NAME = "gcn"
@@ -46,15 +48,21 @@ SPARSIFICATION_PAGERANK_KEEP_RATIO = 0.8  # fraction of nodes to keep (0.0 to 1.
 SPARSIFICATION_PAGERANK_ALPHA = 0.85      # damping factor for PageRank
 SPARSIFICATION_SEED = 42
 
-import os
 _user = os.environ.get("USER", "")
 SPARSIFICATION_REPLACE_PATH = (
-    f"/scratch-shared/{_user}/aig_train_run", 
+    f"/scratch-shared/{_user}/aig_train_run",
     f"/scratch-shared/{_user}/aig_mask_cache"
 )
 
-# VALID_ALGORITHMS = {"Orchestrate", "Deepsyn", "Syn4", "C2RS"}
+# Algorithms currently supported for training (train.py --algorithm validation).
+# This project only trains on Orchestrate-optimized graphs.
 VALID_ALGORITHMS = {"Orchestrate"}
+
+# All algorithm names that appear in existing tier0/tier1/tier2 filenames on
+# disk (the data-creation pipeline ran all four). Used by dataset_utils.py to
+# parse filenames regardless of which algorithm is currently trained on.
+KNOWN_ALGORITHMS = {"Orchestrate", "Deepsyn", "Syn4", "C2RS"}
+
 # Output dimension used by models (set equal to hidden dim by default)
 OUTPUT_DIM = HIDDEN_DIM
 
@@ -86,3 +94,42 @@ def get_output_dim_for_encoder(encoder_name, encoder_kwargs):
     else:
         # 'mean', 'max', 'sum', or 'last' all result in the same hid_dim
         return hid_dim
+
+
+# GCN is the only GNN encoder model retained in the registry.
+_ENCODER_MODULE_MAP = {
+    "gcn": ("models.layers.gcn", "GCNEncoder"),
+}
+_ENCODER_CACHE: dict = {}
+
+
+class _LazyEncoderRegistry(dict):
+    """Dict-like registry that imports an encoder class on first access."""
+
+    def __getitem__(self, key: str):
+        if key not in _ENCODER_CACHE:
+            if key not in _ENCODER_MODULE_MAP:
+                raise KeyError(
+                    f"Unknown encoder: {key!r}. Valid: {sorted(_ENCODER_MODULE_MAP)}"
+                )
+            module_path, class_name = _ENCODER_MODULE_MAP[key]
+            import importlib
+
+            mod = importlib.import_module(module_path)
+            _ENCODER_CACHE[key] = getattr(mod, class_name)
+        return _ENCODER_CACHE[key]
+
+    def __contains__(self, key):
+        return key in _ENCODER_MODULE_MAP
+
+    def keys(self):
+        return _ENCODER_MODULE_MAP.keys()
+
+    def __iter__(self):
+        return iter(_ENCODER_MODULE_MAP)
+
+    def __len__(self):
+        return len(_ENCODER_MODULE_MAP)
+
+
+ENCODER_REGISTRY = _LazyEncoderRegistry()

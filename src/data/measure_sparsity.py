@@ -17,13 +17,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from data.sparsification import (
-    _SPARSE_PREFIX,
-    random_edge_dropout,
-    spanning_forest_sparsification,
-    pagerank_sparsification,
-    and_gate_only_sparsification,
-)
+from data.sparsification import _SPARSE_PREFIX
 
 # Try to use the safe globals registration if available
 try:
@@ -57,7 +51,6 @@ def measure_from_precomputed_masks(mask_cache_dirs: list[Path], max_samples: int
     algo_files: dict[str, list[Path]] = defaultdict(list)
     unrecognized: list[str] = []
     for index_path in all_index_files:
-        fname = index_path.stem  # e.g. _sparse_spanning_forest_1720000000_abcd
         matched = False
         for candidate in KNOWN_ALGOS:
             # Check if the filename contains the algo name after the prefix
@@ -69,7 +62,7 @@ def measure_from_precomputed_masks(mask_cache_dirs: list[Path], max_samples: int
         if not matched:
             unrecognized.append(index_path.name)
 
-    print(f"\n  Files per algorithm:")
+    print("\n  Files per algorithm:")
     for algo in KNOWN_ALGOS:
         print(f"    {algo}: {len(algo_files[algo])} index files")
     if unrecognized:
@@ -224,7 +217,6 @@ def process_single_graph(pt_path: Path):
 
 def measure_from_graphs(graph_dirs: list[Path], max_samples: int = 100):
     """Load actual graph .pt files and compute masks on-the-fly."""
-    import time
     import random
     import csv
     import os
@@ -324,15 +316,14 @@ def print_stats(stats: dict):
                   f"min={arr.min():.1%}  max={arr.max():.1%}")
             print(f"    → Effective {mask_type} REDUCTION: ~{1 - arr.mean():.1%}")
             if algo == "pagerank":
-                print(f"    NOTE: This is node retention. Actual edge reduction is higher")
-                print(f"          (removing a node also removes all its incident edges).")
+                print("    NOTE: This is node retention. Actual edge reduction is higher")
+                print("          (removing a node also removes all its incident edges).")
 
     print("\n" + "=" * 70)
 
 
 if __name__ == "__main__":
     import argparse
-    import os
 
     parser = argparse.ArgumentParser(description="Measure sparsification retention")
     parser.add_argument("--mask-cache-dirs", nargs="*",

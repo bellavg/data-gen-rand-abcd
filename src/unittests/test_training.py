@@ -7,7 +7,6 @@ import torch
 from torch_geometric.data import Batch, Data
 from torch_geometric.loader import DataLoader as PyGDataLoader
 
-import config
 import train
 
 # Adjust imports based on your project structure
@@ -333,6 +332,7 @@ def test_train_main_passes_partition_to_datamodule(tmp_path, basic_model, dummy_
         val_check_interval=1.0,
         num_sanity_val_steps=0,
         log_steps=1,
+        torch_compile=False,
     )
 
     with (
@@ -561,8 +561,10 @@ def _make_sparse_batch(n_graphs: int = 4, *, flag_name: str) -> "Batch":
         # x: 4-dim AIG-style features (constant, pi, and_gate, po one-hot)
         x = torch.zeros(n, 4)
         x[:, 2] = 1.0  # all AND gates
-        x[0, 1] = 1.0; x[0, 2] = 0.0  # node 0 is PI
-        x[-1, 3] = 1.0; x[-1, 2] = 0.0  # last node is PO
+        x[0, 1] = 1.0
+        x[0, 2] = 0.0  # node 0 is PI
+        x[-1, 3] = 1.0
+        x[-1, 2] = 0.0  # last node is PO
         ei = torch.tensor([[0, 0, 1, 2, 3, 4, 5, 6, 7, 8],
                            [1, 2, 3, 4, 5, 6, 7, 8, 9, 9]], dtype=torch.long)
         ea = torch.zeros(ei.size(1), 2)

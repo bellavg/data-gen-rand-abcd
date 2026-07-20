@@ -1057,7 +1057,10 @@ class TestAIGDataModule(unittest.TestCase):
         self.assertIsNotNone(dm.train_dataloader())
         self.assertIsNotNone(dm.val_dataloader())
 
-    def test_persistent_workers_train_only_kwargs(self):
+    def test_persistent_workers_applies_to_all_loader_kwargs(self):
+        # persistent_workers applies uniformly to train and val loaders (not
+        # train-only) since the loaders are recreated frequently under
+        # fractional val_check_interval; see datamodule._loader_kwargs.
         from data.datamodule import AIGDataModule
 
         dm = AIGDataModule(
@@ -1072,9 +1075,9 @@ class TestAIGDataModule(unittest.TestCase):
         val_kwargs = dm._loader_kwargs(is_train=False)
 
         self.assertTrue(train_kwargs["persistent_workers"])
-        self.assertFalse(val_kwargs["persistent_workers"])
+        self.assertTrue(val_kwargs["persistent_workers"])
 
-    def test_persistent_workers_train_only_budgeted_dataloaders(self):
+    def test_persistent_workers_applies_to_all_budgeted_dataloaders(self):
         dm = self._make_dm(
             num_workers=2,
             persistent_workers=True,
@@ -1087,7 +1090,7 @@ class TestAIGDataModule(unittest.TestCase):
         val_loader = dm.val_dataloader()
 
         self.assertTrue(getattr(train_loader, "persistent_workers", False))
-        self.assertFalse(getattr(val_loader, "persistent_workers", False))
+        self.assertTrue(getattr(val_loader, "persistent_workers", False))
 
     def test_train_batch_shapes(self):
         dm = self._make_dm()
