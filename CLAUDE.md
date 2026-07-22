@@ -57,6 +57,10 @@ For multi-step tasks, state a brief plan:
 2. [Step] → verify: [check]
 ```
 
+### 6. Adversarial Review Before Commit
+
+Any time code has been written or edited in a session, before running `git commit`/`git push`, spawn a fresh sub-agent with no prior context to act as an adversarial reviewer of the changes made (diff only, no memory of why the change was made). Address what it flags — fix real issues, or note why a flagged item is a non-issue — before committing.
+
 ---
 
 ## Project overview
