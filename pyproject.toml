@@ -14,6 +14,7 @@ dependencies = [
     "networkx>=3.6",
     "pandas>=3.0",
     "scipy>=1.17",
+    "matplotlib>=3.9",
     "torch>=2.11,<2.12",
     "torch-geometric>=2.7,<2.8",
     "optuna>=4.8,<5",

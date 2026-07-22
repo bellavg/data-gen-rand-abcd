@@ -13,8 +13,9 @@
 
 set -euo pipefail
 
-# Define the algorithm argument
-SPARSIFICATION_ALGO="and_gate_only"
+# Define the algorithm argument (override via env var to run this once per
+# method, e.g. SPARSIFICATION_ALGO=pagerank sbatch precompute_sparsification_masks.sh)
+SPARSIFICATION_ALGO="${SPARSIFICATION_ALGO:-and_gate_only}"
 
 
 # Match the workspace targeted in train.sh
