@@ -24,6 +24,7 @@ import pandas as pd
 
 from results_to_latex import (
     _method_matches,
+    load_benchmark_per_graph,
     load_inference_results,
     load_offline_stats,
     load_training_benchmark,
@@ -226,6 +227,105 @@ def plot_pareto_front(pareto_df: pd.DataFrame, figures_dir: Path) -> None:
     _savefig(fig, figures_dir / "rq3_pareto_front.png")
 
 
+def plot_benchmark_vram_vs_size(
+    per_graph_df: pd.DataFrame, training_df: pd.DataFrame, figures_dir: Path
+) -> None:
+    """Peak training VRAM vs. graph size, one series per config. Node-reducing
+    methods shift points down-and-left; the spread shows how per-graph memory
+    scales with size — the quantity that determines whether a graph OOMs."""
+    if per_graph_df.empty or per_graph_df["peak_vram_mb"].isna().all():
+        print("[plot_results] No GPU per-graph VRAM data — skipping VRAM-vs-size scatter.")
+        return
+
+    label_map = {}
+    if not training_df.empty:
+        label_map = (
+            training_df.drop_duplicates("run_label")
+            .set_index("run_label")[["reduction_type", "reduction_method"]]
+            .to_dict("index")
+        )
+
+    fig, ax = plt.subplots(figsize=(7, 5))
+    for i, run_label in enumerate(sorted(per_graph_df["run_label"].unique())):
+        grp = per_graph_df[per_graph_df["run_label"] == run_label]
+        meta = label_map.get(run_label, {"reduction_type": "", "reduction_method": run_label})
+        label = _config_label(meta["reduction_type"], meta["reduction_method"]).replace("\n", " ")
+        ax.scatter(
+            grp["num_nodes"], grp["peak_vram_mb"],
+            s=18, alpha=0.5, marker=_PARETO_MARKERS[i % len(_PARETO_MARKERS)], label=label,
+        )
+    ax.set_xlabel("Graph size (nodes)")
+    ax.set_ylabel("Peak training VRAM (MB)")
+    ax.set_title("Per-graph training VRAM vs. graph size (RQ2)")
+    ax.minorticks_on()
+    ax.grid(which="major", alpha=0.3)
+    ax.grid(which="minor", alpha=0.15, linestyle=":")
+    ax.legend(loc="center left", bbox_to_anchor=(1.02, 0.5), fontsize=8, frameon=True)
+    _savefig(fig, figures_dir / "rq2_vram_vs_size.png")
+
+
+def plot_benchmark_savings_vs_size(
+    per_graph_df: pd.DataFrame, training_df: pd.DataFrame, figures_dir: Path
+) -> None:
+    """Per-graph VRAM saving vs. full-graph size, paired against baseline by
+    graph_id. The headline plot: reduction saves most on the largest graphs —
+    exactly where OOM happens."""
+    if per_graph_df.empty or training_df.empty:
+        print("[plot_results] No per-graph/benchmark data — skipping savings-vs-size scatter.")
+        return
+
+    baseline_labels = training_df[training_df["reduction_type"] == "none"]["run_label"].unique()
+    if len(baseline_labels) == 0:
+        print("[plot_results] No baseline run_label — skipping savings-vs-size scatter.")
+        return
+    baseline_label = baseline_labels[0]
+    base = per_graph_df[per_graph_df["run_label"] == baseline_label][
+        ["graph_id", "num_nodes", "peak_vram_mb"]
+    ].rename(columns={"num_nodes": "base_nodes", "peak_vram_mb": "base_vram"})
+    if base.empty or base["base_vram"].isna().all():
+        print("[plot_results] No GPU baseline VRAM — skipping savings-vs-size scatter.")
+        return
+
+    label_map = (
+        training_df.drop_duplicates("run_label")
+        .set_index("run_label")[["reduction_type", "reduction_method"]]
+        .to_dict("index")
+    )
+
+    fig, ax = plt.subplots(figsize=(7, 5))
+    plotted = False
+    for i, run_label in enumerate(sorted(per_graph_df["run_label"].unique())):
+        if run_label == baseline_label:
+            continue
+        grp = per_graph_df[per_graph_df["run_label"] == run_label][["graph_id", "peak_vram_mb"]]
+        merged = grp.merge(base, on="graph_id")
+        if merged.empty or merged["base_vram"].isna().all():
+            continue
+        saving_pct = (1 - merged["peak_vram_mb"] / merged["base_vram"]) * 100
+        meta = label_map.get(run_label, {"reduction_type": "", "reduction_method": run_label})
+        label = _config_label(meta["reduction_type"], meta["reduction_method"]).replace("\n", " ")
+        ax.scatter(
+            merged["base_nodes"], saving_pct,
+            s=18, alpha=0.5, marker=_PARETO_MARKERS[(i + 1) % len(_PARETO_MARKERS)], label=label,
+        )
+        plotted = True
+
+    if not plotted:
+        plt.close(fig)
+        print("[plot_results] No reduced configs paired with baseline — skipping savings-vs-size scatter.")
+        return
+
+    ax.axhline(0, color="black", linewidth=0.8)
+    ax.set_xlabel("Full-graph size (nodes)")
+    ax.set_ylabel("Training VRAM saving vs. baseline (%)")
+    ax.set_title("Per-graph VRAM saving vs. graph size (RQ2/RQ3)")
+    ax.minorticks_on()
+    ax.grid(which="major", alpha=0.3)
+    ax.grid(which="minor", alpha=0.15, linestyle=":")
+    ax.legend(loc="center left", bbox_to_anchor=(1.02, 0.5), fontsize=8, frameon=True)
+    _savefig(fig, figures_dir / "rq2_vram_saving_vs_size.png")
+
+
 def plot_rq4_cross_state_bars(inference_df: pd.DataFrame, figures_dir: Path) -> None:
     """Matched-state vs. cross-state RMSE per reduced config — makes the
     "performance drop-off" comparison (RQ4) visual rather than only tabular."""
@@ -265,16 +365,19 @@ def plot_rq4_cross_state_bars(inference_df: pd.DataFrame, figures_dir: Path) -> 
 
 
 def main(args: argparse.Namespace) -> None:
-    inference_df = load_inference_results(Path(args.inference_csv))
-    training_df = load_training_benchmark(Path(args.training_csv))
+    inference_df = load_inference_results(Path(args.inference_dir))
+    training_df = load_training_benchmark(Path(args.training_dir))
     sparsification_stats = load_offline_stats(Path(args.logs_dir), "sparsification_stats")
     partition_stats = load_offline_stats(Path(args.logs_dir), "partition_stats")
+    per_graph_df = load_benchmark_per_graph(Path(args.per_graph_dir))
 
     figures_dir = Path(args.figures_dir)
 
     plot_parity(Path(args.predictions_dir), figures_dir)
     plot_rq2_hardware_bars(training_df, inference_df, figures_dir)
     plot_rq2_offline_bars(sparsification_stats, partition_stats, figures_dir)
+    plot_benchmark_vram_vs_size(per_graph_df, training_df, figures_dir)
+    plot_benchmark_savings_vs_size(per_graph_df, training_df, figures_dir)
     plot_rq3_accuracy_bars(inference_df, figures_dir)
     plot_rq4_cross_state_bars(inference_df, figures_dir)
 
@@ -289,10 +392,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Generate static publication figures from results/ + logs/ CSVs."
     )
-    parser.add_argument("--inference_csv", type=str, default="results/inference_results.csv")
-    parser.add_argument("--training_csv", type=str, default="results/training_benchmark.csv")
+    parser.add_argument("--inference_dir", type=str, default="results/inference_results")
+    parser.add_argument("--training_dir", type=str, default="results/training_benchmark")
     parser.add_argument("--logs_dir", type=str, default="logs")
     parser.add_argument("--predictions_dir", type=str, default="results/predictions")
+    parser.add_argument("--per_graph_dir", type=str, default="results/benchmark_per_graph")
     parser.add_argument("--tables_dir", type=str, default="results/tables")
     parser.add_argument("--figures_dir", type=str, default="results/figures")
 

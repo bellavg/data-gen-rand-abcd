@@ -70,18 +70,26 @@ def _method_matches(series: pd.Series, method) -> pd.Series:
     return series.fillna("") == target
 
 
-def load_inference_results(path: Path) -> pd.DataFrame:
-    if not path.is_file():
-        print(f"[results_to_latex] {path} not found — skipping inference-based tables.")
+def _load_csv_dir(directory: Path, kind: str) -> pd.DataFrame:
+    """Concatenate every per-config CSV that test.py / benchmark.py wrote into
+    ``directory`` (one file per config, to avoid concurrent-append races in the
+    SLURM array). Returns empty if the directory has no CSVs."""
+    if not directory.is_dir():
+        print(f"[results_to_latex] {directory} not found — skipping {kind} tables.")
         return pd.DataFrame()
-    return pd.read_csv(path)
+    frames = [pd.read_csv(p) for p in sorted(directory.glob("*.csv"))]
+    if not frames:
+        print(f"[results_to_latex] no CSVs in {directory} — skipping {kind} tables.")
+        return pd.DataFrame()
+    return pd.concat(frames, ignore_index=True)
 
 
-def load_training_benchmark(path: Path) -> pd.DataFrame:
-    if not path.is_file():
-        print(f"[results_to_latex] {path} not found — skipping benchmark-based tables.")
-        return pd.DataFrame()
-    return pd.read_csv(path)
+def load_inference_results(directory: Path) -> pd.DataFrame:
+    return _load_csv_dir(directory, "inference-based")
+
+
+def load_training_benchmark(directory: Path) -> pd.DataFrame:
+    return _load_csv_dir(directory, "benchmark-based")
 
 
 def load_offline_stats(logs_dir: Path, prefix: str) -> pd.DataFrame:
@@ -96,6 +104,73 @@ def load_offline_stats(logs_dir: Path, prefix: str) -> pd.DataFrame:
     if not frames:
         return pd.DataFrame()
     return pd.concat(frames, ignore_index=True)
+
+
+def load_benchmark_per_graph(per_graph_dir: Path) -> pd.DataFrame:
+    """Loads results/benchmark_per_graph/{run_label}.csv (benchmark.py per-graph
+    output) into one DataFrame tagged with run_label from the filename."""
+    frames = []
+    for csv_path in sorted(per_graph_dir.glob("*.csv")):
+        df = pd.read_csv(csv_path)
+        df["run_label"] = csv_path.stem
+        frames.append(df)
+    if not frames:
+        return pd.DataFrame()
+    return pd.concat(frames, ignore_index=True)
+
+
+def build_paired_savings(training_df: pd.DataFrame, per_graph_df: pd.DataFrame) -> pd.DataFrame:
+    """Per-config mean VRAM/time savings vs. the baseline, paired by graph_id.
+
+    Because the benchmark measures one graph per batch on the same seeded
+    sample for every config, a reduced graph can be matched to its own
+    full-size version (same graph_id) and the per-graph delta averaged — a
+    stronger comparison than differencing aggregate means over different
+    batch compositions.
+    """
+    if training_df.empty or per_graph_df.empty:
+        return pd.DataFrame()
+
+    baseline_labels = training_df[training_df["reduction_type"] == "none"]["run_label"].unique()
+    if len(baseline_labels) == 0:
+        return pd.DataFrame()
+    baseline_label = baseline_labels[0]
+
+    base = per_graph_df[per_graph_df["run_label"] == baseline_label][
+        ["graph_id", "step_time_s", "peak_vram_mb"]
+    ].rename(columns={"step_time_s": "base_time", "peak_vram_mb": "base_vram"})
+    if base.empty:
+        return pd.DataFrame()
+
+    label_map = (
+        training_df.drop_duplicates("run_label")
+        .set_index("run_label")[["reduction_type", "reduction_method"]]
+        .to_dict("index")
+    )
+
+    rows = []
+    for label in per_graph_df["run_label"].unique():
+        if label == baseline_label:
+            continue
+        red = per_graph_df[per_graph_df["run_label"] == label][
+            ["graph_id", "step_time_s", "peak_vram_mb"]
+        ]
+        merged = red.merge(base, on="graph_id")
+        if merged.empty:
+            continue
+        vram_saving = (1 - merged["peak_vram_mb"] / merged["base_vram"]) * 100
+        time_saving = (1 - merged["step_time_s"] / merged["base_time"]) * 100
+        meta = label_map.get(label, {"reduction_type": "", "reduction_method": ""})
+        rows.append(
+            {
+                "reduction_type": meta["reduction_type"],
+                "reduction_method": meta["reduction_method"],
+                "n_paired": len(merged),
+                "mean_vram_saving_pct": float(vram_saving.mean()),
+                "mean_time_saving_pct": float(time_saving.mean()),
+            }
+        )
+    return pd.DataFrame(rows)
 
 
 def build_baseline_accuracy_table(inference_df: pd.DataFrame) -> pd.DataFrame:
@@ -118,6 +193,7 @@ def build_reduction_efficiency_table(
     training_df: pd.DataFrame,
     sparsification_stats: pd.DataFrame,
     partition_stats: pd.DataFrame,
+    paired_savings: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """RQ2: joins offline reduction cost with runtime (train + inference) cost."""
     if training_df.empty:
@@ -132,6 +208,17 @@ def build_reduction_efficiency_table(
             (training_df["reduction_type"] == rtype)
             & _method_matches(training_df["reduction_method"], rmethod)
         ]
+
+        vram_saving = float("nan")
+        time_saving = float("nan")
+        if paired_savings is not None and not paired_savings.empty:
+            s = paired_savings[
+                (paired_savings["reduction_type"] == rtype)
+                & _method_matches(paired_savings["reduction_method"], rmethod)
+            ]
+            if not s.empty:
+                vram_saving = float(s["mean_vram_saving_pct"].mean())
+                time_saving = float(s["mean_time_saving_pct"].mean())
         infer_mode = "full_graph" if rtype == "none" else "matched_reduction"
         infer_row = pd.DataFrame()
         if not inference_df.empty:
@@ -177,6 +264,8 @@ def build_reduction_efficiency_table(
                 "infer_peak_vram_mb": (
                     float(infer_row["peak_vram_mb"].mean()) if not infer_row.empty else float("nan")
                 ),
+                "vram_saving_pct": vram_saving,
+                "time_saving_pct": time_saving,
             }
         )
     return pd.DataFrame(rows)
@@ -283,10 +372,12 @@ def build_pareto_front(inference_df: pd.DataFrame, training_df: pd.DataFrame) ->
 
 
 def main(args: argparse.Namespace) -> None:
-    inference_df = load_inference_results(Path(args.inference_csv))
-    training_df = load_training_benchmark(Path(args.training_csv))
+    inference_df = load_inference_results(Path(args.inference_dir))
+    training_df = load_training_benchmark(Path(args.training_dir))
     sparsification_stats = load_offline_stats(Path(args.logs_dir), "sparsification_stats")
     partition_stats = load_offline_stats(Path(args.logs_dir), "partition_stats")
+    per_graph_df = load_benchmark_per_graph(Path(args.per_graph_dir))
+    paired_savings = build_paired_savings(training_df, per_graph_df)
 
     tables_dir = Path(args.tables_dir)
 
@@ -313,7 +404,8 @@ def main(args: argparse.Namespace) -> None:
     if not training_df.empty:
         write_booktabs_table(
             build_reduction_efficiency_table(
-                inference_df, training_df, sparsification_stats, partition_stats
+                inference_df, training_df, sparsification_stats, partition_stats,
+                paired_savings=paired_savings,
             ),
             tables_dir / "reduction_efficiency.tex",
             "Offline reduction cost and runtime (training + inference) efficiency across reduction methods (RQ2).",
@@ -334,9 +426,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Turn results/ + logs/ CSVs into booktabs .tex tables for the thesis Results chapter."
     )
-    parser.add_argument("--inference_csv", type=str, default="results/inference_results.csv")
-    parser.add_argument("--training_csv", type=str, default="results/training_benchmark.csv")
+    parser.add_argument("--inference_dir", type=str, default="results/inference_results")
+    parser.add_argument("--training_dir", type=str, default="results/training_benchmark")
     parser.add_argument("--logs_dir", type=str, default="logs")
+    parser.add_argument("--per_graph_dir", type=str, default="results/benchmark_per_graph")
     parser.add_argument("--tables_dir", type=str, default="results/tables")
 
     main(parser.parse_args())

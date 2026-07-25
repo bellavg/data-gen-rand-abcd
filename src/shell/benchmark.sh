@@ -84,18 +84,12 @@ RESULTS_DIR="$BASE_DIR/results"
 mkdir -p "$RESULTS_DIR"
 
 # Fixed across every array task — this is what makes the comparison
-# controlled. Do not read these from train.sh's env-overridable defaults.
-# dynamic_batching/max_total_nodes_per_batch match train.py's actual
-# batching *strategy* (node-budget, not fixed graph-count) so the benchmark
-# reflects what production training really does, while still being held
-# identical across every config here.
+# controlled. The benchmark measures ONE graph per batch (not real training's
+# node-budget dynamic batching, which holds per-batch VRAM ~constant across
+# methods and hides reduction's memory benefit). See benchmark.py's docstring.
 NUM_WORKERS=8
-BATCH_SIZE=32
-DYNAMIC_BATCHING=true
-MAX_TOTAL_NODES_PER_BATCH=3000000
-NUM_SAMPLE_GRAPHS=100
-NUM_WARMUP_STEPS=5
-NUM_MEASURE_STEPS=30
+NUM_WARMUP_GRAPHS=5
+NUM_MEASURE_GRAPHS=100
 
 nvidia-smi -L
 
@@ -114,13 +108,10 @@ srun python -u -m benchmark \
     --tier1_cache_dir    "$TIER1_CACHE_DIR" \
     --hp_tuning_splits_path "$HP_TUNING_SPLITS" \
     --num_workers        "$NUM_WORKERS" \
-    --batch_size         "$BATCH_SIZE" \
-    --dynamic_batching   "$DYNAMIC_BATCHING" \
-    --max_total_nodes_per_batch "$MAX_TOTAL_NODES_PER_BATCH" \
-    --num_sample_graphs  "$NUM_SAMPLE_GRAPHS" \
-    --num_warmup_steps   "$NUM_WARMUP_STEPS" \
-    --num_measure_steps  "$NUM_MEASURE_STEPS" \
-    --results_csv        "$RESULTS_DIR/training_benchmark.csv"
+    --num_warmup_graphs  "$NUM_WARMUP_GRAPHS" \
+    --num_measure_graphs "$NUM_MEASURE_GRAPHS" \
+    --results_dir        "$RESULTS_DIR/training_benchmark" \
+    --per_graph_dir      "$RESULTS_DIR/benchmark_per_graph"
 
 echo "=========================================="
 echo "Task $SLURM_ARRAY_TASK_ID training benchmark ($REDUCTION_TYPE/$REDUCTION_METHOD) complete."

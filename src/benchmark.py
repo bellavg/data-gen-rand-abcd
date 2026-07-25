@@ -1,16 +1,19 @@
-"""Controlled training-hardware benchmark on a small seeded sample of graphs.
+"""Controlled per-graph training-hardware benchmark.
 
-Measures what one training step (forward + backward) costs for a given
-reduction config — step time, throughput, peak VRAM, GPU utilization, host
-memory — using fixed, identical settings across configs so the numbers are
-actually comparable. This replaces the real-training W&B numbers, which
-drifted across runs due to incidental settings changes (worker count, etc.),
-per the reproducibility notes in the thesis experiments plan.
+Measures what one training step (forward + backward + optimizer step) costs
+for a given reduction config — step time, peak VRAM, activation VRAM — on a
+small seeded sample of graphs, **one graph per batch**.
 
-Not a substitute for real training: this only runs `--num_warmup_steps +
---num_measure_steps` batches on `--num_sample_graphs` graphs, discarding the
-model afterward. It exists purely to produce apples-to-apples hardware
-numbers per reduction config.
+Why one graph per batch (not real training's node-budget dynamic batching):
+node-budget batching packs graphs until it hits a fixed node budget, so every
+batch has ~the same node count regardless of reduction, which holds peak VRAM
+~constant across methods *by construction* and hides the whole point of
+reduction (lower per-graph memory footprint → avoids OOM). Measuring one graph
+at a time exposes each graph's true footprint, lets the same graph be compared
+full vs. reduced (pairing by graph_id downstream), and is fully reproducible.
+
+Not a substitute for real training throughput — it is a controlled, relative
+comparison of per-graph memory/latency across reduction methods.
 """
 
 from __future__ import annotations
@@ -18,22 +21,24 @@ from __future__ import annotations
 import argparse
 import csv
 import os
+import random
 import subprocess
 import sys
 import time
+from contextlib import nullcontext
 from pathlib import Path
 
 import numpy as np
 import psutil
-import pytorch_lightning as pl
 import torch
 import torch.nn as nn
+from torch_geometric.data import Batch
 
 import config
 from config import HEAD_DROPOUT, NORMALIZE_EDGES
 from data.datamodule import AIGDataModule
 from models.lightning_model import AIGRegressionLightningModule
-from train import _select_accelerator_and_devices, _select_precision
+from train import _select_precision
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -80,6 +85,12 @@ def reproducibility_metadata(seed: int) -> dict:
     }
 
 
+def run_label_for(algorithm: str, reduction_type: str, reduction_method: str | None) -> str:
+    if reduction_type == "none":
+        return algorithm
+    return f"{algorithm}_{reduction_method}"
+
+
 def resolve_reduction_kwargs(reduction_type: str, reduction_method: str | None) -> dict:
     """Maps the generic reduction axis onto AIGDataModule's concrete kwargs."""
     if reduction_type == "none":
@@ -96,118 +107,46 @@ def resolve_reduction_kwargs(reduction_type: str, reduction_method: str | None) 
     raise ValueError(f"Unknown reduction_type: {reduction_type!r}")
 
 
-def append_csv_row(csv_path: str | Path, row: dict) -> None:
-    csv_path = Path(csv_path)
-    csv_path.parent.mkdir(parents=True, exist_ok=True)
-    write_header = not csv_path.exists()
-    with open(csv_path, "a", newline="") as f:
+def _safe_nanmean(values) -> float:
+    """np.nanmean but returns NaN (no warning) when every value is NaN — the
+    CPU case, where per-graph VRAM is unmeasured."""
+    arr = np.asarray(values, dtype=float)
+    return float(np.nanmean(arr)) if np.isfinite(arr).any() else float("nan")
+
+
+def write_single_row_csv(path: str | Path, row: dict) -> None:
+    """Write one config's result as its own header+row file (overwrite).
+
+    The SLURM array runs up to 9 tasks concurrently, so appending to one
+    shared CSV would race on the header write and could interleave/corrupt
+    rows, and a stale file from an older column schema would silently
+    misalign. One file per config sidesteps all of that: each task owns its
+    file, and re-running a config cleanly overwrites its own result instead of
+    appending a duplicate. results_to_latex.py globs the directory.
+    """
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=list(row.keys()))
-        if write_header:
-            writer.writeheader()
+        writer.writeheader()
         writer.writerow(row)
 
 
-def _batch_stats(batch) -> tuple[int, int, int]:
-    num_graphs = getattr(batch, "num_graphs", None)
-    if num_graphs is None:
-        targets = getattr(batch, "y", None)
-        num_graphs = int(targets.size(0)) if targets is not None and targets.dim() > 0 else 1
-    else:
-        num_graphs = int(num_graphs)
-    num_nodes = int(batch.x.size(0)) if getattr(batch, "x", None) is not None else 0
-    edge_index = getattr(batch, "edge_index", None)
-    num_edges = int(edge_index.size(1)) if edge_index is not None else 0
-    return num_graphs, num_nodes, num_edges
-
-
-class BenchmarkCallback(pl.Callback):
-    """Self-contained timing/VRAM/GPU-util/host-memory bookkeeping.
-
-    Not added to the shared ``train_utils.py`` — no other script needs this,
-    and it deliberately differs from ``TrainingStartupCallback`` by excluding
-    a configurable warmup window from every aggregate so CUDA/cuDNN/compile
-    warmup doesn't skew the reported numbers.
-    """
-
-    def __init__(
-        self,
-        num_warmup_steps: int,
-        num_measure_steps: int,
-        gpu_util_sample_every: int = 1,
-    ) -> None:
-        self.num_warmup_steps = num_warmup_steps
-        self.num_measure_steps = num_measure_steps
-        self.gpu_util_sample_every = gpu_util_sample_every
-        self._step_times: list[float] = []
-        self._graph_counts: list[int] = []
-        self._node_counts: list[int] = []
-        self._edge_counts: list[int] = []
-        self._gpu_utils: list[float] = []
-        self._batch_start: float | None = None
-        self._proc = psutil.Process()
-        self._peak_rss = 0
-        self._sys_mem_pcts: list[float] = []
-
-    def on_fit_start(self, trainer, pl_module) -> None:
-        device = pl_module.device
-        if device.type == "cuda":
-            torch.cuda.reset_peak_memory_stats(device)
-
-    def on_train_batch_start(self, trainer, pl_module, batch, batch_idx) -> None:
-        self._batch_start = time.perf_counter()
-
-    def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx) -> None:
-        elapsed = time.perf_counter() - (self._batch_start or time.perf_counter())
-        if batch_idx < self.num_warmup_steps:
-            return
-
-        self._step_times.append(elapsed)
-        num_graphs, num_nodes, num_edges = _batch_stats(batch)
-        self._graph_counts.append(num_graphs)
-        self._node_counts.append(num_nodes)
-        self._edge_counts.append(num_edges)
-
-        rss = self._proc.memory_info().rss
-        self._peak_rss = max(self._peak_rss, rss)
-        self._sys_mem_pcts.append(psutil.virtual_memory().percent)
-
-        device = pl_module.device
-        if device.type == "cuda" and batch_idx % max(1, self.gpu_util_sample_every) == 0:
-            try:
-                self._gpu_utils.append(float(torch.cuda.utilization(device)))
-            except Exception:
-                pass
-
-    def summary(self, device: torch.device) -> dict:
-        step_times = np.array(self._step_times) if self._step_times else np.array([float("nan")])
-        total_graphs = sum(self._graph_counts)
-        total_time = float(np.nansum(step_times))
-        peak_vram_mb = (
-            torch.cuda.max_memory_allocated(device) / (1024**2)
-            if device.type == "cuda"
-            else float("nan")
-        )
-        return {
-            "avg_step_time_s": float(np.nanmean(step_times)),
-            "std_step_time_s": float(np.nanstd(step_times)),
-            "throughput_graphs_per_s": (
-                total_graphs / total_time if total_time > 0 else float("nan")
-            ),
-            "peak_vram_mb": peak_vram_mb,
-            "avg_gpu_utilization_pct": (
-                float(np.mean(self._gpu_utils)) if self._gpu_utils else float("nan")
-            ),
-            "peak_process_rss_mb": self._peak_rss / (1024**2),
-            "avg_system_memory_pct": (
-                float(np.mean(self._sys_mem_pcts)) if self._sys_mem_pcts else float("nan")
-            ),
-            "avg_nodes_per_batch": (
-                float(np.mean(self._node_counts)) if self._node_counts else float("nan")
-            ),
-            "avg_edges_per_batch": (
-                float(np.mean(self._edge_counts)) if self._edge_counts else float("nan")
-            ),
-        }
+def write_per_graph_csv(path: str | Path, per_graph: list[dict], max_rows: int) -> None:
+    """One row per measured graph, capped with seeded sampling (same pattern as
+    test.py's per-graph predictions) so scratch never accumulates huge files."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    rows = per_graph
+    if len(rows) > max_rows:
+        idx = sorted(random.Random(42).sample(range(len(rows)), k=max_rows))
+        rows = [per_graph[i] for i in idx]
+    if not rows:
+        return
+    with open(path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+        writer.writeheader()
+        writer.writerows(rows)
 
 
 def build_model(compile_model: bool) -> AIGRegressionLightningModule:
@@ -242,10 +181,13 @@ def build_model(compile_model: bool) -> AIGRegressionLightningModule:
 def build_datamodule(args: argparse.Namespace) -> AIGDataModule:
     reduction_kwargs = resolve_reduction_kwargs(args.reduction_type, args.reduction_method)
     positional_encoding = config.PE_TYPE if config.PE_TYPE != "none" else None
+    # batch_size is nominal — the benchmark iterates the dataset one graph at a
+    # time (see run_benchmark), so no DataLoader batching happens here. Seeded
+    # subsetting keeps the same graphs across every config for graph_id pairing.
     return AIGDataModule(
         csv_paths=args.csv_paths,
         positional_encoding=positional_encoding,
-        batch_size=args.batch_size,
+        batch_size=1,
         split_ratios=(0.8, 0.1, 0.1),
         seed=args.seed,
         num_workers=args.num_workers,
@@ -253,18 +195,148 @@ def build_datamodule(args: argparse.Namespace) -> AIGDataModule:
         hp_tuning_splits_path=args.hp_tuning_splits_path,
         tier0_cache_dir=args.tier0_cache_dir,
         tier1_cache_dir=args.tier1_cache_dir,
-        train_num_samples=args.num_sample_graphs,
-        # Matches real training's batching *strategy* (node-budget batching,
-        # since AIGs vary wildly in size) rather than defaulting to plain
-        # fixed-count batching — otherwise this "controlled" benchmark would
-        # measure a fundamentally different batching regime than production
-        # training actually uses. --batch_size/--max_total_nodes_per_batch
-        # are still held fixed identically across every config by
-        # benchmark.sh, so the comparison stays controlled.
-        dynamic_batching=args.dynamic_batching,
-        max_total_nodes=args.max_total_nodes_per_batch,
+        train_num_samples=args.num_warmup_graphs + args.num_measure_graphs,
         **reduction_kwargs,
     )
+
+
+def run_benchmark(
+    model: AIGRegressionLightningModule,
+    dataset,
+    device: torch.device,
+    *,
+    num_warmup: int,
+    precision: str,
+) -> tuple[dict, list[dict]]:
+    """One-graph-per-batch training-step benchmark.
+
+    Iterates the dataset directly (no DataLoader) so batch i maps to
+    ``dataset.samples[i]`` deterministically and graph_id is known. The first
+    ``num_warmup`` graphs are run but excluded from all aggregates — they cover
+    CUDA/cuDNN init and AdamW's first-step optimizer-state allocation. A memory
+    floor (model + optimizer state + CUDA context) is captured once after
+    warmup so activation-only VRAM can be reported.
+    """
+    loss_fn = nn.SmoothL1Loss(beta=0.01)
+    optimizer = torch.optim.AdamW(
+        model.parameters(), lr=config.LR, weight_decay=config.WEIGHT_DECAY
+    )
+    model.to(device)
+    model.train()
+
+    is_cuda = device.type == "cuda"
+    use_bf16 = precision == "bf16-mixed" and is_cuda
+    autocast_ctx = (
+        torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+        if use_bf16
+        else nullcontext()
+    )
+
+    proc = psutil.Process()
+    peak_rss = 0
+    per_graph: list[dict] = []
+    n = len(dataset)
+    num_warmup = min(num_warmup, n)
+
+    def _one_step(batch) -> tuple[float, float | None]:
+        """One training step with CUDA-synchronized timing bracketing exactly
+        the compute. Returns (step_time_s, peak_bytes | None)."""
+        targets = batch.y.view(-1)
+        optimizer.zero_grad(set_to_none=True)
+        if is_cuda:
+            torch.cuda.reset_peak_memory_stats(device)
+            torch.cuda.synchronize(device)
+        t0 = time.perf_counter()
+        with autocast_ctx:
+            preds = model.forward(batch).squeeze(-1)
+            loss = loss_fn(preds, targets)
+        loss.backward()
+        optimizer.step()
+        if is_cuda:
+            torch.cuda.synchronize(device)
+        step_time = time.perf_counter() - t0
+        peak = torch.cuda.max_memory_allocated(device) if is_cuda else None
+        return step_time, peak
+
+    # Warmup — run full steps (this is what allocates AdamW's optimizer state)
+    # but record nothing. `del batch` frees each warmup graph's input so the
+    # floor below is measured with no graph resident.
+    for i in range(num_warmup):
+        batch = Batch.from_data_list([dataset[i]]).to(device)
+        _one_step(batch)
+        del batch
+
+    # Memory floor: model + optimizer state + CUDA context only — no input, no
+    # gradients (just zeroed), no activations (freed after the last backward).
+    # Measuring it once with nothing resident means activation_vram = peak −
+    # floor is a clean per-graph increment that cannot be biased by, or driven
+    # negative by, whichever graph happened to be on the device.
+    optimizer.zero_grad(set_to_none=True)
+    floor_mb = float("nan")
+    if is_cuda:
+        torch.cuda.synchronize(device)
+        floor_mb = torch.cuda.memory_allocated(device) / (1024**2)
+
+    for i in range(num_warmup, n):
+        batch = Batch.from_data_list([dataset[i]]).to(device)
+        step_time, peak = _one_step(batch)
+        peak_rss = max(peak_rss, proc.memory_info().rss)
+
+        if is_cuda:
+            peak_mb = peak / (1024**2)
+            activation_mb = peak_mb - floor_mb
+        else:
+            peak_mb = float("nan")
+            activation_mb = float("nan")
+
+        per_graph.append(
+            {
+                "graph_id": dataset.samples[i].graph_path,
+                "num_nodes": int(batch.x.size(0)),
+                "num_edges": int(batch.edge_index.size(1)),
+                "step_time_s": step_time,
+                "peak_vram_mb": peak_mb,
+                "activation_vram_mb": activation_mb,
+            }
+        )
+        del batch
+
+    if per_graph:
+        step_times = np.array([g["step_time_s"] for g in per_graph])
+        peaks = np.array([g["peak_vram_mb"] for g in per_graph])
+        activations = np.array([g["activation_vram_mb"] for g in per_graph])
+        nodes = np.array([g["num_nodes"] for g in per_graph])
+        edges = np.array([g["num_edges"] for g in per_graph])
+        total_time = float(step_times.sum())
+        aggregate = {
+            "num_measured_graphs": len(per_graph),
+            "avg_step_time_s": float(step_times.mean()),
+            "std_step_time_s": float(step_times.std()),
+            "throughput_graphs_per_s": (
+                len(per_graph) / total_time if total_time > 0 else float("nan")
+            ),
+            "peak_vram_mb": _safe_nanmean(peaks),
+            "activation_vram_mb": _safe_nanmean(activations),
+            "memory_floor_mb": floor_mb,
+            "peak_process_rss_mb": peak_rss / (1024**2),
+            "avg_nodes_per_graph": float(nodes.mean()),
+            "avg_edges_per_graph": float(edges.mean()),
+        }
+    else:
+        aggregate = {
+            "num_measured_graphs": 0,
+            "avg_step_time_s": float("nan"),
+            "std_step_time_s": float("nan"),
+            "throughput_graphs_per_s": float("nan"),
+            "peak_vram_mb": float("nan"),
+            "activation_vram_mb": float("nan"),
+            "memory_floor_mb": floor_mb,
+            "peak_process_rss_mb": peak_rss / (1024**2),
+            "avg_nodes_per_graph": float("nan"),
+            "avg_edges_per_graph": float("nan"),
+        }
+
+    return aggregate, per_graph
 
 
 def main(args: argparse.Namespace) -> None:
@@ -274,6 +346,13 @@ def main(args: argparse.Namespace) -> None:
         )
     if args.reduction_type != "none" and not args.reduction_method:
         raise ValueError("--reduction_method is required when --reduction_type != none")
+    if args.num_warmup_graphs < 1:
+        raise ValueError(
+            "--num_warmup_graphs must be >= 1: the memory floor is measured "
+            "after warmup, and AdamW only allocates its optimizer state on the "
+            "first optimizer.step(). With 0 warmup the floor would exclude that "
+            "state and inflate every activation_vram_mb reading."
+        )
 
     # Same backend settings train.py uses, so the benchmark reflects real
     # training numerics rather than an artificially different configuration.
@@ -286,63 +365,55 @@ def main(args: argparse.Namespace) -> None:
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(args.seed)
 
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    precision = _select_precision()
+    print(f"[benchmark] device={device} precision={precision}", flush=True)
+
     datamodule = build_datamodule(args)
     datamodule.setup("fit")
-
     model = build_model(compile_model=args.torch_compile)
 
-    precision = _select_precision()
-    accelerator, devices = _select_accelerator_and_devices()
-    print(f"[benchmark] accelerator={accelerator} precision={precision}", flush=True)
-
-    callback = BenchmarkCallback(
-        num_warmup_steps=args.num_warmup_steps,
-        num_measure_steps=args.num_measure_steps,
-        gpu_util_sample_every=args.gpu_util_sample_every,
-    )
-
-    trainer = pl.Trainer(
-        max_epochs=1,
-        accelerator=accelerator,
-        devices=devices,
+    aggregate, per_graph = run_benchmark(
+        model,
+        datamodule.train_ds,
+        device,
+        num_warmup=args.num_warmup_graphs,
         precision=precision,
-        limit_train_batches=args.num_warmup_steps + args.num_measure_steps,
-        limit_val_batches=0,  # only training-step cost is being measured
-        logger=False,
-        enable_checkpointing=False,
-        enable_progress_bar=False,
-        num_sanity_val_steps=0,
-        callbacks=[callback],
     )
 
-    trainer.fit(model, datamodule=datamodule)
-
-    summary = callback.summary(model.device)
+    run_label = run_label_for(args.algorithm, args.reduction_type, args.reduction_method)
     row = {
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "reduction_type": args.reduction_type,
         "reduction_method": args.reduction_method or "",
         "algorithm": args.algorithm,
-        "device": accelerator,
-        "batch_size": args.batch_size,
+        "run_label": run_label,
+        "device": device.type,
+        "batch_size": 1,
         "num_workers": args.num_workers,
-        "num_sample_graphs": args.num_sample_graphs,
-        "num_measure_steps": args.num_measure_steps,
-        **summary,
+        "num_warmup_graphs": args.num_warmup_graphs,
+        **aggregate,
         **reproducibility_metadata(args.seed),
     }
-    append_csv_row(args.results_csv, row)
+    results_path = Path(args.results_dir) / f"{run_label}_{device.type}.csv"
+    write_single_row_csv(results_path, row)
+
+    per_graph_path = Path(args.per_graph_dir) / f"{run_label}.csv"
+    write_per_graph_csv(per_graph_path, per_graph, max_rows=args.max_per_graph_rows)
+
     print(
-        f"[benchmark] avg_step_time_s={summary['avg_step_time_s']:.4f} "
-        f"throughput={summary['throughput_graphs_per_s']:.1f} graphs/s "
-        f"peak_vram_mb={summary['peak_vram_mb']:.1f}",
+        f"[benchmark] {run_label}: avg_step_time_s={aggregate['avg_step_time_s']:.4f} "
+        f"throughput={aggregate['throughput_graphs_per_s']:.1f} graphs/s "
+        f"peak_vram_mb={aggregate['peak_vram_mb']:.1f} "
+        f"activation_vram_mb={aggregate['activation_vram_mb']:.1f}",
         flush=True,
     )
+    print(f"[benchmark] Wrote per-graph rows to {per_graph_path}", flush=True)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Controlled training-hardware benchmark on a seeded sample of graphs."
+        description="Controlled per-graph (one graph per batch) training-hardware benchmark."
     )
     parser.add_argument("--algorithm", type=str, required=True)
     parser.add_argument("--csv_paths", nargs="+", required=True)
@@ -358,33 +429,26 @@ if __name__ == "__main__":
     parser.add_argument("--tier1_cache_dir", type=str, default=None)
     parser.add_argument("--hp_tuning_splits_path", type=str, default=None)
     parser.add_argument("--num_workers", type=int, default=config.NUM_WORKERS)
-    parser.add_argument("--batch_size", type=int, default=config.BATCH_SIZE)
-    parser.add_argument(
-        "--dynamic_batching",
-        type=lambda x: str(x).lower() in ("true", "1", "yes"),
-        default=config.DYNAMIC_BATCHING,
-        help="Match real training's node-budget batching strategy (default: same as train.py).",
-    )
-    parser.add_argument(
-        "--max_total_nodes_per_batch",
-        type=int,
-        default=config.MAX_TOTAL_NODES_PER_BATCH,
-    )
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--num_sample_graphs", type=int, default=100)
-    parser.add_argument("--num_warmup_steps", type=int, default=5)
-    parser.add_argument("--num_measure_steps", type=int, default=30)
-    parser.add_argument("--gpu_util_sample_every", type=int, default=1)
+    parser.add_argument(
+        "--num_warmup_graphs",
+        type=int,
+        default=5,
+        help="Graphs run but excluded from all aggregates (CUDA/cuDNN + optimizer-state warmup).",
+    )
+    parser.add_argument("--num_measure_graphs", type=int, default=100)
     parser.add_argument(
         "--torch_compile",
         type=lambda x: str(x).lower() in ("true", "1", "yes"),
-        default=config.TORCH_COMPILE,
+        default=False,
         help=(
-            "Match real training's torch.compile setting for fidelity. If "
-            "enabled, consider raising --num_warmup_steps since compilation "
-            "cost needs to be excluded from steady-state timing."
+            "Default off: at batch_size=1 every graph is a distinct shape, so "
+            "torch.compile recompilation spikes would pollute per-graph timing. "
+            "The benchmark measures eager-mode relative cost."
         ),
     )
-    parser.add_argument("--results_csv", type=str, default="results/training_benchmark.csv")
+    parser.add_argument("--max_per_graph_rows", type=int, default=20_000)
+    parser.add_argument("--results_dir", type=str, default="results/training_benchmark")
+    parser.add_argument("--per_graph_dir", type=str, default="results/benchmark_per_graph")
 
     main(parser.parse_args())

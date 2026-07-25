@@ -12,11 +12,11 @@ from torch_geometric.data import Batch as PyGBatch
 
 from test import (
     _batch_per_graph_counts,
-    append_csv_row,
     compute_accuracy_metrics,
     resolve_reduction_kwargs,
     run_label_for,
     write_predictions_csv,
+    write_single_row_csv,
 )
 
 
@@ -120,16 +120,24 @@ class TestBatchPerGraphCounts:
 
 
 class TestCsvHelpers:
-    def test_append_csv_row_writes_header_once(self, tmp_path):
-        csv_path = tmp_path / "results.csv"
-        append_csv_row(csv_path, {"a": 1, "b": "x"})
-        append_csv_row(csv_path, {"a": 2, "b": "y"})
+    def test_write_single_row_csv_header_and_row(self, tmp_path):
+        csv_path = tmp_path / "sub" / "results.csv"  # parent auto-created
+        write_single_row_csv(csv_path, {"a": 1, "b": "x"})
 
         with open(csv_path, newline="") as f:
             rows = list(csv.reader(f))
-        assert rows[0] == ["a", "b"]
-        assert rows[1] == ["1", "x"]
-        assert rows[2] == ["2", "y"]
+        assert rows == [["a", "b"], ["1", "x"]]
+
+    def test_write_single_row_csv_overwrites(self, tmp_path):
+        """Re-running a config must cleanly replace its own file, not append a
+        duplicate row (the whole point of per-config output files)."""
+        csv_path = tmp_path / "results.csv"
+        write_single_row_csv(csv_path, {"a": 1, "b": "x"})
+        write_single_row_csv(csv_path, {"a": 2, "b": "y"})
+
+        with open(csv_path, newline="") as f:
+            rows = list(csv.reader(f))
+        assert rows == [["a", "b"], ["2", "y"]]
 
     def test_write_predictions_csv_writes_all_rows_when_under_cap(self, tmp_path):
         path = tmp_path / "preds.csv"

@@ -235,14 +235,22 @@ def run_eval_pass(
     return metrics, per_graph
 
 
-def append_csv_row(csv_path: str | Path, row: dict) -> None:
-    csv_path = Path(csv_path)
-    csv_path.parent.mkdir(parents=True, exist_ok=True)
-    write_header = not csv_path.exists()
-    with open(csv_path, "a", newline="") as f:
+def write_single_row_csv(path: str | Path, row: dict) -> None:
+    """Write one (config, eval_mode, device) result as its own header+row file
+    (overwrite).
+
+    test.sh and test_cpu.sh together run up to 18 array tasks concurrently, so
+    appending to one shared CSV would race on the header write and could
+    interleave/corrupt rows, and a stale file from an older column schema would
+    silently misalign. One file per (config, eval_mode, device) sidesteps all
+    of that; re-running a config cleanly overwrites its own result.
+    results_to_latex.py globs the directory.
+    """
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=list(row.keys()))
-        if write_header:
-            writer.writeheader()
+        writer.writeheader()
         writer.writerow(row)
 
 
@@ -339,7 +347,8 @@ def main(args: argparse.Namespace) -> None:
             **metrics,
             **repro,
         }
-        append_csv_row(args.results_csv, row)
+        results_path = Path(args.results_dir) / f"{run_label}_{eval_mode}_{device.type}.csv"
+        write_single_row_csv(results_path, row)
         print(
             f"[test] {eval_mode}: rmse={metrics['rmse']:.4f} r2={metrics['r2']:.4f} "
             f"spearman={metrics['spearman']:.4f} "
@@ -383,7 +392,7 @@ if __name__ == "__main__":
         default=True,
     )
     parser.add_argument("--max_prediction_rows", type=int, default=20_000)
-    parser.add_argument("--results_csv", type=str, default="results/inference_results.csv")
+    parser.add_argument("--results_dir", type=str, default="results/inference_results")
     parser.add_argument("--predictions_dir", type=str, default="results/predictions")
 
     main(parser.parse_args())

@@ -138,7 +138,7 @@ srun python -u -m test \
     --num_workers        "$NUM_WORKERS" \
     --device             cuda \
     --dump_predictions   true \
-    --results_csv        "$RESULTS_DIR/inference_results.csv" \
+    --results_dir        "$RESULTS_DIR/inference_results" \
     --predictions_dir    "$RESULTS_DIR/predictions"
 
 echo "=========================================="
