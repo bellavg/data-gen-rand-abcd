@@ -32,6 +32,19 @@ AIG), trained on Orchestrate. This matters a lot for R1 (see below).
   lineage, Kron, Local Variation. The generic principled baseline family.
 - **Shabani, Wu et al. (2023)** — *Survey on Graph Summarization with GNNs.*
   aggregation (→ supernodes) / selection / transformation; structural vs attribute.
+- **CTS-Bench (2026, arXiv 2602.19330)** — nearest competitor; graph coarsening
+  trade-offs for GNNs in **clock tree synthesis**. Generic clustering → 17.2× memory /
+  3× speed but **negative R² zero-shot**; calls for domain-aware coarsening. See the
+  gap section — narrows our claim, strengthens our motivation.
+- **ConvMatch / A-ConvMatch** (Dickens et al., WWW'24) — coarsening by **convolution
+  matching**; ~95% performance at **1%** graph size. Our SOTA bar (S3).
+- **UGC / AH-UGC** (2024/2025) — **LSH-based, linear-time** universal coarsening. Our
+  cheap/scalable tier (S5).
+- **DeepGate3 / DeepGate4** (2024/2025) — AIG scaling via *architecture* (pooling
+  transformer; GAT sparse transformer, sub-linear memory, −84% inference time vs DG3).
+  Contrast class: they scale the **model**, we reduce the **input**.
+- **PolarGate (2024)** — polarity/functionality bottleneck in AIG GNNs → supports
+  treating inverter polarity as a first-class relation (C2/CA3).
 
 ---
 
@@ -86,43 +99,76 @@ depth), *not* higher-order k-WL — don't conflate.
 
 ---
 
-## Candidate methods (lossless → lossy spectrum)
+## THE FIVE METHODS (locked set)
 
-**M1 — Graded WL–Bisimulation coarsening**  *(flagship; Bollen, Generale/FLUID)*
-- Merge nodes with equal d-step relational neighborhood; knobs c (∞=exact WL,
-  1=bisimulation), d (=4), direction (fwd/bwd/both).
-- AIG: node color = 4-D type; relations = 2 polarities (relational refinement).
-  Super-edges carry polarity **multiplicities** → full-graph edge = [1,0]/[0,1]
-  (schema superset). Level PE preserved (WL-equiv nodes share level structure).
-- c=∞ is **orthogonal to optimization by construction** (removes only
-  GNN-indistinguishable redundancy → cannot erase the label signal).
-- Risk: compression is data-dependent; if AIGs have little WL-redundancy it barely
-  shrinks — but *measuring that redundancy is itself a finding.*
-- Open: does forward or backward refinement compress AIGs more? (arxiv fwd 33% vs
-  inv 66% shows direction dominates.)
+Spread mirrors the sparsification section: novel-domain → provable → SOTA → classic
+control → naive control. Ordered by how domain-aware they are, not by expected rank.
 
-**M2 — IO / Attribute-schema summary**  *(cheapest; Tian SNAP/k-SNAP, Campinas)*
-- Group by (node type, fan-in polarity multiset, fan-out polarity multiset). 1-hop.
-- Trivially offline-tractable; k-SNAP gives a resolution knob.
-- Risk: 1-hop, structure-blind beyond neighbors; expect it to trail M1.
+### S1 — Level-Bounded Cone Coarsening  ★ FULLY DOMAIN-SPECIFIC (the contribution)
+AIG-native, built on levels / dominators / fanout-free structure. Two merge axes:
+- **Depth axis — cascade (fanout-free chain) contraction.** Contract maximal chains of
+  single-fanout gates into one super-node. *Reduces circuit depth* → directly attacks
+  over-squashing (see CA9); and **cascade coarsening provably preserves acyclicity**
+  → DAG-safe by construction.
+- **Width axis — level-band reconvergence merge.** Merge gates within a tight level
+  band (±1) sharing a common immediate dominator. Compresses parallel width while
+  *locking critical-path depth* → the 32-D level PE stays exact.
+- Respects PI/PO boundaries; structural-only (never functional) → sits on the safe end
+  of the optimization-overlap spectrum (CA2).
+- Knobs: band width, max chain length, dominator strictness.
+- Risk: compression may be modest if AIGs are fanout-rich (reconvergence is common).
 
-**M3 — Spectral / Local-Variation coarsening**  *(the generic control; Loukas, Kron)*
-- Pairwise contraction scored by Heavy-Edge / Local Variation; preserves Laplacian
-  spectrum (REE). Kron/Schur variant (directed, Sugiyama-Sato) preserves eff.
-  resistance.
-- This is the domain-BLIND control (coarsening analogue of random_edge_dropout).
-- Risk (intended): severs causal cones; expected to hurt → makes domain-aware look
-  strong.
+### S2 — Graded WL / Bisimulation Coarsening  *(general SOTA, AIG-ADAPTED)*
+Bollen exact compression + FLUID k-bisimulation, unified by the count-cap `c`.
+- Knobs: `c` (∞ = exact WL/lossless, 1 = bisimulation/lossy), depth `d` (=4, couple to
+  #layers), direction (forward toward PO / backward toward PI / both).
+- **AIG adaptation:** node colors = 4-D type; **polarity as distinct relations**
+  (relational refinement, cf. PolarGate/R-GCN); super-edges carry polarity
+  **multiplicities** → a full graph's edge is [1,0]/[0,1] (schema superset, satisfies R1).
+- `c=∞` is **provably lossless** for our GCN+ and **orthogonal to optimization by
+  construction** (removes only what the GNN cannot distinguish → cannot erase the label).
+- The lossless anchor of the whole study. NB: subsumes IO/k-SNAP schema summary as its
+  `d=1` case — cite k-SNAP, don't run it as a separate method (it's redundant).
+- Risk: strash already removed easy equivalences (CA1) → measure *residual* redundancy.
 
-**M4 — Level-bounded reconvergence coarsening**  *(custom / domain-aware contribution)*
-- Merge only within tight level bands sharing a common dominator; preserves level-PE
-  and causal cones. Position explicitly against M3.
+### S3 — Convolution-Matching Coarsening (ConvMatch / A-ConvMatch)  *(general SOTA, GNN-aware)*
+- Merges nodes that are equivalent/similar **w.r.t. the graph-convolution operation** —
+  i.e. it directly preserves the *convolution output* rather than a graph property.
+- Reported: up to **95% of GNN prediction performance at 1% of original size** (node
+  classification). A-ConvMatch = scalable variant.
+- Role: the strongest *general* competitor — GNN-aware but domain-blind. If S1/S2 beat
+  it, the domain-aware claim is earned against a real SOTA bar, not a strawman.
+- Risk: designed for node classification on homophilous undirected graphs; behaviour on
+  a deep polarity-carrying DAG is untested (that's part of the finding).
 
-**M5 — Optimization-aware weighted coarsening**  *(your "weight it somehow")*
-- Merge more aggressively but attach **structural rewrite-potential** features to
-  super-nodes (MFFC size, reconvergence count, fan-out). These are *inputs available
-  on any graph, never the label* → legitimate, not leakage.
-- Open: where's the line between a useful structural feature and label leakage?
+### S4 — Spectral / Local-Variation Coarsening  *(general classic, DOMAIN-BLIND CONTROL)*
+- Pairwise contraction scored by **Heavy-Edge / Local Variation** (Loukas), preserving
+  the Laplacian **spectrum** (REE guarantee); **Kron/Schur** variant (directed extension,
+  Sugiyama-Sato) preserves effective resistance.
+- Role: the coarsening analogue of `random_edge_dropout` — principled but logic-blind.
+- **Expected to hurt**, and we now have external evidence: CTS-Bench found generic
+  clustering coarsening on EDA netlists gives big memory/speed wins but **negative R²
+  under zero-shot evaluation**. Predict the same here; that contrast is the point.
+
+### S5 — Hash-Based Universal Coarsening (UGC / AH-UGC, LSH)  *(general, cheap/naive tier)*
+- **Locality-sensitive hashing** over node feature+connectivity → merge colliding nodes.
+  **Linear time**, no eigendecomposition, no iterative refinement.
+- Role: the cheap scalable tier — the one method certain to satisfy **R3** at 3.9M
+  graphs, and a naive control for "does *any* principled merging beat hashing?"
+- Light AIG adaptation: hash on (type, level, fan-in/out polarity profile).
+- Risk: feature-similarity ≠ logical equivalence; expect weak retention, strong speed.
+
+### Negative control (not a 6th method) — FRAIG / functional reduction
+Run as a **leakage probe**, not a summarizer. SAT-sweeping merges *functionally*
+equivalent nodes = it pre-performs part of Orchestrate → should visibly destroy/leak the
+optimizability label. Demonstrates empirically where the optimization-overlap boundary
+lies (CA2) and justifies why S1–S2 stay structural. Also answers the "unless we optimize
+it but weight it somehow?" question with data.
+
+### Optional add-on (fold into S1 if used) — rewrite-potential super-node features
+Attach **structural** rewrite-potential features to super-nodes (MFFC size, reconvergence
+count, fan-out). Inputs available on any graph, *never the label* → legitimate. Treat as
+an ablation on S1, not a separate method.
 
 ---
 
@@ -167,6 +213,237 @@ Kept out as a primary method; note as related-work / future-work only.
   acyclic, don't block.
 - **C8 matched-compression comparability** — report best ratio + one matched point.
 - **C9 determinism** — preferred; seed where possible.
+
+---
+
+## IMPLEMENTATION PLAN (for a coding-agent session)
+
+Order: shared infrastructure → the four off-the-shelf methods (S2, S5, S4, S3) → S1 last
+(deferred by choice; needs more thinking//discussion). Each phase states its **verify**
+step, per CLAUDE.md §5 goal-driven execution.
+
+### Architecture decision — read this first
+**One primitive: the merge-map.** Every method reduces to a function
+`graph -> cluster: LongTensor[num_nodes]` assigning each node a super-node id. A single
+shared `apply_merge_map()` does the actual rewrite. Methods differ *only* in how they
+produce the cluster vector — so implement the rewrite **once** (DRY; CLAUDE.md §3).
+
+Precedents in-repo to mirror, not reinvent:
+- **Caching/index pattern:** `src/data/sparsification.py` — chunked `_sparse_<algo>*.pt`
+  index files, `_SPARSE_INDEX_CACHE` keyed `(cache_dir, algo)`, `preload_sparse_index`,
+  `mmap=True` loads, `CHECKPOINT_EVERY`, `update_existing_cache_with_masks`,
+  multiprocessing with `_worker_initializer`. Copy this shape for merge-maps.
+- **Assignment-carrying Data:** `src/data/partition_utils.py::PartitionedData.__inc__`
+  (offsets `partition_id` per graph in a batch). A merge-map needs the same treatment if
+  it's carried on the Data object.
+- **Offline profiling script:** `src/data/measure_sparsity.py` + `shell/measure_sparsity.sh`.
+- **Precompute job:** `shell/precompute_sparsification_masks.sh`.
+
+**Key difference from sparsification:** sparsification applies a *mask* (selection);
+summarization *rewrites the graph* (coalesce edges, pool features). Masks can be applied
+at `get()` time cheaply; a merge rewrite is heavier → strongly prefer **precompute the
+cluster vector offline, apply at `get()`**, same as the existing mask flow.
+
+### Phase 0 — shared infrastructure  ⟵ blocks everything, do first
+New file `src/data/summarization.py` (mirror `sparsification.py` layout).
+NB: `src/summarize.py` at repo root is **empty** — decide whether to delete it or make it
+the CLI entrypoint; do not leave both.
+
+1. `apply_merge_map(data, cluster, num_clusters) -> Data`
+   - **edges:** map `edge_index` through `cluster`, drop intra-super-node self-loops
+     (or record their count), coalesce duplicates.
+   - **edge_attr:** super-edge carries polarity **counts** `[#normal, #inverted]`
+     (C2/CA3). A single original edge → `[1,0]` or `[0,1]`.
+   - **x:** super-node carries member **type counts** `[#const,#PI,#AND,#PO]`. A single
+     node → its original one-hot. (Schema superset — R1 satisfied by construction.)
+   - **level PE:** pool member levels → `[min,max,mean,var]` (C4); keep the existing
+     32-D projection downstream.
+   - **extra:** `node_size` (member count), optionally `log1p(node_size)`.
+2. Config constants → `src/config.py` **only** (single source of truth; no second
+   constants module — see CLAUDE.md).
+3. Measurement harness `measure_summarization.py` + SLURM script: node/edge retention,
+   wall-clock, **and** mean shortest-path or effective-receptive-field before/after
+   (CA8 — needed to evidence the over-squashing claim).
+
+**Verify:** unit test in `src/unittests/data/test_summarization.py` —
+`apply_merge_map(g, identity_cluster)` returns a graph **equal to `g`** (up to the
+enriched schema). This identity property *is* R1; if it fails, nothing downstream is
+valid.
+
+### Phase 1 — S2 Graded WL / Bisimulation  ⟵ flagship, and the easiest real method
+`color_refinement(data, depth, count_cap, direction) -> cluster`
+- Iterate `depth` times: `new_color[v] = hash(color[v], multiset{(color[u], polarity) for
+  u in neighbours(v)})`, where the multiset is **capped at `count_cap`** copies per
+  distinct element (`c=1` → set → bisimulation; `c=∞` → exact WL).
+- `direction ∈ {forward, backward, both}` selects out-/in-/both-edges (C5).
+- Complexity `O((n+m) log n)`; deterministic given a stable hash → satisfies C9 and R3.
+
+**Verify (three tests, the third is the important one):**
+1. On a hand-built symmetric graph, classes match by hand.
+2. `depth=0` → classes == node types.
+3. **Losslessness test:** build a small AIG, run the actual GCN+ encoder on it and on its
+   `c=∞` coarsening, assert the pooled graph-level output matches within tolerance. This
+   empirically confirms Bollen's theorem *for our architecture* and is the single most
+   valuable test in the project.
+
+**⚠ Do the empirical probe EARLY (before Phases 2–4):** run refinement at d=1..4 over a
+sample (~1–10k graphs) and report class-count reduction. Because of **CA1 (strash already
+applied)**, d=1 will likely find ~nothing; the question is d≥2. This de-risks S2 and is a
+reportable dataset statistic either way (CA10). *If residual redundancy is near zero,
+S2 becomes a lossless-baseline result rather than a compressor — and S1/S3 carry more
+weight. Know this before investing in Phases 2–4.*
+
+### Phase 2 — S5 Hash-based coarsening (UGC / LSH)
+Cheapest method; good second because it exercises Phase 0 with a totally different
+cluster source. Hash `(type, level, fan-in/out polarity profile)` via LSH; colliding
+nodes merge. Linear time, tunable band/width for the compression knob.
+**Verify:** compression ratio responds monotonically to the LSH parameter; deterministic
+under fixed seed.
+
+### Phase 3 — S4 Spectral / Local Variation (+ Kron)
+Use existing implementations where possible (Loukas' `graph-coarsening`; heavy-edge
+matching is already reachable via the METIS path used in `partition.py`). Domain-blind
+control — do **not** spend effort adapting it; its job is to be generic.
+**Verify:** matches reference implementation on a small graph; REE reported.
+
+### Phase 4 — S3 ConvMatch
+Most involved of the off-the-shelf set (reference implementation exists). Merges nodes
+equivalent w.r.t. the convolution operation.
+**Verify:** reproduces reported behaviour on a small standard graph before trusting it on
+AIGs.
+
+### Phase 5 — S1 Level-Bounded Cone Coarsening  ⟵ DEFERRED (thinking/discussion first)
+Do not start until the merge rule is specified. Needed decisions: cascade (fanout-free
+chain) contraction rule, level-band width, dominator strictness, tie-breaking, and the
+interaction between the depth axis and the width axis. Phase 0 means S1 will only need a
+cluster-producing function when it's ready.
+
+### Cross-cutting integration (after Phase 1, before any training run)
+- `dataset.py`: `get_num_nodes_list()` must special-case summarization (node counts
+  change post-merge — same issue node-mask sparsification already has).
+- `datamodule.py` / `sampler.py`: batch plan must be built from **post-merge** node counts
+  or dynamic batching will mis-size batches.
+- `config.py`: `SUMMARIZATION_*` constants; add a `--summarization` flag to `train.py`
+  mirroring `--sparsification`.
+- **CA18 blocker:** confirm the GCN+ edge encoder can ingest edge **counts** (or
+  `log1p(count)`) before relying on S2 `c=∞`; if it silently re-simplifies, the method is
+  no longer lossless.
+
+### What "Phase 0" means (plain version)
+Phase 0 contains **no coarsening algorithm at all**. It is only the shared plumbing that
+all five methods need: *given* a merge-map (which node goes into which super-node),
+rewrite the graph — coalesce edges, pool features, keep the feature schema valid. Every
+method (S1–S5) then reduces to "produce a cluster vector," and this code does the rest.
+Building it first means each method is a small, self-contained function rather than five
+copies of the same rewrite logic.
+
+Deliberately **not** in Phase 0 (YAGNI, CLAUDE.md §2): the on-disk merge-map cache/index.
+There is nothing to cache until a method exists → it lands in **Phase 1** alongside S2,
+mirroring `sparsification.py`'s chunked-index pattern then.
+
+### Design decisions already made (hand these to the agent; don't re-litigate)
+- **`x`** → member **type counts** `[#const,#PI,#AND,#PO]` (float). A size-1 super-node
+  reproduces the original one-hot exactly.
+- **`edge_attr`** → super-edge polarity **counts** `[#normal,#inverted]`. A single edge
+  reproduces `[1,0]`/`[0,1]`.
+- **`level`** → must stay an **integer scalar per node**, because `pe_type="level"` feeds
+  `ExtractPrecomputedPE`/discrete level embedding (`models/layers/positional_encodings.py`).
+  Use the member **minimum** level (earliest level preserves causal ordering). Store the
+  richer `[min,max,mean,var]` separately as `level_stats` for the C4 ablation — do **not**
+  replace `level` with a vector in Phase 0 or the existing PE path breaks.
+- **`node_size`** → member count (plus `log1p` variant if useful downstream).
+- **intra-super-node edges** → dropped (they'd be self-loops); record the count as
+  `internal_edges` so the information is not silently lost.
+- **`src/summarize.py`** (empty, repo root) → **delete it**. The new module is
+  `src/data/summarization.py`.
+
+### Opening prompt for the coding session
+See the ready-to-paste prompt at the end of this document.
+
+Reminders for that session: tests live **only** in `src/unittests/`; SLURM scripts are
+prepared, not run; and CLAUDE.md requires an **adversarial sub-agent review** of the diff
+before any commit/push.
+
+---
+
+## CPU/GPU BUDGET STRATEGY (GPU time is the scarce resource)
+
+Goal: **zero summarization work on the GPU node.** All coarsening happens offline on
+`genoa` (CPU); the GPU job should be unable to tell it's training on coarsened graphs.
+
+### Decision: MATERIALIZE the coarsened graphs — do not rewrite at `get()` time
+This **differs from the sparsification pattern**, deliberately:
+- Sparsification stores a boolean **mask** and applies it in `get()` — that's just an
+  `index_select`, genuinely cheap.
+- Summarization's rewrite (scatter/coalesce edges, pool features) is **much heavier**.
+  Running it per-graph, per-epoch inside dataloader workers burns CPU **on the GPU node**
+  and risks starving the H100 (`NUM_WORKERS=12`, `PREFETCH_FACTOR=4`).
+- **The clincher: coarsened graphs are SMALLER than the originals.** Writing them out
+  costs *less* disk than the existing graph cache, and loading them is *less* I/O. There
+  is no storage penalty to pay — materializing is cheaper on every axis.
+
+So: precompute job writes **materialized coarsened `.pt` graphs** into their own cache
+dir (mirror `SPARSIFICATION_REPLACE_PATH`'s separate-cache idea, e.g.
+`/scratch-shared/$USER/aig_summary_cache/<method>/`). Training then points at that dir and
+uses the **normal unreduced code path** — no summarization logic in the hot loop at all.
+Bonus: this makes the summarized training path nearly identical to the baseline path,
+which removes a whole class of bugs.
+
+`apply_merge_map()` is still the right primitive — it just runs **offline**, once.
+
+### Cost ceiling: ~4 s/graph on one 96-core genoa node
+Relevant corpus ≈ tier0 + tier1(Orchestrate) + tier2 ≈ **~700k graphs** (we train on
+Orchestrate only — do **not** precompute all four algorithms; that's a free 4× saving).
+On 96 cores with the existing 8-hour wall:
+
+| per-graph cost | CPU-seconds | wall on 96 cores | verdict |
+|---|---|---|---|
+| 10 ms | 7.0k | ~1 min | trivial |
+| 100 ms | 70k | ~12 min | fine |
+| 1 s | 700k | ~2 h | fine |
+| **~4 s** | 2.8M | **~8 h** | **at the wall limit** |
+| 10 s | 7M | ~20 h | needs an array job / chunking |
+
+Reference points from the measured sparsification table: `random_edge_dropout` 26 ms,
+`and_gate_only` 92 ms, `pagerank` 1.83 s, `spanning_forest` 3.52 s per graph — a **130×**
+spread. Assume the same spread here.
+
+### Expected per-method CPU cost (drives method viability = R3)
+- **S2 (WL/bisimulation)** — `O((n+m) log n)`, integer hashing. Should be **ms**. Cheap.
+- **S5 (LSH)** — linear, cheapest of all.
+- **S1 (level/dominator)** — dominator tree is near-linear (Lengauer–Tarjan). Cheap.
+- **S3 (ConvMatch)** — iterative, moderate.
+- **S4 (spectral / Local Variation)** — ⚠ **the CPU risk**: eigendecomposition per graph.
+  Could blow the budget on large AIGs. Mitigations: cap by graph size, use Kron/heavy-edge
+  instead of full spectral, or run S4 on a **stratified subsample** and report it as a
+  reduced-scope control (it's only the domain-blind control — degrading its coverage is
+  acceptable if disclosed).
+
+### Rules for the precompute jobs
+1. **Profile before committing.** Extend `measure_sparsity.py` into a summarization
+   profiler; run each method on ~1k stratified graphs, extrapolate with the table above,
+   *then* decide whether to launch the full job. Do this **before** implementing S3/S4.
+2. **Make jobs resumable.** Reuse the `CHECKPOINT_EVERY = 50_000` atomic-index idea so a
+   job killed at 7h59m doesn't restart from zero. Skip-if-exists sentinels like
+   `warmup_train_cache.sh` already uses.
+3. **Compute once, reuse everywhere.** Merge-maps are deterministic per
+   `(method, params, seed)` → key by signature hash and reuse across all seeds, Optuna
+   trials, and both the RQ3 (matched-state) and RQ4 (cross-state) experiments. Never
+   recompute per training run.
+4. **Chain, don't idle the GPU:**
+   `PID=$(sbatch --parsable src/shell/precompute_summarization.sh)` then
+   `sbatch --dependency=afterok:$PID src/shell/train.sh`.
+5. **Keep the existing knobs:** `--partition=genoa`, `--cpus-per-task=96`,
+   `--constraint=scratch-node`, `OMP_NUM_THREADS=1`/`MKL_NUM_THREADS=1` (correct — avoids
+   thread thrash under multiprocessing), chunked + `mmap=True` index loads.
+6. **Array-job the expensive methods** by shard if profiling says >4 s/graph, rather than
+   raising `--time`.
+
+### Where the GPU actually wins
+Batching is **node-budgeted** (`MAX_TOTAL_NODES_PER_BATCH = 3e6`), so fewer nodes per
+graph ⇒ more graphs per batch ⇒ **fewer steps per epoch** and lower peak VRAM. That is
+precisely the RQ2 measurement — so the GPU saving *is* a result, not just an
+optimization. Report GPU-hours per epoch alongside VRAM.
 
 ---
 
@@ -238,8 +515,72 @@ downstream regression label.** Generic summarization papers (Bollen, Generale, L
 ignore strash/FRAIG; EDA papers (FRAIG, DeepGate) don't frame their reductions as
 GNN-input summarization. **The contribution is the bridge**: bring the generic
 exactness framework (WL/bisimulation, *provable*) together with AIG-native equivalence
-(strash/FRAIG, *functional*) and evaluate label retention across the spectrum. That
-positioning is novel and defensible.
+(strash/FRAIG, *functional*) and evaluate label retention across the spectrum.
+
+### ⚠ Nearest competitor — CTS-Bench (arXiv 2602.19330, Feb 2026). READ BEFORE WRITING.
+*"Benchmarking Graph Coarsening Trade-offs for GNNs in Clock Tree Synthesis."*
+Khadka, Roxy, Ahmed. Submitted 22 Feb 2026, cs.LG (preprint).
+
+**Correction to an earlier overstatement in these notes:** it narrows the gap **far
+less** than first assumed. Having read the method section, it benchmarks **exactly one
+bespoke, physical-design-specific clustering heuristic** — it does *not* survey or
+compare the graph-coarsening literature at all.
+
+**Their actual "coarsening" = a 3-step custom heuristic (~13.3× node compression):**
+1. **Atomic cluster formation** — BFS outward from flip-flops
+2. **High-spread filtering** — on **spatial** standard deviation (σ > 0.05)
+3. **Gravity-vector-aligned merging** — cosine similarity > 0.9 + Manhattan-distance
+   constraint
+
+→ This is **spatial/placement clustering**: it consumes **physical XY coordinates**
+(spatial variance, gravity vectors, Manhattan distance) from a **post-placement**
+design. **It is not even applicable to an AIG**, which has no coordinates — a
+logic-level AIG is pre-physical. Their "generic graph clustering" label is generous to
+itself.
+
+**What they did NOT do** (i.e. still open, and squarely ours): METIS, Louvain,
+spectral/Local Variation, heavy-edge matching, Kron, ConvMatch, WL/color refinement,
+bisimulation, LSH/UGC — **none** benchmarked. No exactness/lossless framing anywhere.
+No structural-equivalence angle. One task, one label, one clustering method.
+
+- **Different EDA stage/graph/task**: clock tree synthesis, **post-placement gate-level
+  netlists**, clock-skew prediction. **Not AIGs, not logic synthesis, not
+  optimizability.** Our claim must be scoped to *logic synthesis / AIG / optimizability*,
+  not "EDA" generally.
+- **Setup**: 4,860 converged PD solutions, 5 architectures; GNNs = **GCN, GraphSAGE,
+  GATv2**; metrics = peak VRAM, training throughput, **MAE and R²**.
+- **Findings that support our premise**: generic clustering coarsening gave **up to
+  17.2× GPU memory reduction and 3× training speedup**, but degraded accuracy — with
+  **negative R² under zero-shot evaluation**. It concludes generic clustering removes
+  task-essential structure and explicitly **calls for domain-aware ("CTS-aware")
+  coarsening strategies** — which is precisely our thesis, one stage earlier.
+- **Consequences for us:**
+  1. Cite as the strongest motivation that **domain-aware coarsening is needed** in EDA.
+  2. Their **zero-shot negative R²** is a direct warning for **RQ4** — expect cross-state
+     transfer to be hard. If our domain-aware methods transfer at all, that's a *result*,
+     and we now have a citation showing the generic case fails.
+  3. It's a **benchmark-paper template** — mirrors our RQ2/RQ3 trade-off framing; use its
+     structure (and its memory/speed numbers) as a comparison point.
+  4. Reframe our novelty precisely: *first systematic study of graph reduction for
+     **AIG/logic-synthesis** GNN regression, and first to pair generic coarsening with
+     **AIG-native equivalence** (strash/FRAIG) as an exactness spectrum.*
+  5. **The MAE-vs-R² lesson (important, methodological).** Their skew MAE barely moved
+     (0.16 → 0.17) while **R² fell below 0**. Global/absolute error looked fine while
+     explained variance collapsed. → **Never judge a reduction on RMSE/MAE alone**; a
+     method can preserve mean error and destroy all discriminative power. Reinforces
+     reporting RMSE **and** R² **and** Spearman together (we already do — now we have a
+     citation for *why*).
+
+**Net position (what we can still honestly claim to be first at):**
+- First to benchmark **multiple graph-coarsening families** (spectral, WL/bisimulation,
+  convolution-matching, hashing, domain-specific) for GNN training in EDA at all —
+  CTS-Bench benchmarks **one** bespoke spatial heuristic.
+- First on **AIGs / logic synthesis / optimizability regression**.
+- First to bring **provable (lossless) compression** into an EDA GNN setting.
+- First to connect **AIG-native equivalence** (strash/FRAIG) to graph summarization.
+CTS-Bench costs us only the unqualified phrase *"first coarsening study in EDA."*
+Everything specific remains ours — and it now provides external evidence that the
+problem is real and that domain-aware coarsening is the needed answer.
 
 Papers to cite here: Mishchenko FRAIG (2005/2007), DeepGate (2021) / DeepGate3 (2024) /
 DeepGate4 (2025), PolarGate (2024), HOGA, FuncGNN, DAGNN / D-VAE, DCN/PDCN (2025),
@@ -307,8 +648,28 @@ Tightens *why* WL-coarsening is lossless, with citable formal basis:
 
 Generic (from earlier, C1–C9) **plus** AIG-specific:
 
-- **CA1 — Strash already applied.** Measure *residual* WL/functional redundancy before
-  claiming M1 compresses; the easy equivalences are gone.
+- **CA1 — Strash already applied (VERIFIED in this repo).** `strash` runs in **every**
+  optimization command template (`data/creation/automate_bulkOptimization.py:15,19,22,25`)
+  and again when tier0 graphs are built (`automate_bulkSynthesis.py:115`). So our AIGs
+  are **already structurally hashed**: no two AND gates share an identical
+  (fanin-pair, polarity) signature. Structural hashing *is* the trivial/1-hop case of
+  structural equivalence → **S2 at depth 1 will find almost nothing.** The open question
+  is whether **deeper** refinement (d = 2,3,4) still finds mergeable classes. Measure
+  before believing S2 compresses. (This is the single biggest risk to S2.)
+- **CA1b — Possible label confound (LOW PRIORITY — document, do not fix).**
+  `generate_csv.py:46-49` computes `optimizability = (t0_nodes - t1_nodes)/t0_nodes`
+  where `t0_nodes` comes from `stats[0]` = the **first** `print_stats`, which runs
+  **before** `strash`. If strash were non-trivial there, part of the label would be
+  credit for structural hashing rather than for Orchestrate.
+  **Decision: not regenerating the dataset — infeasible on time/compute, and correctly
+  out of scope.** This is a *disclosure* item, not a blocker: the label is defined
+  consistently across every graph and every method, so all comparisons in RQ2/RQ3/RQ4
+  remain internally valid regardless.
+  **If ever checked, it costs minutes, not compute:** the existing logs only hold two
+  `print_stats` (pre-strash, post-opt), so it needs a handful of ABC calls on ~20 tier0
+  files — `abc -c "read F; print_stats; strash; print_stats"` — comparing node counts.
+  No rerun of the pipeline. Outcome either way is one sentence in Limitations, never a
+  code change.
 - **CA2 — Optimization overlap is a spectrum.** FRAIG (functional) > cut/MFFC
   (semi-functional) > WL/bisimulation (structural) > level-band (M4). The *more
   functional* the merge, the *more it leaks the label*. Design methods to sit on the
@@ -344,3 +705,95 @@ Generic (from earlier, C1–C9) **plus** AIG-specific:
 - **CA12 — Super-node term collision.** "Super-node" already means the *recipe*
   encoder in LOSTIN; we use it structurally. Disambiguate in the writeup to avoid
   confusion.
+- **CA13 — Scope the novelty claim tightly.** After CTS-Bench, never claim "first
+  coarsening study in EDA." Claim: *first for AIG / logic synthesis / optimizability
+  regression, and first to bridge generic coarsening with AIG-native equivalence.*
+- **CA14 — Expect RQ4 to be hard.** CTS-Bench reports **negative R² zero-shot** for
+  generic coarsening. Plan for the possibility that cross-state fails for S3–S5 and
+  succeeds only for S1–S2 — that asymmetry *is* the headline result, so instrument for
+  it (report matched-state and cross-state side by side per method).
+- **CA15 — Two transfer mechanisms, two experiments.** Shared-weights direct transfer
+  (clean RQ4) vs summary-pretrain→full-finetune warm-start (Generale jump-start). Don't
+  conflate; they answer different questions.
+- **CA16 — Method-family balance is deliberate.** S1 domain-specific / S2 adapted-SOTA /
+  S3 SOTA / S4 classic control / S5 naive control. If a method is dropped for time,
+  drop from the control end (S5), never S1/S2 — the contribution lives there.
+- **CA17 — Beat a real bar.** S3 (ConvMatch) is the honest SOTA competitor. Domain-aware
+  claims only count if measured against it at matched compression, not against S4/S5.
+- **CA18 — Multigraph support is a prerequisite, not a detail.** S2 at c=∞ *requires*
+  edge multiplicities. Confirm the GCN+ edge encoder can ingest a count (or a log-count)
+  before committing to S2 — otherwise re-simplification silently makes it lossy.
+- **CA19 — Report MAE/RMSE *and* R² *and* Spearman, always.** CTS-Bench: MAE 0.16→0.17
+  (looks fine) while R² went **negative**. A reduction can preserve average error and
+  destroy explained variance. Our Pareto front must plot an explained-variance metric,
+  not just error, or it will flatter bad methods.
+- **CA20 — Coordinate-free is a feature.** CTS-Bench's clustering needs placement XY;
+  AIGs have none. Every method we pick must be **purely topological/functional** — which
+  they are. Worth one sentence in the writeup: reduction at the *logic* level generalises
+  across physical implementations, since it never sees placement.
+- **CA21 — Watch for follow-ups.** CTS-Bench (Feb 2026, cs.LG preprint, not obviously
+  peer-reviewed yet) explicitly calls for "CTS-aware coarsening." Someone will answer
+  that call. Re-check arXiv before submission for (a) CTS-aware coarsening follow-ups and
+  (b) anyone extending it to logic synthesis / AIGs.
+
+---
+
+## READY-TO-PASTE PROMPT — next coding session (Phase 0)
+
+> **Context.** This repo trains a GNN (GCN+) to regress AIG "optimizability". I am adding a
+> third graph-reduction family — **summarization/coarsening** — alongside the existing
+> partitioning and sparsification. Before writing this code, read:
+> - `IV_Gardner___Master_AI_Thesis_Outline/summarization_notes.md` — specifically the
+>   **IMPLEMENTATION PLAN** section (Phase 0, and the "Design decisions already made" list).
+> - `src/data/sparsification.py` and `src/data/partition_utils.py` — match their style,
+>   naming, and structure. Do not invent a new pattern.
+>
+> **Scope: Phase 0 ONLY. Do not implement any coarsening algorithm** (no WL, no
+> bisimulation, no spectral, no hashing). Phase 0 is purely the shared rewrite primitive
+> that all five future methods will call. Do **not** build the on-disk cache/index yet —
+> that lands in Phase 1 when the first real method exists.
+>
+> **Important execution context:** `apply_merge_map()` will run **offline on a CPU-only
+> SLURM node** (`genoa`) inside a multiprocessing pool, over ~700k graphs — never on the
+> GPU node and never in the training hot loop (GPU time is the scarce resource here). So
+> it must be: a **pure function** (no global/module state), **CPU-only** (no `.cuda()`, no
+> device assumptions), **picklable-friendly**, and allocation-light. Prefer vectorised
+> `torch` scatter/`coalesce`-style ops over Python loops over nodes/edges.
+>
+> **Tasks**
+> 1. Delete `src/summarize.py` (it is empty and would shadow/confuse the new module).
+> 2. Create `src/data/summarization.py` with:
+>    `apply_merge_map(data: Data, cluster: LongTensor, num_clusters: int) -> Data`
+>    - map `edge_index` through `cluster`; drop intra-super-node self-loops; coalesce
+>      duplicate super-edges
+>    - `x` → member type counts `[#const,#PI,#AND,#PO]` (float)
+>    - `edge_attr` → super-edge polarity counts `[#normal,#inverted]`
+>    - `level` → **integer scalar** per super-node = member **min** level (must stay an int
+>      tensor: `pe_type="level"` feeds a discrete level embedding via
+>      `ExtractPrecomputedPE`; do not turn it into a vector)
+>    - `level_stats` → `[min,max,mean,var]` stored separately for a later ablation
+>    - `node_size` → member count; `internal_edges` → count of dropped intra-cluster edges
+> 3. Add any needed `SUMMARIZATION_*` constants to `src/config.py` **only** (single source
+>    of truth — there is no `constants.py`).
+> 4. Add `src/unittests/data/test_summarization.py`. The **critical** test:
+>    `apply_merge_map(g, torch.arange(g.num_nodes), g.num_nodes)` must return a graph
+>    equivalent to `g` — same edges, `x` equal to the original one-hot, `edge_attr` equal to
+>    the original one-hot, `node_size` all ones, `level` unchanged. This identity property
+>    is the foundation of cross-state inference (RQ4); if it fails nothing downstream is
+>    valid. Also test: a simple hand-built merge (2 nodes → 1) produces the expected counts,
+>    coalesced edges, and `internal_edges`.
+>
+> **Verify**
+> ```
+> PYTHONPATH=src pytest src/unittests
+> ruff check src
+> ```
+> Suite is currently green (256 passed, 5 skipped) and ruff is clean — keep both true.
+>
+> **Constraints**
+> - Tests live **only** in `src/unittests/` (mirroring the `src/` layout). Never create a
+>   root-level `tests/` dir or root-level `test_*.py`.
+> - Everything runs on a SLURM cluster: prepare/edit job scripts, do not execute training.
+> - Follow CLAUDE.md: YAGNI (no speculative abstraction), DRY, surgical changes only.
+> - Before any `git commit`/`git push`, spawn a fresh adversarial sub-agent to review the
+>   diff with no prior context, and address what it flags.
