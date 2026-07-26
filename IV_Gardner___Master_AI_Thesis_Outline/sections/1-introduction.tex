@@ -13,20 +13,22 @@
 % Motivation below and must be at least named before it. Full definitions belong in
 % Preliminaries (\ref{sec:prelim}); here they only need a clause each.
 % Delete this subsection once the introduction prose is written.
+% Trailing comment on each item records where the full definition lives, so a term
+% cannot silently end up with no home. Keep the mapping updated if headings move.
 \begin{itemize}
-    \item Electronic Design Automation (EDA)
-    \item Logic synthesis
-    \item Optimization objectives: area, power, delay
-    \item And-Inverter Graph (AIG); Directed Acyclic Graph (DAG)
-    \item Synthesis algorithm, script, and pipeline
-    \item Optimizability (the prediction target)
-    \item Graph Neural Network (GNN)
-    \item Graph reduction: partitioning, sparsification, summarization/coarsening
-    \item Compression ratio
-    \item Training vs.\ inference
-    \item VRAM; memory bottleneck / out-of-memory (OOM); distributed and multi-GPU training
-    \item Causal cone, logical depth, longest path, topological level, gate role
-    \item Evaluation metrics: RMSE, $R^2$, Spearman correlation
+    \item Electronic Design Automation (EDA)                  % def: sec:prelim:synthesis:flow
+    \item Logic synthesis                                     % def: sec:prelim:synthesis:flow
+    \item Optimization objectives: area, power, delay          % def: sec:prelim:synthesis:objectives
+    \item And-Inverter Graph (AIG); Directed Acyclic Graph (DAG) % def: sec:prelim:aig:definition
+    \item Synthesis algorithm, script, and pipeline            % def: sec:prelim:synthesis:scripts
+    \item Optimizability (the prediction target)               % def: sec:prelim:formalization
+    \item Graph Neural Network (GNN)                           % def: sec:prelim:gnn:mp
+    \item Graph reduction: partitioning, sparsification, summarization/coarsening % def: sec:prelim:reduction
+    \item Compression ratio                                    % def: sec:prelim:reduction:measuring
+    \item Training vs.\ inference                              % def: sec:prelim:gnn:cost
+    \item VRAM; memory bottleneck / out-of-memory (OOM); distributed and multi-GPU training % def: sec:prelim:gnn:cost
+    \item Causal cone, logical depth, longest path, topological level, gate role % def: sec:prelim:aig:properties
+    \item Evaluation metrics: RMSE, $R^2$, Spearman correlation % def: sec:method:experiment:metrics (not Preliminaries -- standard metrics, defined where first used)
 \end{itemize}
 
 
