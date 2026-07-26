@@ -1,16 +1,154 @@
 \chapter{Preliminaries \& Related Work}
 \label{sec:related_work}
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \section{Preliminaries}
-% What to know to read the thesis.
+\label{sec:prelim}
+% What a reader needs to know to follow the rest of the thesis. Definitions and
+% notation only -- no argumentation, no comparison to other work.
 
+\subsection{Logic Synthesis and the EDA Flow}
+\label{sec:prelim:synthesis}
+
+\subsubsection{Position of Logic Synthesis in the Design Flow}
+\label{sec:prelim:synthesis:flow}
+
+\subsubsection{Optimization Objectives: Area, Power, Delay}
+\label{sec:prelim:synthesis:objectives}
+
+\subsubsection{Synthesis Scripts and Pipelines}
+\label{sec:prelim:synthesis:scripts}
+
+\subsection{And-Inverter Graphs}
+\label{sec:prelim:aig}
+
+\subsubsection{Definition and Structure}
+\label{sec:prelim:aig:definition}
+
+\subsubsection{Node Types and Edge Polarity}
+\label{sec:prelim:aig:nodes}
+
+\subsubsection{Structural Properties: Levels, Logic Cones, Fanout}
+\label{sec:prelim:aig:properties}
+
+\subsubsection{Why AIGs Differ from General Graphs}
+\label{sec:prelim:aig:distinct}
+
+\subsection{Synthesis Algorithms}
+\label{sec:prelim:algorithms}
+
+\subsubsection{Rewriting, Refactoring, and Balancing}
+\label{sec:prelim:algorithms:primitives}
+
+\subsubsection{The Orchestrate Script}
+\label{sec:prelim:algorithms:orchestrate}
+
+\subsection{Graph Neural Networks}
+\label{sec:prelim:gnn}
+
+\subsubsection{Message Passing Framework}
+\label{sec:prelim:gnn:mp}
+
+\subsubsection{Graph-Level Readout and Pooling}
+\label{sec:prelim:gnn:readout}
+
+\subsubsection{Positional and Structural Encodings}
+\label{sec:prelim:gnn:pe}
+
+\subsubsection{Expressivity and the Weisfeiler--Leman Hierarchy}
+\label{sec:prelim:gnn:expressivity}
+
+\subsection{Graph Reduction: Definitions}
+\label{sec:prelim:reduction}
+
+\subsubsection{Partitioning}
+\label{sec:prelim:reduction:partitioning}
+
+\subsubsection{Sparsification}
+\label{sec:prelim:reduction:sparsification}
+
+\subsubsection{Summarization and Coarsening}
+\label{sec:prelim:reduction:summarization}
+
+\subsection{Problem Formalization}
+\label{sec:prelim:formalization}
+% Formal statement of optimizability regression: notation for the graph, the
+% target, and the reduction operator. Referenced throughout the Methodology.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \section{Related Work}
+\label{sec:relwork}
+% Template guidance: announce the research gap at the START of this section and
+% return to it at the END. Not a laundry list -- every citation should support the
+% gap or motivate a design decision. Consider stating hypotheses.
 
-% Your work needs to be grounded and compared to earlier work and the state-of-the-art. Start the section with announcing the research gap and also end with the research gap. Consider using hypotheses. 
-Write about your related work here. Make clear to which key papers you will compare your eventual results. This can be done from the perspective of methods used, the task at hand and the addressed domain.
+\subsection{Machine Learning for Logic Synthesis}
+\label{sec:relwork:ml4eda}
 
-% The related work section is not a a background section. If you want to explain techniques, it is possible to have a background section after the Related Work section. Background should only be added when it has benefit for an informed audience. It is not common to use a background section. 
+\subsubsection{Quality-of-Result and Optimizability Prediction}
+\label{sec:relwork:ml4eda:qor}
 
-Remember: a related works section is not a ``laundry list'' of references, cited for the sake of citing papers: they are the support and motivation for your research gap and research question that you are going to address.
+\subsubsection{Learned Synthesis Script Generation}
+\label{sec:relwork:ml4eda:scripts}
 
-If you stick with Use \verb|\cite{}| for reference that is part of the sentence, and \verb|\citep{}| for references in parenthesis. For example, \cite{viola1997alignment} is awesome. Also, this is a citation~\citep{viola1997alignment}.
+\subsubsection{Circuit Representation Learning}
+\label{sec:relwork:ml4eda:representation}
+
+\subsubsection{Benchmarks and Datasets for ML in EDA}
+\label{sec:relwork:ml4eda:datasets}
+
+\subsection{Scaling Graph Neural Networks to Large Graphs}
+\label{sec:relwork:scaling}
+
+\subsubsection{Sampling-Based Approaches}
+\label{sec:relwork:scaling:sampling}
+
+\subsubsection{Partitioning and Distributed Training}
+\label{sec:relwork:scaling:distributed}
+
+\subsubsection{Memory-Efficient Training Techniques}
+\label{sec:relwork:scaling:memory}
+
+\subsection{Graph Reduction Techniques}
+\label{sec:relwork:reduction}
+
+\subsubsection{Graph Partitioning}
+\label{sec:relwork:reduction:partitioning}
+
+\subsubsection{Graph Sparsification}
+\label{sec:relwork:reduction:sparsification}
+
+\subsubsection{Graph Summarization and Coarsening}
+\label{sec:relwork:reduction:summarization}
+
+\subsubsection{Reduction as Preprocessing for GNN Training}
+\label{sec:relwork:reduction:forgnn}
+
+\subsection{Structure-Preserving and Domain-Aware Reduction}
+\label{sec:relwork:domain}
+
+\subsubsection{Reduction on Directed Acyclic Graphs}
+\label{sec:relwork:domain:dag}
+
+\subsubsection{Reduction in Circuit and Netlist Domains}
+\label{sec:relwork:domain:circuits}
+
+\subsection{Generalization Across Graph Distributions}
+\label{sec:relwork:generalization}
+% Grounds RQ5: training on one structural distribution, testing on another.
+
+\subsubsection{Size and Distribution Shift in GNNs}
+\label{sec:relwork:generalization:shift}
+
+\subsubsection{Train--Test Structural Mismatch}
+\label{sec:relwork:generalization:mismatch}
+
+\subsection{Research Gap}
+\label{sec:relwork:gap}
+% Close the chapter by restating the gap, now grounded in the work above.
+% Name the key papers the eventual results will be compared against.
+
+
+% Use \cite{} for a reference that is part of the sentence, and \citep{} for
+% references in parentheses.

@@ -2,22 +2,377 @@
 \label{sec:methodology}
 
 \section{Architecture}
+\label{sec:method:architecture}
+Based on GNNPlus: \url{https://github.com/LUOyk1999/GNNPlus}.
+Based on literature and HP tuning. Used for unreduced graphs, sparsified graphs, and summarized graphs.
+
+\begin{itemize}
+    \item \textbf{Model Type:} Edge-Aware Graph Convolutional Network (GCN+) for AIGs
+    \item \textbf{Input Representation \& Encodings}
+    \begin{itemize}
+        \item \textit{Node Features:} 4-dimensional one-hot vector (Constant, Primary Input, AND Gate, Primary Output)
+        \item \textit{Edge Attributes:} 2-dimensional one-hot vector (Standard connection, Inverted signal)
+        \item \textit{Positional Encoding:} Level-based, 32-dimensional space
+        \item \textit{Pre-Encoder Integration:} 4D nodes linearly projected to 128D $\rightarrow$ concatenated with 32D PE $\rightarrow$ 160D vector $\rightarrow$ stabilized via \texttt{GraphNorm}
+    \end{itemize}
+
+    \item \textbf{Core Architecture Scale}
+    \begin{itemize}
+        \item Depth: 4 stacked message-passing layers
+        \item Width/Hidden Dimension ($d_h$): 128 (consistent across layers)
+    \end{itemize}
+
+    \item \textbf{Edge-Aware Message Passing}
+    \begin{itemize}
+        \item Dynamic integration of edge attributes directly into message formulation
+        \item Linear projection of edge features $\rightarrow$ fuse with neighbor features $\rightarrow$ LeakyReLU - from GNNPlus
+        \item Symmetric degree normalization: Disabled in final configuration - Worked better GNNPlus found the same out...
+    \end{itemize}
+
+    \item \textbf{Layer Block Composition (Per Layer)}
+    \begin{itemize}
+        \item Activation \& Regularization: LeakyReLU + Dropout ($p = 0.15$)
+        \item Residuals: Skip-connections added post-message passing
+        \item Feed-Forward Network (FFN): Two-layer linear expansion ($128 \rightarrow 256 \rightarrow 128$)
+        \item Normalization: \texttt{LayerNorm} applied before and after FFN
+    \end{itemize}
+
+    \item \textbf{Graph-Level Readout \& Aggregation}
+    \begin{itemize}
+        \item \textit{Jumping Knowledge (JK):} \texttt{"sum"} aggregation across all 4 layers (maintains $d_{out} = 128$)
+        \item \textit{Global Pooling:} Mean pooling down to single graph-level embedding
+        \item \textit{Regression Head Setup:}
+        \begin{itemize}
+            \item MLP architecture bridging graph embedding to final prediction
+            \item Intermediate compression: Linear layer ($128 \rightarrow 64$) + \texttt{ReLU} + Dropout
+            \item Final projection: Linear layer ($64 \rightarrow 1$)
+            \item Output bounding: Terminal \texttt{Sigmoid} activation constrains prediction to $[0, 1]$ range (mapping directly to the optimizability percentage)
+        \end{itemize}
+    \end{itemize}
+\end{itemize}
+
+\subsection{Partitioning Graphs}
+\label{sec:method:architecture:partitioning}
+Partition graphs in dataset offline. Removes edges between partitions.
+
+\begin{itemize}
+  \item GNN encoder (applied on intra-partition edges only)
+  \item Pooling from node representations to partition representations
+  \item Pooling from partition representations to a single graph representation
+  \item Prediction head applied to the graph representation to produce the output $\hat{y}$
+\end{itemize}
+
+\subsection{Sparsified Graphs}
+\label{sec:method:architecture:sparsification}
+% NOTE: unlike partitioning, sparsification may need NO architectural change -- a
+% sparsified AIG is just a smaller AIG, and the overview states this architecture is
+% "used for unreduced graphs, sparsified graphs, and summarized graphs".
+% What does change is the data pipeline, which is still worth stating explicitly:
+%   - edge-mask methods (random_edge_dropout, spanning_forest) keep node counts;
+%     node-mask methods (pagerank, and_gate_only) do not, which affects the
+%     node-budget dynamic batching.
+%   - masks are applied at get() time, not baked into the cached graphs.
+% Decide: is this a subsection describing adaptations, or a short statement that
+% none are required? The latter is a legitimate and useful methodological claim.
+
+\subsection{Summarized Graphs}
+\label{sec:method:architecture:summarization}
+% Super-node feature/PE pooling and how the merged graph is fed to the same encoder.
+% Blocked on the summarization method selection.
+
+\subsection{Baselines for Optimizability Prediction}
+\label{sec:method:architecture:baselines}
+% TODO: some optimizability baselines from pre-existing?
+
 
 \section{Graph Reduction}
+\label{sec:method:reduction}
+This section outlines the diverse reduction methods integrated and tested in this framework for compressing AIGs. The primary objective of applying these reductions is to mitigate severe memory bottlenecks (such as GPU OOM errors) and accelerate training, all while attempting to preserve the structural features necessary for accurate optimizability prediction.
+
 \subsection{Partitioning}
+\label{sec:method:reduction:partitioning}
+Partitioning methods divide massive AIGs into smaller, distinct subgraphs to manage memory constraints. This process retains all original nodes, only the edges that span between different partitions are cut. The number of partitions, $k$, is determined dynamically for each graph by dividing the total number of nodes by a target partition size, and then clamping the result to fall within a predefined minimum and maximum range.
+
+\subsubsection{Random Hashing}
+\label{sec:method:partition:random}
+This method uniformly assigns nodes to partitions at random, serving as a naive baseline for evaluating the efficiency and performance of more complex partitioning algorithms.
+
+\subsubsection{METIS}
+\label{sec:method:partition:metis}
+% TODO: Citation? Karypis \& Kumar, 1997
+Implemented via PyTorch Geometric, this approach utilizes the classic METIS algorithm
+to create balanced graph partitions while explicitly minimizing the overall number of edge cuts.
+
+\subsubsection{Naive Level Slicing}
+\label{sec:method:partition:levelslice}
+This technique partitions the graph strictly by topological depth (e.g., grouping top-level and bottom-level nodes together). While naive, it helps preserve the circuit's directed logical flow better than random assignment.
+
+\subsubsection{Span-Weighted METIS (Domain-Informed)}
+\label{sec:method:partition:spanmetis}
+This is a targeted, domain-aware adaptation of METIS. In AIGs, cutting edges that span across multiple topological levels breaks the longest causal chains. To prevent this, edges are assigned weights proportional to their span length (i.e., a large weight to long edges spanning multiple levels, and a small weight to short edges). METIS is then forced to minimize the \textit{weighted} cut, actively discouraging the severing of logic paths.
+
+
 \subsection{Sparsification}
+\label{sec:method:reduction:sparsification}
+Sparsification reduces graph density by selectively removing edges or nodes while attempting to preserve overall structural properties.
+
+\subsubsection{Random Edge Dropout}
+\label{sec:method:sparse:dropout}
+This naive baseline uniformly drops a specified random percentage ($N\%$) of edges across the graph, acting as a control for structural degradation.
+
+\subsubsection{And-Gate Only}
+\label{sec:method:sparse:andgate}
+This domain-specific method reduces the graph by dropping all Primary Input (PI) and Primary Output (PO) nodes. It preserves only the internal AND logic gates, which constitute the exclusively optimizable portion of the circuit, since PI and PO boundaries remain structurally fixed during synthesis.
+
+\subsubsection{Random Minimum Spanning Tree (MST) Sparsity}
+\label{sec:method:sparse:mst}
+This method extracts a sparse connectivity backbone by computing a minimum spanning tree over randomized edge weights, effectively eliminating dense reconvergent paths while ensuring the core connectivity of the AIG remains intact.
+% https://www.sciencedirect.com/science/article/pii/S0169743925002473
+
+\subsubsection{PageRank Node Pruning}
+\label{sec:method:sparse:pagerank}
+This centrality-based approach computes the PageRank score for all nodes to determine their structural importance. It retains only the top $N\%$ of nodes, implicitly dropping all edges incident to the removed, low-centrality nodes.
+
+
 \subsection{Summarization \& Coarsening}
+\label{sec:method:reduction:summarization}
+% NOTE: method selection still undecided -- the candidate pool below is a working list,
+% not a final set. See the planning list for what needs to be narrowed down.
+These methods compress the graph by merging structurally or semantically similar nodes into super-nodes.
+% Issue with AIG-specific summarization: most coarsening overlaps with optimization.
+% HOW TO DEAL WITH: Depth, not optimizing, not removing parts that will be optimized.
+
+\subsubsection{Candidate Methods}
+\label{sec:method:summary:candidates}
+\begin{itemize}
+    \item \textbf{SNAP (Strict Semantic):} Summarization by Grouping Nodes on Attributes and Pairwise edges. Aggregates nodes based on matching attributes and connectivity patterns (implemented via NetworkX).
+    \begin{itemize}
+        \item \textit{Positional Encodings (PE):} Mean-pool 32D PEs of merged nodes to maintain strict 32D dimensionality, ensuring compatibility with fixed feature spaces during Cross-State Inference (RQ5).
+        \item \textit{Boundary Constraints:} Explicitly forbid merging Primary Input (PI) or Primary Output (PO) nodes to preserve valid logic cones.
+    \end{itemize}
+
+    % TODO: k to infinity
+    \item \textbf{Approximate $k$-bisimulation (Relaxed Semantic):} Merges nodes sharing similar structural neighborhoods up to $k$ hops.
+    \begin{itemize}
+        \item \textit{Depth Alignment:} Neighborhood radius $k$ must strictly match target GNN message-passing depth ($d$) to prevent receptive field overshoot.
+        \item \textit{Compression Collapse:} High $k$ values in deep feed-forward circuits cause vanishing compression ratios; empirical tuning required.
+        \item \textit{Edge Parity:} Modify bisimulation to treat inverted/non-inverted edges as distinct relations to avoid merging logically distinct subgraphs.
+    \end{itemize}
+    % Implementation reference: https://github.com/R-van-Bakel/Multi-Summaries/tree/main
+
+    \item \textbf{Heavy Edge (HE) Contraction (Local Structural):} Iteratively contracts edges with highest weights or topological importance.
+    \begin{itemize}
+        \item DAG Cycle Risk
+        \item \textit{Critical Path Erasure:} Contracting low-traffic logic.
+        \item \textit{Edge Attribute Pooling:} Resolving conflicting edge polarities during merges requires careful handling to prevent boolean function distortion.
+    \end{itemize}
+    % With weights in regard to logical flow? Like local sp sum? Paths through from in to out = weight?
+
+    \item \textbf{Level-Bounded Reconvergence Coarsening (Custom AIG Method):} Restricts merging to gates on tightly bounded topological depths (e.g., $\pm 1$) sharing a common immediate dominator node.
+    \begin{itemize}
+        \item \textit{Causal Preservation:} Compresses parallel width while locking critical path depth. This perfectly preserves strict causal cones and ensures the 32D Level PE remains highly accurate.
+    \end{itemize}
+\end{itemize}
+
+\subsubsection{Wider Candidate Pool}
+\label{sec:method:summary:pool}
+% Generic coarsening/summarization taxonomy considered but not yet selected.
+\begin{itemize}
+    \item \textit{Pairwise Aggregation / Edge Collapsing:} Coalesces adjacent nodes based on nearness or similarity.
+    \item \textit{Heavy-Edge Matching (HEM):} Greedy algorithm matching nodes with their largest off-diagonal neighbor.
+    \item \textit{Local Variation (LV):} Provides spectral/cut guarantees to preserve global structure during reduction.
+    \item \textit{Independent Set Coarsening:} Forms coarse graphs using maximal independent sets of non-adjacent nodes.
+    \item \textit{Node Grouping / Supernodes:} Aggregates tailored by structural/attribute similarities.
+    \item \textit{Attributes / IO Summary:} Partitions nodes sharing equivalent incoming/outgoing attribute sets.
+    \item \textit{Strict Bisimulation:} Aggregates nodes only if they share identical outgoing paths.
+    \item \textit{Forward ($k$)-bisimulation:} Stratified bisimulation restricted to maximum path length $k$.
+    \item \textit{Color Refinement (1D WL):} Evaluates if nodes are indistinguishable to a GNN up to layer depth $d$.
+    \item \textit{$d$-reduction / $d$-substitution:} Collapses all nodes sharing exact color refinement classes (up to depth $d$).
+\end{itemize}
+
+\begin{itemize}
+    \item \textbf{Maximum Fanout Free Cone (MFFC) Contraction:} Collapses local structural cones where internal paths pass through a single root gate.
+    \begin{itemize}
+        \item \textit{Optimizability Risk:} MFFCs are prime targets for synthesis rewriting. Merging them might obscure the exact optimizability features the model must regress.
+    \end{itemize}
+    \item \textbf{$K$-Feasible Cut Enumeration (LUT Mapping):} Subdivides AIGs into bounded logic cones.
+\end{itemize}
+
+% Two further candidates carried over from the direction document, both still open:
+% \subsubsection{Algebraic Distance (AD) Coarsening (Global Structural)}
+% Utilizing networkit, this approach determines the ``closeness'' of nodes based on algebraic relaxation procedures (such as Jacobi overrelaxation) rather than direct structural edges. By measuring how quickly nodes converge during these iterations, it extracts an ``algebraic distance'' to identify and aggregate strongly connected variables, effectively preserving the global structural layout and spectral properties of the original graph.
+% % networkit.coarsening.AlgebraicDistanceCoarsening (Explicitly Spectral)
+%
+% \subsubsection{AIG Specific - Level Coarsening - Own}
+% TBD
+
+% How to deal with the positional encoding??
+% Options: a vector [Min_Level, Max_Level, Mean_Level, Level_Variance] rounded for matching ease? Per super node -- MORE EFFICIENT?
+% Appending it to the node attribute? STRICTER
+
 
 \section{Data}
+\label{sec:method:data}
+
+\subsection{Source Circuits}
+\label{sec:method:data:sources}
+% Which benchmark suites the 55 designs come from, their provenance and licensing,
+% and the size/domain range they span.
+
+\subsection{Dataset Generation}
+\label{sec:method:data:generation}
+
+\subsubsection{Random Structural Transformation}
+\label{sec:method:data:generation:transform}
+% How the 55 source designs are expanded into 231,055 structurally distinct base
+% graphs, and why randomised transformation rather than plain replication.
+
+\subsubsection{Target Synthesis Algorithms}
+\label{sec:method:data:generation:algorithms}
+% Orchestrate, Deepsyn, Syn4, C2RS -- what each does and why these four.
+
+\subsection{Tiered Dataset Structure}
+\label{sec:method:data:tiers}
+Over 3.9 million total unique AIGs.
+
+\subsubsection{Tier 0: Base Graphs}
+\label{sec:method:data:tier0}
+This originates from 55 designs randomly transformed into 231,055 base graphs (Tier-0).
+
+\subsubsection{Tier 1: Single-Algorithm Optimization}
+\label{sec:method:data:tier1}
+Applying the 4 distinct target synthesis algorithms (Orchestrate, Deepsyn, Syn4, C2RS) to these base graphs yields exactly 231,055 primary (Tier-1) samples per algorithm.
+
+\subsubsection{Tier 2: Sequential Optimization}
+\label{sec:method:data:tier2}
+In Tier-2, each resulting graph from Tier 1 is then optimized by Orchestrate.
+
+\subsection{Target Label: Optimizability}
+\label{sec:method:data:label}
+
+\subsubsection{Definition}
+\label{sec:method:data:label:definition}
+The relative percentage of node reduction achieved by a synthesis algorithm (formulated as a regression task bound between 0 and 1).
+
+\subsubsection{Label Distribution}
+\label{sec:method:data:label:distribution}
+% Histogram + summary stats across tiers. Matters because a skewed target changes
+% how RMSE and R^2 should be read, and motivates the Sigmoid output bound.
+
+\subsection{Graph Representation}
+\label{sec:method:data:representation}
+
+\subsubsection{Node and Edge Features}
+\label{sec:method:data:representation:features}
+PyTorch Geometric graphs utilizing 1-hot node types (Constants, PI, AND, PO), 1-hot encoded edge polarity (regular connection or inverted signal), and topological depth encodings.
+
+\subsubsection{Positional Encoding Precomputation}
+\label{sec:method:data:representation:pe}
+% Level-based PE computed offline and stored on the graph rather than at runtime.
+
+\subsection{Dataset Statistics}
+\label{sec:method:data:statistics}
+% Node/edge count distributions, depth distributions, per-tier breakdown. This is
+% where the table justifying the graph-scale bound in the Experiment section lives.
+
+\subsection{Held-Out Hyperparameter Tuning Subset}
+\label{sec:method:data:hpsubset}
+A smaller, balanced (between Tier 0, 1 and 2) subset of 50,000 graphs was used exclusively for the initial hyperparameter tuning and then excluded from the rest.
+
 
 \section{Experiment}
+\label{sec:method:experiment}
+
+\subsection{Research Design}
+\label{sec:method:experiment:design}
+% Characterise the design: controlled comparison against a full-graph baseline,
+% with reduction method as the manipulated variable. State the hypotheses.
+
+\subsection{Experimental Setup}
+\label{sec:method:experiment:setup}
+
+\subsubsection{Data Splitting}
+\label{sec:method:experiment:splitting}
+An 80/10/10 volume split and a functional design level split. This prevents data leakage, ensuring the model never sees structurally identical circuits in different optimization states across the train/test sets.
+
+\subsubsection{Graph Scale Bounds}
+\label{sec:method:experiment:scale}
+The dataset is bounded to a specific node/edge threshold (e.g., max X,000 nodes per AIG). This intermediate scale guarantees that a single, unreduced graph can fit into GPU VRAM, making the ground-truth baseline in RQ1 computationally tractable, while still providing sufficient structural complexity to rigorously stress-test the reduction methods.
+
+\subsubsection{Dynamic Batching}
+\label{sec:method:experiment:batching}
+Dynamic batching is employed by setting a maximum number of nodes per batch and using a greedy bin-packing algorithm to prevent CUDA Out-Of-Memory errors on massive AIGs.
+
+\subsubsection{Model Configuration}
+\label{sec:method:experiment:model}
+An Edge-Aware Graph Convolutional Network (GCN+) is trained to predict the optimizability of a circuit when subjected to the Orchestrate synthesis script.
+
+\subsubsection{Hyperparameter Tuning}
+\label{sec:method:experiment:hp}
+% Optuna sweep, search space, the held-out 50k balanced subset, and its exclusion
+% from all subsequent training/evaluation.
+
+\subsubsection{Training Configuration}
+\label{sec:method:experiment:training}
+% Loss (Smooth L1), optimizer, LR warmup + ReduceLROnPlateau, epochs, early stopping.
+
+\subsubsection{Hardware \& Software Environment}
+\label{sec:method:experiment:hardware}
+% Cluster, GPU model, wall-clock budget, library versions. Needed for reproducibility
+% and to make the VRAM/throughput numbers in the Results interpretable.
+
+\subsection{Evaluation Metrics}
+\label{sec:method:experiment:metrics}
+% Template guidance: there should be a sub-section on the evaluation.
+
+\subsubsection{Predictive Accuracy}
+\label{sec:method:experiment:metrics:accuracy}
+% Smooth L1 Loss, RMSE, R^2. Note R^2 is logged for val/test only.
+
+\subsubsection{Ranking Quality}
+\label{sec:method:experiment:metrics:ranking}
+% Spearman correlation, and why ranking matters independently of absolute error.
+
+\subsubsection{Efficiency \& Resource Metrics}
+\label{sec:method:experiment:metrics:efficiency}
+% Peak VRAM, step/epoch time, inference throughput, GPU utilisation.
+
+\subsubsection{Reduction Quality Metrics}
+\label{sec:method:experiment:metrics:reduction}
+% Node/edge retention ratios and offline wall-clock cost of each reduction.
+
+\subsection{Experimental Phases}
+\label{sec:method:experiment:phases}
+% TODO: add one sentence mapping phases to RQs -- no longer 1:1 since RQ4 was split out.
+%   Phase 1 -> RQ1 | Phase 2 -> RQ2 | Phase 3 -> RQ3 and RQ4 | Phase 4 -> RQ5
+%   (RQ4 is an analysis of the Phase 3 runs, not a separate experiment.)
+
+\subsubsection{Phase 1: Full-Graph Baseline}
+\label{sec:method:experiment:phase1}
+Train the GNN on full, unreduced AIGs to establish predictive accuracy and baseline hardware overhead (VRAM, training time).
+
+\subsubsection{Phase 2: Offline Reduction Profiling}
+\label{sec:method:experiment:phase2}
+Apply and measure the offline computational cost and shrinkage achieved by the three reduction categories: Partitioning, Sparsification, and Coarsening/Summarization.
+
+\subsubsection{Phase 3: Trade-off Analysis}
+\label{sec:method:experiment:phase3}
+Train models on the newly reduced datasets and compare their performance against the Phase 1 baseline to establish a Pareto front (predictive degradation vs. memory/speed gains).
+
+\subsubsection{Phase 4: Cross-State Generalization}
+\label{sec:method:experiment:phase4}
+Query the models trained exclusively on reduced graphs using normal, full-sized graphs during inference to evaluate structural generalization capabilities or model graph indistinguishability.
+
+\subsection{Reproducibility}
+\label{sec:method:experiment:reproducibility}
+% Seeds and run-to-run variance (how many seeds per configuration?), plus
+% availability of code, dataset, and reduction artifacts.
 
 
-% Focus on what you add to the existing method. Explain what you will do and why (and how). Do not forget to characterize your research design. There should be a sub-section on the evaluation. 
+% Focus on what you add to the existing method. Explain what you will do and why (and how). Do not forget to characterize your research design. There should be a sub-section on the evaluation.
 %For DS students, this normally means using manually labelled or ground truth data. For IS students, it is not always needed to have a separate methodology section. You can also integrate the approach with the results in one section. It depends on your type of research what is best fitting.
 % Write about your methodology here. Focus on your own contribution. Indicate exactly how you will assess your work in terms of evaluation.
-
-% % It is possible to use a separate section for the Experimental Setup, which then focuses on all settings used in your experiments. It also possible to address the settings in a sub-section under Methodology. 
+% % It is possible to use a separate section for the Experimental Setup, which then focuses on all settings used in your experiments. It also possible to address the settings in a sub-section under Methodology.
 % \section{Equations}
 %         We estimate the deformable template parameters~$\theta_t$ and the deformation fields for every data point using maximum likelihood. Letting~$\mathcal{V} = \{\boldsymbol{v}_i\}$ and~$\mathcal{A} = \{a_i\}$,
 %         %

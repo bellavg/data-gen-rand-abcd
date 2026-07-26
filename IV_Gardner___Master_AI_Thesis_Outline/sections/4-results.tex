@@ -1,30 +1,239 @@
 \chapter{Results}
 \label{sec:results}
 % Give the outcomes for each research question in the form of a table or graphic (with caption).
-Write about your results here. Good captions to tables and/or figures are key.
+% Sometimes, especially if you have quite different experiments or research questions, it makes sense to interleave the experimental setup and the results sections, so the reader does not get lost. It is then helpful to structure clearly in (sub)subsections.
 
-% Sometimes,  especially  if  you  have  quite  different experiments or research  questions,  it makes sense to interleave the experimental setup and the results sections, so the reader does not get lost. It is then helpful to structure clearly in (sub)subsections.
+% This chapter is currently a specification of the comparisons to collect and analyse,
+% moved over from the thesis direction document. Each section states the data to be
+% gathered; the numbers, tables and figures still have to be produced.
 
-\section{Table and Figures}
-        \begin{table}[h] % h for Here, t for Top, b for Bottom
-                \centering
-                \caption{By convention, Table caption goes on top.}
-                \begin{tabular}{lcr}
-                        \textbf{Left} & \textbf{center} & \textbf{right} \\
-                        \hline
-                        111 & 222 & 333 \\
-                        444 & 555 & 666
-                \end{tabular}
-        \end{table}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Baseline Predictive Performance on Full AIGs (RQ1)}
+\label{sec:results:rq1}
+% Answers \ref{sec:intro:rq1}: can a GNN predict optimizability from the full,
+% unreduced AIG at all? Everything downstream is measured against this.
 
-        \begin{figure}[h]
-                \centering
-                \includegraphics[width=0.5\linewidth]{example-image}
-                \caption[Example figure]{Example figure. Notice that the caption goes below and that there is a way to have a shorter caption for the list of Figures.}
-        \end{figure}
+\subsection{Comparison Against Naive Baselines}
+\label{sec:results:rq1:baselines}
+% "Accurately" needs a referent. Report the trivial predictors the GNN must beat
+% (e.g. mean/median of the training targets, a graph-size-only regressor) so the
+% R^2 has meaning. Ties to \ref{sec:method:architecture:baselines}.
 
-        \begin{figure*}[b]
-                \centering
-                \includegraphics[width=0.8\linewidth, height=.2\textheight]{example-image}
-                \caption{Example figure spanning the two columns.}
-        \end{figure*}
+\subsection{Predictive Accuracy Metrics}
+\label{sec:results:rq1:accuracy}
+Tabular presentation of Smooth L1 Loss, RMSE, and $R^2$ for the Edge-Aware GCN+ predicting Orchestrate optimizability, on a test set of full AIGs.
+
+\subsection{Ranking Efficacy}
+\label{sec:results:rq1:ranking}
+Spearman correlation coefficients.
+
+\subsection{Error Analysis}
+\label{sec:results:rq1:erroranalysis}
+% Where the baseline model fails: residuals broken down by graph size, by tier
+% (0/1/2), and by source design. Feeds the Discussion and sets up which reduction
+% methods are expected to hurt most.
+
+\subsection{Hardware Baselines and Training Bottlenecks}
+\label{sec:results:rq1:hardware}
+\begin{itemize}
+    \item Base training times tracked via W\&B (\texttt{train\_step\_time\_s\_step} and \texttt{train\_step\_time\_s\_epoch}).
+    \item Peak VRAM allocation (\texttt{GPU Memory Allocated}).
+    \item \textbf{Throughput:} Baseline inference speed measured in graphs processed per second.
+\end{itemize}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Efficiency Profile of Graph Reduction Techniques (RQ2)}
+\label{sec:results:rq2}
+% Answers \ref{sec:intro:rq2}: shrinkage, VRAM, and speed across all reduction methods.
+
+\subsection{Graph Reduction Offline Profile}
+\label{sec:results:rq2:offline}
+\begin{itemize}
+    \item Statistical summary of node and edge reduction ratios achieved by Partitioning, Sparsification, and Exact Summarization.
+    \item Computational wall-clock time required to execute these reduction algorithms offline.
+\end{itemize}
+
+% Measured sparsification retention statistics (already collected offline).
+% Uncomment once the surrounding text is written; requires \usepackage{booktabs}.
+% \begin{table}[htbp]
+% \centering
+% \caption{Sparsification Retention Statistics over 10,000 Graphs}
+% \label{tab:sparsification_stats}
+% \small
+% \begin{tabular}{llccccr}
+% \toprule
+% \textbf{Method} & \textbf{Metric} & \textbf{Mean (\%)} & \textbf{Std (\%)} & \textbf{Min (\%)} & \textbf{Max (\%)} & \textbf{Avg Time (ms)} \\
+% \midrule
+% and\_gate\_only & Edge Retention & 73.3 & 13.0 & 48.9 & 99.1 & 91.85 \\
+%                 & Node Retention & 82.1 & 11.4 & 63.3 & 99.9 & \\
+%                 & Edge Reduction & 26.7 & --   & --   & --   & \\
+% \midrule
+% pagerank        & Edge Retention & 62.7 & 6.3  & 41.5 & 76.8 & 1,832.14 \\
+%                 & Node Retention & 80.0 & 0.0  & 79.8 & 80.0 & \\
+%                 & Edge Reduction & 37.3 & --   & --   & --   & \\
+% \midrule
+% random\_edge\_dropout & Edge Retention & 69.7 & 0.6  & 66.7 & 70.3 & 26.44 \\
+%                       & Node Retention & 100.0& 0.0  & 100.0& 100.0& \\
+%                       & Edge Reduction & 30.3 & --   & --   & --   & \\
+% \midrule
+% spanning\_forest       & Edge Retention & 58.1 & 5.3  & 50.0 & 70.0 & 3,519.05 \\
+%                       & Node Retention & 100.0& 0.0  & 100.0& 100.0& \\
+%                       & Edge Reduction & 41.9 & --   & --   & --   & \\
+% \bottomrule
+% \end{tabular}
+% \end{table}
+
+\subsection{Training Memory Dynamics and Compute Efficiency}
+\label{sec:results:rq2:memory}
+\begin{itemize}
+    \item \textbf{VRAM Footprint:} Bar charts comparing peak \texttt{GPU Memory Allocated (Bytes)} and \texttt{GPU Memory Allocated (\%)}.
+    \item \textbf{Host Memory Bottlenecks:} \texttt{Process Memory In Use (MB)} and \texttt{System Memory Utilization (\%)} (MAYBE).
+    \item \textbf{Compute Efficiency:} \texttt{GPU Utilization (\%)} and \texttt{GPU DRAM Active (\%)}.
+\end{itemize}
+
+\subsection{Throughput and Training Speedup}
+\label{sec:results:rq2:throughput}
+\begin{itemize}
+    \item Comparison of \texttt{train\_step\_time\_s\_step} and \texttt{train\_step\_time\_s\_epoch} against the full-graph baseline.
+    \item Inference throughput improvements (graphs processed per second) over the baseline.
+\end{itemize}
+
+\subsection{Efficiency Ranking Across Methods}
+\label{sec:results:rq2:ranking}
+% The subsections above are organised by metric; this one cuts the same data the
+% other way -- one row per reduction method, ranked on what it buys you.
+% How much smaller, how much faster, at what offline cost.
+% Tag each method as generic or domain-informed in a column rather than splitting
+% the section by it: it is one attribute of a method, not the organising axis.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Predictive Retention and Performance Trade-offs (RQ3)}
+\label{sec:results:rq3}
+% Answers \ref{sec:intro:rq3}: how much accuracy survives reduction, and which
+% methods sit on the best accuracy-to-efficiency trade-off.
+% The domain-informed comparison is its own question -- see \ref{sec:results:rq4}.
+
+\subsection{Accuracy Degradation}
+\label{sec:results:rq3:degradation}
+Grouped bar charts comparing the RMSE and $R^2$ of models trained and tested on reduced graphs against the RQ1 full-graph baseline.
+
+\subsection{Ranking Preservation}
+\label{sec:results:rq3:ranking}
+% Spearman under reduction. Ranking can survive even when absolute error degrades,
+% which matters for the script-selection use case in the motivation.
+
+\subsection{Accuracy Loss Attributable to Reduction}
+\label{sec:results:rq3:attribution}
+% How much accuracy each method costs, and what structural damage explains it
+% (severed causal cones, lost depth, broken longest paths).
+% IMPORTANT: compare at matched compression ratio, or "which method is best"
+% confounds a genuinely better method with one that simply reduced less.
+% The measured retention spread makes this concrete -- and\_gate\_only keeps 73.3\%
+% of edges while spanning\_forest keeps 58.1\%, so their raw accuracies are not
+% comparable as-is. The formal paired version of this lives in \ref{sec:results:rq4}.
+% Present this as one row per reduction method (accuracy retained vs the RQ1
+% baseline) so it lines up directly against the efficiency ranking in
+% \ref{sec:results:rq2:ranking}. The two tables together feed the Pareto front below.
+
+\subsection{The Pareto Front (Trade-Off Analysis)}
+\label{sec:results:rq3:pareto}
+Scatter plots visualizing Accuracy (y-axis) vs. Memory/Speed Gains (x-axis) to identify the optimal graph reduction technique, bridging RQ2 and RQ3.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Value of Domain-Informed Adaptation (RQ4)}
+\label{sec:results:rq4}
+% Answers \ref{sec:intro:rq4}. RQ2 and RQ3 rank every method on efficiency and on
+% accuracy; this section asks the narrower question of whether AIG-specific
+% knowledge bought anything at all.
+
+\subsection{Matched-Compression Pairings}
+\label{sec:results:rq4:pairings}
+% Define the comparisons before reporting them: each domain-informed method against
+% the generic method closest to it in compression ratio, e.g. span-weighted METIS vs
+% plain METIS, level slicing vs random hashing, and-gate-only vs PageRank pruning.
+% State how the matching was done and how close the ratios actually are.
+
+\subsection{Retention Gap at Matched Compression}
+\label{sec:results:rq4:gap}
+% The paired result: RMSE / R^2 / Spearman difference within each pairing, with
+% run-to-run variance, so a small gap is not over-read.
+
+\subsection{Structural Interpretation}
+\label{sec:results:rq4:interpretation}
+% What the outcome implies either way. If domain-informed methods do not win, the
+% predictive signal is likely distributed rather than concentrated in the causal
+% cones and long paths the heuristics were built to protect -- which is a finding
+% about AIG representation learning, not just about these four heuristics.
+
+\subsection{Adequacy of the Heuristics Tested}
+\label{sec:results:rq4:adequacy}
+% Honest scoping: these are relatively simple adaptations (edge span weighting,
+% level slicing, gate-role filtering). A null result bounds these heuristics, not
+% the idea of domain-aware reduction in general. Carry this into the Discussion.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Cross-Structural Generalization (RQ5)}
+\label{sec:results:rq5}
+% Answers \ref{sec:intro:rq5}: train on reduced, infer on full.
+
+\subsection{Reduced-to-Full Inference Accuracy}
+\label{sec:results:rq5:accuracy}
+Smooth L1 Loss, RMSE, and $R^2$ metrics from testing a model (which was trained exclusively on reduced AIGs via partitioning, sparsification, or summarization) directly on normal, full-sized AIGs.
+
+\subsection{Zero-Shot Ranking}
+\label{sec:results:rq5:ranking}
+Spearman correlation.
+
+\subsection{Matched-State vs. Cross-State Drop-Off}
+\label{sec:results:rq5:dropoff}
+Comparison measuring the performance drop-off between matched-state testing (Reduced $\rightarrow$ Reduced) vs. cross-state testing (Reduced $\rightarrow$ Full).
+
+\subsection{Generalization by Reduction Family}
+\label{sec:results:rq5:byfamily}
+% Which family survives the structural shift best? Node-count-preserving methods
+% (edge dropout, spanning forest) may transfer differently to node-removing ones
+% (PageRank, and-gate-only) or to partitioning, which changes the pooling path.
+
+\subsection{Inference Cost}
+\label{sec:results:rq5:cost}
+% The practical pay-off: inference needs no gradients or activations, so a model
+% trained cheaply on reduced graphs may serve full graphs on modest hardware.
+% Report full-graph inference memory and latency, CPU included.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Summary of Findings}
+\label{sec:results:summary}
+% One consolidated table: every reduction method as a row, with compression,
+% VRAM, speedup, retained accuracy, and cross-state accuracy as columns.
+% Gives the Discussion and Conclusion a single artifact to refer back to.
+
+
+% Template examples for tables and figures, kept for reference.
+% \section{Table and Figures}
+%         \begin{table}[h] % h for Here, t for Top, b for Bottom
+%                 \centering
+%                 \caption{By convention, Table caption goes on top.}
+%                 \begin{tabular}{lcr}
+%                         \textbf{Left} & \textbf{center} & \textbf{right} \\
+%                         \hline
+%                         111 & 222 & 333 \\
+%                         444 & 555 & 666
+%                 \end{tabular}
+%         \end{table}
+%
+%         \begin{figure}[h]
+%                 \centering
+%                 \includegraphics[width=0.5\linewidth]{example-image}
+%                 \caption[Example figure]{Example figure. Notice that the caption goes below and that there is a way to have a shorter caption for the list of Figures.}
+%         \end{figure}
+%
+%         \begin{figure*}[b]
+%                 \centering
+%                 \includegraphics[width=0.8\linewidth, height=.2\textheight]{example-image}
+%                 \caption{Example figure spanning the two columns.}
+%         \end{figure*}
