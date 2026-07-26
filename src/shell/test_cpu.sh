@@ -70,11 +70,13 @@ echo "Task $SLURM_ARRAY_TASK_ID assigned to reduction_type=$REDUCTION_TYPE reduc
 
 CSV_PATH="$BASE_DIR/data/designs/design_metadata/algo_${ALGORITHM}_ml.csv"
 
-WORKSPACE="/scratch-shared/$USER/aig_train_run/${ALGORITHM}"
-CHECKPOINT_DIR="$WORKSPACE/checkpoints"
-CACHE_DIR="$WORKSPACE/cache"
-TIER0_CACHE_DIR="/scratch-shared/$USER/aig_train_run/shared_tier0_cache"
-TIER1_CACHE_DIR="/scratch-shared/$USER/aig_train_run/shared_tier1_cache"
+# Checkpoints stay in the train workspace; the eval CACHE is separate (see
+# test.sh). Override the eval root with EVAL_ROOT=...
+CHECKPOINT_DIR="/scratch-shared/$USER/aig_train_run/${ALGORITHM}/checkpoints"
+EVAL_ROOT="${EVAL_ROOT:-/scratch-shared/$USER/aig_eval_run}"
+CACHE_DIR="$EVAL_ROOT/${ALGORITHM}/cache"
+TIER0_CACHE_DIR="$EVAL_ROOT/shared_tier0_cache"
+TIER1_CACHE_DIR="$EVAL_ROOT/shared_tier1_cache"
 
 HP_TUNING_WORKSPACE="/scratch-shared/$USER/big_optuna_run"
 HP_TUNING_SPLITS="$HP_TUNING_WORKSPACE/shared_dataset_cache/algo_Orchestrate_ml_algo_Deepsyn_ml_algo_Syn4_ml_algo_C2RS_ml_50000_splits.json"

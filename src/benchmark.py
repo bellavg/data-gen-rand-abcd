@@ -207,6 +207,7 @@ def run_benchmark(
     *,
     num_warmup: int,
     precision: str,
+    num_repeats: int = 3,
 ) -> tuple[dict, list[dict]]:
     """One-graph-per-batch training-step benchmark.
 
@@ -216,6 +217,12 @@ def run_benchmark(
     CUDA/cuDNN init and AdamW's first-step optimizer-state allocation. A memory
     floor (model + optimizer state + CUDA context) is captured once after
     warmup so activation-only VRAM can be reported.
+
+    Each measured graph's step is timed ``num_repeats`` times; the per-graph
+    step time is the **median** of those repeats (robust to system noise), and
+    the within-graph std is recorded so measurement stability is visible. VRAM
+    is deterministic for a given graph, so its peak is taken across repeats
+    (they agree) rather than needing repetition.
     """
     loss_fn = nn.SmoothL1Loss(beta=0.01)
     optimizer = torch.optim.AdamW(
@@ -279,8 +286,18 @@ def run_benchmark(
 
     for i in range(num_warmup, n):
         batch = Batch.from_data_list([dataset[i]]).to(device)
-        step_time, peak = _one_step(batch)
+
+        rep_times: list[float] = []
+        peak = None
+        for _ in range(max(1, num_repeats)):
+            st, pk = _one_step(batch)
+            rep_times.append(st)
+            if pk is not None:
+                peak = pk if peak is None else max(peak, pk)
         peak_rss = max(peak_rss, proc.memory_info().rss)
+
+        step_time = float(np.median(rep_times))
+        step_time_std = float(np.std(rep_times))
 
         if is_cuda:
             peak_mb = peak / (1024**2)
@@ -295,6 +312,7 @@ def run_benchmark(
                 "num_nodes": int(batch.x.size(0)),
                 "num_edges": int(batch.edge_index.size(1)),
                 "step_time_s": step_time,
+                "step_time_std_s": step_time_std,
                 "peak_vram_mb": peak_mb,
                 "activation_vram_mb": activation_mb,
             }
@@ -303,6 +321,7 @@ def run_benchmark(
 
     if per_graph:
         step_times = np.array([g["step_time_s"] for g in per_graph])
+        within_stds = np.array([g["step_time_std_s"] for g in per_graph])
         peaks = np.array([g["peak_vram_mb"] for g in per_graph])
         activations = np.array([g["activation_vram_mb"] for g in per_graph])
         nodes = np.array([g["num_nodes"] for g in per_graph])
@@ -310,8 +329,14 @@ def run_benchmark(
         total_time = float(step_times.sum())
         aggregate = {
             "num_measured_graphs": len(per_graph),
+            "num_repeats": max(1, num_repeats),
+            # std_step_time_s is the spread ACROSS graphs (expected — graphs
+            # vary in size); avg_within_graph_step_std_s is the repeat-to-repeat
+            # measurement noise on the SAME graph (should be small — this is
+            # the "are the timings stable" check).
             "avg_step_time_s": float(step_times.mean()),
             "std_step_time_s": float(step_times.std()),
+            "avg_within_graph_step_std_s": float(within_stds.mean()),
             "throughput_graphs_per_s": (
                 len(per_graph) / total_time if total_time > 0 else float("nan")
             ),
@@ -325,8 +350,10 @@ def run_benchmark(
     else:
         aggregate = {
             "num_measured_graphs": 0,
+            "num_repeats": max(1, num_repeats),
             "avg_step_time_s": float("nan"),
             "std_step_time_s": float("nan"),
+            "avg_within_graph_step_std_s": float("nan"),
             "throughput_graphs_per_s": float("nan"),
             "peak_vram_mb": float("nan"),
             "activation_vram_mb": float("nan"),
@@ -379,6 +406,7 @@ def main(args: argparse.Namespace) -> None:
         device,
         num_warmup=args.num_warmup_graphs,
         precision=precision,
+        num_repeats=args.num_repeats,
     )
 
     run_label = run_label_for(args.algorithm, args.reduction_type, args.reduction_method)
@@ -437,6 +465,13 @@ if __name__ == "__main__":
         help="Graphs run but excluded from all aggregates (CUDA/cuDNN + optimizer-state warmup).",
     )
     parser.add_argument("--num_measure_graphs", type=int, default=100)
+    parser.add_argument(
+        "--num_repeats",
+        type=int,
+        default=3,
+        help="Times each graph's step is re-timed; per-graph time is the median "
+        "(robust to system noise). VRAM is deterministic so it isn't repeated.",
+    )
     parser.add_argument(
         "--torch_compile",
         type=lambda x: str(x).lower() in ("true", "1", "yes"),

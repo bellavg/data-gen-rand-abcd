@@ -206,10 +206,13 @@ class TestRunBenchmarkIntegration:
             "num_nodes",
             "num_edges",
             "step_time_s",
+            "step_time_std_s",
             "peak_vram_mb",
             "activation_vram_mb",
         }
         assert row["num_nodes"] > 0
+        # Within-graph timing noise is non-negative and reported per graph.
+        assert row["step_time_std_s"] >= 0
 
         # No CUDA: VRAM must be NaN (unmeasured), not a stale/garbage value.
         if not torch.cuda.is_available():

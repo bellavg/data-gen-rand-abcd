@@ -136,9 +136,17 @@ def build_paired_savings(training_df: pd.DataFrame, per_graph_df: pd.DataFrame) 
         return pd.DataFrame()
     baseline_label = baseline_labels[0]
 
-    base = per_graph_df[per_graph_df["run_label"] == baseline_label][
-        ["graph_id", "step_time_s", "peak_vram_mb"]
-    ].rename(columns={"step_time_s": "base_time", "peak_vram_mb": "base_vram"})
+    # drop_duplicates on graph_id: dataset samples are 1:1 with CSV rows and a
+    # graph_path (== graph_id) can legitimately appear more than once, so a
+    # plain merge below could fan out into a k×k cartesian product and bias the
+    # means. Keeping one row per graph_id makes the pairing strictly 1:1.
+    base = (
+        per_graph_df[per_graph_df["run_label"] == baseline_label][
+            ["graph_id", "step_time_s", "peak_vram_mb"]
+        ]
+        .drop_duplicates("graph_id")
+        .rename(columns={"step_time_s": "base_time", "peak_vram_mb": "base_vram"})
+    )
     if base.empty:
         return pd.DataFrame()
 
@@ -154,7 +162,7 @@ def build_paired_savings(training_df: pd.DataFrame, per_graph_df: pd.DataFrame) 
             continue
         red = per_graph_df[per_graph_df["run_label"] == label][
             ["graph_id", "step_time_s", "peak_vram_mb"]
-        ]
+        ].drop_duplicates("graph_id")
         merged = red.merge(base, on="graph_id")
         if merged.empty:
             continue

@@ -21,6 +21,22 @@ SPARSIFICATION_ALGO="${SPARSIFICATION_ALGO:-and_gate_only}"
 # Match the workspace targeted in train.sh
 ALGORITHM="${ALGORITHM:-Orchestrate}"
 
+# Workspace root. Defaults to the train workspace. For the separate eval cache,
+# pass RUN_ROOT=/scratch-shared/$USER/aig_eval_run (see EVALUATION.md).
+RUN_ROOT="${RUN_ROOT:-/scratch-shared/$USER/aig_train_run}"
+
+# Mask redirect: training writes sparsification masks OFF the main cache (to a
+# separate aig_mask_cache) to cut inode pressure, and the dataset looks them up
+# there via config.SPARSIFICATION_REPLACE_PATH (which only rewrites the train
+# root). For any other RUN_ROOT that config redirect is a no-op, so masks must
+# be written IN-PLACE or the lookup won't find them — hence the default below
+# only redirects the train root.
+if [[ "$RUN_ROOT" == "/scratch-shared/$USER/aig_train_run" ]]; then
+    MASK_CACHE_ROOT="${MASK_CACHE_ROOT:-/scratch-shared/$USER/aig_mask_cache}"
+else
+    MASK_CACHE_ROOT="${MASK_CACHE_ROOT:-$RUN_ROOT}"
+fi
+
 echo "=========================================="
 echo "PRECOMPUTE SPARSIFICATION MASKS JOB ID: $SLURM_JOB_ID"
 echo "Algorithm: $ALGORITHM"
@@ -57,16 +73,25 @@ cd "$BASE_DIR"
 # 2. MANIFEST DIRECTORIES
 # =========================================================
 
-MANIFEST_DIR="/scratch-shared/$USER/aig_train_run/${ALGORITHM}/cache/metadata"
+MANIFEST_DIR="$RUN_ROOT/${ALGORITHM}/cache/metadata"
 
 echo "=========================================="
 echo "Processing manifests in $MANIFEST_DIR"
+echo "Mask output root: $MASK_CACHE_ROOT (in-place if == RUN_ROOT)"
 echo "=========================================="
+
+# Redirect masks only when MASK_CACHE_ROOT differs from RUN_ROOT (training);
+# for the eval workspace they are written in-place (no --replace-path).
+if [[ "$MASK_CACHE_ROOT" == "$RUN_ROOT" ]]; then
+    REPLACE_ARGS=()
+else
+    REPLACE_ARGS=(--replace-path "$RUN_ROOT" "$MASK_CACHE_ROOT")
+fi
 
 # Call the updated python script with --manifest-dirs
 time python -W ignore -u -m data.sparsification "$SPARSIFICATION_ALGO" \
     --manifest-dirs "$MANIFEST_DIR" \
-    --replace-path "/scratch-shared/$USER/aig_train_run" "/scratch-shared/$USER/aig_mask_cache"
+    ${REPLACE_ARGS[@]+"${REPLACE_ARGS[@]}"}
 
 echo "=========================================="
 echo "Precomputation complete."

@@ -30,6 +30,13 @@ set -euo pipefail
 # Define the algorithm argument (Python script supports "all" to compute them in one pass)
 PARTITION_ALGO="all"
 
+# Workspace root + algorithm. Default to the train workspace. For the separate
+# eval cache, pass RUN_ROOT=/scratch-shared/$USER/aig_eval_run (see
+# EVALUATION.md). Partition masks are written in-place in the cache dirs (no
+# redirect), so no MASK_CACHE_ROOT handling is needed here.
+RUN_ROOT="${RUN_ROOT:-/scratch-shared/$USER/aig_train_run}"
+ALGORITHM="${ALGORITHM:-Orchestrate}"
+
 echo "=========================================="
 echo "PRECOMPUTE PARTITION MASKS JOB ID: $SLURM_JOB_ID"
 echo "Running on: $(hostname)"
@@ -71,9 +78,9 @@ cd "$BASE_DIR"
 # - shared tier-1 cache
 # - Orchestrate workspace cache (tier-2 / non-tiered graphs)
 CACHE_DIRS=(
-    "/scratch-shared/$USER/aig_train_run/shared_tier0_cache"
-    "/scratch-shared/$USER/aig_train_run/shared_tier1_cache"
-    "/scratch-shared/$USER/aig_train_run/Orchestrate/cache"
+    "$RUN_ROOT/shared_tier0_cache"
+    "$RUN_ROOT/shared_tier1_cache"
+    "$RUN_ROOT/${ALGORITHM}/cache"
 )
 
 for SHARED_DIR in "${CACHE_DIRS[@]}"; do

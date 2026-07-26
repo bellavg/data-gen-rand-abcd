@@ -279,9 +279,15 @@ def plot_benchmark_savings_vs_size(
         print("[plot_results] No baseline run_label — skipping savings-vs-size scatter.")
         return
     baseline_label = baseline_labels[0]
-    base = per_graph_df[per_graph_df["run_label"] == baseline_label][
-        ["graph_id", "num_nodes", "peak_vram_mb"]
-    ].rename(columns={"num_nodes": "base_nodes", "peak_vram_mb": "base_vram"})
+    # drop_duplicates on graph_id — a graph_path can repeat across dataset
+    # samples, so keep the pairing merge below strictly 1:1 (see build_paired_savings).
+    base = (
+        per_graph_df[per_graph_df["run_label"] == baseline_label][
+            ["graph_id", "num_nodes", "peak_vram_mb"]
+        ]
+        .drop_duplicates("graph_id")
+        .rename(columns={"num_nodes": "base_nodes", "peak_vram_mb": "base_vram"})
+    )
     if base.empty or base["base_vram"].isna().all():
         print("[plot_results] No GPU baseline VRAM — skipping savings-vs-size scatter.")
         return
@@ -297,7 +303,9 @@ def plot_benchmark_savings_vs_size(
     for i, run_label in enumerate(sorted(per_graph_df["run_label"].unique())):
         if run_label == baseline_label:
             continue
-        grp = per_graph_df[per_graph_df["run_label"] == run_label][["graph_id", "peak_vram_mb"]]
+        grp = per_graph_df[per_graph_df["run_label"] == run_label][
+            ["graph_id", "peak_vram_mb"]
+        ].drop_duplicates("graph_id")
         merged = grp.merge(base, on="graph_id")
         if merged.empty or merged["base_vram"].isna().all():
             continue

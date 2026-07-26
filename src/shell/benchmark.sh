@@ -90,6 +90,7 @@ mkdir -p "$RESULTS_DIR"
 NUM_WORKERS=8
 NUM_WARMUP_GRAPHS=5
 NUM_MEASURE_GRAPHS=100
+NUM_REPEATS=3   # each graph re-timed 3x; per-graph time = median (noise control)
 
 nvidia-smi -L
 
@@ -110,6 +111,7 @@ srun python -u -m benchmark \
     --num_workers        "$NUM_WORKERS" \
     --num_warmup_graphs  "$NUM_WARMUP_GRAPHS" \
     --num_measure_graphs "$NUM_MEASURE_GRAPHS" \
+    --num_repeats        "$NUM_REPEATS" \
     --results_dir        "$RESULTS_DIR/training_benchmark" \
     --per_graph_dir      "$RESULTS_DIR/benchmark_per_graph"
 

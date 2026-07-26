@@ -8,8 +8,9 @@ Runs up to two passes per checkpoint:
 
 Each pass reports accuracy (Smooth L1, RMSE, R^2, Spearman) and inference
 hardware stats (throughput, peak VRAM, GPU utilization, host memory) in one
-forward-only sweep, and appends a row to --results_csv plus (optionally) a
-bounded per-graph predictions CSV for later error-vs-graph-size breakdowns.
+forward-only sweep, and writes one per-config file into --results_dir plus
+(optionally) a bounded per-graph predictions CSV for later error-vs-graph-size
+breakdowns.
 """
 
 from __future__ import annotations

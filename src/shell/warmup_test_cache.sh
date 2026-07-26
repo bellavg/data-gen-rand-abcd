@@ -59,8 +59,13 @@ export PYTHONPATH="$BASE_DIR/src"
 cd "$BASE_DIR"
 
 # =========================================================
-# 2. SHARED PATHS (must match warmup_train_cache.sh / train.sh exactly, so
-#    this extends the existing manifest rather than creating a parallel one)
+# 2. EVAL CACHE PATHS — a SEPARATE workspace from training, so test-split
+#    graphs are never written into the train cache. The design-level split
+#    makes train/test graphs disjoint, so nothing is shared anyway. These must
+#    match test.sh / test_cpu.sh exactly (same EVAL_ROOT) so the warmed cache
+#    is found at eval time. Override with EVAL_ROOT=...
+#    The HP-tuning splits file is the SAME as training's: with the same seed +
+#    CSVs it reproduces the identical test split regardless of cache location.
 # =========================================================
 
 ALGO="Orchestrate"
@@ -69,12 +74,12 @@ CSV_PATH="$BASE_DIR/data/designs/design_metadata/algo_${ALGO}_ml.csv"
 HP_TUNING_WORKSPACE="/scratch-shared/$USER/big_optuna_run"
 HP_TUNING_SPLITS="$HP_TUNING_WORKSPACE/shared_dataset_cache/algo_Orchestrate_ml_algo_Deepsyn_ml_algo_Syn4_ml_algo_C2RS_ml_50000_splits.json"
 
-TIER0_CACHE_DIR="/scratch-shared/$USER/aig_train_run/shared_tier0_cache"
-TIER1_CACHE_DIR="/scratch-shared/$USER/aig_train_run/shared_tier1_cache"
+EVAL_ROOT="${EVAL_ROOT:-/scratch-shared/$USER/aig_eval_run}"
+TIER0_CACHE_DIR="$EVAL_ROOT/shared_tier0_cache"
+TIER1_CACHE_DIR="$EVAL_ROOT/shared_tier1_cache"
 mkdir -p "$TIER0_CACHE_DIR" "$TIER1_CACHE_DIR"
 
-WORKSPACE="/scratch-shared/$USER/aig_train_run/${ALGO}"
-CACHE_DIR="$WORKSPACE/cache"
+CACHE_DIR="$EVAL_ROOT/${ALGO}/cache"
 mkdir -p "$CACHE_DIR"
 
 N_IO_WORKERS="${N_IO_WORKERS:-$(nproc)}"
