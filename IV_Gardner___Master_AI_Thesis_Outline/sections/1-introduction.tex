@@ -1,43 +1,136 @@
 \chapter{Introduction}
 \label{sec:introduction}
-% Mention scientific context/field, problem statement, research gap and (sub) research question(s). 
-Write your introduction here. It should be immediately clear how your proposed contribution is scientifically relevant and fills the research gap.
-  This is a test citation \cite{Gruber1995}
+% Mention scientific context/field, problem statement, research gap and (sub) research question(s).
 
+\section{Introduction}
+\label{sec:intro:context}
+% Scientific context: EDA flow, where logic synthesis sits, why it matters.
+% High-level framing before the detailed motivation.
 
-\section{Motivation}
-
-\section{Research Questions}
-
-Towards the end of the introduction, you should also add your \textit{preliminary} \textbf{reasearch questions (RQ)} here. You may want to state your main RQ like this:
-
-\noindent\textit{To what extent can a master thesis template enhance the quality of the final thesis?}
-
-You can then list the sub-questions as:
+\subsection{Terms to Introduce}
+\label{sec:intro:terms}
+% WORKING NOTE -- not final thesis content. These terms are all used by the
+% Motivation below and must be at least named before it. Full definitions belong in
+% Preliminaries (\ref{sec:prelim}); here they only need a clause each.
+% Delete this subsection once the introduction prose is written.
 \begin{itemize}
-    \item How does the structure of the template influence the final grading?
-    \item To what extent is textual guidance sufficient for structured working?
-    \item \dots
+    \item Electronic Design Automation (EDA)
+    \item Logic synthesis
+    \item Optimization objectives: area, power, delay
+    \item And-Inverter Graph (AIG); Directed Acyclic Graph (DAG)
+    \item Synthesis algorithm, script, and pipeline
+    \item Optimizability (the prediction target)
+    \item Graph Neural Network (GNN)
+    \item Graph reduction: partitioning, sparsification, summarization/coarsening
+    \item Compression ratio
+    \item Training vs.\ inference
+    \item VRAM; memory bottleneck / out-of-memory (OOM); distributed and multi-GPU training
+    \item Causal cone, logical depth, longest path, topological level, gate role
+    \item Evaluation metrics: RMSE, $R^2$, Spearman correlation
 \end{itemize}
 
 
+% TODO: CUDA too direct, need to be more abstract.
+\section{Motivation}
+\label{sec:intro:motivation}
+
+\subsection{Logic Synthesis and Optimization Script Design}
+\label{sec:intro:motivation:synthesis}
+Logic synthesis is a critical phase in the Electronic Design Automation (EDA) flow, relying heavily on structural representations like And-Inverter Graphs (AIGs), a special form of Directed Acyclic Graph (DAG), to optimize circuits for area, power, and delay. However, crafting an optimal sequence of synthesis algorithms (a ``script'' or ``pipeline'') for a given circuit is a highly expensive, heuristic-driven trial-and-error process.
+
+\subsection{Machine Learning for Optimizability Prediction}
+\label{sec:intro:motivation:ml}
+Structural representations such as AIGs provide a foundation for applying ML to address a multitude of complex challenges in logic synthesis. With ML, one could predict a circuit's theoretical ``optimizability'' if subjected to certain optimization algorithms, therefore circumventing the trial-and-error phase by facilitating data-driven script generation. However, industrial-sized AIGs scale to millions or billions of nodes. Training advanced GNNs directly on these massive structures causes severe memory bottlenecks (e.g., CUDA OOM) and intractable training times, actively preventing the field from exploring these diverse applications and scaling to more capable models.
+
+\subsection{The Scale Bottleneck}
+\label{sec:intro:motivation:scale}
+Consequently, to bypass OOM crashes and make execution tractable, researchers must restrict model size and parameters (adopting sub-par architectures), rely on massive multi-GPU clusters, or deploy resource-heavy distributed training setups. AIGs can still be too large for single-device memory, and if using a distributed system, this necessitates partitioning.
+
+\subsection{Limitations of Generic Graph Reduction}
+\label{sec:intro:motivation:reduction}
+While generic graph reduction techniques (partitioning, sparsification, and summarization) are widely used on other graphs, they have never been systematically evaluated or adapted for AIGs. Additionally, standard methods could potentially degrade predictive (ML) performance on logic graphs because they blindly sever strict causal cones, obscure logical depth, and break the longest paths, therefore altering the underlying logic function and destroying the structural features necessary for accurate prediction. This necessitates the development of domain-aware reduction techniques.
+
+
+\section{Problem Statement \& Research Gap}
+\label{sec:intro:gap}
+% State the gap explicitly and in one place: no systematic evaluation or domain-aware
+% adaptation of graph reduction for AIGs. Related Work returns to this in depth.
+
+
+\section{Contributions}
+\label{sec:intro:contributions}
+To enable further ML applications in EDA and solve the OOM bottleneck, this thesis proposes a comprehensive three-part methodology:
+\begin{itemize}
+    \item \textbf{Domain-Aware AIG Reduction Framework:} First, this thesis contrasts generic graph reduction techniques with targeted, AIG-specific heuristics (such as level-aware span weighting and structural coarsening). The objective is to effectively compress massive logic graphs (reducing memory footprint and computation time) while preserving the causal logic and structural information required for predictive accuracy. This yields a domain-aware reduction methodology and a dataset of compressed graphs that can be readily applied to unblock other ML avenues in EDA.
+    \item \textbf{Deep-Dive Optimizability Prediction:} Second, these reduction techniques are applied and rigorously validated on a high-value regression task: predicting circuit optimizability for a complex target synthesis algorithm. By focusing deeply on a single target algorithm, this approach provides a robust benchmark to measure exactly how well different reduction methods (generic vs. AIG-specific) retain critical structural features without the confounding variables of cross-algorithm comparisons.
+    \item \textbf{Cross-Structural Generalization:} Finally, to guarantee practical applicability in production environments, this thesis evaluates cross-state inference. The objective is to determine if a model trained exclusively on memory-friendly compressed AIGs (to explicitly bypass OOM bottlenecks) can successfully generalize and accurately predict optimizability when queried with normal, full-sized AIGs during inference.
+\end{itemize}
+
+In conclusion, while machine learning could eliminate costly trial-and-error in logic synthesis, the massive scale of AIGs creates severe OOM bottlenecks. To overcome this, this thesis systematically evaluates generic reductions against domain-informed adaptations tailored for AIGs. By successfully compressing these massive structures while preserving their predictive power across structural states, this work enables efficient, scalable predictions for logic optimization.
+
+\subsection{Summary of Results}
+\label{sec:intro:contributions:results}
+% Supervisor note: tease the headline numbers here (e.g. "X\% memory reduction at
+% Y\% accuracy retention over the full-graph baseline"). Fill once RQ2/RQ3 land.
+
+
+% TODO: naming?
+\section{Research Questions}
+\label{sec:intro:rqs}
+\subsection{RQ1: Task Feasibility \& Baseline}
+\label{sec:intro:rq1}
+Can Graph Neural Networks accurately predict the theoretical optimizability of a circuit directly from its full, unreduced AIG representation?
+
+\subsection{RQ2: Reduction Efficiency}
+\label{sec:intro:rq2}
+How do graph reduction techniques, spanning partitioning, sparsification, and summarization/coarsening, differ in graph shrinkage rate, peak memory (VRAM) usage, training and inference speed, and the offline cost of applying the reduction itself?
+
+\subsection{RQ3: Predictive Retention \& Trade-offs}
+\label{sec:intro:rq3}
+To what extent do models trained on reduced AIGs retain predictive accuracy (measured via Smooth L1 Loss, RMSE, and $R^2$) and circuit-ranking ability (Spearman correlation) relative to the full-graph baseline established in RQ1, and which techniques offer the best accuracy-to-efficiency trade-off?
+
+\subsection{RQ4: Value of Domain-Informed Adaptation}
+\label{sec:intro:rq4}
+Do AIG-specific reduction heuristics, which exploit topological level, causal cones, and gate roles, retain more predictive accuracy than generic techniques when compared at matched compression ratios? If they do not, what does that indicate about which structural features the model actually relies on?
+% Hypothesis: the domain-informed adaptations are structurally weak relative to the
+% generic ones and are not expected to win outright. State this up front -- a
+% negative result here is still a result, and it says something about how
+% distributed the predictive signal is across the AIG.
+
+% TODO: inference works, why inference would work -- grads. Inference on CPU, less intensive - motivation.
+\subsection{RQ5: Reduced to Unreduced? Generalization}
+\label{sec:intro:rq5}
+Can a model trained exclusively on reduced AIGs (partitioned, sparsified, or summarized) be successfully queried on normal, full-sized AIGs during inference, and does it retain accurate predictive capabilities across these structural state changes?
+
+\subsection{Scope \& Delimitations}
+\label{sec:intro:rqs:scope}
+% Each subsubsection below covers one axis: state what IS included, then what is
+% deliberately excluded and why. Limitations discovered after the fact go in the
+% Discussion instead.
+
+\subsubsection{Target Synthesis Algorithm}
+\label{sec:intro:scope:algorithm}
+
+\subsubsection{Definition of Optimizability}
+\label{sec:intro:scope:target}
+
+\subsubsection{Graph Scale \& Dataset Boundaries}
+\label{sec:intro:scope:scale}
+
+\subsubsection{Reduction Families Considered}
+\label{sec:intro:scope:reductions}
+
+\subsubsection{Model Architecture}
+\label{sec:intro:scope:architecture}
+
+\subsubsection{Prediction Rather Than Script Generation}
+\label{sec:intro:scope:prediction}
+
+
+\section{Thesis Outline}
+\label{sec:intro:outline}
+% One short paragraph mapping the remaining chapters (2 Preliminaries \& Related Work,
+% 3 Methodology, 4 Results, 5 Discussion, 6 Conclusion).
 
 
 % The page limit is 35 pages. In any case, the irrelevant and the long unclear explanations will be penalized: clarity does not require long blocks of text, quite the opposite.
-
-
-% \section{Section}
-%   \subsection{Subsection}
-%     \subsubsection{Subsubsection}
-%       \paragraph{Paragraph} Ex culpa ut commodo proident esse excepteur mollit in sed aliqua fugiat sed cupidatat dolor sint quis veniam amet aute ea fugiat quis do excepteur sunt commodo magna cupidatat veniam minim anim mollit do enim et nostrud ad esse velit nisi est dolor do ut dolore excepteur nulla ex sunt exercitation consequat ullamco ad in fugiat ut ut enim adipisicing cillum nisi anim ullamco ullamco nisi esse aute dolore amet nisi adipisicing dolor dolore do ut aliqua in sunt aliqua tempor duis amet ut non adipisicing nostrud ex ullamco excepteur culpa anim est minim fugiat laborum ex irure consectetur eu in reprehenderit sint magna ut consequat laborum ex minim laboris culpa amet incididunt laborum laborum dolore nulla cupidatat dolore in aliqua ut eu in magna sunt eiusmod est labore sit eu incididunt fugiat in culpa pariatur voluptate duis id velit sunt reprehenderit pariatur amet esse dolore minim non fugiat fugiat amet incididunt commodo sit dolor.
-
-%       In \verb|itemize| and \verb|enumeration|, longer sentences and text in paragraphs could require manual hyphenation with \verb|-| in case of boxes under- or over-flows:
-%       \begin{itemize}
-%         \item Ad dolor nisi culpa eu eiusmod sint ut est in nisi quis ut deserunt ut anim ut proident proident officia laborum in.
-%         \item Dolore et irure adipisicing ex anim exercitation sit pro-ident mollit.
-%       \end{itemize}
-
-%       \begin{enumerate}
-%         \item Incididunt id cillum mollit officia aliquip id dolor ea reprehenderit ut pariatur consequat dolore adipisicing sit minim minim id irure ullamco nulla occaecat sint ut deserunt tempor aute eiusmod dolor.
-%         \item Aliquip sunt in voluptate occaecat ut magna cupidatat sunt duis ut proident consequat.
-%       \end{enumerate}

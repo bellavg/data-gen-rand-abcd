@@ -1,4 +1,112 @@
 \chapter{Discussion}
 \label{sec:discussion}
 % Compare your results with the state-of-the-art and reflect upon the results and limitations of the study. You can already hint at future work to which you come back in the conclusion section.
-Write your discussion here. Do not forget to use sub-sections. Normally, the discussion starts with comparing your results to other studies as precisely as possible. The limitations should be reflected upon in terms such as reproducibility,  scalability,  generalizability,  reliability  and  validity. It is also important to mention ethical concerns.
+% Template guidance: start by comparing to other studies as precisely as possible.
+% Reflect on limitations in terms of reproducibility, scalability, generalizability,
+% reliability and validity. Ethical concerns must be mentioned.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Comparison with Related Work}
+\label{sec:discussion:relatedwork}
+% Goes first per template guidance. Compare as precisely as the literature allows,
+% and say so explicitly where a direct numerical comparison is not possible because
+% no prior work reduces AIGs for this task.
+
+\subsection{Positioning Against Optimizability Prediction Work}
+\label{sec:discussion:relatedwork:prediction}
+
+\subsection{Positioning Against Graph Reduction Work}
+\label{sec:discussion:relatedwork:reduction}
+
+\subsection{Where Direct Comparison Is Not Possible}
+\label{sec:discussion:relatedwork:incomparable}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Interpretation of Findings}
+\label{sec:discussion:interpretation}
+% Explain the results rather than restating them -- Results reports what happened,
+% this section argues why. Grouped by theme rather than strictly per-RQ so RQ2 and
+% RQ3 can be discussed as the single trade-off they describe.
+
+\subsection{Feasibility of Optimizability Prediction}
+\label{sec:discussion:interpretation:feasibility}
+% What \ref{sec:intro:rq1} implies about whether structure alone carries the signal.
+
+\subsection{What Reduction Buys and What It Costs}
+\label{sec:discussion:interpretation:tradeoff}
+% \ref{sec:intro:rq2} and \ref{sec:intro:rq3} together. Which point on the Pareto
+% front is actually worth taking, and is the offline reduction cost recovered?
+
+\subsection{Why Domain-Informed Adaptation Did or Did Not Help}
+\label{sec:discussion:interpretation:domain}
+% \ref{sec:intro:rq4}. If the AIG-aware heuristics do not win, argue what that says
+% about where the predictive signal lives -- distributed across the graph rather
+% than concentrated in causal cones and long paths. Distinguish clearly between
+% "domain knowledge does not help here" and "these particular heuristics were weak".
+
+\subsection{Structural Generalization and Deployment}
+\label{sec:discussion:interpretation:generalization}
+% \ref{sec:intro:rq5}. Whether train-cheap/infer-full is a viable deployment story.
+
+\subsection{Unexpected Results}
+\label{sec:discussion:interpretation:unexpected}
+% Anything that contradicted the hypotheses, including negative results. Better
+% surfaced deliberately here than left for a reader to notice.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Practical Implications}
+\label{sec:discussion:implications}
+% Concrete recommendation: given a memory budget and an accuracy tolerance, which
+% reduction should a practitioner reach for? This is the payoff of the Pareto front.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Limitations}
+\label{sec:discussion:limitations}
+% These are limitations discovered or imposed -- distinct from the deliberate
+% scoping choices declared in \ref{sec:intro:rqs:scope}. Do not simply repeat those.
+
+\subsection{Reproducibility}
+\label{sec:discussion:limitations:reproducibility}
+% Seed count and run-to-run variance, cluster-specific timing measurements,
+% dependence on a specific abc version and tool chain.
+
+\subsection{Scalability}
+\label{sec:discussion:limitations:scalability}
+% The central honesty point: the motivation invokes industrial AIGs of millions to
+% billions of nodes, but evaluation runs on a bounded intermediate scale so the RQ1
+% baseline stays tractable. State plainly what does and does not extrapolate.
+
+\subsection{Generalizability}
+\label{sec:discussion:limitations:generalizability}
+% One synthesis algorithm, one encoder architecture, one target metric. How far do
+% the conclusions travel to Deepsyn/Syn4/C2RS, to other GNNs, to delay or area?
+
+\subsection{Reliability and Validity}
+\label{sec:discussion:limitations:validity}
+% Construct validity: is node reduction a good proxy for "optimizability"?
+% Internal validity: does the design-level split fully prevent leakage?
+
+\subsection{Limitations of the Reduction Methods Tested}
+\label{sec:discussion:limitations:methods}
+% The summarization family in particular -- which candidates were implemented and
+% which were left out, and what that omission means for the conclusions.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Outlook}
+\label{sec:discussion:outlook}
+% Short. Per the template, the Discussion hints at future directions and the
+% Conclusion develops them -- so a few sentences pointing forward, not a second
+% Future Work section. Full treatment lives in \ref{sec:conclusion:futurework}.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Ethical Considerations}
+\label{sec:discussion:ethics}
+% Required by the template. Plausible angles: energy and compute cost of the
+% dataset generation and training sweeps (which cuts both ways, since the point of
+% the work is to reduce compute); benchmark provenance and licensing; dual-use and
+% accessibility, i.e. whether cheaper training widens or narrows who can do EDA research.
