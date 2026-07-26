@@ -58,6 +58,13 @@
 \subsubsection{Expressivity and the Weisfeiler--Leman Hierarchy}
 \label{sec:prelim:gnn:expressivity}
 
+\subsubsection{Training Cost, Memory, and Inference}
+\label{sec:prelim:gnn:cost}
+% Defines the vocabulary the whole motivation leans on but never introduces:
+% VRAM, the memory bottleneck and OOM, distributed/multi-GPU training, and the
+% training-vs-inference distinction (activations and gradients are stored for the
+% former, not the latter -- which is the mechanism RQ5 depends on).
+
 \subsection{Graph Reduction: Definitions}
 \label{sec:prelim:reduction}
 
@@ -69,6 +76,13 @@
 
 \subsubsection{Summarization and Coarsening}
 \label{sec:prelim:reduction:summarization}
+
+\subsubsection{Measuring Reduction: Compression Ratio}
+\label{sec:prelim:reduction:measuring}
+% Node vs edge retention, and why the distinction matters here: edge-mask methods
+% preserve node counts while node-mask methods do not, so a single "compression"
+% number is ambiguous. This is the definition RQ4's matched-compression comparison
+% rests on, so it has to be pinned down before the Results use it.
 
 \subsection{Problem Formalization}
 \label{sec:prelim:formalization}
