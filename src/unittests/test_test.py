@@ -13,6 +13,7 @@ from torch_geometric.data import Batch as PyGBatch
 from test import (
     _batch_per_graph_counts,
     compute_accuracy_metrics,
+    resolve_checkpoint_path,
     resolve_reduction_kwargs,
     run_label_for,
     write_predictions_csv,
@@ -27,6 +28,98 @@ class TestRunLabelFor:
     def test_reduction_appends_method_suffix(self):
         assert run_label_for("Orchestrate", "sparsification", "pagerank") == "Orchestrate_pagerank"
         assert run_label_for("Orchestrate", "partition", "metis") == "Orchestrate_metis"
+
+
+class TestResolveCheckpointPath:
+    """Checkpoint filenames really look like 'epoch=03-val_loss=val_loss=0.0024.ckpt'
+    — the ModelCheckpoint template double-prints the 'val_loss=' prefix."""
+
+    @staticmethod
+    def _make_run_dir(tmp_path, filenames):
+        run_dir = tmp_path / "Orchestrate_pagerank"
+        run_dir.mkdir()
+        for name in filenames:
+            (run_dir / name).write_text("ckpt")
+        return str(tmp_path), "Orchestrate_pagerank"
+
+    def test_picks_lowest_val_loss_across_reruns(self, tmp_path):
+        # A dir holding two runs' top-3 checkpoints plus both last files.
+        root, label = self._make_run_dir(
+            tmp_path,
+            [
+                "epoch=01-val_loss=val_loss=0.0023.ckpt",
+                "epoch=02-val_loss=val_loss=0.0044.ckpt",
+                "last.ckpt",
+                "epoch=06-val_loss=val_loss=0.0016.ckpt",
+                "epoch=07-val_loss=val_loss=0.0017.ckpt",
+                "last-v1.ckpt",
+            ],
+        )
+        assert (
+            resolve_checkpoint_path(root, label, "best").name
+            == "epoch=06-val_loss=val_loss=0.0016.ckpt"
+        )
+
+    def test_lowest_need_not_be_the_newest_run(self, tmp_path):
+        # The completed run's best (0.0034) predates later, worse checkpoints.
+        root, label = self._make_run_dir(
+            tmp_path,
+            [
+                "epoch=02-val_loss=val_loss=0.0034.ckpt",
+                "epoch=05-val_loss=val_loss=0.0041.ckpt",
+                "epoch=06-val_loss=val_loss=0.0041.ckpt",
+                "last.ckpt",
+            ],
+        )
+        assert (
+            resolve_checkpoint_path(root, label, "best").name
+            == "epoch=02-val_loss=val_loss=0.0034.ckpt"
+        )
+
+    def test_includes_lightning_dedup_suffix(self, tmp_path):
+        root, label = self._make_run_dir(
+            tmp_path,
+            [
+                "epoch=03-val_loss=val_loss=0.0024.ckpt",
+                "epoch=03-val_loss=val_loss=0.0011-v1.ckpt",
+            ],
+        )
+        assert (
+            resolve_checkpoint_path(root, label, "best").name
+            == "epoch=03-val_loss=val_loss=0.0011-v1.ckpt"
+        )
+
+    def test_tie_at_minimum_is_deterministic_and_warns(self, tmp_path, capsys):
+        root, label = self._make_run_dir(
+            tmp_path,
+            [
+                "epoch=08-val_loss=val_loss=0.0024.ckpt",
+                "epoch=05-val_loss=val_loss=0.0024.ckpt",
+            ],
+        )
+        chosen = resolve_checkpoint_path(root, label, "best")
+        assert chosen.name == "epoch=05-val_loss=val_loss=0.0024.ckpt"
+        assert "tie at val_loss=0.0024" in capsys.readouterr().out
+
+    def test_literal_filename_bypasses_selection(self, tmp_path):
+        root, label = self._make_run_dir(
+            tmp_path, ["last.ckpt", "epoch=01-val_loss=val_loss=0.0023.ckpt"]
+        )
+        assert resolve_checkpoint_path(root, label, "last.ckpt").name == "last.ckpt"
+
+    def test_missing_literal_filename_raises(self, tmp_path):
+        root, label = self._make_run_dir(tmp_path, ["last.ckpt"])
+        with pytest.raises(FileNotFoundError):
+            resolve_checkpoint_path(root, label, "absent.ckpt")
+
+    def test_only_last_ckpt_raises(self, tmp_path):
+        root, label = self._make_run_dir(tmp_path, ["last.ckpt", "last-v1.ckpt"])
+        with pytest.raises(FileNotFoundError):
+            resolve_checkpoint_path(root, label, "best")
+
+    def test_missing_run_dir_names_the_directory(self, tmp_path):
+        with pytest.raises(FileNotFoundError, match="directory not found"):
+            resolve_checkpoint_path(str(tmp_path), "Orchestrate_absent", "best")
 
 
 class TestResolveReductionKwargs:

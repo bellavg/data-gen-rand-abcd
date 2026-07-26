@@ -19,6 +19,7 @@ import argparse
 import csv
 import os
 import random
+import re
 import subprocess
 import sys
 import time
@@ -83,6 +84,65 @@ def run_label_for(algorithm: str, reduction_type: str, reduction_method: str | N
     if reduction_type == "none":
         return algorithm
     return f"{algorithm}_{reduction_method}"
+
+
+# Matches the val_loss the ModelCheckpoint template bakes into the filename.
+# The template double-prints "val_loss=" (a literal in the format string plus
+# Lightning's own metric prefix), so the value is the LAST val_loss= in the
+# name — .search naturally lands on it since the earlier one is followed by
+# letters, not a number.  The optional -v<n> is Lightning's dedup suffix, added
+# when a rerun into the same dir collides on (epoch, val_loss).
+_VAL_LOSS_RE = re.compile(r"val_loss=([0-9]+(?:\.[0-9]+)?)(?:-v[0-9]+)?\.ckpt$")
+
+
+def resolve_checkpoint_path(
+    checkpoint_dir: str, run_label: str, checkpoint_filename: str
+) -> Path:
+    """Resolve the checkpoint file to evaluate for a run.
+
+    ``checkpoint_filename="best"`` selects the checkpoint with the lowest
+    ``val_loss`` encoded in its filename, so eval uses the early-stopping
+    optimum rather than ``last.ckpt`` (which is ``patience`` epochs past the
+    best). Any other value is treated as a literal filename under the run dir.
+    """
+    run_dir = Path(checkpoint_dir) / run_label
+    if not run_dir.is_dir():
+        raise FileNotFoundError(f"Checkpoint directory not found: {run_dir}")
+
+    if checkpoint_filename != "best":
+        path = run_dir / checkpoint_filename
+        if not path.is_file():
+            raise FileNotFoundError(f"Checkpoint not found: {path}")
+        return path
+
+    scored = [
+        (float(match.group(1)), path)
+        for path in run_dir.glob("*.ckpt")
+        if (match := _VAL_LOSS_RE.search(path.name)) is not None
+    ]
+    if not scored:
+        raise FileNotFoundError(
+            f"No val_loss checkpoints found in {run_dir} to select best from."
+        )
+    # Lowest val_loss wins; tie-break on filename for a deterministic choice.
+    scored.sort(key=lambda item: (item[0], item[1].name))
+    best_score, best_path = scored[0]
+
+    # The filename carries val_loss at {:.4f}, so near-identical checkpoints can
+    # round to the same value and the true minimum is not recoverable here.
+    # Warn rather than pick silently — the tie-break above is arbitrary.
+    tied = [path.name for score, path in scored if score == best_score]
+    if len(tied) > 1:
+        print(
+            f"[test] WARNING: {len(tied)} checkpoints tie at val_loss={best_score} "
+            f"in {run_dir} (filenames round to 4dp). Picking {best_path.name}. "
+            f"Tied: {', '.join(tied)}",
+            flush=True,
+        )
+
+    if not best_path.is_file():
+        raise FileNotFoundError(f"Checkpoint is not a file: {best_path}")
+    return best_path
 
 
 def resolve_reduction_kwargs(reduction_type: str, reduction_method: str | None) -> dict:
@@ -294,9 +354,9 @@ def main(args: argparse.Namespace) -> None:
 
     reduction_kwargs = resolve_reduction_kwargs(args.reduction_type, args.reduction_method)
     run_label = run_label_for(args.algorithm, args.reduction_type, args.reduction_method)
-    checkpoint_path = Path(args.checkpoint_dir) / run_label / args.checkpoint_filename
-    if not checkpoint_path.is_file():
-        raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
+    checkpoint_path = resolve_checkpoint_path(
+        args.checkpoint_dir, run_label, args.checkpoint_filename
+    )
 
     print(f"[test] device={device} checkpoint={checkpoint_path}", flush=True)
     model = AIGRegressionLightningModule.load_from_checkpoint(
@@ -370,7 +430,12 @@ if __name__ == "__main__":
     parser.add_argument("--algorithm", type=str, required=True)
     parser.add_argument("--csv_paths", nargs="+", required=True)
     parser.add_argument("--checkpoint_dir", type=str, required=True)
-    parser.add_argument("--checkpoint_filename", type=str, default="last.ckpt")
+    parser.add_argument(
+        "--checkpoint_filename",
+        type=str,
+        default="best",
+        help='Filename under the run dir, or "best" to pick the lowest-val_loss checkpoint.',
+    )
     parser.add_argument(
         "--reduction_type",
         type=str,
