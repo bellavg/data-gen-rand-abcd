@@ -119,6 +119,19 @@ mkdir -p "$RESULTS_DIR/predictions"
 
 NUM_WORKERS="${NUM_WORKERS:-12}"
 
+# Batching is NOT set here on purpose. config.EVAL_DYNAMIC_BATCHING /
+# config.EVAL_MAX_TOTAL_NODES_PER_BATCH are the single source of truth, so all
+# 9 array tasks (and test_cpu.sh) cannot drift onto different batchings and
+# make their hardware columns incomparable. The effective setting is recorded
+# in each result row's `batching` column. Change it in config.py, not here.
+
+# WandB run named test_<config>_<device>, mirroring train.py's train_<config>.
+# WANDB_INIT_TIMEOUT matches train.sh: without it a compute node that cannot
+# reach the wandb backend hangs in wandb.init() until the wall clock kills the
+# task, with no results written.
+export WANDB_INIT_TIMEOUT=120
+WANDB="${WANDB:-true}"
+
 nvidia-smi -L
 
 # =========================================================
@@ -141,6 +154,7 @@ srun python -u -m test \
     --tier1_cache_dir    "$TIER1_CACHE_DIR" \
     --hp_tuning_splits_path "$HP_TUNING_SPLITS" \
     --num_workers        "$NUM_WORKERS" \
+    --wandb              "$WANDB" \
     --device             cuda \
     --dump_predictions   true \
     --results_dir        "$RESULTS_DIR/inference_results" \

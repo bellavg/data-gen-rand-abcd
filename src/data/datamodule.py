@@ -242,7 +242,29 @@ class AIGDataModule(pl.LightningDataModule):
             **self._loader_kwargs(is_train=False),
         )
 
+    def _ensure_test_plan(self) -> None:
+        if not self.dynamic_batching:
+            return
+        self._test_batch_plan: list[list[int]] = (
+            BalancedDynamicBatchSampler.build_batch_plan(
+                self.test_ds.get_num_nodes_list(),
+                max_total_nodes=self.max_total_nodes,
+            )
+        )
+        self.test_ds.release_runtime_caches()
+
     def test_dataloader(self) -> DataLoader:
+        if self.dynamic_batching:
+            precomputed = getattr(self, "_test_batch_plan", None)
+            if precomputed is None:
+                self._ensure_test_plan()
+                precomputed = self._test_batch_plan
+            return self._make_budgeted_dataloader(
+                self.test_ds,
+                precomputed,
+                shuffle=False,
+                is_train=False,
+            )
         return DataLoader(
             self.test_ds,
             shuffle=False,

@@ -44,6 +44,57 @@ the cache/mask chain above, and `test.sh` is the only GPU-partition job here —
 so getting it through the queue first keeps the training benchmark from sitting
 in front of it competing for GPU budget.
 
+### Batching at eval time
+
+Eval packs batches to a total-node budget — the same scheme training uses —
+rather than a fixed 32 graphs per batch. AIGs range up to ~366k nodes, so a
+fixed graph count both wastes the GPU on runs of small graphs and risks OOM on
+a run of large ones.
+
+The settings live in `config.py`, **not** in the SLURM scripts, so all 9 array
+tasks and both devices cannot drift onto different batchings:
+
+| `config.py` | default |
+|---|---|
+| `EVAL_DYNAMIC_BATCHING` | `True` |
+| `EVAL_MAX_TOTAL_NODES_PER_BATCH` | `5_000_000` |
+| `EVAL_PREFETCH_FACTOR` | `2` (below training's 4 — in-flight host memory is `num_workers × prefetch_factor` batches, and eval batches are much larger) |
+
+What this does and does not change:
+
+| | Effect of node-budget batching |
+|---|---|
+| Accuracy (Smooth L1 / RMSE / R² / Spearman) | **None.** Metrics are computed over the whole concatenated prediction tensor, the model normalises per-node (`NORM_TYPE="layer"`) and pools per-graph, so batch composition cannot move them. Covered by `TestRunEvalPassBatchingInvariance`. |
+| `throughput_graphs_per_s` | Improves, and becomes where the reduction benefit shows up (fewer nodes ⇒ more graphs per batch). |
+| `peak_vram_mb` | Becomes ~constant across configs **by construction** — the budget holds nodes/batch fixed. Don't read a reduction's memory benefit off this column while dynamic batching is on. |
+
+The 5M budget sits above training's 3M because forward-only eval holds no
+gradients or optimizer state. Watch `avg_gpu_utilization_pct` and
+`peak_vram_mb` on the first run and adjust `EVAL_MAX_TOTAL_NODES_PER_BATCH`.
+
+The effective setting lands in each row's single `batching` column
+(`dynamic_nodes=5000000` or `fixed_graphs=32` — only one of the two knobs is
+ever live), so a mismatch across configs is visible in the CSVs rather than
+silent. **Changing it means re-running every config**, not just the new one,
+or the hardware columns stop being comparable.
+
+`throughput_graphs_per_s` excludes the first batch (CUDA context init, cuDNN
+autotune and worker spawn all land there). `num_timed_graphs` records how many
+graphs the timing covers, and `total_time_s` covers that same region — so
+divide by `num_timed_graphs`, not `num_graphs`. Both go NaN when a pass fits in
+a single batch, since there is then no steady-state region at all.
+
+### WandB
+
+Each array task opens one run named `test_<algorithm>[_<type>_<method>]`,
+mirroring train.py's `train_<…>` scheme, into the same project/entity (now
+`config.WANDB_PROJECT` / `config.WANDB_ENTITY`, shared by both scripts).
+Metrics land in the run summary prefixed by pass — `full_graph/rmse`,
+`matched_reduction/throughput_graphs_per_s`, … The CSV write happens *first*,
+so WandB is a mirror and never the source of truth. Disable with
+`WANDB=false sbatch …`.
+
+
 ## 3. Training-hardware benchmark (after step 2)
 ```bash
 sbatch src/shell/benchmark.sh                     # no cache dependency

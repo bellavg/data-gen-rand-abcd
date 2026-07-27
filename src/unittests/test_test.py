@@ -1,21 +1,29 @@
-"""Unit tests for src/test.py's pure logic — metric math, reduction-config
-dispatch, and CSV I/O helpers. Deliberately excludes anything that needs a
-real checkpoint/dataloader/GPU (that's exercised on Snellius via test.sh)."""
+"""Unit tests for src/test.py — metric math, reduction-config dispatch, CSV
+I/O helpers, and the forward sweep itself (run_eval_pass) driven on CPU
+against a stub datamodule and model. Still excludes anything needing a real
+checkpoint, graph cache, or GPU (that's exercised on Snellius via test.sh)."""
 
 import csv
 import math
 
 import pytest
 import torch
+from torch.utils.data import DataLoader
 from torch_geometric.data import Data
 from torch_geometric.data import Batch as PyGBatch
 
+import test as test_module
+from data.sampler import BalancedDynamicBatchSampler
 from test import (
     _batch_per_graph_counts,
+    batching_label,
     compute_accuracy_metrics,
+    emitted_sample_order,
     resolve_checkpoint_path,
     resolve_reduction_kwargs,
+    run_eval_pass,
     run_label_for,
+    wandb_run_name_for,
     write_predictions_csv,
     write_single_row_csv,
 )
@@ -28,6 +36,67 @@ class TestRunLabelFor:
     def test_reduction_appends_method_suffix(self):
         assert run_label_for("Orchestrate", "sparsification", "pagerank") == "Orchestrate_pagerank"
         assert run_label_for("Orchestrate", "partition", "metis") == "Orchestrate_metis"
+
+
+class TestWandbRunNameFor:
+    """Mirrors train.py's scheme (train_<algo>[_<type>_<method>]) with a
+    test_ prefix, so each config's eval run sits beside its training run."""
+
+    def test_baseline(self):
+        assert (
+            wandb_run_name_for("Orchestrate", "none", None, "cuda")
+            == "test_Orchestrate_cuda"
+        )
+
+    def test_sparsification_and_partition(self):
+        assert (
+            wandb_run_name_for("Orchestrate", "sparsification", "pagerank", "cuda")
+            == "test_Orchestrate_sparsification_pagerank_cuda"
+        )
+        assert (
+            wandb_run_name_for("Orchestrate", "partition", "metis", "cuda")
+            == "test_Orchestrate_partition_metis_cuda"
+        )
+
+    def test_device_disambiguates_the_gpu_and_cpu_passes(self):
+        """test.sh and test_cpu.sh evaluate the same 9 configs; without device
+        in the name both would collide on one WandB run."""
+        assert wandb_run_name_for(
+            "Orchestrate", "none", None, "cuda"
+        ) != wandb_run_name_for("Orchestrate", "none", None, "cpu")
+
+
+class TestBatchingLabel:
+    def test_dynamic_reports_the_node_budget(self):
+        assert (
+            batching_label(
+                dynamic_batching=True, batch_size=32, max_total_nodes=5_000_000
+            )
+            == "dynamic_nodes=5000000"
+        )
+
+    def test_fixed_reports_the_graph_count(self):
+        assert (
+            batching_label(
+                dynamic_batching=False, batch_size=32, max_total_nodes=5_000_000
+            )
+            == "fixed_graphs=32"
+        )
+
+    def test_label_ignores_the_setting_that_is_not_in_force(self):
+        """Under dynamic batching the node budget alone packs batches, so
+        batch_size must not leak into the label (and vice versa) — otherwise
+        two runs that batched identically would compare as different."""
+        assert batching_label(
+            dynamic_batching=True, batch_size=8, max_total_nodes=5_000_000
+        ) == batching_label(
+            dynamic_batching=True, batch_size=512, max_total_nodes=5_000_000
+        )
+        assert batching_label(
+            dynamic_batching=False, batch_size=32, max_total_nodes=1
+        ) == batching_label(
+            dynamic_batching=False, batch_size=32, max_total_nodes=9_000_000
+        )
 
 
 class TestResolveCheckpointPath:
@@ -269,3 +338,252 @@ class TestCsvHelpers:
 
         assert len(rows_a) == 50
         assert [r["graph_id"] for r in rows_a] == [r["graph_id"] for r in rows_b]
+
+
+# ---------------------------------------------------------------------------
+# Forward-sweep (run_eval_pass) harness
+#
+# run_eval_pass builds its own AIGDataModule from dm_kwargs, so the stub below
+# is monkeypatched over test.AIGDataModule. It mirrors the two batching modes
+# AIGDataModule.test_dataloader actually supports (fixed graph count vs
+# node-budget dynamic batching) so the ordering/timing logic is exercised for
+# real rather than mocked away.
+# ---------------------------------------------------------------------------
+
+
+def _target_for(num_nodes: int) -> float:
+    """Target that is a deterministic but *non-monotonic* function of node
+    count, so it differs from _CountingModel's prediction. Equal preds and
+    targets would drive every metric to its perfect value and make the
+    batching-invariance test below pass vacuously."""
+    return ((num_nodes * 7) % 100) / 100.0
+
+
+def _make_graph(num_nodes: int, num_edges: int) -> Data:
+    """Graph whose node count uniquely identifies it, so predictions derived
+    from node count can be traced back to the right graph_id."""
+    src = torch.arange(num_edges, dtype=torch.long) % num_nodes
+    dst = (src + 1) % num_nodes
+    return Data(
+        x=torch.zeros(num_nodes, 4),
+        edge_index=torch.stack([src, dst]),
+        y=torch.tensor([[_target_for(num_nodes)]], dtype=torch.float32),
+    )
+
+
+class _FakeSample:
+    def __init__(self, graph_path: str) -> None:
+        self.graph_path = graph_path
+
+
+class _CountingModel(torch.nn.Module):
+    """Predicts num_nodes/1000 per graph — a deterministic, order-revealing
+    stand-in for the real regressor."""
+
+    def forward(self, batch):
+        counts = torch.bincount(batch.batch, minlength=batch.num_graphs).float()
+        return (counts / 1000.0).unsqueeze(-1)
+
+
+def _install_fake_datamodule(monkeypatch, graphs, captured: dict):
+    class _FakeDataModule:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+            self.batch_size = kwargs.get("batch_size", 32)
+            self.dynamic_batching = kwargs.get("dynamic_batching", False)
+            self.max_total_nodes = kwargs.get("max_total_nodes", 3_000_000)
+            self.test_ds = type(
+                "_FakeTestDS",
+                (),
+                {"samples": [_FakeSample(f"/graphs/g{i}.pt") for i in range(len(graphs))]},
+            )()
+
+        def setup(self, stage):
+            assert stage == "test"
+
+        def test_dataloader(self):
+            if self.dynamic_batching:
+                plan = BalancedDynamicBatchSampler.build_batch_plan(
+                    [g.num_nodes for g in graphs],
+                    max_total_nodes=self.max_total_nodes,
+                )
+                sampler = BalancedDynamicBatchSampler(
+                    batch_size=self.batch_size,
+                    shuffle=False,
+                    seed=42,
+                    max_total_nodes=self.max_total_nodes,
+                    precomputed_batches=plan,
+                )
+                return DataLoader(
+                    graphs,
+                    batch_sampler=sampler,
+                    collate_fn=PyGBatch.from_data_list,
+                )
+            return DataLoader(
+                graphs,
+                batch_size=self.batch_size,
+                shuffle=False,
+                collate_fn=PyGBatch.from_data_list,
+            )
+
+    monkeypatch.setattr(test_module, "AIGDataModule", _FakeDataModule)
+
+
+# Deliberately NOT in ascending node order: dataset order and size-sorted
+# order must differ, or the reordering bug this guards against is invisible.
+_GRAPH_SIZES = [50, 10, 90, 30, 70, 20]
+
+
+def _sweep(monkeypatch, *, dynamic: bool, max_total_nodes: int = 100, sizes=None):
+    sizes = list(_GRAPH_SIZES if sizes is None else sizes)
+    graphs = [_make_graph(n, n) for n in sizes]
+    captured: dict = {}
+    _install_fake_datamodule(monkeypatch, graphs, captured)
+    dm_kwargs = {
+        "batch_size": 2,
+        "dynamic_batching": dynamic,
+        "max_total_nodes": max_total_nodes,
+    }
+    metrics, per_graph = run_eval_pass(
+        _CountingModel(),
+        dm_kwargs,
+        device=torch.device("cpu"),
+    )
+    return metrics, per_graph, captured
+
+
+class TestEmittedSampleOrder:
+    def test_none_for_plain_sequential_loader(self):
+        """A stock DataLoader still exposes a .batch_sampler, so the check has
+        to key on the sampler *type*, not on the attribute existing."""
+        loader = DataLoader([_make_graph(4, 4)], batch_size=1)
+        assert emitted_sample_order(loader) is None
+
+    def test_dynamic_plan_covers_every_index_exactly_once(self):
+        sizes = [50, 10, 90, 30]
+        plan = BalancedDynamicBatchSampler.build_batch_plan(sizes, max_total_nodes=100)
+        sampler = BalancedDynamicBatchSampler(
+            batch_size=2, shuffle=False, seed=42, precomputed_batches=plan
+        )
+        loader = DataLoader([_make_graph(n, n) for n in sizes], batch_sampler=sampler)
+
+        order = emitted_sample_order(loader)
+        assert sorted(order) == list(range(len(sizes)))
+
+    def test_dynamic_order_differs_from_dataset_order(self):
+        """Guards the premise of the alignment fix: if the plan happened to be
+        emitted in dataset order the reordering test below would pass for the
+        wrong reason."""
+        plan = BalancedDynamicBatchSampler.build_batch_plan(
+            _GRAPH_SIZES, max_total_nodes=100
+        )
+        sampler = BalancedDynamicBatchSampler(
+            batch_size=2, shuffle=False, seed=42, precomputed_batches=plan
+        )
+        loader = DataLoader(
+            [_make_graph(n, n) for n in _GRAPH_SIZES], batch_sampler=sampler
+        )
+        assert emitted_sample_order(loader) != list(range(len(_GRAPH_SIZES)))
+
+
+class TestRunEvalPassAlignment:
+    def test_sequential_rows_stay_in_dataset_order(self, monkeypatch):
+        _, per_graph, _ = _sweep(monkeypatch, dynamic=False)
+
+        assert per_graph["graph_id"] == [f"/graphs/g{i}.pt" for i in range(len(_GRAPH_SIZES))]
+        assert per_graph["num_nodes"] == _GRAPH_SIZES
+
+    def test_dynamic_batching_keeps_graph_id_aligned_with_its_prediction(
+        self, monkeypatch
+    ):
+        """Regression test: the batch plan sorts by node count, so the loader
+        emits samples out of dataset order. graph_id is read from
+        dataset.samples while predictions come back in emission order — zipping
+        them naively mislabels every row of the predictions CSV."""
+        _, per_graph, _ = _sweep(monkeypatch, dynamic=True)
+
+        size_of = {f"/graphs/g{i}.pt": n for i, n in enumerate(_GRAPH_SIZES)}
+        for gid, n_nodes, pred, target in zip(
+            per_graph["graph_id"],
+            per_graph["num_nodes"],
+            per_graph["prediction"],
+            per_graph["target"],
+        ):
+            assert size_of[gid] == n_nodes
+            assert pred == pytest.approx(n_nodes / 1000.0)
+            assert target == pytest.approx(_target_for(n_nodes))
+
+    def test_dynamic_and_sequential_cover_the_same_graphs(self, monkeypatch):
+        _, seq, _ = _sweep(monkeypatch, dynamic=False)
+        _, dyn, _ = _sweep(monkeypatch, dynamic=True)
+
+        assert sorted(dyn["graph_id"]) == sorted(seq["graph_id"])
+        assert sorted(dyn["num_nodes"]) == sorted(seq["num_nodes"])
+
+
+class TestRunEvalPassBatchingInvariance:
+    def test_accuracy_metrics_are_invariant_to_batching(self, monkeypatch):
+        """The property that makes dynamic batching safe for the thesis
+        numbers: metrics are computed over the full concatenated prediction
+        tensor, the model's norm layers are per-node, and pooling is per-graph
+        — so batch composition cannot move RMSE/R2/Spearman."""
+        seq_metrics, _, _ = _sweep(monkeypatch, dynamic=False)
+        dyn_metrics, _, _ = _sweep(monkeypatch, dynamic=True)
+
+        assert dyn_metrics["num_graphs"] == seq_metrics["num_graphs"]
+        for key in ("smooth_l1", "rmse", "r2", "spearman"):
+            assert dyn_metrics[key] == pytest.approx(seq_metrics[key], abs=1e-6)
+
+    def test_node_budget_controls_packing(self, monkeypatch):
+        """A budget below the largest graph still yields batches (one graph
+        each); a budget above the whole split collapses to a single batch."""
+        _, tight, _ = _sweep(monkeypatch, dynamic=True, max_total_nodes=1)
+        _, loose, _ = _sweep(monkeypatch, dynamic=True, max_total_nodes=10_000)
+
+        assert sorted(tight["num_nodes"]) == sorted(_GRAPH_SIZES)
+        assert sorted(loose["num_nodes"]) == sorted(_GRAPH_SIZES)
+
+    def test_batching_kwargs_reach_the_datamodule(self, monkeypatch):
+        _, _, captured = _sweep(monkeypatch, dynamic=True, max_total_nodes=12345)
+
+        assert captured["dynamic_batching"] is True
+        assert captured["max_total_nodes"] == 12345
+
+
+class TestRunEvalPassTiming:
+    def test_first_batch_is_excluded_from_timing(self, monkeypatch):
+        """Batch 0 absorbs CUDA context init, cuDNN autotune and worker spawn,
+        so it is deliberately not charged to steady-state throughput."""
+        metrics, _, _ = _sweep(monkeypatch, dynamic=False)
+
+        # batch_size=2 over 6 graphs -> 3 batches; the first 2 graphs are warmup.
+        assert metrics["num_graphs"] == 6
+        assert metrics["num_timed_graphs"] == 4
+
+    def test_single_batch_reports_nan_throughput_instead_of_dividing_by_zero(
+        self, monkeypatch
+    ):
+        """With one batch there is no steady-state region at all. Accuracy is
+        still reported; only the timing columns go NaN."""
+        metrics, _, _ = _sweep(monkeypatch, dynamic=False, sizes=[40, 60])
+
+        assert metrics["num_graphs"] == 2
+        assert metrics["num_timed_graphs"] == 0
+        assert math.isnan(metrics["throughput_graphs_per_s"])
+        # total_time_s must be NaN too, not a microsecond-scale number that
+        # measures nothing but reads like a real duration in the CSV.
+        assert math.isnan(metrics["total_time_s"])
+        assert not math.isnan(metrics["rmse"])
+
+    def test_hardware_columns_are_populated_on_cpu(self, monkeypatch):
+        """peak VRAM / GPU util are NaN off-GPU, but the host-memory columns
+        must still be real numbers on the CPU pass (test_cpu.sh depends on
+        them)."""
+        metrics, _, _ = _sweep(monkeypatch, dynamic=False)
+
+        assert metrics["peak_process_rss_mb"] > 0
+        assert not math.isnan(metrics["avg_system_memory_pct"])
+        assert math.isnan(metrics["peak_vram_mb"])
+        assert metrics["avg_nodes_per_graph"] == pytest.approx(
+            sum(_GRAPH_SIZES) / len(_GRAPH_SIZES)
+        )

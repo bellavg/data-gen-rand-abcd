@@ -1235,6 +1235,31 @@ class TestAIGDataModule(unittest.TestCase):
         batch = next(iter(dm.test_dataloader()))
         self.assertEqual(batch.y.shape[1], 1)
 
+    def test_test_loader_ignores_dynamic_batching_by_default(self):
+        from data.datamodule import AIGDataModule
+        from data.sampler import BalancedDynamicBatchSampler
+
+        dm = AIGDataModule(self.csv_path, batch_size=4)
+        dm.setup(stage="test")
+        self.assertNotIsInstance(
+            dm.test_dataloader().batch_sampler, BalancedDynamicBatchSampler
+        )
+
+    def test_test_loader_uses_node_budget_when_dynamic_batching(self):
+        # test.py packs eval batches to a node budget to fill the GPU; the
+        # test loader must honour dynamic_batching the same way val does,
+        # and the plan must still cover every test graph exactly once.
+        from data.datamodule import AIGDataModule
+        from data.sampler import BalancedDynamicBatchSampler
+
+        dm = AIGDataModule(self.csv_path, batch_size=4, dynamic_batching=True)
+        dm.setup(stage="test")
+        loader = dm.test_dataloader()
+
+        self.assertIsInstance(loader.batch_sampler, BalancedDynamicBatchSampler)
+        emitted = [idx for batch in loader.batch_sampler for idx in batch]
+        self.assertEqual(sorted(emitted), list(range(len(dm.test_ds))))
+
     def test_datamodule_split_sizes_sum_to_total(self):
         dm = self._make_dm()
         self.assertEqual(len(dm.train_ds) + len(dm.val_ds) + len(dm.test_ds), 30)

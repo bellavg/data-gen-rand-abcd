@@ -16,6 +16,21 @@ POS_ENC_DIM = 32
 NORM_TYPE = "layer"
 DYNAMIC_BATCHING = True
 MAX_TOTAL_NODES_PER_BATCH = 3_000_000
+
+# Eval-time batching (test.py). Deliberately SEPARATE from the two names above
+# rather than a bumped value of them: those govern training, the trained
+# checkpoints came from a 3M budget, and changing them would also change the
+# training batch-plan cache key. Forward-only eval holds no gradients or
+# optimizer state, so it has headroom for a larger budget.
+# These are the single source of truth for eval batching — test.sh/test_cpu.sh
+# deliberately do NOT pass them, so all 9 configs cannot drift apart.
+EVAL_DYNAMIC_BATCHING = True
+EVAL_MAX_TOTAL_NODES_PER_BATCH = 5_000_000
+# Lower than PREFETCH_FACTOR: in-flight host memory is (num_workers x
+# prefetch_factor) batches, and a node-budget eval batch is roughly an order of
+# magnitude larger than a 32-graph training batch. Neither eval SLURM script
+# requests an explicit --mem.
+EVAL_PREFETCH_FACTOR = 2
 PIN_MEMORY = True
 PERSISTENT_WORKERS = True
 NUM_WORKERS = 12
@@ -23,6 +38,11 @@ PREFETCH_FACTOR = 4
 TORCH_COMPILE = True
 MIN_LR = 1e-6
 PATIENCE = 3
+
+# WandB destination, shared by train.py and test.py so the two can't drift
+# onto different projects/entities.
+WANDB_PROJECT = "AIG-SUMMARIZE"
+WANDB_ENTITY = "isabella-v-gardner-university-of-amsterdam"
 
 SCHEDULER_PATIENCE = 2
 SCHEDULER_FACTOR = 0.5

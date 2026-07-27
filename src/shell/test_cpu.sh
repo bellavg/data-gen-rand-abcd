@@ -86,6 +86,14 @@ mkdir -p "$RESULTS_DIR"
 
 NUM_WORKERS="${NUM_WORKERS:-16}"
 
+# Batching comes from config.EVAL_* (see test.sh) so this and the GPU pass
+# cannot end up comparing two different batchings rather than two devices.
+
+# See test.sh: caps the wandb handshake so an unreachable backend cannot
+# consume the whole array's wall clock.
+export WANDB_INIT_TIMEOUT=120
+WANDB="${WANDB:-true}"
+
 REDUCTION_ARGS=()
 if [[ "$REDUCTION_TYPE" != "none" ]]; then
     REDUCTION_ARGS=(--reduction_method "$REDUCTION_METHOD")
@@ -102,6 +110,7 @@ srun python -u -m test \
     --tier1_cache_dir    "$TIER1_CACHE_DIR" \
     --hp_tuning_splits_path "$HP_TUNING_SPLITS" \
     --num_workers        "$NUM_WORKERS" \
+    --wandb              "$WANDB" \
     --device             cpu \
     --dump_predictions   false \
     --results_dir        "$RESULTS_DIR/inference_results" \

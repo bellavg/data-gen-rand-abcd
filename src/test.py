@@ -33,6 +33,7 @@ from scipy.stats import spearmanr
 
 import config
 from data.datamodule import AIGDataModule
+from data.sampler import BalancedDynamicBatchSampler
 from models.lightning_model import AIGRegressionLightningModule
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -84,6 +85,38 @@ def run_label_for(algorithm: str, reduction_type: str, reduction_method: str | N
     if reduction_type == "none":
         return algorithm
     return f"{algorithm}_{reduction_method}"
+
+
+def wandb_run_name_for(
+    algorithm: str, reduction_type: str, reduction_method: str | None, device: str
+) -> str:
+    """Mirrors train.py's WandB naming with a ``test_`` prefix, so each
+    config's eval run sits next to its ``train_`` run in the same project.
+
+    Device is part of the name because test.sh (cuda) and test_cpu.sh (cpu)
+    evaluate the same 9 configs — without it both would land on an identically
+    named run and the two devices' hardware numbers would be indistinguishable
+    in the UI. The result-CSV filename already keys on device the same way.
+    """
+    if reduction_type == "none":
+        return f"test_{algorithm}_{device}"
+    return f"test_{algorithm}_{reduction_type}_{reduction_method}_{device}"
+
+
+def batching_label(
+    *, dynamic_batching: bool, batch_size: int, max_total_nodes: int
+) -> str:
+    """The batching actually in force, as one self-describing string.
+
+    Only one of batch_size / max_total_nodes is live at a time — under dynamic
+    batching the node budget alone packs batches and batch_size is ignored
+    (see BalancedDynamicBatchSampler) — so recording all three invites reading
+    the dead one. Every config compared on the hardware columns must carry an
+    identical string here.
+    """
+    if dynamic_batching:
+        return f"dynamic_nodes={int(max_total_nodes)}"
+    return f"fixed_graphs={int(batch_size)}"
 
 
 # Matches the val_loss the ModelCheckpoint template bakes into the filename.
@@ -161,6 +194,34 @@ def resolve_reduction_kwargs(reduction_type: str, reduction_method: str | None) 
     raise ValueError(f"Unknown reduction_type: {reduction_type!r}")
 
 
+def emitted_sample_order(loader) -> list[int] | None:
+    """Dataset indices in the order ``loader`` will yield them, or None if
+    that is plain sequential order.
+
+    Under dynamic batching the batch plan is built from graphs *sorted by node
+    count* (``BalancedDynamicBatchSampler.build_batch_plan``), so the loader
+    emits samples in size order rather than dataset order. Predictions and the
+    per-graph node/edge counts come back in emission order, while
+    ``dataset.samples`` is in dataset order — zipping the two without
+    reconciling them would attach every graph_id to a different graph's
+    prediction. Reads the sampler's prebuilt plan rather than iterating it, so
+    this has no effect on the sampler's own epoch state.
+    """
+    sampler = getattr(loader, "batch_sampler", None)
+    if not isinstance(sampler, BalancedDynamicBatchSampler):
+        return None
+    if sampler.shuffle:
+        # Reading the plan is only equivalent to iterating while shuffle is
+        # off; with it on, __iter__ permutes the batch order and this list
+        # would mislabel every predictions row with no error anywhere. Fail
+        # loudly rather than emit plausible-looking wrong data.
+        raise ValueError(
+            "emitted_sample_order requires a non-shuffled sampler; the eval "
+            "loader must be built with shuffle=False."
+        )
+    return [idx for batch in sampler._base_batches for idx in batch]
+
+
 def _batch_per_graph_counts(batch) -> tuple[list[int], list[int]]:
     num_graphs = int(batch.num_graphs)
     node_counts = torch.bincount(batch.batch, minlength=num_graphs)
@@ -227,10 +288,22 @@ def run_eval_pass(
     all_node_counts: list[int] = []
     all_edge_counts: list[int] = []
 
-    t_start = time.perf_counter()
-    with torch.no_grad():
+    # The clock starts *after* batch 0 completes: CUDA context creation, cuDNN
+    # autotune and dataloader worker spawn all land in the first batch and
+    # would otherwise be charged to steady-state throughput. Batch 0 still
+    # counts towards accuracy — only the timing denominator skips it.
+    t_start: float | None = None
+    timed_graphs = 0
+
+    # inference_mode, not no_grad: it additionally skips version-counter and
+    # view tracking, so tensors are cheaper to allocate. The resulting
+    # "inference tensors" may not be saved for backward or modified in-place
+    # through a view — neither of which this forward-only sweep does. The
+    # metric math downstream is out-of-place on requires_grad=False tensors,
+    # which is legal outside the block (covered by the run_eval_pass tests).
+    with torch.inference_mode():
         for batch_idx, batch in enumerate(loader):
-            batch = batch.to(device)
+            batch = batch.to(device, non_blocking=True)
             preds = model.forward(batch).squeeze(-1).cpu()
             targets = batch.y.view(-1).cpu()
             node_counts, edge_counts = _batch_per_graph_counts(batch)
@@ -239,6 +312,11 @@ def run_eval_pass(
             all_targets.append(targets)
             all_node_counts.extend(node_counts)
             all_edge_counts.extend(edge_counts)
+
+            if t_start is None:
+                t_start = time.perf_counter()
+            else:
+                timed_graphs += len(node_counts)
 
             rss = proc.memory_info().rss
             if rss > peak_rss:
@@ -251,7 +329,11 @@ def run_eval_pass(
                 except Exception:
                     pass
 
-    total_time = time.perf_counter() - t_start
+    # With fewer than two batches there is no steady-state region at all, so
+    # the timing columns are NaN rather than a microsecond-scale number that
+    # measures nothing. Accuracy is still reported in full.
+    has_timed_region = t_start is not None and timed_graphs > 0
+    total_time = time.perf_counter() - t_start if has_timed_region else float("nan")
 
     preds_t = torch.cat(all_preds) if all_preds else torch.empty(0)
     targets_t = torch.cat(all_targets) if all_targets else torch.empty(0)
@@ -268,9 +350,12 @@ def run_eval_pass(
     metrics = {
         "num_graphs": num_graphs_total,
         **accuracy_metrics,
+        # total_time_s covers the timed region only (batch 0 excluded), so the
+        # matching graph count is num_timed_graphs, NOT num_graphs.
+        "num_timed_graphs": timed_graphs,
         "total_time_s": total_time,
         "throughput_graphs_per_s": (
-            num_graphs_total / total_time if total_time > 0 else float("nan")
+            timed_graphs / total_time if has_timed_region else float("nan")
         ),
         "peak_vram_mb": peak_vram_mb,
         "avg_gpu_utilization_pct": float(np.mean(gpu_utils)) if gpu_utils else float("nan"),
@@ -286,8 +371,15 @@ def run_eval_pass(
         ),
     }
 
+    # graph_id must follow the loader's emission order, not dataset order —
+    # under dynamic batching those differ (see emitted_sample_order).
+    order = emitted_sample_order(loader)
     per_graph = {
-        "graph_id": [s.graph_path for s in samples],
+        "graph_id": (
+            [samples[i].graph_path for i in order]
+            if order is not None
+            else [s.graph_path for s in samples]
+        ),
         "num_nodes": all_node_counts,
         "num_edges": all_edge_counts,
         "target": targets_t.tolist(),
@@ -373,6 +465,15 @@ def main(args: argparse.Namespace) -> None:
         csv_paths=args.csv_paths,
         positional_encoding=positional_encoding,
         batch_size=args.batch_size,
+        dynamic_batching=args.dynamic_batching,
+        max_total_nodes=args.max_total_nodes_per_batch,
+        # A node budget makes each batch ~an order of magnitude larger than a
+        # 32-graph one, so the default per-worker prefetch would hold far more
+        # host RAM in flight. Neither SLURM script requests --mem.
+        prefetch_factor=args.prefetch_factor,
+        # Pinning is only useful for H2D transfer; on the CPU pass it just
+        # burns non-pageable memory.
+        pin_memory=(device.type == "cuda"),
         split_ratios=(0.8, 0.1, 0.1),
         seed=args.seed,
         num_workers=args.num_workers,
@@ -383,44 +484,101 @@ def main(args: argparse.Namespace) -> None:
     )
 
     repro = reproducibility_metadata(args.seed)
+    batching = batching_label(
+        dynamic_batching=args.dynamic_batching,
+        batch_size=args.batch_size,
+        max_total_nodes=args.max_total_nodes_per_batch,
+    )
+
+    # Init before the sweep so a bad handshake fails the job early rather than
+    # after the GPU work is spent. The SLURM scripts cap the handshake with
+    # WANDB_INIT_TIMEOUT so an unreachable backend cannot hang the whole array.
+    wandb_run = None
+    if args.wandb:
+        import wandb
+
+        wandb_run = wandb.init(
+            project=config.WANDB_PROJECT,
+            entity=config.WANDB_ENTITY,
+            name=wandb_run_name_for(
+                args.algorithm, args.reduction_type, args.reduction_method, device.type
+            ),
+            # Without an explicit dir, wandb stages run artifacts into ./wandb
+            # under cwd — which the SLURM scripts set to the repo in $HOME.
+            dir=args.results_dir,
+            job_type="eval",
+            config={
+                "algorithm": args.algorithm,
+                "reduction_type": args.reduction_type,
+                "reduction_method": args.reduction_method or "",
+                "batching": batching,
+                "checkpoint_path": str(checkpoint_path),
+                "device": device.type,
+                **repro,
+            },
+        )
 
     passes: list[tuple[str, dict]] = [("full_graph", {"sparsification": None, "partition": None})]
     if args.reduction_type != "none":
         passes.append(("matched_reduction", reduction_kwargs))
 
-    for eval_mode, red_kwargs in passes:
-        print(f"[test] Running {eval_mode!r} pass ...", flush=True)
-        dm_kwargs = {**base_dm_kwargs, **red_kwargs}
-        metrics, per_graph = run_eval_pass(
-            model,
-            dm_kwargs,
-            device=device,
-            gpu_util_sample_every=args.gpu_util_sample_every,
-        )
-        row = {
-            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
-            "checkpoint_path": str(checkpoint_path),
-            "run_label": run_label,
-            "reduction_type": args.reduction_type,
-            "reduction_method": args.reduction_method or "",
-            "eval_mode": eval_mode,
-            "device": device.type,
-            **metrics,
-            **repro,
-        }
-        results_path = Path(args.results_dir) / f"{run_label}_{eval_mode}_{device.type}.csv"
-        write_single_row_csv(results_path, row)
-        print(
-            f"[test] {eval_mode}: rmse={metrics['rmse']:.4f} r2={metrics['r2']:.4f} "
-            f"spearman={metrics['spearman']:.4f} "
-            f"throughput={metrics['throughput_graphs_per_s']:.1f} graphs/s",
-            flush=True,
-        )
+    try:
+        for eval_mode, red_kwargs in passes:
+            print(f"[test] Running {eval_mode!r} pass ...", flush=True)
+            dm_kwargs = {**base_dm_kwargs, **red_kwargs}
+            metrics, per_graph = run_eval_pass(
+                model,
+                dm_kwargs,
+                device=device,
+                gpu_util_sample_every=args.gpu_util_sample_every,
+            )
+            row = {
+                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                "checkpoint_path": str(checkpoint_path),
+                "run_label": run_label,
+                "reduction_type": args.reduction_type,
+                "reduction_method": args.reduction_method or "",
+                "eval_mode": eval_mode,
+                "device": device.type,
+                # One column, not three: the hardware columns below are only
+                # comparable across configs sharing this exact value.
+                "batching": batching,
+                **metrics,
+                **repro,
+            }
+            results_path = (
+                Path(args.results_dir) / f"{run_label}_{eval_mode}_{device.type}.csv"
+            )
+            write_single_row_csv(results_path, row)
+            print(
+                f"[test] {eval_mode}: rmse={metrics['rmse']:.4f} r2={metrics['r2']:.4f} "
+                f"spearman={metrics['spearman']:.4f} "
+                f"throughput={metrics['throughput_graphs_per_s']:.1f} graphs/s",
+                flush=True,
+            )
 
-        if args.dump_predictions:
-            pred_path = Path(args.predictions_dir) / f"{run_label}_{eval_mode}.csv"
-            write_predictions_csv(pred_path, per_graph, max_rows=args.max_prediction_rows)
-            print(f"[test] Wrote per-graph predictions to {pred_path}", flush=True)
+            if args.dump_predictions:
+                pred_path = Path(args.predictions_dir) / f"{run_label}_{eval_mode}.csv"
+                write_predictions_csv(
+                    pred_path, per_graph, max_rows=args.max_prediction_rows
+                )
+                print(f"[test] Wrote per-graph predictions to {pred_path}", flush=True)
+
+            # Last, and non-fatal. Both CSVs are the source of truth; a WandB
+            # hiccup must not lose the predictions file or abort the remaining
+            # pass, which would cost a full GPU re-run of this config.
+            if wandb_run is not None:
+                try:
+                    wandb_run.summary.update(
+                        {f"{eval_mode}/{key}": value for key, value in metrics.items()}
+                    )
+                except Exception as exc:  # noqa: BLE001 - never fail eval over logging
+                    print(f"[test] WARNING: WandB logging failed: {exc}", flush=True)
+    finally:
+        # In finally so an exception mid-sweep still closes the run rather than
+        # leaving it hanging in the WandB UI.
+        if wandb_run is not None:
+            wandb_run.finish()
 
 
 if __name__ == "__main__":
@@ -449,6 +607,34 @@ if __name__ == "__main__":
     parser.add_argument("--hp_tuning_splits_path", type=str, default=None)
     parser.add_argument("--num_workers", type=int, default=config.NUM_WORKERS)
     parser.add_argument("--batch_size", type=int, default=config.BATCH_SIZE)
+    # Batching defaults come from config so every config is evaluated under
+    # identical settings without the SLURM scripts having to agree on them.
+    parser.add_argument(
+        "--dynamic_batching",
+        type=lambda x: str(x).lower() in ("true", "1", "yes"),
+        default=config.EVAL_DYNAMIC_BATCHING,
+        help=(
+            "Pack batches to a total-node budget instead of a fixed graph count, "
+            "as training does. Makes peak VRAM roughly constant across configs "
+            "(the reduction benefit moves into throughput). Overriding this for "
+            "one config makes its hardware columns incomparable to the rest."
+        ),
+    )
+    parser.add_argument(
+        "--max_total_nodes_per_batch",
+        type=int,
+        default=config.EVAL_MAX_TOTAL_NODES_PER_BATCH,
+        help="Node budget per batch when --dynamic_batching is on.",
+    )
+    parser.add_argument(
+        "--prefetch_factor",
+        type=int,
+        default=config.EVAL_PREFETCH_FACTOR,
+        help=(
+            "Batches prefetched per worker. Kept below the training default "
+            "because node-budget eval batches are much larger."
+        ),
+    )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", type=str, choices=["cuda", "cpu"], default=None)
     parser.add_argument("--gpu_util_sample_every", type=int, default=5)
@@ -456,6 +642,13 @@ if __name__ == "__main__":
         "--dump_predictions",
         type=lambda x: str(x).lower() in ("true", "1", "yes"),
         default=True,
+    )
+    parser.add_argument(
+        "--wandb",
+        type=lambda x: str(x).lower() in ("true", "1", "yes"),
+        default=True,
+        help="Log the result rows to WandB as test_<config>_<device> runs "
+        "(results are written to CSV either way).",
     )
     parser.add_argument("--max_prediction_rows", type=int, default=20_000)
     parser.add_argument("--results_dir", type=str, default="results/inference_results")
