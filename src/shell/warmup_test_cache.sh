@@ -16,14 +16,9 @@
 #
 # CHAIN WITH TEST + MASK PRECOMPUTE JOBS
 # ---------------------------------------
-#   W=$(sbatch --parsable src/shell/warmup_test_cache.sh)
-#   S1=$(SPARSIFICATION_ALGO=and_gate_only       sbatch --parsable --dependency=afterok:$W src/shell/precompute_sparsification_masks.sh)
-#   S2=$(SPARSIFICATION_ALGO=random_edge_dropout sbatch --parsable --dependency=afterok:$W src/shell/precompute_sparsification_masks.sh)
-#   S3=$(SPARSIFICATION_ALGO=spanning_forest     sbatch --parsable --dependency=afterok:$W src/shell/precompute_sparsification_masks.sh)
-#   S4=$(SPARSIFICATION_ALGO=pagerank            sbatch --parsable --dependency=afterok:$W src/shell/precompute_sparsification_masks.sh)
-#   M=$(sbatch --parsable --dependency=afterok:$W src/shell/precompute_partition_masks.sh)
-#   sbatch --dependency=afterok:$S1:$S2:$S3:$S4:$M src/shell/test.sh
-#   sbatch --dependency=afterok:$S1:$S2:$S3:$S4:$M src/shell/test_cpu.sh
+# This job is step 1 of the chain in EVALUATION.md — follow it there rather
+# than copying the submission commands into this header, which is how earlier
+# copies drifted out of sync with it.
 #
 # If the sentinel already exists the warmup skips it, so re-running or
 # re-chaining is always safe.

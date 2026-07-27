@@ -22,15 +22,16 @@
 # CPU-only partition so that comparison doesn't consume GPU budget.
 #
 # REQUIRED BEFORE RUNNING: the test split's graph cache and reduction masks
-# must exist first (warmup_train_cache.sh only builds train+val). Chain:
-#
-#   W=$(sbatch --parsable src/shell/warmup_test_cache.sh)
-#   S1=$(SPARSIFICATION_ALGO=and_gate_only       sbatch --parsable --dependency=afterok:$W src/shell/precompute_sparsification_masks.sh)
-#   S2=$(SPARSIFICATION_ALGO=random_edge_dropout sbatch --parsable --dependency=afterok:$W src/shell/precompute_sparsification_masks.sh)
-#   S3=$(SPARSIFICATION_ALGO=spanning_forest     sbatch --parsable --dependency=afterok:$W src/shell/precompute_sparsification_masks.sh)
-#   S4=$(SPARSIFICATION_ALGO=pagerank            sbatch --parsable --dependency=afterok:$W src/shell/precompute_sparsification_masks.sh)
-#   M=$(sbatch --parsable --dependency=afterok:$W src/shell/precompute_partition_masks.sh)
-#   sbatch --dependency=afterok:$S1:$S2:$S3:$S4:$M src/shell/test.sh
+# must exist first (warmup_train_cache.sh only builds train+val). The exact
+# submission chain lives in EVALUATION.md — follow it there rather than
+# copying a second copy into this header, which is how the two drifted apart
+# before. Two things that chain gets right and are easy to get wrong:
+#   - one precompute_sparsification_masks.sh submission PER method (the
+#     SPARSIFICATION_ALGO env var defaults to and_gate_only, so all four must
+#     be submitted explicitly);
+#   - masks must land in the same workspace this script reads ($EVAL_ROOT).
+# A missing mask raises at eval time rather than silently recomputing, so a
+# mismatch fails the array task loudly instead of costing a slow rebuild.
 #
 # Once the warmup+mask chain completes, this array job only *reads* the
 # cache — no concurrent-write contention regardless of parallelism, and it

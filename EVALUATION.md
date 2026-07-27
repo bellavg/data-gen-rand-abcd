@@ -5,7 +5,15 @@ The eval cache is a **separate workspace** (`$EVAL_ROOT`, default
 graphs are never written into the train cache. Trained checkpoints are still
 read from the train workspace (`aig_train_run/…/checkpoints`) — only the cache
 moves. `RUN_ROOT=$EVAL_ROOT` points the mask-precompute at that same workspace
-(masks are written in-place there).
+(masks are written in-place there). Both precompute scripts now *default* to
+the eval root, so the explicit `RUN_ROOT=` below is redundant — it is kept so
+each command states which workspace it writes to. Rebuilding masks for
+**training** is the case that now needs `RUN_ROOT=/scratch-shared/$USER/aig_train_run`
+passed explicitly.
+
+Masks are never built on demand: a missing mask raises at eval time
+(`Precomputed sparsification/partition mask ... not found`) and fails that array
+task, rather than silently recomputing them inside the eval job.
 
 ## 1. Warm the test-split cache (once)
 ```bash
@@ -23,19 +31,32 @@ S4=$(RUN_ROOT=$EVAL_ROOT SPARSIFICATION_ALGO=pagerank             sbatch --parsa
 M=$(RUN_ROOT=$EVAL_ROOT sbatch --parsable --dependency=afterok:$W src/shell/precompute_partition_masks.sh)  # "all" partition methods in one pass
 ```
 
-## 2. Run eval (array jobs, 9 configs each)
+## 2. Run inference eval (array jobs, 9 configs each)
 ```bash
 DEPS="afterok:$S1:$S2:$S3:$S4:$M"
 sbatch --dependency=$DEPS src/shell/test.sh       # GPU: accuracy + inference hardware
 sbatch --dependency=$DEPS src/shell/test_cpu.sh   # CPU: inference hardware only
-sbatch src/shell/benchmark.sh                     # controlled training-hardware benchmark (no cache dependency)
 ```
+
+Run the inference eval **first** and let it finish before starting step 3. It
+is the step the accuracy results (RQ1–RQ3) depend on, it is the one gated on
+the cache/mask chain above, and `test.sh` is the only GPU-partition job here —
+so getting it through the queue first keeps the training benchmark from sitting
+in front of it competing for GPU budget.
+
+## 3. Training-hardware benchmark (after step 2)
+```bash
+sbatch src/shell/benchmark.sh                     # no cache dependency
+```
+
+Ordering is a scheduling choice, not a correctness one: `benchmark.sh` has no
+cache or mask dependency and would run correctly at any point.
 
 The benchmark measures **one graph per batch** (not real training's node-budget
 dynamic batching, which holds per-batch VRAM ~constant across methods and hides
 the memory benefit) so per-graph VRAM/latency is comparable full-vs-reduced.
 
-## 3. Turn results into thesis tables/figures
+## 4. Turn results into thesis tables/figures
 ```bash
 PYTHONPATH=src python -m results_to_latex   # results/tables/*.tex + pareto_front.csv
 PYTHONPATH=src python -m plot_results       # results/figures/*.png

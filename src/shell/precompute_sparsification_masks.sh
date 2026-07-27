@@ -21,16 +21,22 @@ SPARSIFICATION_ALGO="${SPARSIFICATION_ALGO:-and_gate_only}"
 # Match the workspace targeted in train.sh
 ALGORITHM="${ALGORITHM:-Orchestrate}"
 
-# Workspace root. Defaults to the train workspace. For the separate eval cache,
-# pass RUN_ROOT=/scratch-shared/$USER/aig_eval_run (see EVALUATION.md).
-RUN_ROOT="${RUN_ROOT:-/scratch-shared/$USER/aig_train_run}"
+# Workspace root. Defaults to the EVAL workspace (see EVALUATION.md) — masks
+# for training were precomputed long ago, so eval is the live use case and the
+# safe default. To (re)build masks for TRAINING you must pass the train root
+# explicitly: RUN_ROOT=/scratch-shared/$USER/aig_train_run
+RUN_ROOT="${RUN_ROOT:-/scratch-shared/$USER/aig_eval_run}"
+# Strip a trailing slash so the train-root comparison below is exact-match
+# safe: a hand-typed ".../aig_train_run/" would otherwise miss the redirect
+# branch and write masks in-place, where the config lookup won't find them.
+RUN_ROOT="${RUN_ROOT%/}"
 
 # Mask redirect: training writes sparsification masks OFF the main cache (to a
 # separate aig_mask_cache) to cut inode pressure, and the dataset looks them up
 # there via config.SPARSIFICATION_REPLACE_PATH (which only rewrites the train
 # root). For any other RUN_ROOT that config redirect is a no-op, so masks must
-# be written IN-PLACE or the lookup won't find them — hence the default below
-# only redirects the train root.
+# be written IN-PLACE or the lookup won't find them — hence the branch below
+# redirects only when RUN_ROOT is the train root, whichever way it was set.
 if [[ "$RUN_ROOT" == "/scratch-shared/$USER/aig_train_run" ]]; then
     MASK_CACHE_ROOT="${MASK_CACHE_ROOT:-/scratch-shared/$USER/aig_mask_cache}"
 else

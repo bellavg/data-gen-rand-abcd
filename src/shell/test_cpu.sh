@@ -16,9 +16,9 @@
 # pass (only timing differs), so this runs with --dump_predictions false to
 # avoid redundant writes — test.sh already wrote the per-graph CSVs.
 #
-# Depends on the same warmup+mask chain as test.sh (see its header comment)
-# and can run concurrently with test.sh — both are read-only against the
-# cache once that chain has completed.
+# Depends on the same warmup+mask chain as test.sh (see EVALUATION.md) and can
+# run concurrently with test.sh — both are read-only against the cache once
+# that chain has completed.
 # ---------------------------------------------------------------------------
 
 set -euo pipefail
