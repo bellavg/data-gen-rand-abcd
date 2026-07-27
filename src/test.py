@@ -264,13 +264,27 @@ def run_eval_pass(
     dm_kwargs: dict,
     *,
     device: torch.device,
+    split: str = "test",
     gpu_util_sample_every: int = 5,
 ) -> tuple[dict, dict]:
-    """Runs one forward-only sweep over the test split; returns (metrics, per_graph)."""
+    """Runs one forward-only sweep over ``split``; returns (metrics, per_graph).
+
+    ``split="val"`` exists purely as a diagnostic: it runs this same code
+    against the split training already reported metrics for, so a disagreement
+    isolates a bug in this pipeline from a genuine train/test generalization
+    gap. It is not part of the thesis results — see --split's help.
+    """
     datamodule = AIGDataModule(**dm_kwargs)
-    datamodule.setup("test")
-    loader = datamodule.test_dataloader()
-    samples = datamodule.test_ds.samples
+    if split == "test":
+        datamodule.setup("test")
+        loader = datamodule.test_dataloader()
+        samples = datamodule.test_ds.samples
+    elif split == "val":
+        datamodule.setup("validate")
+        loader = datamodule.val_dataloader()
+        samples = datamodule.val_ds.samples
+    else:
+        raise ValueError(f"split must be 'test' or 'val', got {split!r}")
 
     model.eval()
     model.to(device)
@@ -530,6 +544,7 @@ def main(args: argparse.Namespace) -> None:
                 model,
                 dm_kwargs,
                 device=device,
+                split=args.split,
                 gpu_util_sample_every=args.gpu_util_sample_every,
             )
             row = {
@@ -540,14 +555,21 @@ def main(args: argparse.Namespace) -> None:
                 "reduction_method": args.reduction_method or "",
                 "eval_mode": eval_mode,
                 "device": device.type,
+                # Only split="test" rows are thesis results; results_to_latex
+                # filters on this so a val diagnostic can never reach a table.
+                "split": args.split,
                 # One column, not three: the hardware columns below are only
                 # comparable across configs sharing this exact value.
                 "batching": batching,
                 **metrics,
                 **repro,
             }
+            # Non-test splits get their own filename so a diagnostic run cannot
+            # overwrite the real result for this config.
+            split_suffix = "" if args.split == "test" else f"_{args.split}"
             results_path = (
-                Path(args.results_dir) / f"{run_label}_{eval_mode}_{device.type}.csv"
+                Path(args.results_dir)
+                / f"{run_label}_{eval_mode}_{device.type}{split_suffix}.csv"
             )
             write_single_row_csv(results_path, row)
             print(
@@ -633,6 +655,19 @@ if __name__ == "__main__":
         help=(
             "Batches prefetched per worker. Kept below the training default "
             "because node-budget eval batches are much larger."
+        ),
+    )
+    parser.add_argument(
+        "--split",
+        type=str,
+        choices=["test", "val"],
+        default="test",
+        help=(
+            "Split to evaluate. 'val' is a DIAGNOSTIC only: it re-runs this "
+            "pipeline on the split training already reported val_r2/val_loss "
+            "for, so a mismatch isolates an eval bug from a genuine "
+            "generalization gap. Its rows carry split='val' and are excluded "
+            "from the thesis tables."
         ),
     )
     parser.add_argument("--seed", type=int, default=42)

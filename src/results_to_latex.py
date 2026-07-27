@@ -85,7 +85,13 @@ def _load_csv_dir(directory: Path, kind: str) -> pd.DataFrame:
 
 
 def load_inference_results(directory: Path) -> pd.DataFrame:
-    return _load_csv_dir(directory, "inference-based")
+    df = _load_csv_dir(directory, "inference-based")
+    if df.empty or "split" not in df.columns:
+        # Rows written before --split existed are test-split results.
+        return df
+    # Drop val-split diagnostic rows (test.py --split val); only the test split
+    # belongs in the thesis tables.
+    return df[df["split"].fillna("test") == "test"].reset_index(drop=True)
 
 
 def load_training_benchmark(directory: Path) -> pd.DataFrame:
