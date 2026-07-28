@@ -587,3 +587,45 @@ class TestRunEvalPassTiming:
         assert metrics["avg_nodes_per_graph"] == pytest.approx(
             sum(_GRAPH_SIZES) / len(_GRAPH_SIZES)
         )
+
+
+class TestWritePredictionsNoCap:
+    """max_rows=0 (the default) must write every graph. A capped file samples
+    by row position, and a reduced config's batch plan orders graphs
+    differently, so capped files from two configs cover different graphs and
+    cannot be paired design-by-design."""
+
+    @staticmethod
+    def _per_graph(n):
+        return {
+            "graph_id": [f"g{i}" for i in range(n)],
+            "num_nodes": list(range(n)),
+            "num_edges": list(range(n)),
+            "target": [0.5] * n,
+            "prediction": [0.5] * n,
+        }
+
+    def test_zero_writes_every_row(self, tmp_path):
+        path = tmp_path / "preds.csv"
+        write_predictions_csv(path, self._per_graph(500), max_rows=0)
+
+        with open(path, newline="") as f:
+            rows = list(csv.DictReader(f))
+        assert [r["graph_id"] for r in rows] == [f"g{i}" for i in range(500)]
+
+    def test_negative_also_means_no_cap(self, tmp_path):
+        path = tmp_path / "preds.csv"
+        write_predictions_csv(path, self._per_graph(50), max_rows=-1)
+
+        with open(path, newline="") as f:
+            assert len(list(csv.DictReader(f))) == 50
+
+    def test_cap_equal_to_size_keeps_dataset_order(self, tmp_path):
+        """max_rows == n must not trigger sampling — sampling would reorder
+        nothing but still exercise the random path for no reason."""
+        path = tmp_path / "preds.csv"
+        write_predictions_csv(path, self._per_graph(30), max_rows=30)
+
+        with open(path, newline="") as f:
+            rows = list(csv.DictReader(f))
+        assert [r["graph_id"] for r in rows] == [f"g{i}" for i in range(30)]

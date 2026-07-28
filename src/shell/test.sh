@@ -143,6 +143,13 @@ if [[ "$REDUCTION_TYPE" != "none" ]]; then
     REDUCTION_ARGS=(--reduction_method "$REDUCTION_METHOD")
 fi
 
+# Pass-through for one-off flags, e.g. a diagnostic val-split run:
+#   sbatch --export=ALL,EXTRA_ARGS="--split val --wandb false" src/shell/test.sh
+# Word-split into an array so multiple flags work; the ${a[@]+...} guard keeps
+# an unset/empty value safe under `set -u`.
+EXTRA_ARGS="${EXTRA_ARGS:-}"
+read -r -a EXTRA_ARGS_ARR <<< "$EXTRA_ARGS"
+
 srun python -u -m test \
     --algorithm          "$ALGORITHM" \
     --reduction_type     "$REDUCTION_TYPE" \
@@ -158,7 +165,8 @@ srun python -u -m test \
     --device             cuda \
     --dump_predictions   true \
     --results_dir        "$RESULTS_DIR/inference_results" \
-    --predictions_dir    "$RESULTS_DIR/predictions"
+    --predictions_dir    "$RESULTS_DIR/predictions" \
+    ${EXTRA_ARGS_ARR[@]+"${EXTRA_ARGS_ARR[@]}"}
 
 echo "=========================================="
 echo "Task $SLURM_ARRAY_TASK_ID GPU inference eval ($REDUCTION_TYPE/$REDUCTION_METHOD) complete."

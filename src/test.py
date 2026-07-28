@@ -426,7 +426,10 @@ def write_predictions_csv(path: str | Path, per_graph: dict, max_rows: int) -> N
     path.parent.mkdir(parents=True, exist_ok=True)
     n = len(per_graph["graph_id"])
     indices = list(range(n))
-    if n > max_rows:
+    # max_rows <= 0 means no cap. A cap samples by row POSITION, and a reduced
+    # config's batch plan orders graphs differently, so capped files from two
+    # configs cover different graphs and cannot be joined design-by-design.
+    if 0 < max_rows < n:
         indices = sorted(random.Random(42).sample(indices, k=max_rows))
     with open(path, "w", newline="") as f:
         writer = csv.writer(f)
@@ -580,7 +583,10 @@ def main(args: argparse.Namespace) -> None:
             )
 
             if args.dump_predictions:
-                pred_path = Path(args.predictions_dir) / f"{run_label}_{eval_mode}.csv"
+                pred_path = (
+                    Path(args.predictions_dir)
+                    / f"{run_label}_{eval_mode}{split_suffix}.csv"
+                )
                 write_predictions_csv(
                     pred_path, per_graph, max_rows=args.max_prediction_rows
                 )
@@ -685,7 +691,17 @@ if __name__ == "__main__":
         help="Log the result rows to WandB as test_<config>_<device> runs "
         "(results are written to CSV either way).",
     )
-    parser.add_argument("--max_prediction_rows", type=int, default=20_000)
+    parser.add_argument(
+        "--max_prediction_rows",
+        type=int,
+        default=0,
+        help=(
+            "Cap on per-graph prediction rows; 0 (default) writes every graph. "
+            "A cap samples by ROW POSITION, and reduced configs have a "
+            "different batch order, so capped files from different configs "
+            "cover different graphs and cannot be paired design-by-design."
+        ),
+    )
     parser.add_argument("--results_dir", type=str, default="results/inference_results")
     parser.add_argument("--predictions_dir", type=str, default="results/predictions")
 
