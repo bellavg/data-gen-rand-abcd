@@ -17,6 +17,8 @@ from torch_geometric.data import Dataset as PyGDataset
 from torch_geometric.data import storage as _pyg_storage
 from torch_geometric.utils import degree
 
+from config import SPLIT_BY, VALID_SPLIT_BY
+from data import dataset_utils
 from data.partition_utils import PartitionedData, precomputed_partitioning
 from data.sparsification import get_sparse_entry, precomputed_sparsification
 from models.layers.positional_encodings import get_pe_transform
@@ -46,6 +48,7 @@ class GraphSample:
 
     graph_path: str
     design_key: str
+    recipe_key: str
     y_node_opt: float
 
 
@@ -134,6 +137,7 @@ class AIGGraphRegressionDataset(PyGDataset):
         tier0_cache_dir: str | Path | None = None,
         tier1_cache_dir: str | Path | None = None,
         split_ratios: tuple[float, float, float] = (0.8, 0.1, 0.1),
+        split_by: str = SPLIT_BY,
         seed: int = 42,
         num_samples: int | None = None,
         num_workers: int = 0,
@@ -158,6 +162,11 @@ class AIGGraphRegressionDataset(PyGDataset):
             Path(tier1_cache_dir) if tier1_cache_dir is not None else None
         )
         self.split_ratios = split_ratios
+        if split_by not in VALID_SPLIT_BY:
+            raise ValueError(
+                f"split_by must be one of {sorted(VALID_SPLIT_BY)}. Got: {split_by!r}"
+            )
+        self.split_by = split_by
         self.seed = seed
         self.num_samples = num_samples
         self.num_workers = num_workers
@@ -212,7 +221,7 @@ class AIGGraphRegressionDataset(PyGDataset):
         hasher = hashlib.sha1()
         hasher.update(f"split_cache_v{_SPLIT_CACHE_VERSION}".encode())
         hasher.update(f"graph_cache_v{_GRAPH_CACHE_CONTENT_VERSION}".encode())
-        hasher.update(b"split_by=design")
+        hasher.update(f"split_by={self.split_by}".encode())
         hasher.update(str(self.seed).encode())
         hasher.update(str(self.split).encode())
         hasher.update(str(self.num_samples).encode())
@@ -250,6 +259,23 @@ class AIGGraphRegressionDataset(PyGDataset):
                 return parts[design_idx]
         return graph_path
 
+    def _infer_recipe_key(self, graph_path: str, design_key: str) -> str:
+        stem = Path(graph_path).stem
+        recipe_id = dataset_utils.infer_recipe_id(stem)
+        if recipe_id is None:
+            # Unrecognized stem format: degrade gracefully to design-level
+            # grouping rather than falling back to per-row (fully leaky) keys.
+            # Logged because this quietly weakens split_by="recipe"'s
+            # unseen-recipe guarantee for this sample.
+            print(
+                f"[dataset] WARNING: could not infer recipe ID from {stem!r}; "
+                f"falling back to design-level grouping ({design_key!r}) for "
+                "split_by='recipe'.",
+                flush=True,
+            )
+            return design_key
+        return recipe_id
+
     def _sample_rows(self, samples: list[GraphSample]) -> list[GraphSample]:
         if self.num_samples is None or self.num_samples >= len(samples):
             return samples
@@ -283,7 +309,7 @@ class AIGGraphRegressionDataset(PyGDataset):
 
         self._cached_split_meta = {
             "version": _SPLIT_CACHE_VERSION,
-            "split_by": "design",
+            "split_by": self.split_by,
             "seed": self.seed,
             "split_ratios": list(self.split_ratios),
             "num_samples": self.num_samples,
@@ -326,10 +352,12 @@ class AIGGraphRegressionDataset(PyGDataset):
             strict=False,
         ):
             norm_path = self._normalize_graph_path(str(graph_path))
+            design_key = self._infer_design_key(norm_path)
             samples.append(
                 GraphSample(
                     graph_path=norm_path,
-                    design_key=self._infer_design_key(norm_path),
+                    design_key=design_key,
+                    recipe_key=self._infer_recipe_key(norm_path, design_key),
                     y_node_opt=float(node_opt),
                 )
             )
@@ -347,7 +375,7 @@ class AIGGraphRegressionDataset(PyGDataset):
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         algo_tag = "_".join(p.stem for p in self.csv_paths)
         sample_tag = f"_{self.num_samples}" if self.num_samples is not None else "_all"
-        cache_file = self.cache_dir / f"{algo_tag}{sample_tag}_splits.json"
+        cache_file = self.cache_dir / f"{algo_tag}{sample_tag}_{self.split_by}_splits.json"
         cache_key = str(cache_file)
 
         cached_payload = _SPLITS_CACHE.get(cache_key)
@@ -373,31 +401,47 @@ class AIGGraphRegressionDataset(PyGDataset):
         _SPLITS_CACHE[cache_key] = split_keys
         return split_keys
 
+    def _group_key_for_sample(self, sample: GraphSample) -> str:
+        """The unit that stays together in one split, per self.split_by.
+
+        "design": whole base circuit. "recipe": one ABC synthesis recipe ID,
+        held out across ALL designs at once (every tier0 step plus its
+        tier1/tier2 descendants for that recipe, regardless of design).
+        "random": every row is its own group (i.e. no grouping at all).
+        """
+        if self.split_by == "design":
+            return sample.design_key
+        if self.split_by == "recipe":
+            return sample.recipe_key
+        return sample.graph_path
+
     def _create_split_keys(
         self, samples: list[GraphSample]
     ) -> dict[str, list[str] | dict[str, object]]:
         samples = self._sample_rows(samples)
-        design_keys = list(dict.fromkeys(sample.design_key for sample in samples))
+        group_keys = list(
+            dict.fromkeys(self._group_key_for_sample(sample) for sample in samples)
+        )
         rng = random.Random(self.seed)
-        rng.shuffle(design_keys)
+        rng.shuffle(group_keys)
 
         total = sum(self.split_ratios)
         train_f = self.split_ratios[0] / total
         val_f = self.split_ratios[1] / total
 
-        n = len(design_keys)
+        n = len(group_keys)
         n_train = int(n * train_f)
         n_val = int(n * val_f)
         if n > 0 and train_f > 0.0 and n_train == 0:
             n_train = 1
         n_val = min(n_val, n - n_train)
 
-        design_to_split = {design_key: "train" for design_key in design_keys[:n_train]}
-        design_to_split.update(
-            {design_key: "val" for design_key in design_keys[n_train : n_train + n_val]}
+        group_to_split = {group_key: "train" for group_key in group_keys[:n_train]}
+        group_to_split.update(
+            {group_key: "val" for group_key in group_keys[n_train : n_train + n_val]}
         )
-        design_to_split.update(
-            {design_key: "test" for design_key in design_keys[n_train + n_val :]}
+        group_to_split.update(
+            {group_key: "test" for group_key in group_keys[n_train + n_val :]}
         )
 
         split_keys: dict[str, list[str] | dict[str, object]] = {
@@ -406,7 +450,7 @@ class AIGGraphRegressionDataset(PyGDataset):
             "test": [],
         }
         for sample in samples:
-            split_name = design_to_split[sample.design_key]
+            split_name = group_to_split[self._group_key_for_sample(sample)]
             split_keys[split_name].append(sample.graph_path)
         split_keys["__meta__"] = self._split_cache_meta()
 

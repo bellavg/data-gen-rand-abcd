@@ -7,13 +7,14 @@ from config import KNOWN_ALGORITHMS
 
 
 _ALGO_ALT = "|".join(sorted(KNOWN_ALGORITHMS))
-_TIER0_STEM_RE = re.compile(r"^(?P<design>.+?)_syn[0-9X]+_step\d+$")
+_TIER0_STEM_RE = re.compile(r"^(?P<design>.+?)_(?P<suffix>syn[0-9X]+_step\d+)$")
 _TIER1_STEM_RE = re.compile(
     rf"^(?P<design>.+?)_(?P<algorithm>{_ALGO_ALT})_tier1_(?P<suffix>.+)$"
 )
 _TIER2_STEM_RE = re.compile(
     rf"^(?P<design>.+?)_(?P<src_algorithm>{_ALGO_ALT})_(?P<dst_algorithm>{_ALGO_ALT})_tier2_(?P<suffix>.+)$"
 )
+_RECIPE_ID_RE = re.compile(r"^(?P<recipe>syn[0-9X]+)_step\d+$")
 
 
 def clean_str(value: Optional[str]) -> str:
@@ -142,10 +143,37 @@ def graph_input_path_from_csv_row(graph_root: Path, row: Dict[str, str]) -> Path
     return graph_root / "graphs" / f"tier{tier_id}" / design / f"{stem}.pt"
 
 
+def infer_recipe_id(stem: str) -> Optional[str]:
+    """Extract the ABC synthesis recipe ID (e.g. "syn5") from a tier0/1/2 stem.
+
+    The same reference recipe script is applied identically across every
+    design, so the recipe ID alone (independent of design and of the
+    within-recipe step number) identifies "which synthesis recipe produced
+    this artifact, or the artifact it was ultimately derived from." Grouping
+    on this key holds a recipe out across ALL designs at once (seen-IP,
+    unseen-recipe), rather than just for one design.
+
+    Tries tier2/tier1 (which have a required literal `_tier{1,2}_` infix)
+    before tier0's more permissive suffix-only pattern, since a tier1/tier2
+    stem also ends in `synX_stepN` and would otherwise be misparsed by the
+    tier0 pattern.
+
+    Returns None if the stem matches none of the known tier patterns, or the
+    matched suffix isn't in the expected `synX_stepN` shape.
+    """
+    for regex in (_TIER2_STEM_RE, _TIER1_STEM_RE, _TIER0_STEM_RE):
+        match = regex.match(stem)
+        if match is not None:
+            recipe_match = _RECIPE_ID_RE.match(match.group("suffix"))
+            return recipe_match.group("recipe") if recipe_match else None
+    return None
+
+
 __all__ = [
     "clean_str",
     "normalize_algorithm",
     "parse_int",
     "parse_float",
     "graph_input_path_from_csv_row",
+    "infer_recipe_id",
 ]

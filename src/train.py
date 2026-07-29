@@ -89,6 +89,7 @@ def main(args):
         partition=args.partition,
         batch_size=args.batch_size,
         split_ratios=(0.8, 0.1, 0.1),
+        split_by=args.split_by,
         num_workers=args.num_workers,
         pin_memory=args.pin_memory,
         persistent_workers=args.persistent_workers,
@@ -163,6 +164,10 @@ def main(args):
     else:
         run_label = args.algorithm
         wandb_run_name = f"train_{args.algorithm}"
+
+    if args.split_by != config.SPLIT_BY:
+        run_label = f"{run_label}_{args.split_by}"
+        wandb_run_name = f"{wandb_run_name}_{args.split_by}"
 
     algo_checkpoint_dir = os.path.join(args.checkpoint_dir, run_label)
     os.makedirs(algo_checkpoint_dir, exist_ok=True)
@@ -343,6 +348,16 @@ if __name__ == "__main__":
     parser.add_argument("--tier0_cache_dir", type=str, default=None)
     parser.add_argument("--tier1_cache_dir", type=str, default=None)
     parser.add_argument("--hp_tuning_splits_path", type=str, default=None)
+    parser.add_argument(
+        "--split_by",
+        type=str,
+        default=config.SPLIT_BY,
+        choices=sorted(config.VALID_SPLIT_BY),
+        help="Train/val/test grouping strategy: 'design' (default, whole circuit "
+        "per split, unseen-IP), 'recipe' (whole ABC synthesis recipe held out "
+        "across all designs, seen-IP/unseen-recipe), or 'random' (no grouping, "
+        "per-row split).",
+    )
     parser.add_argument(
         "--sparsification",
         type=lambda x: x.lower() if x.lower() != "none" else None,

@@ -52,12 +52,14 @@ PREFETCH_FACTOR="${PREFETCH_FACTOR:-4}"
 PIN_MEMORY="${PIN_MEMORY:-true}"
 PERSISTENT_WORKERS="${PERSISTENT_WORKERS:-true}"
 TORCH_COMPILE="${TORCH_COMPILE:-true}"
+SPLIT_BY="${SPLIT_BY:-design}"
 
 echo "Using NUM_WORKERS=$NUM_WORKERS for data loading."
 echo "Using PREFETCH_FACTOR=$PREFETCH_FACTOR."
 echo "Using PIN_MEMORY=$PIN_MEMORY."
 echo "Using PERSISTENT_WORKERS=$PERSISTENT_WORKERS."
 echo "Using TORCH_COMPILE=$TORCH_COMPILE."
+echo "Using SPLIT_BY=$SPLIT_BY."
 echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-<unset>}"
 
 # =========================================================
@@ -76,6 +78,7 @@ srun python -u -m train \
     --tier0_cache_dir   "$TIER0_CACHE_DIR" \
     --tier1_cache_dir   "$TIER1_CACHE_DIR" \
     --hp_tuning_splits_path "$HP_TUNING_SPLITS" \
+    --split_by          "$SPLIT_BY" \
     --prefetch_factor   "$PREFETCH_FACTOR" \
     --num_workers       "$NUM_WORKERS" \
     --pin_memory        "$PIN_MEMORY" \
