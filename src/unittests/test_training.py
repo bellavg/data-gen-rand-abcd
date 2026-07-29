@@ -1,3 +1,4 @@
+import os
 from types import SimpleNamespace
 from unittest.mock import ANY, MagicMock, call, patch
 
@@ -306,6 +307,7 @@ def test_train_main_passes_sparsification_and_partition_to_datamodule(
         prefetch_factor=1,
         cache_dir=None,
         hp_tuning_splits_path=None,
+        split_by="design",
         tier0_cache_dir=None,
         tier1_cache_dir=None,
         dynamic_batching=False,
@@ -356,6 +358,126 @@ def test_train_main_passes_sparsification_and_partition_to_datamodule(
     assert datamodule_cls.call_args.kwargs["partition"] is None
 
 
+def _base_train_args(tmp_path, **overrides) -> SimpleNamespace:
+    """Shared argparse-Namespace stand-in for train.main() tests below."""
+    args = SimpleNamespace(
+        algorithm="Orchestrate",
+        seed=42,
+        csv_paths=[str(tmp_path / "dummy.csv")],
+        pe_type="none",
+        sparsification=None,
+        partition=None,
+        batch_size=2,
+        num_workers=0,
+        pin_memory=False,
+        persistent_workers=False,
+        prefetch_factor=1,
+        cache_dir=None,
+        hp_tuning_splits_path=None,
+        split_by="design",
+        tier0_cache_dir=None,
+        tier1_cache_dir=None,
+        dynamic_batching=False,
+        max_total_nodes_per_batch=16,
+        num_layers=2,
+        hidden_dim=16,
+        dropout=0.0,
+        norm_type="layer",
+        jk_mode="last",
+        encoder_name="gcn",
+        heads=4,
+        pos_enc_dim=0,
+        pooling_type="mean",
+        lr=1e-3,
+        weight_decay=1e-4,
+        min_lr=1e-6,
+        warmup_steps=1,
+        warmup_start_lr=1e-6,
+        scheduler_patience=1,
+        scheduler_factor=0.5,
+        checkpoint_dir=str(tmp_path / "checkpoints"),
+        log_dir=str(tmp_path / "logs"),
+        patience=1,
+        max_batch_compute_reports=0,
+        max_epochs=1,
+        gradient_clip_val=1.0,
+        val_check_interval=1.0,
+        num_sanity_val_steps=0,
+        log_steps=1,
+        torch_compile=False,
+    )
+    for key, value in overrides.items():
+        setattr(args, key, value)
+    return args
+
+
+@pytest.mark.parametrize(
+    "split_by,sparsification,partition,expected_run_label,expected_wandb_name",
+    [
+        # Default split_by ("design") must NOT get a suffix — this is the
+        # naming scheme every existing checkpoint/log/WandB run already uses.
+        ("design", None, None, "Orchestrate", "train_Orchestrate"),
+        ("recipe", None, None, "Orchestrate_recipe", "train_Orchestrate_recipe"),
+        ("random", None, None, "Orchestrate_random", "train_Orchestrate_random"),
+        (
+            "recipe",
+            "random_edge_dropout",
+            None,
+            "Orchestrate_random_edge_dropout_recipe",
+            "train_Orchestrate_sparsification_random_edge_dropout_recipe",
+        ),
+        (
+            "random",
+            None,
+            "metis",
+            "Orchestrate_metis_random",
+            "train_Orchestrate_partition_metis_random",
+        ),
+    ],
+)
+def test_run_naming_reflects_split_by(
+    tmp_path,
+    split_by,
+    sparsification,
+    partition,
+    expected_run_label,
+    expected_wandb_name,
+):
+    """split_by must be folded into the checkpoint dir, log dir, and WandB
+    run name for any non-default value, so switching split strategy never
+    overwrites a previous run's checkpoints/logs/WandB history. The default
+    ("design") must produce the same unamended names as before this option
+    existed."""
+    args = _base_train_args(
+        tmp_path,
+        split_by=split_by,
+        sparsification=sparsification,
+        partition=partition,
+    )
+
+    with (
+        patch("train.AIGDataModule"),
+        patch("train.AIGRegressionLightningModule"),
+        patch("train.ModelCheckpoint") as checkpoint_cls,
+        patch("train.PreciseEarlyStopping"),
+        patch("train.LearningRateMonitor"),
+        patch("train.TrainingStartupCallback"),
+        patch("train.WandbLogger") as wandb_cls,
+        patch("train.pl.Trainer") as trainer_cls,
+    ):
+        trainer_cls.return_value.fit = MagicMock()
+        train.main(args)
+
+    expected_checkpoint_dir = os.path.join(args.checkpoint_dir, expected_run_label)
+    assert checkpoint_cls.call_args.kwargs["dirpath"] == expected_checkpoint_dir
+
+    assert wandb_cls.call_args.kwargs["name"] == expected_wandb_name
+    assert (
+        wandb_cls.call_args.kwargs["save_dir"]
+        == f"{args.log_dir}_{expected_run_label}"
+    )
+
+
 def test_main_falls_back_to_cpu_when_cuda_driver_init_fails(tmp_path):
     csv_path = tmp_path / "dataset.csv"
     csv_path.write_text("unoptimized_graph_path,optimizability\n/tmp/graph.pt,0.5\n")
@@ -373,6 +495,7 @@ def test_main_falls_back_to_cpu_when_cuda_driver_init_fails(tmp_path):
         prefetch_factor=1,
         cache_dir=None,
         hp_tuning_splits_path=None,
+        split_by="design",
         tier0_cache_dir=None,
         tier1_cache_dir=None,
         dynamic_batching=False,
@@ -448,6 +571,7 @@ def test_main_does_not_materialize_node_local_partition_cache_before_fit(
         prefetch_factor=1,
         cache_dir=None,
         hp_tuning_splits_path=None,
+        split_by="design",
         tier0_cache_dir=None,
         tier1_cache_dir=None,
         dynamic_batching=False,
@@ -521,6 +645,7 @@ def test_main_raises_when_gpu_required_but_cuda_init_fails(tmp_path, monkeypatch
         prefetch_factor=1,
         cache_dir=None,
         hp_tuning_splits_path=None,
+        split_by="design",
         tier0_cache_dir=None,
         tier1_cache_dir=None,
         dynamic_batching=False,

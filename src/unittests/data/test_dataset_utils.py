@@ -8,6 +8,7 @@ import pytest
 from data.dataset_utils import (
     clean_str,
     graph_input_path_from_csv_row,
+    infer_recipe_id,
     normalize_algorithm,
     parse_float,
     parse_int,
@@ -264,3 +265,44 @@ class TestGraphInputPathFromCsvRow(unittest.TestCase):
 )
 def test_normalize_algorithm_all_valid(algo: str) -> None:
     assert normalize_algorithm(algo) == algo
+
+
+# ---------------------------------------------------------------------------
+# infer_recipe_id
+# ---------------------------------------------------------------------------
+
+
+class TestInferRecipeId(unittest.TestCase):
+    def test_tier0_stem(self):
+        self.assertEqual(infer_recipe_id("adder_syn1_step3"), "syn1")
+
+    def test_tier0_stem_with_x_variant(self):
+        self.assertEqual(infer_recipe_id("multiplier_synX_step0"), "synX")
+
+    def test_tier1_stem_reproduces_tier0_recipe(self):
+        self.assertEqual(
+            infer_recipe_id("adder_Orchestrate_tier1_syn2_step4"), "syn2"
+        )
+
+    def test_tier2_stem_reproduces_same_recipe(self):
+        self.assertEqual(
+            infer_recipe_id("adder_Orchestrate_Deepsyn_tier2_syn1_step0"), "syn1"
+        )
+
+    def test_tier0_and_tier1_same_recipe_agree(self):
+        """The whole point of the recipe key: a tier0 variant and its tier1
+        descendant (same synX, different design-irrelevant step) must produce
+        an identical recipe ID, regardless of design."""
+        tier0 = infer_recipe_id("adder_syn2_step4")
+        tier1 = infer_recipe_id("adder_Orchestrate_tier1_syn2_step4")
+        self.assertEqual(tier0, tier1)
+
+    def test_recipe_id_is_design_independent(self):
+        """The same recipe script is applied to every design, so two
+        different designs on the same recipe ID must produce the same key."""
+        self.assertEqual(
+            infer_recipe_id("adder_syn3_step7"), infer_recipe_id("aes_syn3_step7")
+        )
+
+    def test_unrecognized_stem_returns_none(self):
+        self.assertIsNone(infer_recipe_id("garbled_file_name"))

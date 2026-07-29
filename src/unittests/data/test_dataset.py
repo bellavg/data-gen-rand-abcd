@@ -127,6 +127,58 @@ def _make_design_rows(
     return rows
 
 
+def _make_recipe_rows(
+    root: Path,
+    designs: list[str],
+    *,
+    suffixes: list[str],
+    include_tier1: bool = False,
+    opt_start: float = 0.1,
+) -> list[dict]:
+    """One tier0 row per (design, suffix) pair (and optionally a same-suffix
+    tier1 row too), with real tier0/tier1 filename-stem shapes so
+    dataset_utils.infer_recipe_id can actually match them. A tier0 stem is
+    `{design}_{suffix}` where suffix looks like `synX_stepN`; its tier1
+    sibling is `{design}_Orchestrate_tier1_{suffix}` (same suffix -> same
+    recipe_key). Reusing the same `suffixes` list across multiple `designs`
+    lets tests prove recipe grouping is design-independent (the same recipe
+    ID on two different designs must land in the same split).
+    """
+    data = aig_to_pytorch_geometric(_AIG_PATH)
+    rows: list[dict] = []
+    opt_value = opt_start
+    for design in designs:
+        design_dir = root / "designs" / design / "tier0"
+        design_dir.mkdir(parents=True, exist_ok=True)
+        for suffix in suffixes:
+            tier0_path = design_dir / f"{design}_{suffix}.pt"
+            torch.save(data, tier0_path)
+            rows.append(
+                {
+                    "unoptimized_graph_path": str(tier0_path),
+                    "design": design,
+                    "algorithm": "Orchestrate",
+                    "tier_id": "0",
+                    "optimizability": str(round(opt_value, 4)),
+                }
+            )
+            opt_value += 0.01
+            if include_tier1:
+                tier1_path = design_dir / f"{design}_Orchestrate_tier1_{suffix}.pt"
+                torch.save(data, tier1_path)
+                rows.append(
+                    {
+                        "unoptimized_graph_path": str(tier1_path),
+                        "design": design,
+                        "algorithm": "Orchestrate",
+                        "tier_id": "1",
+                        "optimizability": str(round(opt_value, 4)),
+                    }
+                )
+                opt_value += 0.01
+    return rows
+
+
 # ---------------------------------------------------------------------------
 # Dataset tests
 # ---------------------------------------------------------------------------
@@ -609,6 +661,150 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
         self.assertFalse(val_paths & test_paths, "val and test share graph paths")
         self.assertEqual(len(train_ds) + len(val_ds) + len(test_ds), 40)
 
+    # --- split_by modes ---
+
+    def test_invalid_split_by_raises(self):
+        from data.dataset import AIGGraphRegressionDataset
+
+        pts = _make_graph_pts(self.root / "invalid_split_by_graphs", 5)
+        csv = self.root / "invalid_split_by.csv"
+        _write_csv(csv, _make_rows(pts))
+
+        with self.assertRaises(ValueError):
+            AIGGraphRegressionDataset(csv, split_by="bogus")
+
+    def test_split_cache_meta_reflects_split_by(self):
+        from data.dataset import AIGGraphRegressionDataset
+
+        pts = _make_graph_pts(self.root / "meta_graphs", 10)
+        csv = self.root / "meta.csv"
+        _write_csv(csv, _make_rows(pts))
+
+        for split_by in ("design", "recipe", "random"):
+            cache_dir = self.root / f"meta_cache_{split_by}"
+            AIGGraphRegressionDataset(
+                csv, split="train", cache_dir=cache_dir, split_by=split_by, seed=1
+            )
+            cache_file = next(cache_dir.glob("*_splits.json"))
+            splits = json.loads(cache_file.read_text())
+            self.assertEqual(splits["__meta__"]["split_by"], split_by)
+
+    def test_recipe_split_keeps_tier_family_together(self):
+        from data.dataset import AIGGraphRegressionDataset
+
+        csv = self.root / "recipe_family.csv"
+        suffixes = [f"syn{i}_step0" for i in range(10)]
+        _write_csv(
+            csv,
+            _make_recipe_rows(
+                self.root, ["adder"], suffixes=suffixes, include_tier1=True
+            ),
+        )
+
+        train_ds = AIGGraphRegressionDataset(csv, split_by="recipe", split="train", seed=2)
+        val_ds = AIGGraphRegressionDataset(csv, split_by="recipe", split="val", seed=2)
+        test_ds = AIGGraphRegressionDataset(csv, split_by="recipe", split="test", seed=2)
+
+        split_of_path: dict[str, str] = {}
+        for name, ds in (("train", train_ds), ("val", val_ds), ("test", test_ds)):
+            for sample in ds.samples:
+                split_of_path[sample.graph_path] = name
+
+        for suffix in suffixes:
+            tier0_path = str(self.root / "designs" / "adder" / "tier0" / f"adder_{suffix}.pt")
+            tier1_path = str(
+                self.root / "designs" / "adder" / "tier0" / f"adder_Orchestrate_tier1_{suffix}.pt"
+            )
+            self.assertEqual(
+                split_of_path[tier0_path],
+                split_of_path[tier1_path],
+                f"tier0/tier1 pair for suffix {suffix} landed in different splits",
+            )
+
+    def test_recipe_split_allows_same_design_different_recipes_to_split(self):
+        from data.dataset import AIGGraphRegressionDataset
+
+        csv = self.root / "recipe_divergence.csv"
+        suffixes = [f"syn{i}_step0" for i in range(10)]
+        rows = _make_recipe_rows(self.root, ["adder"], suffixes=suffixes)
+        _write_csv(csv, rows)
+
+        # A single design forces "design" split_by to put everything in train
+        # (one group, ratio math rounds it entirely into the first split).
+        design_val_ds = AIGGraphRegressionDataset(csv, split_by="design", split="val", seed=2)
+        design_test_ds = AIGGraphRegressionDataset(csv, split_by="design", split="test", seed=2)
+        self.assertEqual(len(design_val_ds), 0)
+        self.assertEqual(len(design_test_ds), 0)
+
+        # 10 distinct recipes within that same design distribute across all
+        # three splits under "recipe" grouping.
+        recipe_val_ds = AIGGraphRegressionDataset(csv, split_by="recipe", split="val", seed=2)
+        recipe_test_ds = AIGGraphRegressionDataset(csv, split_by="recipe", split="test", seed=2)
+        self.assertGreater(len(recipe_val_ds), 0)
+        self.assertGreater(len(recipe_test_ds), 0)
+
+    def test_recipe_split_holds_out_recipe_across_designs(self):
+        """The defining property of "recipe" grouping vs a design::recipe
+        pairing: the SAME recipe ID reused on two different designs must
+        land in the same split for both, so a held-out recipe never appears
+        in train for ANY design (seen-IP, unseen-recipe)."""
+        from data.dataset import AIGGraphRegressionDataset
+
+        csv = self.root / "recipe_cross_design.csv"
+        suffixes = [f"syn{i}_step0" for i in range(10)]
+        rows = _make_recipe_rows(self.root, ["adder", "aes"], suffixes=suffixes)
+        _write_csv(csv, rows)
+
+        train_ds = AIGGraphRegressionDataset(csv, split_by="recipe", split="train", seed=2)
+        val_ds = AIGGraphRegressionDataset(csv, split_by="recipe", split="val", seed=2)
+        test_ds = AIGGraphRegressionDataset(csv, split_by="recipe", split="test", seed=2)
+
+        split_of_recipe: dict[str, str] = {}
+        for name, ds in (("train", train_ds), ("val", val_ds), ("test", test_ds)):
+            for sample in ds.samples:
+                stem = Path(sample.graph_path).stem
+                recipe_id = stem.split("_")[-2]  # "..._synI_step0" -> "synI"
+                if recipe_id in split_of_recipe:
+                    self.assertEqual(
+                        split_of_recipe[recipe_id],
+                        name,
+                        f"recipe {recipe_id} appears in both "
+                        f"{split_of_recipe[recipe_id]} and {name}",
+                    )
+                else:
+                    split_of_recipe[recipe_id] = name
+
+        # Both designs should be represented in train (seen-IP)...
+        train_designs = {
+            Path(s.graph_path).parent.parent.name for s in train_ds.samples
+        }
+        self.assertEqual(train_designs, {"adder", "aes"})
+        # ...while some recipes are absent from train for both designs at once
+        # (unseen-recipe): every recipe present in val/test is entirely
+        # missing from train, verified above by split_of_recipe.
+
+    def test_random_split_has_no_grouping_guarantee(self):
+        from data.dataset import AIGGraphRegressionDataset
+
+        csv = self.root / "random_split.csv"
+        design_names = ["design_a", "design_b"]
+        _write_csv(
+            csv,
+            _make_design_rows(self.root, design_names, graphs_per_design=15),
+        )
+
+        # 2 designs forces "design" split_by's val to be empty (ratio math
+        # assigns one whole design to train, the other to test, none to val).
+        design_val_ds = AIGGraphRegressionDataset(csv, split_by="design", split="val", seed=4)
+        self.assertEqual(len(design_val_ds), 0)
+
+        # The same 30 rows, ungrouped, deterministically produce non-empty
+        # val/test splits (30 rows * 0.1 ratio = 3 each) regardless of shuffle.
+        random_val_ds = AIGGraphRegressionDataset(csv, split_by="random", split="val", seed=4)
+        random_test_ds = AIGGraphRegressionDataset(csv, split_by="random", split="test", seed=4)
+        self.assertGreater(len(random_val_ds), 0)
+        self.assertGreater(len(random_test_ds), 0)
+
     # --- HP tuning split exclusion testing ---
 
     def test_hp_tuning_splits_path_excludes_samples(self):
@@ -670,6 +866,40 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
         self.assertIn("test", splits)
         self.assertIn("__meta__", splits)
         self.assertEqual(splits["__meta__"]["split_by"], "design")
+
+    def test_cache_filename_disambiguates_split_by(self):
+        from data.dataset import AIGGraphRegressionDataset
+
+        pts = _make_graph_pts(self.root / "cache_split_by_graphs", 10)
+        csv = self.root / "cache_split_by.csv"
+        _write_csv(csv, _make_rows(pts))
+        cache_dir = self.root / "cache_split_by"
+
+        design_ds = AIGGraphRegressionDataset(
+            csv, split="train", cache_dir=cache_dir, split_by="design", seed=1
+        )
+        random_ds = AIGGraphRegressionDataset(
+            csv, split="train", cache_dir=cache_dir, split_by="random", seed=1
+        )
+
+        cache_files = sorted(cache_dir.glob("*_splits.json"))
+        self.assertEqual(len(cache_files), 2, "expected one cache file per split_by mode")
+
+        # Both reload correctly on a second construction with the same args.
+        design_ds2 = AIGGraphRegressionDataset(
+            csv, split="train", cache_dir=cache_dir, split_by="design", seed=1
+        )
+        random_ds2 = AIGGraphRegressionDataset(
+            csv, split="train", cache_dir=cache_dir, split_by="random", seed=1
+        )
+        self.assertEqual(
+            [s.graph_path for s in design_ds.samples],
+            [s.graph_path for s in design_ds2.samples],
+        )
+        self.assertEqual(
+            [s.graph_path for s in random_ds.samples],
+            [s.graph_path for s in random_ds2.samples],
+        )
 
     def test_cache_loaded_on_second_call(self):
         from data.dataset import AIGGraphRegressionDataset
@@ -1238,6 +1468,14 @@ class TestAIGDataModule(unittest.TestCase):
     def test_datamodule_split_sizes_sum_to_total(self):
         dm = self._make_dm()
         self.assertEqual(len(dm.train_ds) + len(dm.val_ds) + len(dm.test_ds), 30)
+
+    def test_datamodule_split_by_passthrough(self):
+        # split_by defaults to "design"; explicit "random" should reach the
+        # underlying AIGGraphRegressionDataset instances unchanged.
+        dm = self._make_dm(split_by="random")
+        self.assertEqual(dm.train_ds.split_by, "random")
+        self.assertEqual(dm.val_ds.split_by, "random")
+        self.assertEqual(dm.test_ds.split_by, "random")
 
     def test_hp_tuning_splits_path_datamodule(self):
         # Pick 5 samples from the 30 existing ones

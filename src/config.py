@@ -69,6 +69,20 @@ VALID_ALGORITHMS = {"Orchestrate"}
 # parse filenames regardless of which algorithm is currently trained on.
 KNOWN_ALGORITHMS = {"Orchestrate", "Deepsyn", "Syn4", "C2RS"}
 
+# Train/val/test grouping strategies (AIGGraphRegressionDataset split_by).
+# These correspond to the standard train/test protocols used across the AIG-ML
+# literature (OpenABC-D Task-1/Task-2, LOSTIN transductive/inductive,
+# Lsoformer IP-Inductive/Recipe-Inductive, ABC-RL/INVICTUS/DeHNN design-disjoint):
+# "design" holds out whole base circuits (unseen-IP / IP-Inductive, leak-safe
+# default); "recipe" holds out whole ABC synthesis recipes -- every tier0 step
+# plus its tier1/tier2 descendants for a given recipe ID -- across ALL designs,
+# so circuits stay seen but a held-out recipe never appears anywhere in train
+# (seen-IP/unseen-recipe, Recipe-Inductive); "random" applies no grouping at
+# all (per-row split, the leakiest baseline, useful only as an ablation
+# control to quantify how much leaky evaluation inflates reported performance).
+VALID_SPLIT_BY = {"design", "recipe", "random"}
+SPLIT_BY = "design"
+
 # Output dimension used by models (set equal to hidden dim by default)
 OUTPUT_DIM = HIDDEN_DIM
 
