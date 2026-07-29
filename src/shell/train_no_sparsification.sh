@@ -64,10 +64,10 @@ PERSISTENT_WORKERS="${PERSISTENT_WORKERS:-true}"
 TORCH_COMPILE="${TORCH_COMPILE:-true}"
 # Array-job task ID -> split_by mode. SLURM_ARRAY_TASK_ID is injected by the
 # scheduler directly (unlike an exported env var, its delivery does not
-# depend on --export policy), so `sbatch -a 0,1,3 ...` reliably selects a
+# depend on --export policy), so `sbatch -a 0-2 ...` reliably selects a
 # mode per task with no environment-passing involved. Falls back to the
 # SPLIT_BY env var (or "design") for a plain, non-array submission.
-declare -A SPLIT_BY_MODES=([0]="design" [1]="recipe" [3]="random")
+declare -A SPLIT_BY_MODES=([0]="design" [1]="recipe" [2]="random")
 if [ -n "${SLURM_ARRAY_TASK_ID:-}" ]; then
     SPLIT_BY="${SPLIT_BY_MODES[$SLURM_ARRAY_TASK_ID]:?Unknown SLURM_ARRAY_TASK_ID=$SLURM_ARRAY_TASK_ID, expected one of: ${!SPLIT_BY_MODES[*]}}"
 else
