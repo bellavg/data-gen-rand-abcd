@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=precompute_sparsification_masks
-#SBATCH --time=08:00:00
+#SBATCH --time=24:00:00
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=96
 #SBATCH --partition=genoa
@@ -9,13 +9,43 @@
 
 # ---------------------------------------------------------------------------
 # Precompute sparsification masks using Cache Manifests
+#
+# --time raised 8h -> 24h now that SPARSIFICATION_ALGO defaults to "all": each
+# task loads its graph once but still runs one full independent compute per
+# requested method (data.sparsification._process_single_cache_file loops
+# algo_names sequentially over the same loaded graph — only the torch.load
+# is shared, not the per-method compute), so a bare "all" invocation costs
+# meaningfully more than the old 8h budget (which was only ever exercised
+# against and_gate_only, the cheapest method) — treat 24h as a rough buffer,
+# not a precise 4x estimate; spanning_forest/pagerank build a full networkx
+# graph and run MST/PageRank per graph, unlike and_gate_only's cheap
+# vectorized op.
+#
+# A timed-out job's progress survives ONLY past its first 50,000 successfully
+# processed graphs: update_from_manifests's periodic _flush_indices() runs
+# every CHECKPOINT_EVERY=50_000 successes, but the unconditional final flush
+# sits OUTSIDE the worker pool's `with` block, so a SIGTERM/timeout kill
+# before that first checkpoint writes ZERO index chunks — a genuine full
+# restart, not partial progress. In THIS repo's actual usage that threshold
+# is very likely crossed before either the eval or train workspace's default
+# RUN_ROOT finishes (a real run logged 96,430 test-split graphs, well above
+# 50,000), but a job killed early in its run is still a full loss regardless
+# of dataset size. Past that first checkpoint, resubmission does make
+# progress: update_from_manifests only skips a graph once it is done for
+# EVERY requested method (an intersection across algos' done-sets, not a
+# per-method check), so a graph only partially done (e.g. 2 of 4 methods)
+# gets reprocessed for all 4 again on resubmission — some redundant
+# recompute, but not from zero.
 # ---------------------------------------------------------------------------
 
 set -euo pipefail
 
-# Define the algorithm argument (override via env var to run this once per
-# method, e.g. SPARSIFICATION_ALGO=pagerank sbatch precompute_sparsification_masks.sh)
-SPARSIFICATION_ALGO="${SPARSIFICATION_ALGO:-and_gate_only}"
+# Define the algorithm argument. Defaults to "all" (data.sparsification computes
+# all 4 methods — random_edge_dropout, spanning_forest, pagerank, and_gate_only —
+# in one pass), matching precompute_partition_masks.sh's "all" default. Override
+# via env var to compute just one method, e.g.
+#   sbatch --export=ALL,SPARSIFICATION_ALGO=pagerank src/shell/precompute_sparsification_masks.sh
+SPARSIFICATION_ALGO="${SPARSIFICATION_ALGO:-all}"
 
 
 # Match the workspace targeted in train.sh
@@ -46,6 +76,14 @@ fi
 echo "=========================================="
 echo "PRECOMPUTE SPARSIFICATION MASKS JOB ID: $SLURM_JOB_ID"
 echo "Algorithm: $ALGORITHM"
+# Distinct from $ALGORITHM above (the training algorithm, e.g. Orchestrate):
+# this is the sparsification method(s) being computed. Echoed explicitly so a
+# silently-unpropagated SPARSIFICATION_ALGO env var (e.g. a bare `VAR=value
+# sbatch ...` prefix, which does not reliably propagate here — use
+# `sbatch --export=ALL,VAR=value` instead) is visible immediately at the top
+# of the log rather than only inside data.sparsification's own banner further
+# down.
+echo "Sparsification method(s): $SPARSIFICATION_ALGO"
 echo "Running on: $(hostname)"
 echo "Start time: $(date)"
 echo "CPUs available: $(nproc)"

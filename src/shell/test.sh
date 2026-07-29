@@ -32,11 +32,12 @@
 # must exist first (warmup_train_cache.sh only builds train+val). The exact
 # submission chain lives in EVALUATION.md — follow it there rather than
 # copying a second copy into this header, which is how the two drifted apart
-# before. Two things that chain gets right and are easy to get wrong:
-#   - one precompute_sparsification_masks.sh submission PER method (the
-#     SPARSIFICATION_ALGO env var defaults to and_gate_only, so all four must
-#     be submitted explicitly);
-#   - masks must land in the same workspace this script reads ($EVAL_ROOT).
+# before. One thing that chain gets right and is easy to get wrong: masks
+# must land in the same workspace this script reads ($EVAL_ROOT). (A prior
+# version of this comment said SPARSIFICATION_ALGO defaults to and_gate_only
+# and needs one submission PER method — that's now stale: it defaults to
+# "all", one submission covers every method, see precompute_sparsification_
+# masks.sh.)
 # A missing mask raises at eval time rather than silently recomputing, so a
 # mismatch fails the array task loudly instead of costing a slow rebuild.
 #

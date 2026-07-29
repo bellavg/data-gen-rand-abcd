@@ -29,8 +29,12 @@
 #
 # Training workspace:
 #   WID=$(sbatch --parsable src/shell/warmup_train_cache.sh)
-#   RUN_ROOT=/scratch-shared/$USER/aig_train_run \
-#     sbatch --dependency=afterok:$WID src/shell/precompute_partition_masks.sh
+#   sbatch --export=ALL,RUN_ROOT=/scratch-shared/$USER/aig_train_run \
+#     --dependency=afterok:$WID src/shell/precompute_partition_masks.sh
+# (--export=ALL,VAR=value, not a bare `VAR=value sbatch ...` prefix: the
+# latter does not reliably propagate into the job on this cluster and would
+# silently fall back to RUN_ROOT's own eval-workspace default instead of
+# erroring.)
 # ---------------------------------------------------------------------------
 
 set -euo pipefail
