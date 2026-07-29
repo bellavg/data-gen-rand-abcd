@@ -150,6 +150,33 @@ NUM_WORKERS="${NUM_WORKERS:-12}"
 export WANDB_INIT_TIMEOUT=120
 WANDB="${WANDB:-true}"
 
+# HARDCODED true, not an overridable env var: this is set for a specific
+# targeted resubmission (fixing eval-workspace sparsification masks for
+# array indices 2-4, whose full_graph pass already completed correctly on a
+# prior run and only needs matched_reduction/val rerun — see EVALUATION.md/
+# git history around commit c308b27).
+#
+# MUST BE REVERTED TO false BEFORE THE NEXT FULL SWEEP (array 0-8 on
+# newly-trained checkpoints). For the 8 reduction configs this silently drops
+# only the full_graph pass; for the BASELINE config (array index 0,
+# "none:none") it is worse — build_eval_passes() only appends matched_reduction
+# when reduction_type != "none", so baseline has no fallback pass at all and
+# this would silently drop its ENTIRE test-split accuracy result, leaving
+# only the val sanity-check row. Nothing in the job log flags this as an
+# anomaly — only the absence of a "Running split='test' 'full_graph' pass"
+# line reveals it, so a forgotten revert would look like a normal run.
+SKIP_FULL_GRAPH=true
+if [[ "$SKIP_FULL_GRAPH" == "true" ]]; then
+    echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+    echo "WARNING: SKIP_FULL_GRAPH is hardcoded true in this script — the"
+    echo "full_graph pass will NOT run for task $SLURM_ARRAY_TASK_ID."
+    echo "If this is array index 0 (baseline, none:none), NO test-split"
+    echo "accuracy metrics will be produced at all this run (baseline has no"
+    echo "matched_reduction fallback). Revert to SKIP_FULL_GRAPH=false in"
+    echo "src/shell/test.sh before the next full 0-8 sweep."
+    echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+fi
+
 nvidia-smi -L
 
 # =========================================================
@@ -183,6 +210,7 @@ srun python -u -m test \
     --hp_tuning_splits_path "$HP_TUNING_SPLITS" \
     --num_workers        "$NUM_WORKERS" \
     --wandb              "$WANDB" \
+    --skip_full_graph    "$SKIP_FULL_GRAPH" \
     --device             cuda \
     --dump_predictions   true \
     --results_dir        "$RESULTS_DIR/inference_results" \

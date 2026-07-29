@@ -769,10 +769,14 @@ if __name__ == "__main__":
             "(e.g. a missing precomputed mask) whose full_graph pass already "
             "completed and wrote its CSV/artifact/wandb entries correctly — "
             "reruns only matched_reduction (and, unless --skip_val, the "
-            "validation-set pass). Not wired into test.sh/test_cpu.sh by "
-            "default (a normal sweep needs full_graph); pass it via "
-            "EXTRA_ARGS for a targeted resubmission, e.g.:\n"
-            '  EXTRA_ARGS="--skip_full_graph true" sbatch --array=2 src/shell/test.sh'
+            "validation-set pass). test.sh sets this via a SKIP_FULL_GRAPH "
+            "variable near its WandB setup (test_cpu.sh doesn't set it at "
+            "all, i.e. always false) — check that variable's current value "
+            "before relying on it: it is sometimes hardcoded true there "
+            "temporarily for one specific targeted resubmission and MUST be "
+            "reverted to false before the next full sweep (array 0-8 on "
+            "fresh checkpoints), or every config's full_graph pass would be "
+            "silently skipped."
         ),
     )
     parser.add_argument("--hp_tuning_splits_path", type=str, default=None)
