@@ -57,7 +57,7 @@ tasks and both devices cannot drift onto different batchings:
 | `config.py` | default |
 |---|---|
 | `EVAL_DYNAMIC_BATCHING` | `True` |
-| `EVAL_MAX_TOTAL_NODES_PER_BATCH` | `5_000_000` |
+| `EVAL_MAX_TOTAL_NODES_PER_BATCH` | `8_000_000` |
 | `EVAL_PREFETCH_FACTOR` | `2` (below training's 4 — in-flight host memory is `num_workers × prefetch_factor` batches, and eval batches are much larger) |
 
 What this does and does not change:
@@ -68,12 +68,33 @@ What this does and does not change:
 | `throughput_graphs_per_s` | Improves, and becomes where the reduction benefit shows up (fewer nodes ⇒ more graphs per batch). |
 | `peak_vram_mb` | Becomes ~constant across configs **by construction** — the budget holds nodes/batch fixed. Don't read a reduction's memory benefit off this column while dynamic batching is on. |
 
-The 5M budget sits above training's 3M because forward-only eval holds no
-gradients or optimizer state. Watch `avg_gpu_utilization_pct` and
-`peak_vram_mb` on the first run and adjust `EVAL_MAX_TOTAL_NODES_PER_BATCH`.
+The 8M budget sits above training's 3M because forward-only eval holds no
+gradients or optimizer state. It was set from a measured 5M run on an H100
+80GB, which peaked at ~40% GPU memory (~34GB, i.e. ~6.8GB per 1M nodes); 8M
+projects to ~54GB (~68%), leaving headroom for allocator fragmentation and for
+a peak falling between NVML samples. Watch `peak_vram_mb` and
+`peak_process_rss_mb` on the first run at the new value:
+
+- if `peak_vram_mb` lands well under ~55GB there is room for ~10M;
+- `peak_process_rss_mb` is the one that can bite first — in-flight *host*
+  memory is `num_workers × prefetch_factor` batches (12 × 2 = 24), each now
+  1.6× larger, and neither eval SLURM script requests an explicit `--mem`.
+  Drop `EVAL_PREFETCH_FACTOR` to 1 before dropping the node budget.
+
+Don't expect throughput to scale with the budget. That same 5M run showed SM
+Active ~100% at 82% occupancy with the FP32 pipeline at ~5% and DRAM at ~37% —
+the kernels are latency-bound on message-passing gather/scatter, not compute-
+or bandwidth-bound, so a larger budget only amortizes per-batch collate/H2D/
+launch overhead.
+
+The eval batch plan is rebuilt in memory each run (`AIGDataModule._ensure_test_plan`
+calls `build_batch_plan` directly and does not touch the on-disk plan cache), so
+a budget change takes effect immediately with no stale-plan risk. The *training*
+plan is disk-cached, but `batch_plan_cache_path` hashes `max_total_nodes` into
+the filename, so that one is safe too.
 
 The effective setting lands in each row's single `batching` column
-(`dynamic_nodes=5000000` or `fixed_graphs=32` — only one of the two knobs is
+(`dynamic_nodes=8000000` or `fixed_graphs=32` — only one of the two knobs is
 ever live), so a mismatch across configs is visible in the CSVs rather than
 silent. **Changing it means re-running every config**, not just the new one,
 or the hardware columns stop being comparable.
@@ -84,14 +105,39 @@ graphs the timing covers, and `total_time_s` covers that same region — so
 divide by `num_timed_graphs`, not `num_graphs`. Both go NaN when a pass fits in
 a single batch, since there is then no steady-state region at all.
 
+### Validation-set sanity pass
+
+Every `test.sh` array task also runs one extra pass on the **validation**
+split, in the same reduction form training's own val loop used for that
+config (`AIGDataModule` applies `sparsification`/`partition` identically to
+`train_ds` and `val_ds` — see `datamodule._make_dataset`) — a check that this
+eval pipeline reproduces training's own reported val metrics, not a thesis
+result (excluded from `results_to_latex.py`'s tables via the `split=="test"`
+filter). It reads from the **train** workspace, not `$EVAL_ROOT`: validation
+graphs and their reduction masks were built there by `warmup_train_cache.sh` /
+`precompute_*_masks.sh RUN_ROOT=aig_train_run` — `warmup_test_cache.sh` only
+ever warms the test split under `$EVAL_ROOT`. `test.sh` wires this via
+`--val_cache_dir`/`--val_tier0_cache_dir`/`--val_tier1_cache_dir`.
+
+`test_cpu.sh` passes `--skip_val true` — it only measures inference hardware,
+and the sanity pass is already covered by the GPU run. Disable it for a single
+`test.sh` invocation with `EXTRA_ARGS="--skip_val true"`.
+
 ### WandB
 
 Each array task opens one run named `test_<algorithm>[_<type>_<method>]`,
 mirroring train.py's `train_<…>` scheme, into the same project/entity (now
 `config.WANDB_PROJECT` / `config.WANDB_ENTITY`, shared by both scripts).
-Metrics land in the run summary prefixed by pass — `full_graph/rmse`,
-`matched_reduction/throughput_graphs_per_s`, … The CSV write happens *first*,
-so WandB is a mirror and never the source of truth. Disable with
+Metrics land in the run summary prefixed by split then pass —
+`test/full_graph/rmse`, `val/matched_reduction/throughput_graphs_per_s`, …
+(the split prefix matters: test and val can share an `eval_mode` string, e.g.
+both `full_graph` for a baseline config, and would otherwise overwrite each
+other's summary entries). The CSV write happens *first*, so WandB is a mirror
+and never the source of truth. Each pass's per-graph predictions CSV (when
+`--dump_predictions true`) is additionally uploaded as a WandB Artifact named
+after the CSV's filename, so per-graph results are recoverable from the run
+without cluster filesystem access — a Table isn't used since a full test
+split is too many rows for its render/size limits. Disable WandB entirely with
 `WANDB=false sbatch …`.
 
 
@@ -123,9 +169,9 @@ directories.
 
 | Path | Contents |
 |---|---|
-| `results/inference_results/*.csv` | accuracy + inference hardware, one file per (config, eval_mode, device) |
+| `results/inference_results/*.csv` | accuracy + inference hardware, one file per (config, eval_mode, split, device) — non-test splits get a `_val` filename suffix and `split` column, and are excluded from the RQ tables |
 | `results/training_benchmark/*.csv` | training hardware aggregate, one file per config (one graph per batch) |
 | `results/benchmark_per_graph/*.csv` | per-graph training step time + VRAM, one file per config (enables paired full-vs-reduced analysis) |
-| `results/predictions/*.csv` | per-graph predictions (GPU pass only) |
+| `results/predictions/*.csv` | per-graph predictions (GPU pass only, `_val` suffix for the validation sanity pass); also uploaded as a WandB Artifact per file |
 | `results/tables/*.tex` | RQ1–RQ4 tables — `\input{}` into `sections/4-results.tex` |
 | `results/figures/*.png` | parity plots, RQ2/RQ3/RQ4 charts, Pareto front, VRAM-vs-size + VRAM-saving-vs-size scatters |

@@ -1,10 +1,20 @@
 """Evaluate a trained checkpoint on the complete test split.
 
-Runs up to two passes per checkpoint:
-    - "full_graph":       unchanged test graphs (baseline eval / RQ4 cross-state)
-    - "matched_reduction": test graphs under the checkpoint's own reduction
-                            (RQ1/RQ3 matched-state eval; skipped for baseline
-                            checkpoints, since it would duplicate full_graph)
+Runs up to three passes per checkpoint:
+    - "full_graph"        (split=test):  unchanged test graphs (baseline eval /
+                            RQ4 cross-state)
+    - "matched_reduction" (split=test):  test graphs under the checkpoint's own
+                            reduction (RQ1/RQ3 matched-state eval; skipped for
+                            baseline checkpoints, since it would duplicate
+                            full_graph)
+    - val sanity pass     (split=val):   validation graphs in the SAME
+                            reduction form training's own val loop saw for
+                            this config (full_graph for baseline,
+                            matched_reduction otherwise) — a check that this
+                            pipeline reproduces training's own reported
+                            val metrics, not a thesis result. Skippable with
+                            --skip_val (test_cpu.sh does, since it only
+                            measures hardware).
 
 Each pass reports accuracy (Smooth L1, RMSE, R^2, Spearman) and inference
 hardware stats (throughput, peak VRAM, GPU utilization, host memory) in one
@@ -192,6 +202,49 @@ def resolve_reduction_kwargs(reduction_type: str, reduction_method: str | None) 
             "dataset-level support first."
         )
     raise ValueError(f"Unknown reduction_type: {reduction_type!r}")
+
+
+def build_eval_passes(
+    split: str,
+    reduction_type: str,
+    reduction_kwargs: dict,
+    *,
+    skip_val: bool,
+) -> list[tuple[str, str, dict]]:
+    """Passes to run for one test.py invocation, as (split, eval_mode, red_kwargs).
+
+    The primary pair follows ``split`` (normally "test"; "val" is also
+    accepted directly for the pre-existing manual diagnostic invocation, e.g.
+    ``EXTRA_ARGS="--split val --wandb false"``).
+
+    When ``split == "test"`` and not ``skip_val``, one extra automatic
+    validation-set sanity pass is appended in the SAME reduction form
+    training used for val_ds — AIGDataModule applies sparsification/partition
+    identically to train_ds and val_ds (see datamodule._make_dataset), so
+    this reproduces exactly what training's own val loop saw. Not a
+    full_graph/matched_reduction pair: for a reduced config, val was never
+    seen full-graph during training, so that comparison wouldn't correspond
+    to anything trained (unlike the test-side RQ4 cross-state pass). Skipped
+    entirely when ``split == "val"`` already (the manual diagnostic case),
+    since the primary pair above already covers val and appending this would
+    just duplicate one of those two passes.
+    """
+    passes: list[tuple[str, str, dict]] = [
+        (split, "full_graph", {"sparsification": None, "partition": None})
+    ]
+    if reduction_type != "none":
+        passes.append((split, "matched_reduction", reduction_kwargs))
+
+    if split == "test" and not skip_val:
+        val_eval_mode = "matched_reduction" if reduction_type != "none" else "full_graph"
+        val_red_kwargs = (
+            reduction_kwargs
+            if reduction_type != "none"
+            else {"sparsification": None, "partition": None}
+        )
+        passes.append(("val", val_eval_mode, val_red_kwargs))
+
+    return passes
 
 
 def emitted_sample_order(loader) -> list[int] | None:
@@ -535,19 +588,33 @@ def main(args: argparse.Namespace) -> None:
             },
         )
 
-    passes: list[tuple[str, dict]] = [("full_graph", {"sparsification": None, "partition": None})]
-    if args.reduction_type != "none":
-        passes.append(("matched_reduction", reduction_kwargs))
+    passes = build_eval_passes(
+        args.split, args.reduction_type, reduction_kwargs, skip_val=args.skip_val
+    )
 
     try:
-        for eval_mode, red_kwargs in passes:
-            print(f"[test] Running {eval_mode!r} pass ...", flush=True)
+        for split, eval_mode, red_kwargs in passes:
+            print(f"[test] Running split={split!r} {eval_mode!r} pass ...", flush=True)
             dm_kwargs = {**base_dm_kwargs, **red_kwargs}
+            if split == "val":
+                # Validation graphs and their reduction masks were built in
+                # the TRAIN workspace (warmup_train_cache.sh +
+                # precompute_*_masks.sh RUN_ROOT=aig_train_run), never under
+                # $EVAL_ROOT — warmup_test_cache.sh only ever warms the test
+                # split there. Falls back to --cache_dir/--tier[01]_cache_dir
+                # when unset, matching the pre-existing manual-diagnostic
+                # behavior.
+                if args.val_cache_dir is not None:
+                    dm_kwargs["cache_dir"] = args.val_cache_dir
+                if args.val_tier0_cache_dir is not None:
+                    dm_kwargs["tier0_cache_dir"] = args.val_tier0_cache_dir
+                if args.val_tier1_cache_dir is not None:
+                    dm_kwargs["tier1_cache_dir"] = args.val_tier1_cache_dir
             metrics, per_graph = run_eval_pass(
                 model,
                 dm_kwargs,
                 device=device,
-                split=args.split,
+                split=split,
                 gpu_util_sample_every=args.gpu_util_sample_every,
             )
             row = {
@@ -559,24 +626,24 @@ def main(args: argparse.Namespace) -> None:
                 "eval_mode": eval_mode,
                 "device": device.type,
                 # Only split="test" rows are thesis results; results_to_latex
-                # filters on this so a val diagnostic can never reach a table.
-                "split": args.split,
+                # filters on this so a val row can never reach a table.
+                "split": split,
                 # One column, not three: the hardware columns below are only
                 # comparable across configs sharing this exact value.
                 "batching": batching,
                 **metrics,
                 **repro,
             }
-            # Non-test splits get their own filename so a diagnostic run cannot
-            # overwrite the real result for this config.
-            split_suffix = "" if args.split == "test" else f"_{args.split}"
+            # Non-test splits get their own filename so a val pass cannot
+            # overwrite the real test result for this config.
+            split_suffix = "" if split == "test" else f"_{split}"
             results_path = (
                 Path(args.results_dir)
                 / f"{run_label}_{eval_mode}_{device.type}{split_suffix}.csv"
             )
             write_single_row_csv(results_path, row)
             print(
-                f"[test] {eval_mode}: rmse={metrics['rmse']:.4f} r2={metrics['r2']:.4f} "
+                f"[test] {split}/{eval_mode}: rmse={metrics['rmse']:.4f} r2={metrics['r2']:.4f} "
                 f"spearman={metrics['spearman']:.4f} "
                 f"throughput={metrics['throughput_graphs_per_s']:.1f} graphs/s",
                 flush=True,
@@ -592,13 +659,35 @@ def main(args: argparse.Namespace) -> None:
                 )
                 print(f"[test] Wrote per-graph predictions to {pred_path}", flush=True)
 
+                # Ship the CSV itself as a versioned Artifact (not a Table —
+                # a full test split is too many rows for Table's render/size
+                # limits) so per-graph results are recoverable from the
+                # WandB run even without cluster filesystem access. Named
+                # after the pred_path stem, so reruns of the same
+                # (config, eval_mode, split) version the same artifact.
+                if wandb_run is not None:
+                    try:
+                        artifact = wandb.Artifact(name=pred_path.stem, type="predictions")
+                        artifact.add_file(str(pred_path))
+                        wandb_run.log_artifact(artifact)
+                    except Exception as exc:  # noqa: BLE001 - never fail eval over logging
+                        print(f"[test] WARNING: WandB artifact upload failed: {exc}", flush=True)
+
             # Last, and non-fatal. Both CSVs are the source of truth; a WandB
             # hiccup must not lose the predictions file or abort the remaining
             # pass, which would cost a full GPU re-run of this config.
             if wandb_run is not None:
                 try:
+                    # Keyed by split too (not just eval_mode): test and val
+                    # passes can share an eval_mode string (e.g. both
+                    # "full_graph" for a baseline config), and without the
+                    # split prefix the second summary.update() call would
+                    # silently overwrite the first pass's entries.
                     wandb_run.summary.update(
-                        {f"{eval_mode}/{key}": value for key, value in metrics.items()}
+                        {
+                            f"{split}/{eval_mode}/{key}": value
+                            for key, value in metrics.items()
+                        }
                     )
                 except Exception as exc:  # noqa: BLE001 - never fail eval over logging
                     print(f"[test] WARNING: WandB logging failed: {exc}", flush=True)
@@ -632,6 +721,31 @@ if __name__ == "__main__":
     parser.add_argument("--cache_dir", type=str, default=None)
     parser.add_argument("--tier0_cache_dir", type=str, default=None)
     parser.add_argument("--tier1_cache_dir", type=str, default=None)
+    parser.add_argument(
+        "--val_cache_dir",
+        type=str,
+        default=None,
+        help=(
+            "cache_dir override for the automatic validation-set pass. "
+            "Validation graphs and their reduction masks are built in the "
+            "TRAIN workspace (warmup_train_cache.sh / precompute_*_masks.sh "
+            "RUN_ROOT=aig_train_run), never under --cache_dir's eval "
+            "workspace, so this must point there. Falls back to --cache_dir "
+            "when unset."
+        ),
+    )
+    parser.add_argument("--val_tier0_cache_dir", type=str, default=None)
+    parser.add_argument("--val_tier1_cache_dir", type=str, default=None)
+    parser.add_argument(
+        "--skip_val",
+        type=lambda x: str(x).lower() in ("true", "1", "yes"),
+        default=False,
+        help=(
+            "Skip the automatic validation-set sanity pass. test_cpu.sh sets "
+            "this true since it only measures inference hardware, not "
+            "accuracy, and the val pass is already covered by the GPU run."
+        ),
+    )
     parser.add_argument("--hp_tuning_splits_path", type=str, default=None)
     parser.add_argument("--num_workers", type=int, default=config.NUM_WORKERS)
     parser.add_argument("--batch_size", type=int, default=config.BATCH_SIZE)

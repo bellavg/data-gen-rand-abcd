@@ -14,7 +14,10 @@
 # comparison (RQ4 motivation: "inference on cpu — less intensive") doesn't
 # spend GPU-node budget. Predictions are numerically identical to the GPU
 # pass (only timing differs), so this runs with --dump_predictions false to
-# avoid redundant writes — test.sh already wrote the per-graph CSVs.
+# avoid redundant writes — test.sh already wrote the per-graph CSVs. For the
+# same reason this passes --skip_val true: test.sh's GPU run already covers
+# the validation-set sanity pass, and CPU accuracy numbers on val add nothing
+# this script cares about (it only measures inference hardware).
 #
 # Depends on the same warmup+mask chain as test.sh (see EVALUATION.md) and can
 # run concurrently with test.sh — both are read-only against the cache once
@@ -72,11 +75,18 @@ CSV_PATH="$BASE_DIR/data/designs/design_metadata/algo_${ALGORITHM}_ml.csv"
 
 # Checkpoints stay in the train workspace; the eval CACHE is separate (see
 # test.sh). Override the eval root with EVAL_ROOT=...
-CHECKPOINT_DIR="/scratch-shared/$USER/aig_train_run/${ALGORITHM}/checkpoints"
+TRAIN_ROOT="/scratch-shared/$USER/aig_train_run"
+CHECKPOINT_DIR="$TRAIN_ROOT/${ALGORITHM}/checkpoints"
 EVAL_ROOT="${EVAL_ROOT:-/scratch-shared/$USER/aig_eval_run}"
 CACHE_DIR="$EVAL_ROOT/${ALGORITHM}/cache"
 TIER0_CACHE_DIR="$EVAL_ROOT/shared_tier0_cache"
 TIER1_CACHE_DIR="$EVAL_ROOT/shared_tier1_cache"
+
+# Wired for parity with test.sh in case --skip_val is ever overridden false
+# via EXTRA_ARGS below; --skip_val true (default here) makes these unused.
+VAL_CACHE_DIR="$TRAIN_ROOT/${ALGORITHM}/cache"
+VAL_TIER0_CACHE_DIR="$TRAIN_ROOT/shared_tier0_cache"
+VAL_TIER1_CACHE_DIR="$TRAIN_ROOT/shared_tier1_cache"
 
 HP_TUNING_WORKSPACE="/scratch-shared/$USER/big_optuna_run"
 HP_TUNING_SPLITS="$HP_TUNING_WORKSPACE/shared_dataset_cache/algo_Orchestrate_ml_algo_Deepsyn_ml_algo_Syn4_ml_algo_C2RS_ml_50000_splits.json"
@@ -115,11 +125,15 @@ srun python -u -m test \
     --cache_dir          "$CACHE_DIR" \
     --tier0_cache_dir    "$TIER0_CACHE_DIR" \
     --tier1_cache_dir    "$TIER1_CACHE_DIR" \
+    --val_cache_dir       "$VAL_CACHE_DIR" \
+    --val_tier0_cache_dir "$VAL_TIER0_CACHE_DIR" \
+    --val_tier1_cache_dir "$VAL_TIER1_CACHE_DIR" \
     --hp_tuning_splits_path "$HP_TUNING_SPLITS" \
     --num_workers        "$NUM_WORKERS" \
     --wandb              "$WANDB" \
     --device             cpu \
     --dump_predictions   false \
+    --skip_val           true \
     --results_dir        "$RESULTS_DIR/inference_results" \
     --predictions_dir    "$RESULTS_DIR/predictions" \
     ${EXTRA_ARGS_ARR[@]+"${EXTRA_ARGS_ARR[@]}"}

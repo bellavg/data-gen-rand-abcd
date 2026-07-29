@@ -17,6 +17,7 @@ from data.sampler import BalancedDynamicBatchSampler
 from test import (
     _batch_per_graph_counts,
     batching_label,
+    build_eval_passes,
     compute_accuracy_metrics,
     emitted_sample_order,
     resolve_checkpoint_path,
@@ -217,6 +218,53 @@ class TestResolveReductionKwargs:
     def test_unknown_type_raises_value_error(self):
         with pytest.raises(ValueError):
             resolve_reduction_kwargs("bogus", "x")
+
+
+class TestBuildEvalPasses:
+    """The val sanity pass is appended automatically (test.sh's default), but
+    must never appear alongside --skip_val or the manual --split val
+    diagnostic (which already covers val via the primary pair)."""
+
+    def test_baseline_gets_full_graph_and_val_passes(self):
+        red_kwargs = resolve_reduction_kwargs("none", None)
+        passes = build_eval_passes("test", "none", red_kwargs, skip_val=False)
+        assert passes == [
+            ("test", "full_graph", {"sparsification": None, "partition": None}),
+            ("val", "full_graph", {"sparsification": None, "partition": None}),
+        ]
+
+    def test_reduction_gets_three_passes_val_matches_the_checkpoints_own_reduction(self):
+        red_kwargs = resolve_reduction_kwargs("partition", "metis")
+        passes = build_eval_passes("test", "partition", red_kwargs, skip_val=False)
+        assert passes == [
+            ("test", "full_graph", {"sparsification": None, "partition": None}),
+            ("test", "matched_reduction", {"sparsification": None, "partition": "metis"}),
+            ("val", "matched_reduction", {"sparsification": None, "partition": "metis"}),
+        ]
+
+    def test_skip_val_drops_the_validation_pass(self):
+        red_kwargs = resolve_reduction_kwargs("sparsification", "pagerank")
+        passes = build_eval_passes("test", "sparsification", red_kwargs, skip_val=True)
+        assert [p[0] for p in passes] == ["test", "test"]
+        assert all(split != "val" for split, _, _ in passes)
+
+    def test_manual_split_val_does_not_duplicate_the_automatic_pass(self):
+        """The pre-existing manual diagnostic (EXTRA_ARGS='--split val') must
+        keep running exactly its own full_graph/matched_reduction pair against
+        val, not that pair *plus* the automatic val pass on top."""
+        red_kwargs = resolve_reduction_kwargs("partition", "metis")
+        passes = build_eval_passes("val", "partition", red_kwargs, skip_val=False)
+        assert passes == [
+            ("val", "full_graph", {"sparsification": None, "partition": None}),
+            ("val", "matched_reduction", {"sparsification": None, "partition": "metis"}),
+        ]
+
+    def test_manual_split_val_baseline_is_a_single_pass(self):
+        red_kwargs = resolve_reduction_kwargs("none", None)
+        passes = build_eval_passes("val", "none", red_kwargs, skip_val=False)
+        assert passes == [
+            ("val", "full_graph", {"sparsification": None, "partition": None}),
+        ]
 
 
 class TestComputeAccuracyMetrics:

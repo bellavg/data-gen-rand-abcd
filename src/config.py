@@ -25,7 +25,17 @@ MAX_TOTAL_NODES_PER_BATCH = 3_000_000
 # These are the single source of truth for eval batching — test.sh/test_cpu.sh
 # deliberately do NOT pass them, so all 9 configs cannot drift apart.
 EVAL_DYNAMIC_BATCHING = True
-EVAL_MAX_TOTAL_NODES_PER_BATCH = 5_000_000
+# Raised 5M -> 8M off a measured 5M eval run on an H100 80GB: peak GPU memory
+# plateaued at ~40% (~34GB), i.e. ~6.8GB per 1M nodes. Activation memory scales
+# ~linearly with nodes/edges per batch (GCN weights at hid=128/4 layers are
+# negligible), so 8M projects to ~54GB / ~68% and leaves room for allocator
+# fragmentation and for a peak between NVML samples. Do NOT expect a
+# proportional speedup: that same run showed SM Active ~100% at 82% occupancy
+# with FP32 pipeline ~5% and DRAM ~37% — the kernels are latency-bound on
+# message-passing gather/scatter, so a bigger budget only amortizes per-batch
+# collate/H2D/launch overhead. Raising this INVALIDATES cross-config hardware
+# comparisons; every config must be re-run at the same value (see EVALUATION.md).
+EVAL_MAX_TOTAL_NODES_PER_BATCH = 8_000_000
 # Lower than PREFETCH_FACTOR: in-flight host memory is (num_workers x
 # prefetch_factor) batches, and a node-budget eval batch is roughly an order of
 # magnitude larger than a 32-graph training batch. Neither eval SLURM script

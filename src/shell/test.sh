@@ -15,7 +15,14 @@
 # test split, for each of the 9 trained configs (baseline, 4 sparsification,
 # 4 partition methods). Each array task runs test.py once, which itself runs
 # the full-graph pass (always) plus the matched-reduction pass (for
-# non-baseline configs).
+# non-baseline configs) on the TEST split, plus one automatic sanity pass on
+# the VALIDATION split in this config's own trained-on reduction form (a
+# check that this pipeline reproduces training's own reported val metrics,
+# not a thesis result — see test.py's module docstring). The val pass reads
+# from the TRAIN workspace (VAL_CACHE_DIR below), not $EVAL_ROOT: val's
+# graphs and reduction masks were built there by warmup_train_cache.sh /
+# precompute_*_masks.sh RUN_ROOT=aig_train_run, and warmup_test_cache.sh only
+# ever warms the test split under $EVAL_ROOT.
 #
 # For CPU inference numbers (RQ4 motivation: does inference stay cheap on
 # CPU?) use test_cpu.sh instead — kept as a separate script on the genoa
@@ -105,11 +112,21 @@ CSV_PATH="$BASE_DIR/data/designs/design_metadata/algo_${ALGORITHM}_ml.csv"
 # The eval CACHE is a separate workspace so test-split graphs never mix into
 # the train cache — the design-level split makes train/test graphs disjoint,
 # so nothing is shared anyway. Override the eval root with EVAL_ROOT=...
-CHECKPOINT_DIR="/scratch-shared/$USER/aig_train_run/${ALGORITHM}/checkpoints"
+TRAIN_ROOT="/scratch-shared/$USER/aig_train_run"
+CHECKPOINT_DIR="$TRAIN_ROOT/${ALGORITHM}/checkpoints"
 EVAL_ROOT="${EVAL_ROOT:-/scratch-shared/$USER/aig_eval_run}"
 CACHE_DIR="$EVAL_ROOT/${ALGORITHM}/cache"
 TIER0_CACHE_DIR="$EVAL_ROOT/shared_tier0_cache"
 TIER1_CACHE_DIR="$EVAL_ROOT/shared_tier1_cache"
+
+# Validation-pass cache: the TRAIN workspace, where val's graphs and
+# reduction masks actually live (see the header comment above). Sparsification
+# masks under this root are found via config.SPARSIFICATION_REPLACE_PATH's
+# aig_train_run -> aig_mask_cache redirect inside AIGGraphRegressionDataset;
+# partition masks are written in-place here, so no redirect is needed.
+VAL_CACHE_DIR="$TRAIN_ROOT/${ALGORITHM}/cache"
+VAL_TIER0_CACHE_DIR="$TRAIN_ROOT/shared_tier0_cache"
+VAL_TIER1_CACHE_DIR="$TRAIN_ROOT/shared_tier1_cache"
 
 HP_TUNING_WORKSPACE="/scratch-shared/$USER/big_optuna_run"
 HP_TUNING_SPLITS="$HP_TUNING_WORKSPACE/shared_dataset_cache/algo_Orchestrate_ml_algo_Deepsyn_ml_algo_Syn4_ml_algo_C2RS_ml_50000_splits.json"
@@ -159,6 +176,9 @@ srun python -u -m test \
     --cache_dir          "$CACHE_DIR" \
     --tier0_cache_dir    "$TIER0_CACHE_DIR" \
     --tier1_cache_dir    "$TIER1_CACHE_DIR" \
+    --val_cache_dir       "$VAL_CACHE_DIR" \
+    --val_tier0_cache_dir "$VAL_TIER0_CACHE_DIR" \
+    --val_tier1_cache_dir "$VAL_TIER1_CACHE_DIR" \
     --hp_tuning_splits_path "$HP_TUNING_SPLITS" \
     --num_workers        "$NUM_WORKERS" \
     --wandb              "$WANDB" \
