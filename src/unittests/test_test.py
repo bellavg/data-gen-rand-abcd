@@ -266,6 +266,50 @@ class TestBuildEvalPasses:
             ("val", "full_graph", {"sparsification": None, "partition": None}),
         ]
 
+    def test_skip_full_graph_drops_only_the_test_side_full_graph_pass(self):
+        """Targeted resubmission after fixing an unrelated failure (e.g. a
+        missing mask) whose full_graph pass already succeeded: rerun only
+        matched_reduction plus the still-pending val pass, not full_graph
+        again."""
+        red_kwargs = resolve_reduction_kwargs("sparsification", "random_edge_dropout")
+        passes = build_eval_passes(
+            "test", "sparsification", red_kwargs, skip_val=False, skip_full_graph=True
+        )
+        assert passes == [
+            (
+                "test",
+                "matched_reduction",
+                {"sparsification": "random_edge_dropout", "partition": None},
+            ),
+            (
+                "val",
+                "matched_reduction",
+                {"sparsification": "random_edge_dropout", "partition": None},
+            ),
+        ]
+
+    def test_skip_full_graph_and_skip_val_leaves_only_matched_reduction(self):
+        red_kwargs = resolve_reduction_kwargs("partition", "metis")
+        passes = build_eval_passes(
+            "test", "partition", red_kwargs, skip_val=True, skip_full_graph=True
+        )
+        assert passes == [
+            ("test", "matched_reduction", {"sparsification": None, "partition": "metis"}),
+        ]
+
+    def test_skip_full_graph_on_baseline_leaves_only_the_val_pass(self):
+        """Baseline has no matched_reduction pass, so skipping full_graph
+        drops its only test-side pass entirely — an intentional, if unusual,
+        consequence of asking for "reduced only" on a config with nothing
+        reduced."""
+        red_kwargs = resolve_reduction_kwargs("none", None)
+        passes = build_eval_passes(
+            "test", "none", red_kwargs, skip_val=False, skip_full_graph=True
+        )
+        assert passes == [
+            ("val", "full_graph", {"sparsification": None, "partition": None}),
+        ]
+
 
 class TestComputeAccuracyMetrics:
     def test_perfect_predictions(self):

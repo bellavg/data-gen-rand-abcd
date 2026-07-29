@@ -210,12 +210,18 @@ def build_eval_passes(
     reduction_kwargs: dict,
     *,
     skip_val: bool,
+    skip_full_graph: bool = False,
 ) -> list[tuple[str, str, dict]]:
     """Passes to run for one test.py invocation, as (split, eval_mode, red_kwargs).
 
     The primary pair follows ``split`` (normally "test"; "val" is also
     accepted directly for the pre-existing manual diagnostic invocation, e.g.
-    ``EXTRA_ARGS="--split val --wandb false"``).
+    ``EXTRA_ARGS="--split val --wandb false"``). ``skip_full_graph`` drops the
+    unreduced-input pass from that primary pair — meant for resubmitting a
+    single config after fixing an unrelated failure (e.g. a missing
+    precomputed mask) whose full_graph pass already completed and wrote its
+    CSV/artifact/wandb entries correctly, so redoing it would just waste GPU
+    time reproducing an identical result.
 
     When ``split == "test"`` and not ``skip_val``, one extra automatic
     validation-set sanity pass is appended in the SAME reduction form
@@ -227,11 +233,14 @@ def build_eval_passes(
     to anything trained (unlike the test-side RQ4 cross-state pass). Skipped
     entirely when ``split == "val"`` already (the manual diagnostic case),
     since the primary pair above already covers val and appending this would
-    just duplicate one of those two passes.
+    just duplicate one of those two passes. ``skip_full_graph`` does not
+    affect this val pass — it is a validation-set check, not a rerun of the
+    test-side full_graph pass, even when its own eval_mode also happens to
+    read "full_graph" for a baseline config.
     """
-    passes: list[tuple[str, str, dict]] = [
-        (split, "full_graph", {"sparsification": None, "partition": None})
-    ]
+    passes: list[tuple[str, str, dict]] = []
+    if not skip_full_graph:
+        passes.append((split, "full_graph", {"sparsification": None, "partition": None}))
     if reduction_type != "none":
         passes.append((split, "matched_reduction", reduction_kwargs))
 
@@ -589,7 +598,11 @@ def main(args: argparse.Namespace) -> None:
         )
 
     passes = build_eval_passes(
-        args.split, args.reduction_type, reduction_kwargs, skip_val=args.skip_val
+        args.split,
+        args.reduction_type,
+        reduction_kwargs,
+        skip_val=args.skip_val,
+        skip_full_graph=args.skip_full_graph,
     )
 
     try:
@@ -744,6 +757,22 @@ if __name__ == "__main__":
             "Skip the automatic validation-set sanity pass. test_cpu.sh sets "
             "this true since it only measures inference hardware, not "
             "accuracy, and the val pass is already covered by the GPU run."
+        ),
+    )
+    parser.add_argument(
+        "--skip_full_graph",
+        type=lambda x: str(x).lower() in ("true", "1", "yes"),
+        default=False,
+        help=(
+            "Skip the full_graph pass (unreduced test graphs). Useful when "
+            "resubmitting a single config after fixing an unrelated failure "
+            "(e.g. a missing precomputed mask) whose full_graph pass already "
+            "completed and wrote its CSV/artifact/wandb entries correctly — "
+            "reruns only matched_reduction (and, unless --skip_val, the "
+            "validation-set pass). Not wired into test.sh/test_cpu.sh by "
+            "default (a normal sweep needs full_graph); pass it via "
+            "EXTRA_ARGS for a targeted resubmission, e.g.:\n"
+            '  EXTRA_ARGS="--skip_full_graph true" sbatch --array=2 src/shell/test.sh'
         ),
     )
     parser.add_argument("--hp_tuning_splits_path", type=str, default=None)
