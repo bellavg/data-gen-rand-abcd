@@ -351,8 +351,11 @@ def select_benchmark_indices(args: argparse.Namespace) -> list[int]:
     """Size-stratified selection of (num_warmup + num_measure) indices into
     the shared candidate pool (see build_datamodule)."""
     population_dm = build_population_datamodule(args)
-    population_dm.setup("fit")
-    node_counts = population_dm.train_ds.get_num_nodes_list()
+    # Build train_ds directly instead of datamodule.setup("fit"): "fit" always
+    # builds val_ds too (Lightning's train+val convention), which this only
+    # ever discards — val is never used for anything here.
+    train_ds = population_dm._make_dataset("train", population_dm.train_num_samples)
+    node_counts = train_ds.get_num_nodes_list()
 
     k = args.num_warmup_graphs + args.num_measure_graphs
     idx = _stratified_indices(node_counts, k, seed=args.seed)
@@ -601,12 +604,16 @@ def main(args: argparse.Namespace) -> None:
 
     indices = select_benchmark_indices(args)
     datamodule = build_datamodule(args)
-    datamodule.setup("fit")
+    # train_ds directly, not datamodule.setup("fit"): "fit" always builds
+    # val_ds too (Lightning's train+val convention), and this benchmark never
+    # touches val — building it would just waste cache-build time on graphs
+    # that are never measured.
+    train_ds = datamodule._make_dataset("train", datamodule.train_num_samples)
     model = build_model(compile_model=args.torch_compile)
 
     aggregate, per_graph = run_benchmark(
         model,
-        datamodule.train_ds,
+        train_ds,
         device,
         num_warmup=args.num_warmup_graphs,
         precision=precision,

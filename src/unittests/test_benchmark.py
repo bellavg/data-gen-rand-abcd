@@ -300,6 +300,22 @@ class TestSelectBenchmarkIndices:
         assert population_dm.sparsification is None
         assert population_dm.partition is None
 
+    def test_never_calls_setup_fit(self, tmp_path, monkeypatch):
+        # val is never used by the benchmark; datamodule.setup("fit") always
+        # builds val_ds too (Lightning's train+val convention), wasting
+        # cache-build time on graphs that are never measured.
+        # select_benchmark_indices must build train_ds directly instead.
+        csv_path = _mock_dataset(tmp_path)
+        args = self._args(csv_path, tmp_path)
+
+        def _fail_if_called(self, stage=None):
+            raise AssertionError("setup() should not be called — it also builds val_ds")
+
+        monkeypatch.setattr(AIGDataModule, "setup", _fail_if_called)
+
+        indices = select_benchmark_indices(args)
+        assert len(indices) == args.num_warmup_graphs + args.num_measure_graphs
+
 
 class TestRunBenchmarkIntegration:
     def test_per_graph_loop_excludes_warmup_and_reports_sane_aggregates(self, tmp_path):
