@@ -55,7 +55,7 @@ TIER1_CACHE_DIR="/scratch-shared/$USER/aig_train_run/shared_tier1_cache"
 HP_TUNING_SPLITS="/scratch-shared/$USER/big_optuna_run/shared_dataset_cache/algo_Orchestrate_ml_algo_Deepsyn_ml_algo_Syn4_ml_algo_C2RS_ml_50000_splits.json"
 
 HOGA_HOP_CACHE_DIR="/scratch-shared/$USER/aig_baseline_run/hoga_hop_cache"
-HOGA_NUM_HOPS="${HOGA_NUM_HOPS:-4}"
+HOGA_NUM_HOPS="${HOGA_NUM_HOPS:-5}"
 HOGA_DIRECTED="${HOGA_DIRECTED:-true}"
 N_IO_WORKERS="${N_IO_WORKERS:-$(nproc)}"
 

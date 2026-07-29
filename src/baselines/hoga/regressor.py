@@ -5,19 +5,23 @@ vendored verbatim) from its released task -- per-node classification for
 Gamora functional reasoning (xor/maj/root structural role) -- to this
 project's task: a single scalar optimizability prediction per whole AIG.
 
-IMPORTANT CAVEAT ON DEFAULTS: unlike SynthNet, the HOGA repo never released
-training code or hyperparameters for its OpenABC-D QoR-prediction experiment
-(the one actually analogous to this task) -- only the Gamora classification
-task's `run.sh` was published (`--heads 32`), plus the model/hop-feature
-building blocks with a note to "adjust them for your own tasks". So:
-  - `heads=32` below is the one concrete value with a published source
-    (run.sh), reused here.
-  - `hidden_channels`, `num_layers`, `dropout`, and `num_hops` (propagation
-    depth) have no published QoR-task default to inherit; they default to
-    this project's own primary-model values (config.HIDDEN_DIM,
-    config.NUM_LAYERS, config.DROPOUT) so the two baselines are at least
-    comparable in scale to each other and to the primary model, not because
-    the HOGA paper specifies them.
+CAVEAT ON DEFAULTS: the HOGA repo never released training *code* for its
+OpenABC-D QoR-prediction experiment (only the Gamora classification task's
+`run.sh` was published, plus the model/hop-feature building blocks with a
+note to "adjust them for your own tasks"). The *paper itself* does publish
+QoR-task hyperparameters, though, in Section 3.3/4.1 (Deng et al., DAC'24):
+"we adopt Adam optimizer with a learning rate of 0.0001, a hidden dimension
+of 256, and fix the number of gated self-attention layer to 1 ... we set the
+number of hops K as 5 for experiments on OpenABC-D". So:
+  - `DEFAULT_HIDDEN_DIM = 256`, `DEFAULT_NUM_LAYERS = 1`, `DEFAULT_LR =
+    0.0001`, and `DEFAULT_NUM_HOPS = 5` (propagation depth, i.e. K) below are
+    all published QoR-task values from the paper text, not assumptions.
+  - `heads` and `dropout` are NOT stated anywhere in that paragraph (and the
+    paper doesn't mention dropout at all for the QoR task). `heads=32` is
+    carried over from the *Gamora* task's published `run.sh` -- the only
+    concrete heads value that exists anywhere in the repo -- and
+    `DEFAULT_DROPOUT` falls back to this project's own primary-model value
+    (config.DROPOUT), since no better source exists for either.
 
 HOGA's trunk (hop-wise linear projection -> gated self-attention layers ->
 node+neighbor fusion) is reused unmodified by subclassing `HOGA` itself and
@@ -42,10 +46,21 @@ from torch_geometric.nn import global_mean_pool
 
 from baselines.hoga.model import HOGA
 
-# The one value with a published source: cornell-zhang/HOGA's run.sh
-# (`python main_gamora.py --mapped 1 --heads 32 ...`), for the Gamora task
-# HOGA does ship. No QoR-task config was ever released -- see module docstring.
+# Published in Deng et al., DAC'24, Section 3.3/4.1 (QoR-prediction setup on
+# OpenABC-D), not assumed -- see module docstring.
+DEFAULT_HIDDEN_DIM = 256
+DEFAULT_NUM_LAYERS = 1  # "fix the number of gated self-attention layer to 1"
+DEFAULT_LR = 0.0001
+DEFAULT_NUM_HOPS = 5  # propagation depth K, "for experiments on OpenABC-D"
+
+# Not stated for the QoR task anywhere in the paper or repo. heads=32 is
+# carried over from cornell-zhang/HOGA's run.sh (`python main_gamora.py
+# --mapped 1 --heads 32 ...`), the Gamora task's published config -- the only
+# concrete heads value that exists anywhere upstream.
 DEFAULT_HEADS = 32
+# Dropout is never mentioned for the QoR task; falls back to this project's
+# own primary-model value (config.DROPOUT) in train_baseline.py, absent any
+# better source.
 
 
 class HOGAGraphRegressor(HOGA):

@@ -17,7 +17,17 @@ Two deviations from the upstream architecture, both intentional:
     no output bound, since it isn't reused elsewhere).
 
 Everything else -- NodeEncoder, GCNConv, GNN, and the FC-stack depth/width --
-matches the upstream paper's own train.py defaults unless overridden.
+matches the upstream paper's own train.py defaults unless overridden. These
+aren't just repo defaults: they match the "Net3" configuration published in
+Table 3 of the OpenABC-D paper (Chowdhury et al., arXiv:2110.11292) --
+AIG-embedding input dim I=4 (3-dim categorical node-type embedding + 1-dim
+inverted-predecessor count), GCN layer dims L1=L2=64, a 4-layer FC stack
+(178-512-512-512-1 upstream, dr=0.2), batch size 64, initial LR 0.001, Adam,
+80 epochs, and MSE loss -- Section 4.1's text confirms the last four for all
+three configs. The FC input width differs from the paper's 178 because that
+includes the recipe-conv output this project's regressor deliberately drops
+(see above); the graph-embedding portion alone (128 = 64 * 2 pooled) is
+unaffected.
 """
 
 from __future__ import annotations

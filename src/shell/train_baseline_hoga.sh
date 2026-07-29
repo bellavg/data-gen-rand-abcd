@@ -55,7 +55,7 @@ HP_TUNING_SPLITS="/scratch-shared/$USER/big_optuna_run/shared_dataset_cache/algo
 # src/baselines/hoga/hop_features.py. Must match warmup's HOGA_NUM_HOPS /
 # HOGA_DIRECTED for the cache to be reused rather than recomputed.
 HOGA_HOP_CACHE_DIR="/scratch-shared/$USER/aig_baseline_run/hoga_hop_cache"
-HOGA_NUM_HOPS="${HOGA_NUM_HOPS:-4}"
+HOGA_NUM_HOPS="${HOGA_NUM_HOPS:-5}"
 HOGA_DIRECTED="${HOGA_DIRECTED:-true}"
 
 NUM_WORKERS="${NUM_WORKERS:-12}"
@@ -70,11 +70,10 @@ echo "Using HOGA_NUM_HOPS=$HOGA_NUM_HOPS, HOGA_DIRECTED=$HOGA_DIRECTED."
 echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-<unset>}"
 
 # =========================================================
-# EXECUTE TRAINING (HOGA baseline. GNN hyperparameters have no published
-# QoR-task default upstream -- see src/baselines/hoga/regressor.py -- and
-# instead default to this project's own primary-model scale via
-# src/train_baseline.py, except --hoga_heads which matches HOGA's own
-# published run.sh.)
+# EXECUTE TRAINING (HOGA baseline. hidden_dim/num_layers/num_hops/lr are
+# published QoR-task values from Deng et al. DAC'24 Sec 3.3/4.1; --hoga_heads
+# has no QoR-task source and carries over from HOGA's Gamora-task run.sh --
+# see src/baselines/hoga/regressor.py for the full breakdown.)
 # =========================================================
 
 echo "Starting HOGA baseline training for $ALGORITHM on GPU 0..."

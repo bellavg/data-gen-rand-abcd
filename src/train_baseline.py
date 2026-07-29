@@ -7,10 +7,12 @@ train.py and the primary model stay completely untouched.
 
 Baseline model hyperparameters and training config (optimizer, loss, LR,
 scheduler) default to each paper's own published values (SynthNet:
-models/qor/SynthNetV3/train.py; HOGA: no QoR-task config was ever published --
-see baselines/hoga/regressor.py's module docstring for what's actually
-published vs. assumed), not this project's own config.py defaults -- those
-are two separate baseline papers with their own training setups. Only data
+models/qor/SynthNetV3/train.py; HOGA: Deng et al. DAC'24 Section 3.3/4.1 --
+see baselines/hoga/regressor.py's module docstring for exactly which values
+are published vs. assumed, since a couple of HOGA's knobs -- heads, dropout --
+still have no published QoR-task source), not this project's own config.py
+defaults -- those are two separate baseline papers with their own training
+setups. Only data
 loading/splitting/caching (AIGDataModule / AIGGraphRegressionDataset) is
 reused unchanged, since identical splits are required for a fair comparison
 against the primary model, and that part isn't "baseline config".
@@ -39,6 +41,10 @@ import config
 from baselines.common.lightning_wrapper import BaselineRegressionLightningModule
 from baselines.hoga.hop_features import HopFeatureCache, collate_hoga_batch, num_hop_slots
 from baselines.hoga.regressor import DEFAULT_HEADS as HOGA_DEFAULT_HEADS
+from baselines.hoga.regressor import DEFAULT_HIDDEN_DIM as HOGA_DEFAULT_HIDDEN_DIM
+from baselines.hoga.regressor import DEFAULT_LR as HOGA_DEFAULT_LR
+from baselines.hoga.regressor import DEFAULT_NUM_HOPS as HOGA_DEFAULT_NUM_HOPS
+from baselines.hoga.regressor import DEFAULT_NUM_LAYERS as HOGA_DEFAULT_NUM_LAYERS
 from baselines.hoga.regressor import HOGAGraphRegressor
 from baselines.openabc_synthnet.regressor import (
     DEFAULT_DROP_RATIO,
@@ -57,8 +63,8 @@ torch.set_num_threads(1)
 # regressor modules for exactly where each of these comes from.
 SYNTHNET_DEFAULTS = {"batch_size": 64, "lr": 0.001, "weight_decay": 0.0}
 HOGA_DEFAULTS = {
-    "batch_size": config.BATCH_SIZE,  # no published QoR-task default; see baselines/hoga/regressor.py
-    "lr": 0.001,
+    "batch_size": config.BATCH_SIZE,  # no published QoR-task batch size; see baselines/hoga/regressor.py
+    "lr": HOGA_DEFAULT_LR,  # 0.0001, published (Deng et al. DAC'24, Sec 3.3/4.1)
     "weight_decay": 0.0,
 }
 
@@ -378,16 +384,22 @@ if __name__ == "__main__":
     )
     parser.add_argument("--synthnet_drop_ratio", type=float, default=DEFAULT_DROP_RATIO)
 
-    # HOGA hyperparameters (heads: cornell-zhang/HOGA/run.sh; the rest have no
-    # published QoR-task default, see baselines/hoga/regressor.py).
-    parser.add_argument("--hoga_hidden_dim", type=int, default=config.HIDDEN_DIM)
-    parser.add_argument("--hoga_num_layers", type=int, default=config.NUM_LAYERS)
+    # HOGA hyperparameters. hidden_dim/num_layers/num_hops/lr are published
+    # (Deng et al. DAC'24, Sec 3.3/4.1); heads carries over from the Gamora
+    # task's run.sh; dropout has no published source for either task -- see
+    # baselines/hoga/regressor.py's module docstring for the full breakdown.
+    parser.add_argument(
+        "--hoga_hidden_dim", type=int, default=HOGA_DEFAULT_HIDDEN_DIM
+    )
+    parser.add_argument(
+        "--hoga_num_layers", type=int, default=HOGA_DEFAULT_NUM_LAYERS
+    )
     parser.add_argument("--hoga_dropout", type=float, default=config.DROPOUT)
     parser.add_argument(
         "--hoga_num_hops",
         type=int,
-        default=4,
-        help="Propagation depth per direction (see baselines/hoga/hop_features.py).",
+        default=HOGA_DEFAULT_NUM_HOPS,
+        help="Propagation depth per direction, i.e. K (see baselines/hoga/hop_features.py).",
     )
     parser.add_argument("--hoga_heads", type=int, default=HOGA_DEFAULT_HEADS)
     parser.add_argument("--hoga_head_dropout", type=float, default=0.3)
