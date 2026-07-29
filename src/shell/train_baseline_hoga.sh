@@ -62,10 +62,10 @@ NUM_WORKERS="${NUM_WORKERS:-12}"
 PREFETCH_FACTOR="${PREFETCH_FACTOR:-4}"
 PIN_MEMORY="${PIN_MEMORY:-true}"
 PERSISTENT_WORKERS="${PERSISTENT_WORKERS:-true}"
-SPLIT_BY="${SPLIT_BY:-design}"
+# No SPLIT_BY: this branch's dataset hardcodes design-level splitting (see
+# data/dataset.py) -- there's no --split_by flag to pass on train_baseline.py.
 
 echo "Using NUM_WORKERS=$NUM_WORKERS for data loading."
-echo "Using SPLIT_BY=$SPLIT_BY."
 echo "Using HOGA_NUM_HOPS=$HOGA_NUM_HOPS, HOGA_DIRECTED=$HOGA_DIRECTED."
 echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-<unset>}"
 
@@ -88,7 +88,6 @@ srun python -u -m train_baseline \
     --tier0_cache_dir    "$TIER0_CACHE_DIR" \
     --tier1_cache_dir    "$TIER1_CACHE_DIR" \
     --hp_tuning_splits_path "$HP_TUNING_SPLITS" \
-    --split_by           "$SPLIT_BY" \
     --hoga_hop_cache_dir "$HOGA_HOP_CACHE_DIR" \
     --hoga_num_hops      "$HOGA_NUM_HOPS" \
     --hoga_directed      "$HOGA_DIRECTED" \

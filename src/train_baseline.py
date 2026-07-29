@@ -192,7 +192,6 @@ def main(args: argparse.Namespace) -> None:
         partition=None,
         batch_size=args.batch_size,
         split_ratios=(0.8, 0.1, 0.1),
-        split_by=args.split_by,
         num_workers=args.num_workers,
         pin_memory=args.pin_memory,
         persistent_workers=args.persistent_workers,
@@ -362,12 +361,11 @@ if __name__ == "__main__":
     parser.add_argument("--tier0_cache_dir", type=str, default=None)
     parser.add_argument("--tier1_cache_dir", type=str, default=None)
     parser.add_argument("--hp_tuning_splits_path", type=str, default=None)
-    parser.add_argument(
-        "--split_by",
-        type=str,
-        default=config.SPLIT_BY,
-        choices=sorted(config.VALID_SPLIT_BY),
-    )
+    # No --split_by flag: this branch's AIGGraphRegressionDataset hardcodes
+    # design-level splitting (see data/dataset.py, "split_by": "design" baked
+    # into its cache signature) -- there's no alternative to select on this
+    # branch. A configurable split_by (design/recipe/random) was added on
+    # main after this branch diverged; it isn't available here.
 
     # SynthNet hyperparameters (defaults: models/qor/SynthNetV3/train.py).
     parser.add_argument(
