@@ -11,11 +11,18 @@ import torch
 
 import config
 from benchmark import (
+    _safe_nanmax,
     _safe_nanmean,
+    _safe_nanpercentile,
+    _stratified_indices,
+    build_datamodule,
     build_model,
+    build_population_datamodule,
     resolve_reduction_kwargs,
     run_benchmark,
+    run_id,
     run_label_for,
+    select_benchmark_indices,
     write_per_graph_csv,
     write_single_row_csv,
 )
@@ -64,6 +71,50 @@ class TestSafeNanmean:
         assert _safe_nanmean([2.0, float("nan"), 4.0]) == pytest.approx(3.0)
 
 
+class TestSafeNanmax:
+    def test_all_nan_returns_nan_without_warning(self):
+        assert math.isnan(_safe_nanmax([float("nan"), float("nan")]))
+
+    def test_mixed_ignores_nan(self):
+        assert _safe_nanmax([2.0, float("nan"), 4.0]) == pytest.approx(4.0)
+
+
+class TestSafeNanpercentile:
+    def test_all_nan_returns_nan_without_warning(self):
+        assert math.isnan(_safe_nanpercentile([float("nan")], 95))
+
+    def test_p95_of_uniform_range(self):
+        values = list(range(1, 101))  # 1..100
+        assert _safe_nanpercentile(values, 95) == pytest.approx(95.05, abs=0.5)
+
+
+class TestStratifiedIndices:
+    def test_returns_all_indices_when_k_covers_population(self):
+        assert sorted(_stratified_indices([1, 2, 3], k=3, seed=0)) == [0, 1, 2]
+        assert sorted(_stratified_indices([1, 2, 3], k=5, seed=0)) == [0, 1, 2]
+
+    def test_selects_requested_count(self):
+        counts = list(range(1, 101))  # 100 graphs, sizes 1..100
+        idx = _stratified_indices(counts, k=20, seed=42)
+        assert len(idx) == 20
+        assert len(set(idx)) == 20  # no duplicates
+
+    def test_spans_full_size_range_unlike_uniform_sample_risk(self):
+        # Heavily skewed population: 95 tiny graphs, 5 huge ones. A uniform
+        # sample of 10 has real odds of missing the huge tail entirely;
+        # stratification must not.
+        counts = [1] * 95 + [10_000] * 5
+        idx = _stratified_indices(counts, k=10, seed=0)
+        selected_counts = [counts[i] for i in idx]
+        assert 10_000 in selected_counts
+
+    def test_deterministic_for_fixed_seed(self):
+        counts = list(range(1, 51))
+        first = _stratified_indices(counts, k=10, seed=7)
+        second = _stratified_indices(counts, k=10, seed=7)
+        assert first == second
+
+
 class TestWriteSingleRowCsv:
     def test_header_and_single_row(self, tmp_path):
         csv_path = tmp_path / "sub" / "bench.csv"  # parent auto-created
@@ -89,11 +140,19 @@ class TestWritePerGraphCsv:
                 "num_nodes": i,
                 "num_edges": 2 * i,
                 "step_time_s": 0.1,
-                "peak_vram_mb": float("nan"),
-                "activation_vram_mb": float("nan"),
+                "peak_vram_allocated_mb": float("nan"),
+                "peak_vram_reserved_mb": float("nan"),
+                "incremental_vram_mb": float("nan"),
             }
             for i in range(n)
         ]
+
+    def test_default_is_uncapped(self, tmp_path):
+        path = tmp_path / "pg.csv"
+        write_per_graph_csv(path, self._rows(500))
+        with open(path, newline="") as f:
+            rows = list(csv.DictReader(f))
+        assert len(rows) == 500
 
     def test_writes_all_under_cap(self, tmp_path):
         path = tmp_path / "pg.csv"
@@ -113,6 +172,25 @@ class TestWritePerGraphCsv:
             rows_b = list(csv.DictReader(f))
         assert len(rows_a) == 50
         assert [r["graph_id"] for r in rows_a] == [r["graph_id"] for r in rows_b]
+
+
+class TestRunId:
+    def test_prefers_array_job_id(self, monkeypatch):
+        monkeypatch.setenv("SLURM_ARRAY_JOB_ID", "111")
+        monkeypatch.setenv("SLURM_JOB_ID", "222")
+        assert run_id() == "111"
+
+    def test_falls_back_to_job_id(self, monkeypatch):
+        monkeypatch.delenv("SLURM_ARRAY_JOB_ID", raising=False)
+        monkeypatch.setenv("SLURM_JOB_ID", "222")
+        assert run_id() == "222"
+
+    def test_falls_back_to_timestamp_outside_slurm(self, monkeypatch):
+        monkeypatch.delenv("SLURM_ARRAY_JOB_ID", raising=False)
+        monkeypatch.delenv("SLURM_JOB_ID", raising=False)
+        rid = run_id()
+        assert rid.isdigit() is False  # timestamp format, e.g. 20260101T120000
+        assert "T" in rid
 
 
 class TestBuildModel:
@@ -167,6 +245,62 @@ def _mock_dataset(tmp_path, algorithm: str = "Orchestrate", n: int = 20):
     return csv_path
 
 
+class TestSelectBenchmarkIndices:
+    def _args(self, csv_path, tmp_path, reduction_type="none", reduction_method=None):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(
+            csv_paths=[str(csv_path)],
+            seed=42,
+            num_workers=0,
+            cache_dir=str(tmp_path / "cache"),
+            tier0_cache_dir=None,
+            tier1_cache_dir=None,
+            hp_tuning_splits_path=None,
+            num_warmup_graphs=1,
+            num_measure_graphs=2,
+            reduction_type=reduction_type,
+            reduction_method=reduction_method,
+        )
+
+    def test_pool_identical_across_reduction_configs(self, tmp_path):
+        # Reduction is applied at get()-time only; the candidate pool itself
+        # (same seed, same oversampled pool size) must be identical regardless
+        # of reduction_type, or stratified selection would pick a different
+        # set of graphs per config and silently break graph_id pairing.
+        csv_path = _mock_dataset(tmp_path)
+
+        dm_baseline = build_datamodule(self._args(csv_path, tmp_path))
+        dm_baseline.setup("fit")
+        dm_reduced = build_datamodule(
+            self._args(csv_path, tmp_path, "sparsification", "and_gate_only")
+        )
+        dm_reduced.setup("fit")
+
+        baseline_paths = [s.graph_path for s in dm_baseline.train_ds.samples]
+        reduced_paths = [s.graph_path for s in dm_reduced.train_ds.samples]
+        assert baseline_paths == reduced_paths
+
+    def test_selected_indices_are_unique_and_resolve_into_the_pool(self, tmp_path):
+        csv_path = _mock_dataset(tmp_path)
+        args = self._args(csv_path, tmp_path)
+
+        indices = select_benchmark_indices(args)
+        assert len(indices) == args.num_warmup_graphs + args.num_measure_graphs
+        assert len(set(indices)) == len(indices)
+
+        dm = build_datamodule(args)
+        dm.setup("fit")
+        assert all(0 <= i < len(dm.train_ds.samples) for i in indices)
+
+    def test_population_datamodule_never_reduces(self, tmp_path):
+        csv_path = _mock_dataset(tmp_path)
+        args = self._args(csv_path, tmp_path, "sparsification", "and_gate_only")
+        population_dm = build_population_datamodule(args)
+        assert population_dm.sparsification is None
+        assert population_dm.partition is None
+
+
 class TestRunBenchmarkIntegration:
     def test_per_graph_loop_excludes_warmup_and_reports_sane_aggregates(self, tmp_path):
         csv_path = _mock_dataset(tmp_path)
@@ -207,16 +341,23 @@ class TestRunBenchmarkIntegration:
             "num_edges",
             "step_time_s",
             "step_time_std_s",
-            "peak_vram_mb",
-            "activation_vram_mb",
+            "peak_vram_allocated_mb",
+            "peak_vram_reserved_mb",
+            "incremental_vram_mb",
         }
         assert row["num_nodes"] > 0
         # Within-graph timing noise is non-negative and reported per graph.
         assert row["step_time_std_s"] >= 0
 
-        # No CUDA: VRAM must be NaN (unmeasured), not a stale/garbage value.
+        # No CUDA: VRAM and GPU-utilization must be NaN (unmeasured), not a
+        # stale/garbage value.
         if not torch.cuda.is_available():
-            assert math.isnan(aggregate["peak_vram_mb"])
-            assert math.isnan(aggregate["activation_vram_mb"])
-            assert math.isnan(row["peak_vram_mb"])
-            assert math.isnan(row["activation_vram_mb"])
+            assert math.isnan(aggregate["peak_vram_allocated_mean_mb"])
+            assert math.isnan(aggregate["peak_vram_allocated_max_mb"])
+            assert math.isnan(aggregate["peak_vram_allocated_p95_mb"])
+            assert math.isnan(aggregate["peak_vram_reserved_mean_mb"])
+            assert math.isnan(aggregate["incremental_vram_mean_mb"])
+            assert math.isnan(aggregate["avg_gpu_utilization_pct"])
+            assert math.isnan(row["peak_vram_allocated_mb"])
+            assert math.isnan(row["peak_vram_reserved_mb"])
+            assert math.isnan(row["incremental_vram_mb"])

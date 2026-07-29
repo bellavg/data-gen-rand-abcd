@@ -16,6 +16,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from scipy.stats import wilcoxon
 
 
 def _escape_latex(value) -> str:
@@ -113,20 +114,50 @@ def load_offline_stats(logs_dir: Path, prefix: str) -> pd.DataFrame:
 
 
 def load_benchmark_per_graph(per_graph_dir: Path) -> pd.DataFrame:
-    """Loads results/benchmark_per_graph/{run_label}.csv (benchmark.py per-graph
-    output) into one DataFrame tagged with run_label from the filename."""
+    """Loads results/benchmark_per_graph/{run_label}_{run_id}.csv (benchmark.py
+    per-graph output) into one DataFrame.
+
+    Prefers the CSV's own ``run_label`` column (benchmark.py writes it into
+    every row) over deriving it from the filename stem: filenames now carry a
+    ``run_id`` suffix so repeated benchmark submissions don't overwrite each
+    other, which would otherwise pollute a filename-derived label. Falls back
+    to the stem for older per-graph files written before that column existed.
+    """
     frames = []
     for csv_path in sorted(per_graph_dir.glob("*.csv")):
         df = pd.read_csv(csv_path)
-        df["run_label"] = csv_path.stem
+        if "run_label" not in df.columns:
+            df["run_label"] = csv_path.stem
         frames.append(df)
     if not frames:
         return pd.DataFrame()
     return pd.concat(frames, ignore_index=True)
 
 
+def _bootstrap_ci(values: np.ndarray, n_boot: int = 2000, seed: int = 0) -> tuple[float, float]:
+    """95% percentile bootstrap CI on the mean of ``values``."""
+    if len(values) < 2:
+        return float("nan"), float("nan")
+    rng = np.random.default_rng(seed)
+    boot_means = rng.choice(values, size=(n_boot, len(values)), replace=True).mean(axis=1)
+    return float(np.percentile(boot_means, 2.5)), float(np.percentile(boot_means, 97.5))
+
+
+def _wilcoxon_p(values: np.ndarray) -> float:
+    """Two-sided Wilcoxon signed-rank test that the paired per-graph savings
+    have non-zero median. NaN when scipy can't run it (too few pairs, or a
+    degenerate all-identical sample)."""
+    if len(values) < 10 or np.allclose(values, values[0]):
+        return float("nan")
+    try:
+        return float(wilcoxon(values).pvalue)
+    except ValueError:
+        return float("nan")
+
+
 def build_paired_savings(training_df: pd.DataFrame, per_graph_df: pd.DataFrame) -> pd.DataFrame:
-    """Per-config mean VRAM/time savings vs. the baseline, paired by graph_id.
+    """Per-config mean VRAM/time savings vs. the baseline, paired by graph_id,
+    with a bootstrap CI and a Wilcoxon signed-rank test on the paired deltas.
 
     Because the benchmark measures one graph per batch on the same seeded
     sample for every config, a reduced graph can be matched to its own
@@ -142,16 +173,17 @@ def build_paired_savings(training_df: pd.DataFrame, per_graph_df: pd.DataFrame) 
         return pd.DataFrame()
     baseline_label = baseline_labels[0]
 
-    # drop_duplicates on graph_id: dataset samples are 1:1 with CSV rows and a
-    # graph_path (== graph_id) can legitimately appear more than once, so a
-    # plain merge below could fan out into a k×k cartesian product and bias the
-    # means. Keeping one row per graph_id makes the pairing strictly 1:1.
+    # groupby-mean on graph_id (not drop_duplicates): a graph_id can
+    # legitimately repeat within one run's per-graph CSV, and a config
+    # benchmarked more than once (repeated array submissions, each its own
+    # run_id) now also contributes one row per repeat for the same graph_id —
+    # averaging is correct for both; drop_duplicates' arbitrary
+    # first-occurrence pick silently discarded real measurements.
     base = (
-        per_graph_df[per_graph_df["run_label"] == baseline_label][
-            ["graph_id", "step_time_s", "peak_vram_mb"]
-        ]
-        .drop_duplicates("graph_id")
-        .rename(columns={"step_time_s": "base_time", "peak_vram_mb": "base_vram"})
+        per_graph_df[per_graph_df["run_label"] == baseline_label]
+        .groupby("graph_id", as_index=False)[["step_time_s", "peak_vram_allocated_mb"]]
+        .mean()
+        .rename(columns={"step_time_s": "base_time", "peak_vram_allocated_mb": "base_vram"})
     )
     if base.empty:
         return pd.DataFrame()
@@ -166,14 +198,18 @@ def build_paired_savings(training_df: pd.DataFrame, per_graph_df: pd.DataFrame) 
     for label in per_graph_df["run_label"].unique():
         if label == baseline_label:
             continue
-        red = per_graph_df[per_graph_df["run_label"] == label][
-            ["graph_id", "step_time_s", "peak_vram_mb"]
-        ].drop_duplicates("graph_id")
+        red = (
+            per_graph_df[per_graph_df["run_label"] == label]
+            .groupby("graph_id", as_index=False)[["step_time_s", "peak_vram_allocated_mb"]]
+            .mean()
+        )
         merged = red.merge(base, on="graph_id")
         if merged.empty:
             continue
-        vram_saving = (1 - merged["peak_vram_mb"] / merged["base_vram"]) * 100
-        time_saving = (1 - merged["step_time_s"] / merged["base_time"]) * 100
+        vram_saving = ((1 - merged["peak_vram_allocated_mb"] / merged["base_vram"]) * 100).to_numpy()
+        time_saving = ((1 - merged["step_time_s"] / merged["base_time"]) * 100).to_numpy()
+        vram_ci = _bootstrap_ci(vram_saving)
+        time_ci = _bootstrap_ci(time_saving)
         meta = label_map.get(label, {"reduction_type": "", "reduction_method": ""})
         rows.append(
             {
@@ -181,7 +217,13 @@ def build_paired_savings(training_df: pd.DataFrame, per_graph_df: pd.DataFrame) 
                 "reduction_method": meta["reduction_method"],
                 "n_paired": len(merged),
                 "mean_vram_saving_pct": float(vram_saving.mean()),
+                "vram_saving_ci_low_pct": vram_ci[0],
+                "vram_saving_ci_high_pct": vram_ci[1],
+                "vram_saving_wilcoxon_p": _wilcoxon_p(vram_saving),
                 "mean_time_saving_pct": float(time_saving.mean()),
+                "time_saving_ci_low_pct": time_ci[0],
+                "time_saving_ci_high_pct": time_ci[1],
+                "time_saving_wilcoxon_p": _wilcoxon_p(time_saving),
             }
         )
     return pd.DataFrame(rows)
@@ -225,6 +267,9 @@ def build_reduction_efficiency_table(
 
         vram_saving = float("nan")
         time_saving = float("nan")
+        vram_ci_low = vram_ci_high = float("nan")
+        time_ci_low = time_ci_high = float("nan")
+        vram_p = time_p = float("nan")
         if paired_savings is not None and not paired_savings.empty:
             s = paired_savings[
                 (paired_savings["reduction_type"] == rtype)
@@ -233,6 +278,12 @@ def build_reduction_efficiency_table(
             if not s.empty:
                 vram_saving = float(s["mean_vram_saving_pct"].mean())
                 time_saving = float(s["mean_time_saving_pct"].mean())
+                vram_ci_low = float(s["vram_saving_ci_low_pct"].mean())
+                vram_ci_high = float(s["vram_saving_ci_high_pct"].mean())
+                time_ci_low = float(s["time_saving_ci_low_pct"].mean())
+                time_ci_high = float(s["time_saving_ci_high_pct"].mean())
+                vram_p = float(s["vram_saving_wilcoxon_p"].mean())
+                time_p = float(s["time_saving_wilcoxon_p"].mean())
         infer_mode = "full_graph" if rtype == "none" else "matched_reduction"
         infer_row = pd.DataFrame()
         if not inference_df.empty:
@@ -269,8 +320,20 @@ def build_reduction_efficiency_table(
                 "train_step_time_s": (
                     float(train_row["avg_step_time_s"].mean()) if not train_row.empty else float("nan")
                 ),
-                "train_peak_vram_mb": (
-                    float(train_row["peak_vram_mb"].mean()) if not train_row.empty else float("nan")
+                "train_peak_vram_allocated_mean_mb": (
+                    float(train_row["peak_vram_allocated_mean_mb"].mean())
+                    if not train_row.empty
+                    else float("nan")
+                ),
+                "train_peak_vram_allocated_max_mb": (
+                    float(train_row["peak_vram_allocated_max_mb"].mean())
+                    if not train_row.empty
+                    else float("nan")
+                ),
+                "train_peak_vram_reserved_mean_mb": (
+                    float(train_row["peak_vram_reserved_mean_mb"].mean())
+                    if not train_row.empty
+                    else float("nan")
                 ),
                 "infer_throughput_graphs_per_s": (
                     float(infer_row["throughput_graphs_per_s"].mean()) if not infer_row.empty else float("nan")
@@ -279,7 +342,13 @@ def build_reduction_efficiency_table(
                     float(infer_row["peak_vram_mb"].mean()) if not infer_row.empty else float("nan")
                 ),
                 "vram_saving_pct": vram_saving,
+                "vram_saving_ci_low_pct": vram_ci_low,
+                "vram_saving_ci_high_pct": vram_ci_high,
+                "vram_saving_wilcoxon_p": vram_p,
                 "time_saving_pct": time_saving,
+                "time_saving_ci_low_pct": time_ci_low,
+                "time_saving_ci_high_pct": time_ci_high,
+                "time_saving_wilcoxon_p": time_p,
             }
         )
     return pd.DataFrame(rows)
@@ -377,9 +446,40 @@ def build_pareto_front(inference_df: pd.DataFrame, training_df: pd.DataFrame) ->
                 "train_step_time_s": (
                     float(train_row["avg_step_time_s"].mean()) if not train_row.empty else float("nan")
                 ),
-                "train_peak_vram_mb": (
-                    float(train_row["peak_vram_mb"].mean()) if not train_row.empty else float("nan")
+                "train_peak_vram_allocated_mean_mb": (
+                    float(train_row["peak_vram_allocated_mean_mb"].mean())
+                    if not train_row.empty
+                    else float("nan")
                 ),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def build_vram_scaling_table(per_graph_df: pd.DataFrame) -> pd.DataFrame:
+    """Peak allocated VRAM vs. graph size, fit per config (OLS slope/intercept
+    over the measured sample's (num_nodes, peak_vram_allocated_mb) pairs).
+
+    A single mean peak VRAM over ~100 sampled graphs doesn't generalize to
+    graphs outside the sample; the slope (MB per 1,000 nodes) does, and is
+    the more defensible number for arguing a method's memory benefit holds at
+    sizes larger than anything actually measured.
+    """
+    if per_graph_df.empty or "peak_vram_allocated_mb" not in per_graph_df.columns:
+        return pd.DataFrame()
+
+    rows = []
+    for label, group in per_graph_df.groupby("run_label"):
+        valid = group.dropna(subset=["num_nodes", "peak_vram_allocated_mb"])
+        if len(valid) < 2:
+            continue
+        slope, intercept = np.polyfit(valid["num_nodes"], valid["peak_vram_allocated_mb"], deg=1)
+        rows.append(
+            {
+                "run_label": label,
+                "n_graphs": len(valid),
+                "vram_mb_per_1k_nodes": float(slope * 1000),
+                "vram_intercept_mb": float(intercept),
             }
         )
     return pd.DataFrame(rows)
@@ -432,6 +532,13 @@ def main(args: argparse.Namespace) -> None:
             pareto_path.parent.mkdir(parents=True, exist_ok=True)
             pareto_df.to_csv(pareto_path, index=False)
             print(f"[results_to_latex] Wrote {pareto_path}")
+
+    write_booktabs_table(
+        build_vram_scaling_table(per_graph_df),
+        tables_dir / "vram_scaling.tex",
+        "Peak allocated training-step VRAM vs. graph size (MB per 1{,}000 nodes) per reduction method.",
+        "tab:vram_scaling",
+    )
 
     print(f"[results_to_latex] Done. Tables in {tables_dir}")
 
