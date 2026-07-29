@@ -2,7 +2,7 @@
 #SBATCH --job-name=hoga_hop_cache_warmup
 #SBATCH --time=08:00:00
 #SBATCH --nodes=1
-#SBATCH --cpus-per-task=32
+#SBATCH --cpus-per-task=24
 #SBATCH --partition=genoa
 #SBATCH --output=logs/warmup_hoga_hop_cache_%j.out
 
