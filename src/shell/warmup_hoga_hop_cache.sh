@@ -78,7 +78,11 @@ from baselines.hoga.hop_features import HopFeatureCache
 
 dm = AIGDataModule(
     csv_paths=["$CSV_PATH"],
-    positional_encoding=None,
+    # Match config.PE_TYPE (not None) so the graph cache lookup hits the
+    # existing shared tier0/tier1 cache instead of rebuilding a full second
+    # copy under a different cache-key hash -- see train_baseline.py's
+    # matching comment for why.
+    positional_encoding=config.PE_TYPE if config.PE_TYPE != "none" else None,
     batch_size=config.BATCH_SIZE,
     split_ratios=(0.8, 0.1, 0.1),
     seed=42,

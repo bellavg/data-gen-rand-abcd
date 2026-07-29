@@ -187,7 +187,17 @@ def main(args: argparse.Namespace) -> None:
 
     datamodule = AIGDataModule(
         csv_paths=args.csv_paths,
-        positional_encoding=None,  # both baselines derive their own features from x/edge_attr
+        # Neither baseline reads .pos_enc -- both derive their own features
+        # from .x/.edge_index/.edge_attr directly -- but the per-graph cache
+        # filename AND content in dataset.py both key on positional_encoding
+        # (see _stable_graph_cache_name/_prepare_cached_graph). Passing None
+        # here would silently miss the primary model's existing shared
+        # tier0_cache_dir/tier1_cache_dir cache entirely (different hash,
+        # different file) and rebuild a full second copy of the same ~700k
+        # graphs from scratch. Matching config.PE_TYPE makes cache lookups
+        # hit the already-built shared cache; the resulting unused pos_enc
+        # attribute is harmless (the baseline models never read it).
+        positional_encoding=config.PE_TYPE if config.PE_TYPE != "none" else None,
         sparsification=None,
         partition=None,
         batch_size=args.batch_size,
