@@ -93,6 +93,25 @@ HOGA_DIRECTED="${HOGA_DIRECTED:-true}"
 # See src/train_baseline.py's module docstring for the full rationale.
 HOGA_MAX_NODES_PER_BATCH="${HOGA_MAX_NODES_PER_BATCH:-150000}"
 
+# The node budget above yields only ~4 graphs per micro-batch (150k / ~40k avg
+# nodes) -- one graph is one label, so node count buys no variance reduction.
+# The primary model averages ~75 graphs per step (its 3M budget / ~40k), so
+# without accumulation HOGA trains on far fewer loss terms per update than the
+# model it is compared against (gradient-noise std scales ~1/sqrt(N), so
+# roughly 4x noisier, not 20x). Accumulating 20 steps closes most of that gap
+# while leaving the published lr=0.0001 untouched.
+#
+# Two honest caveats on "parity". Lightning divides each micro-batch loss by
+# the CONSTANT accumulate_grad_batches, so micro-batches are weighted equally
+# regardless of how many graphs they hold; since node-budget packing puts
+# fewer graphs in batches holding big graphs, large graphs end up carrying
+# more per-graph gradient weight. And the effective sample size over a 20-step
+# window is the harmonic mean, ~60-65 graphs, not 20 x 4 = 80. So this
+# approximates the primary model's regime rather than matching it exactly.
+# TrainingStartupCallback prints the real avg_graphs_per_batch each epoch --
+# calibrate this value from an actual log rather than trusting the estimate.
+ACCUMULATE_GRAD_BATCHES="${ACCUMULATE_GRAD_BATCHES:-20}"
+
 NUM_WORKERS="${NUM_WORKERS:-12}"
 PREFETCH_FACTOR="${PREFETCH_FACTOR:-4}"
 PIN_MEMORY="${PIN_MEMORY:-true}"
@@ -125,6 +144,7 @@ srun python -u -m train_baseline \
     --hp_tuning_splits_path "$HP_TUNING_SPLITS" \
     --hoga_num_hops      "$HOGA_NUM_HOPS" \
     --hoga_max_nodes_per_batch "$HOGA_MAX_NODES_PER_BATCH" \
+    --accumulate_grad_batches  "$ACCUMULATE_GRAD_BATCHES" \
     --hoga_directed      "$HOGA_DIRECTED" \
     --prefetch_factor    "$PREFETCH_FACTOR" \
     --num_workers        "$NUM_WORKERS" \

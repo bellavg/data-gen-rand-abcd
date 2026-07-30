@@ -69,6 +69,16 @@ class TestTrainBaselineCLI(unittest.TestCase):
         result = _run_cli("--help")
         self.assertIn("--hoga_max_nodes_per_batch", result.stdout)
 
+    def test_accumulate_grad_batches_flag_is_wired(self):
+        # train_baseline_hoga.sh passes this (20, to match the primary model's
+        # ~75-graph effective batch); a rename would break the job script
+        # silently. The default stays 1 so SynthNet keeps its published
+        # batch_size=64 effective batch -- not asserted here because this
+        # parser uses argparse's plain HelpFormatter, which never prints
+        # defaults.
+        result = _run_cli("--help")
+        self.assertIn("--accumulate_grad_batches", result.stdout)
+
     def test_hoga_hop_cache_dir_is_optional(self):
         # The on-disk hop cache is not size-viable at full scale, so omitting
         # --hoga_hop_cache_dir must be allowed (it used to raise).

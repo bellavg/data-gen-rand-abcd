@@ -39,12 +39,28 @@ unit than a fixed graph count is, not further from it. There is no published
 QoR-task batch size to match regardless: HOGA never released QoR training
 code (see baselines/hoga/regressor.py).
 
+A node budget alone leaves each optimizer step averaging only ~4 graph-level
+losses (150k / ~40k), versus ~75 for the primary model, because one graph is
+one label regardless of its node count -- so a 40k-node graph reduces gradient
+variance no more than a 400-node one does. HOGA therefore also accumulates
+(--accumulate_grad_batches, 20 in train_baseline_hoga.sh) so the two models
+are optimized under comparable gradient noise. This is approximate, not exact:
+Lightning divides each micro-batch loss by the constant accumulate_grad_batches
+rather than by its graph count, so micro-batches weigh equally however many
+graphs they hold -- and since node-budget packing puts fewer graphs in batches
+containing large graphs, large graphs draw more per-graph weight. Effective
+sample size over the window is the harmonic mean (~60-65), not 20 x 4.
+
 Everything the paper DOES publish for the QoR task is kept verbatim --
-hidden_dim=256, num_layers=1, lr=0.0001, num_hops=5. Batching is adapted
-because no published value exists and the task differs (graph-level pooling
-vs upstream's per-node prediction), not because the published config was
-inconvenient. If memory still forces a change, cap graph size at the dataset
-level rather than altering those four values.
+hidden_dim=256, num_layers=1, lr=0.0001, num_hops=5. Note num_layers=1 is not
+an oversight: it counts gated self-attention layers over the 11-slot hop
+dimension, not message-passing layers. Depth of field comes from num_hops=5,
+already baked into the precomputed features, which is why HOGA.forward() never
+sees a graph. Batching and accumulation are adapted because no published value
+exists and the task differs (graph-level pooling vs upstream's per-node
+prediction), not because the published config was inconvenient. If memory
+still forces a change, cap graph size at the dataset level rather than
+altering those four values.
 """
 
 from __future__ import annotations
@@ -352,6 +368,7 @@ def main(args: argparse.Namespace) -> None:
         callbacks=callbacks,
         logger=logger,
         gradient_clip_val=args.gradient_clip_val,
+        accumulate_grad_batches=args.accumulate_grad_batches,
         # Match train.py's explicit 0 (Lightning's own default is 2) so the
         # baseline and the primary model start training from the same point.
         num_sanity_val_steps=0,
@@ -409,6 +426,18 @@ if __name__ == "__main__":
     )  # models/qor/SynthNetV3/train.py default
     parser.add_argument("--patience", type=int, default=config.PATIENCE)
     parser.add_argument("--gradient_clip_val", type=float, default=1.0)
+    # Defaults to 1 (no accumulation) so SynthNet keeps its published
+    # batch_size=64 effective batch untouched. train_baseline_hoga.sh sets 20:
+    # HOGA's node budget yields only ~4 graphs per micro-batch (150k / ~40k
+    # nodes) against the primary model's ~75 (3M / ~40k), an optimization
+    # confound rather than an architectural difference. Node count buys no
+    # variance reduction -- one graph is one label is one loss term, whether
+    # it has 400 nodes or 400k. Caveat: Lightning divides by the CONSTANT
+    # accumulate_grad_batches, so micro-batches are weighted equally however
+    # many graphs they hold, and the effective sample size is the harmonic
+    # mean (~60-65), not 20 x 4. Approximates the primary model's regime; does
+    # not match it exactly. See this module's docstring.
+    parser.add_argument("--accumulate_grad_batches", type=int, default=1)
     parser.add_argument("--log_steps", type=int, default=config.LOG_EVERY_N_STEPS)
     parser.add_argument(
         "--max_batch_compute_reports",
