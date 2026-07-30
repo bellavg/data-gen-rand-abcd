@@ -541,22 +541,124 @@ class AIGGraphRegressionDataset(PyGDataset):
                     flush=True,
                 )
 
-        print(
-            f"[dataset] No manifest found — checking file existence for "
-            f"{len(samples)} graph paths (using ThreadPool) ...",
-            flush=True,
+        # No manifest for this exact signature (e.g. first run of a new
+        # split_by/num_samples combination). Before falling back to a raw
+        # ThreadPool existence scan, consult the global per-cache-root graph
+        # index: it is shared across every split/signature and already
+        # proves these graph paths were valid and cached by an earlier run
+        # (a different split_by, the design-split warmup job, ...), so there
+        # is no need to touch the raw filesystem for them again.
+        global_maps = (
+            self._load_global_num_nodes_maps() if self._cache_roots() else {}
         )
-        valid_samples = []
-        with ThreadPoolExecutor(max_workers=32) as executor:
-            is_file_mask = list(executor.map(os.path.isfile, (s.graph_path for s in samples)))
-            valid_samples = [s for s, valid in zip(samples, is_file_mask, strict=False) if valid]
+        known_flags: list[bool | None] = [None] * len(samples)
+        unknown_idx: list[int] = []
+        for i, s in enumerate(samples):
+            if self._global_cache_hit(s.graph_path, global_maps) is not None:
+                known_flags[i] = True
+            else:
+                unknown_idx.append(i)
 
+        if unknown_idx:
+            print(
+                f"[dataset] Global graph-cache index matched "
+                f"{len(samples) - len(unknown_idx)}/{len(samples)} samples; "
+                f"checking remaining {len(unknown_idx)} via ThreadPool "
+                "is_file() ...",
+                flush=True,
+            )
+            with ThreadPoolExecutor(max_workers=32) as executor:
+                results = list(
+                    executor.map(
+                        os.path.isfile, (samples[i].graph_path for i in unknown_idx)
+                    )
+                )
+            for idx, ok in zip(unknown_idx, results, strict=False):
+                known_flags[idx] = ok
+        else:
+            print(
+                f"[dataset] Global graph-cache index matched all "
+                f"{len(samples)} samples; skipping raw file existence check.",
+                flush=True,
+            )
+
+        valid_samples = [s for s, ok in zip(samples, known_flags, strict=False) if ok]
         print(
             f"[dataset] File check done: {len(valid_samples)} valid, "
             f"{len(samples) - len(valid_samples)} missing, took {_time.monotonic() - t2:.1f}s",
             flush=True,
         )
         return valid_samples
+
+    def _cache_index_tag(self) -> str:
+        """Tag identifying which (content-version, PE, normalize_edges) a
+        global-index cache_path entry was built under, so a fast-path hit can
+        never return a file built for a different config -- both PE and
+        normalize_edges affect what `_prepare_cached_graph` writes into the
+        cached .pt (pos_enc / edge_weight respectively)."""
+        return (
+            f"v{_GRAPH_CACHE_CONTENT_VERSION}|pe={self.positional_encoding}|"
+            f"norm_edges={self.normalize_edges}"
+        )
+
+    def _cache_roots(self) -> dict[str, Path]:
+        return {
+            str(root): root
+            for root in (
+                self._cache_graph_dir,
+                self._tier0_cache_dir,
+                self._tier1_cache_dir,
+            )
+            if root is not None
+        }
+
+    def _load_global_num_nodes_maps(self) -> dict[str, dict]:
+        """Load the per-cache-root `_num_nodes_global.json` index.
+
+        This index is keyed only by graph_path and lives in the cache-root
+        directory itself, so it is shared across every split/split_by/
+        num_samples signature that writes into the same cache_dir/tier0/tier1
+        directories -- unlike the per-signature manifest. Values are either a
+        legacy bare int (num_nodes only, written before cache_path tracking)
+        or `[cache_path, num_nodes, index_tag]`.
+        """
+        maps: dict[str, dict] = {}
+        for cache_key, root in self._cache_roots().items():
+            gpath = root / "_num_nodes_global.json"
+            data: dict = {}
+            if gpath.is_file():
+                try:
+                    data = json.loads(gpath.read_text(encoding="utf-8"))
+                except (json.JSONDecodeError, OSError):
+                    data = {}
+            maps[cache_key] = data
+        return maps
+
+    def _global_cache_hit(
+        self, graph_path: str, maps: dict[str, dict]
+    ) -> tuple[str, int] | None:
+        """Return (cache_path, num_nodes) if some earlier run -- any split,
+        split_by, or num_samples value -- already cached this exact graph
+        under the current PE/normalize_edges/content-version, without
+        touching the raw source file (only a cheap stat of the cache file
+        itself, which lives on the fast cache filesystem, not GPFS).
+
+        Verifying the cache file still exists here (not just trusting the
+        JSON index) matters for callers like `_build_samples`: without it, a
+        graph whose cache file was later deleted would be reported "valid"
+        purely from stale index data, silently including a missing raw graph
+        instead of filtering it out.
+        """
+        cache_key = str(self._cache_root_for_graph(graph_path))
+        entry = maps.get(cache_key, {}).get(graph_path)
+        if (
+            isinstance(entry, list)
+            and len(entry) == 3
+            and entry[2] == self._cache_index_tag()
+            and os.path.isfile(str(entry[0]))
+        ):
+            return str(entry[0]), int(entry[1])
+        return None
 
     def _stable_graph_cache_name(self, graph_path: str) -> str:
         source = Path(graph_path)
@@ -693,40 +795,40 @@ class AIGGraphRegressionDataset(PyGDataset):
             flush=True,
         )
 
-        # Stored one file per unique cache-directory so that reruns skip
-        # torch.load for cached .pt files whose num_nodes is already known.
-        cache_roots = {
-            str(root): root
-            for root in (
-                self._cache_graph_dir,
-                self._tier0_cache_dir,
-                self._tier1_cache_dir,
-            )
-            if root is not None
-        }
+        # Stored one file per unique cache-directory so that reruns -- under
+        # ANY split/split_by/num_samples signature, not just this one -- skip
+        # both the raw-file stat() needed to name the cache file and the
+        # torch.load of the cached .pt file, for any graph already cached.
+        cache_roots = self._cache_roots()
         global_nn_paths = {
             cache_key: root / "_num_nodes_global.json"
             for cache_key, root in cache_roots.items()
         }
-        global_num_nodes = {cache_key: {} for cache_key in cache_roots}
-        for cache_key, gpath in global_nn_paths.items():
-            if gpath.is_file():
-                try:
-                    global_num_nodes[cache_key].update(
-                        json.loads(gpath.read_text(encoding="utf-8"))
-                    )
-                except (json.JSONDecodeError, OSError):
-                    pass
+        global_num_nodes = self._load_global_num_nodes_maps()
+        for cache_key in cache_roots:
+            global_num_nodes.setdefault(cache_key, {})
 
         path_map: dict[str, str] = {}
         num_nodes_map: dict[str, int] = {}
 
         def _process_one(graph_path: str) -> tuple[str, str, int]:
+            hit = self._global_cache_hit(graph_path, global_num_nodes)
+            if hit is not None:
+                return graph_path, hit[0], hit[1]
+            # No global-index hit -- either this graph has never been cached,
+            # or the index predates cache_path/index_tag tracking (a legacy
+            # bare-int entry) or was built under a different PE/content
+            # version. Fall back to the deterministic, raw-stat-based path;
+            # the write-back below upgrades the index entry afterwards.
             cache_key = str(self._cache_root_for_graph(graph_path))
             gmap = global_num_nodes[cache_key]
+            legacy_entry = gmap.get(graph_path)
             cache_path = self._cached_graph_path(graph_path)
-            if cache_path.is_file() and graph_path in gmap:
-                return graph_path, str(cache_path), gmap[graph_path]
+            if cache_path.is_file():
+                if isinstance(legacy_entry, int):
+                    return graph_path, str(cache_path), legacy_entry
+                obj = self._torch_load_graph(cache_path)
+                return graph_path, str(cache_path), int(obj.x.shape[0])
             cached_path, num_nodes = self._cache_single_graph(graph_path)
             return graph_path, cached_path, num_nodes
 
@@ -747,8 +849,9 @@ class AIGGraphRegressionDataset(PyGDataset):
                     completed += 1
                     cache_key = str(self._cache_root_for_graph(graph_path))
                     gmap = global_num_nodes[cache_key]
-                    if graph_path not in gmap:
-                        gmap[graph_path] = num_nodes
+                    tagged_entry = [cached_path, num_nodes, self._cache_index_tag()]
+                    if gmap.get(graph_path) != tagged_entry:
+                        gmap[graph_path] = tagged_entry
                         dirty_cache_keys.add(cache_key)
                     if completed % 1000 == 0 or completed == total:
                         print(f"[cache] {completed}/{total} graphs cached", flush=True)

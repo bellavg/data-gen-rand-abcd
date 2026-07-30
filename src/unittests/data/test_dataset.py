@@ -1013,6 +1013,65 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
             f"Expected 0 graph loads on rerun (all in global map), got {len(load_calls)}",
         )
 
+    def test_new_split_by_reuses_cache_across_signatures(self):
+        """A brand-new split_by value produces a brand-new cache signature
+        (no manifest exists for it yet), but graphs already cached under a
+        different split_by must be reused via the global per-cache-root
+        index -- no raw-file stat() to recompute their cache path."""
+        from unittest.mock import patch
+
+        from data.dataset import AIGGraphRegressionDataset
+
+        tier0_dir = self.root / "designs" / "gcd" / "tier0"
+        tier0_pts = _make_graph_pts(tier0_dir, 6)
+        csv = self.root / "split_by_reuse.csv"
+        _write_csv(csv, _make_rows(tier0_pts))
+
+        cache_dir = self.root / "split_by_reuse_cache"
+        tier0_cache_dir = self.root / "split_by_reuse_tier0"
+
+        # First run: split_by="design" builds .pt files + the global index.
+        # A single design here means the whole dataset lands in "train".
+        AIGGraphRegressionDataset(
+            csv,
+            split="train",
+            split_by="design",
+            cache_dir=cache_dir,
+            tier0_cache_dir=tier0_cache_dir,
+            seed=0,
+        )
+
+        # Second run: a DIFFERENT split_by -> a new cache signature -> no
+        # manifest exists for it -> _rebuild_graph_cache() must run, but
+        # should not need to re-stat the raw source files for graphs already
+        # indexed by the first run.
+        _orig = AIGGraphRegressionDataset._cached_graph_path
+        raw_stat_calls: list[str] = []
+
+        def _counting(self_inner, graph_path):
+            raw_stat_calls.append(graph_path)
+            return _orig(self_inner, graph_path)
+
+        with patch.object(
+            AIGGraphRegressionDataset, "_cached_graph_path", _counting
+        ):
+            AIGGraphRegressionDataset(
+                csv,
+                split="train",
+                split_by="random",
+                cache_dir=cache_dir,
+                tier0_cache_dir=tier0_cache_dir,
+                seed=0,
+            )
+
+        self.assertEqual(
+            len(raw_stat_calls),
+            0,
+            "Expected 0 raw-file cache-path lookups when reusing graphs "
+            f"already cached under a different split_by, got "
+            f"{len(raw_stat_calls)}: {raw_stat_calls}",
+        )
+
     def test_tier0_graphs_routed_to_tier0_cache_dir(self):
         """Tier-0 graphs (path contains /tier0/) must be cached in tier0_cache_dir,
         not in cache_dir/processed_graphs."""
