@@ -96,6 +96,15 @@ mkdir -p "$RESULTS_DIR"
 
 NUM_WORKERS="${NUM_WORKERS:-16}"
 
+# Split strategy the checkpoint was trained with — same env-var contract as
+# test.sh (unset falls through to config.SPLIT_BY inside test.py):
+#   sbatch --export=ALL,SPLIT_BY=recipe --array=0-8 src/shell/test_cpu.sh
+SPLIT_BY_ARGS=()
+if [[ -n "${SPLIT_BY:-}" ]]; then
+    SPLIT_BY_ARGS=(--split_by "$SPLIT_BY")
+    echo "Using SPLIT_BY=$SPLIT_BY."
+fi
+
 # Batching comes from config.EVAL_* (see test.sh) so this and the GPU pass
 # cannot end up comparing two different batchings rather than two devices.
 
@@ -129,6 +138,7 @@ srun python -u -m test \
     --val_tier0_cache_dir "$VAL_TIER0_CACHE_DIR" \
     --val_tier1_cache_dir "$VAL_TIER1_CACHE_DIR" \
     --hp_tuning_splits_path "$HP_TUNING_SPLITS" \
+    ${SPLIT_BY_ARGS[@]+"${SPLIT_BY_ARGS[@]}"} \
     --num_workers        "$NUM_WORKERS" \
     --wandb              "$WANDB" \
     --device             cpu \

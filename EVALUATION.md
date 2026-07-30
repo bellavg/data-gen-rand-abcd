@@ -44,6 +44,25 @@ the cache/mask chain above, and `test.sh` is the only GPU-partition job here —
 so getting it through the queue first keeps the training benchmark from sitting
 in front of it competing for GPU budget.
 
+### Evaluating a non-default split strategy
+
+The steps above evaluate `config.SPLIT_BY` (`design`). To evaluate a checkpoint
+trained with `train.py --split_by recipe|random` (e.g. `sbatch -a 0-2
+src/shell/train_no_sparsification.sh`, whose tasks 0/1/2 are design/recipe/random),
+pass the same value through the **whole** chain — the warmup included, since a
+different strategy puts different graphs in the test split:
+
+```bash
+sbatch --parsable --export=ALL,SPLIT_BY=recipe src/shell/warmup_test_cache.sh
+sbatch --dependency=$DEPS --export=ALL,SPLIT_BY=recipe src/shell/test.sh
+```
+
+`test.py` then evaluates that split and reads the `<run_label>_recipe`
+checkpoint directory `train.py` wrote to; its result/prediction filenames and
+WandB run names carry the same suffix, so they never collide with the design
+run. The warmup sentinel is keyed on `SPLIT_BY` too, so a prior design warmup
+does not make the recipe warmup skip itself.
+
 ### Batching at eval time
 
 Eval packs batches to a total-node budget — the same scheme training uses —

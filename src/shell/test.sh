@@ -137,6 +137,23 @@ mkdir -p "$RESULTS_DIR/predictions"
 
 NUM_WORKERS="${NUM_WORKERS:-12}"
 
+# Split strategy the checkpoint under test was TRAINED with (train.py
+# --split_by; train_no_sparsification.sh maps array tasks 0/1/2 to
+# design/recipe/random). SLURM_ARRAY_TASK_ID is already spoken for here (it
+# selects the reduction config), so this comes in as an env var:
+#   sbatch --export=ALL,SPLIT_BY=recipe --array=0-8 src/shell/test.sh
+# Left unset it falls through to config.SPLIT_BY inside test.py rather than
+# being duplicated here. For non-default values test.py both evaluates that
+# split and looks in the matching <run_label>_<split_by> checkpoint dir, and
+# its result/prediction filenames carry the suffix, so runs cannot collide.
+# NOTE: warmup_test_cache.sh must have been run with the SAME SPLIT_BY, or the
+# test graphs for this split are not in the eval cache yet.
+SPLIT_BY_ARGS=()
+if [[ -n "${SPLIT_BY:-}" ]]; then
+    SPLIT_BY_ARGS=(--split_by "$SPLIT_BY")
+    echo "Using SPLIT_BY=$SPLIT_BY."
+fi
+
 # Batching is NOT set here on purpose. config.EVAL_DYNAMIC_BATCHING /
 # config.EVAL_MAX_TOTAL_NODES_PER_BATCH are the single source of truth, so all
 # 9 array tasks (and test_cpu.sh) cannot drift onto different batchings and
@@ -150,22 +167,20 @@ NUM_WORKERS="${NUM_WORKERS:-12}"
 export WANDB_INIT_TIMEOUT=120
 WANDB="${WANDB:-true}"
 
-# HARDCODED true, not an overridable env var: this is set for a specific
-# targeted resubmission (fixing eval-workspace sparsification masks for
-# array indices 2-4, whose full_graph pass already completed correctly on a
-# prior run and only needs matched_reduction/val rerun — see EVALUATION.md/
-# git history around commit c308b27).
+# Hardcoded here (not an env var) so a full sweep can never be silently
+# gutted by a stale exported value. false is the ONLY correct setting for a
+# full sweep; edit it to true in-place ONLY for a targeted resubmission whose
+# full_graph pass already completed correctly (as was done for array indices
+# 2-4 when their eval-workspace sparsification masks were missing — see
+# EVALUATION.md / commit c308b27), then revert it in the same session.
 #
-# MUST BE REVERTED TO false BEFORE THE NEXT FULL SWEEP (array 0-8 on
-# newly-trained checkpoints). For the 8 reduction configs this silently drops
-# only the full_graph pass; for the BASELINE config (array index 0,
-# "none:none") it is worse — build_eval_passes() only appends matched_reduction
-# when reduction_type != "none", so baseline has no fallback pass at all and
-# this would silently drop its ENTIRE test-split accuracy result, leaving
-# only the val sanity-check row. Nothing in the job log flags this as an
-# anomaly — only the absence of a "Running split='test' 'full_graph' pass"
-# line reveals it, so a forgotten revert would look like a normal run.
-SKIP_FULL_GRAPH=true
+# Why a forgotten true is costly: for the 8 reduction configs it drops only
+# the full_graph pass; for the BASELINE config (array index 0, "none:none")
+# build_eval_passes() appends no matched_reduction pass at all, so it would
+# drop that config's ENTIRE test-split accuracy result, leaving only the val
+# sanity-check row. Nothing in the job log flags this as an anomaly — only the
+# absence of a "Running split='test' 'full_graph' pass" line reveals it.
+SKIP_FULL_GRAPH=false
 if [[ "$SKIP_FULL_GRAPH" == "true" ]]; then
     echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
     echo "WARNING: SKIP_FULL_GRAPH is hardcoded true in this script — the"
@@ -208,6 +223,7 @@ srun python -u -m test \
     --val_tier0_cache_dir "$VAL_TIER0_CACHE_DIR" \
     --val_tier1_cache_dir "$VAL_TIER1_CACHE_DIR" \
     --hp_tuning_splits_path "$HP_TUNING_SPLITS" \
+    ${SPLIT_BY_ARGS[@]+"${SPLIT_BY_ARGS[@]}"} \
     --num_workers        "$NUM_WORKERS" \
     --wandb              "$WANDB" \
     --skip_full_graph    "$SKIP_FULL_GRAPH" \

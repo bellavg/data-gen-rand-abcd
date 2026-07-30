@@ -91,14 +91,30 @@ def reproducibility_metadata(seed: int) -> dict:
     }
 
 
-def run_label_for(algorithm: str, reduction_type: str, reduction_method: str | None) -> str:
-    if reduction_type == "none":
-        return algorithm
-    return f"{algorithm}_{reduction_method}"
+def run_label_for(
+    algorithm: str,
+    reduction_type: str,
+    reduction_method: str | None,
+    split_by: str = config.SPLIT_BY,
+) -> str:
+    """Mirrors train.py's run_label, including its split_by suffix rule.
+
+    train.py only appends the split_by suffix for NON-default strategies, so
+    design-split checkpoints keep their unsuffixed directory names. This must
+    stay in lockstep with train.py or eval cannot find the checkpoint dir.
+    """
+    label = algorithm if reduction_type == "none" else f"{algorithm}_{reduction_method}"
+    if split_by != config.SPLIT_BY:
+        label = f"{label}_{split_by}"
+    return label
 
 
 def wandb_run_name_for(
-    algorithm: str, reduction_type: str, reduction_method: str | None, device: str
+    algorithm: str,
+    reduction_type: str,
+    reduction_method: str | None,
+    device: str,
+    split_by: str = config.SPLIT_BY,
 ) -> str:
     """Mirrors train.py's WandB naming with a ``test_`` prefix, so each
     config's eval run sits next to its ``train_`` run in the same project.
@@ -109,8 +125,12 @@ def wandb_run_name_for(
     in the UI. The result-CSV filename already keys on device the same way.
     """
     if reduction_type == "none":
-        return f"test_{algorithm}_{device}"
-    return f"test_{algorithm}_{reduction_type}_{reduction_method}_{device}"
+        name = f"test_{algorithm}_{device}"
+    else:
+        name = f"test_{algorithm}_{reduction_type}_{reduction_method}_{device}"
+    if split_by != config.SPLIT_BY:
+        name = f"{name}_{split_by}"
+    return name
 
 
 def batching_label(
@@ -524,7 +544,9 @@ def main(args: argparse.Namespace) -> None:
     )
 
     reduction_kwargs = resolve_reduction_kwargs(args.reduction_type, args.reduction_method)
-    run_label = run_label_for(args.algorithm, args.reduction_type, args.reduction_method)
+    run_label = run_label_for(
+        args.algorithm, args.reduction_type, args.reduction_method, args.split_by
+    )
     checkpoint_path = resolve_checkpoint_path(
         args.checkpoint_dir, run_label, args.checkpoint_filename
     )
@@ -554,6 +576,11 @@ def main(args: argparse.Namespace) -> None:
         # burns non-pageable memory.
         pin_memory=(device.type == "cuda"),
         split_ratios=(0.8, 0.1, 0.1),
+        # Must match what the checkpoint was trained under: the split is
+        # regenerated here from (split_by, seed, split_ratios), so evaluating a
+        # recipe-split checkpoint against a design-split test set would score it
+        # on graphs it trained on.
+        split_by=args.split_by,
         seed=args.seed,
         num_workers=args.num_workers,
         cache_dir=args.cache_dir,
@@ -580,7 +607,11 @@ def main(args: argparse.Namespace) -> None:
             project=config.WANDB_PROJECT,
             entity=config.WANDB_ENTITY,
             name=wandb_run_name_for(
-                args.algorithm, args.reduction_type, args.reduction_method, device.type
+                args.algorithm,
+                args.reduction_type,
+                args.reduction_method,
+                device.type,
+                args.split_by,
             ),
             # Without an explicit dir, wandb stages run artifacts into ./wandb
             # under cwd — which the SLURM scripts set to the repo in $HOME.
@@ -590,6 +621,7 @@ def main(args: argparse.Namespace) -> None:
                 "algorithm": args.algorithm,
                 "reduction_type": args.reduction_type,
                 "reduction_method": args.reduction_method or "",
+                "split_by": args.split_by,
                 "batching": batching,
                 "checkpoint_path": str(checkpoint_path),
                 "device": device.type,
@@ -636,6 +668,10 @@ def main(args: argparse.Namespace) -> None:
                 "run_label": run_label,
                 "reduction_type": args.reduction_type,
                 "reduction_method": args.reduction_method or "",
+                # Same reason the `batching` column exists: rows are only
+                # comparable to rows sharing this value, and run_label alone
+                # carries no suffix for the default strategy.
+                "split_by": args.split_by,
                 "eval_mode": eval_mode,
                 "device": device.type,
                 # Only split="test" rows are thesis results; results_to_latex
@@ -777,6 +813,19 @@ if __name__ == "__main__":
             "reverted to false before the next full sweep (array 0-8 on "
             "fresh checkpoints), or every config's full_graph pass would be "
             "silently skipped."
+        ),
+    )
+    parser.add_argument(
+        "--split_by",
+        type=str,
+        default=config.SPLIT_BY,
+        choices=sorted(config.VALID_SPLIT_BY),
+        help=(
+            "Train/val/test grouping strategy the checkpoint was TRAINED with "
+            "(see train.py --split_by). It selects both the test split "
+            "evaluated here and, for non-default values, the "
+            "<run_label>_<split_by> checkpoint directory train.py wrote to. "
+            "Getting it wrong evaluates the model on graphs it trained on."
         ),
     )
     parser.add_argument("--hp_tuning_splits_path", type=str, default=None)

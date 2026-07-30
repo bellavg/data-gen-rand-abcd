@@ -78,7 +78,20 @@ CACHE_DIR="$EVAL_ROOT/${ALGO}/cache"
 mkdir -p "$CACHE_DIR"
 
 N_IO_WORKERS="${N_IO_WORKERS:-$(nproc)}"
-SENTINEL="$CACHE_DIR/test_cache_ready.sentinel"
+
+# Split strategy — must match the SPLIT_BY passed to test.sh/test_cpu.sh (and
+# the one the checkpoint was trained with), because a different strategy puts
+# a different set of graphs in the test split. Unset means config.SPLIT_BY.
+# The sentinel is keyed on it so warming "design" does not make a later
+# "recipe" warmup skip itself with a cache that lacks its graphs.
+SPLIT_BY="${SPLIT_BY:-}"
+if [[ -n "$SPLIT_BY" ]]; then
+    SPLIT_BY_PY="\"$SPLIT_BY\""
+    SENTINEL="$CACHE_DIR/test_cache_ready_${SPLIT_BY}.sentinel"
+else
+    SPLIT_BY_PY="config.SPLIT_BY"
+    SENTINEL="$CACHE_DIR/test_cache_ready.sentinel"
+fi
 
 if [[ -f "$SENTINEL" ]]; then
     echo "[warmup:test] Cache already warm (sentinel exists). Skipping."
@@ -97,7 +110,7 @@ else
     echo "[warmup:test] WARNING: splits file not found at $HP_TUNING_SPLITS — using auto-generated splits."
 fi
 
-echo "[warmup:test] Building test-split cache in $CACHE_DIR ..."
+echo "[warmup:test] Building test-split cache in $CACHE_DIR (split_by=${SPLIT_BY:-<config default>}) ..."
 
 python -u - <<PYEOF
 import sys, time
@@ -112,6 +125,7 @@ dm = AIGDataModule(
     positional_encoding=config.PE_TYPE if config.PE_TYPE != "none" else None,
     batch_size=config.BATCH_SIZE,
     split_ratios=(0.8, 0.1, 0.1),
+    split_by=$SPLIT_BY_PY,
     seed=42,
     cache_dir="$CACHE_DIR",
     tier0_cache_dir="$TIER0_CACHE_DIR",

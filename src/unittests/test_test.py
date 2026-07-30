@@ -12,6 +12,7 @@ from torch.utils.data import DataLoader
 from torch_geometric.data import Data
 from torch_geometric.data import Batch as PyGBatch
 
+import config
 import test as test_module
 from data.sampler import BalancedDynamicBatchSampler
 from test import (
@@ -37,6 +38,18 @@ class TestRunLabelFor:
     def test_reduction_appends_method_suffix(self):
         assert run_label_for("Orchestrate", "sparsification", "pagerank") == "Orchestrate_pagerank"
         assert run_label_for("Orchestrate", "partition", "metis") == "Orchestrate_metis"
+
+    def test_default_split_by_adds_no_suffix(self):
+        """train.py leaves design-split checkpoint dirs unsuffixed, so eval
+        must not go looking for an "Orchestrate_design" directory."""
+        assert run_label_for("Orchestrate", "none", None, config.SPLIT_BY) == "Orchestrate"
+
+    def test_non_default_split_by_matches_train_pys_directory(self):
+        assert run_label_for("Orchestrate", "none", None, "recipe") == "Orchestrate_recipe"
+        assert (
+            run_label_for("Orchestrate", "sparsification", "pagerank", "random")
+            == "Orchestrate_pagerank_random"
+        )
 
 
 class TestWandbRunNameFor:
@@ -65,6 +78,16 @@ class TestWandbRunNameFor:
         assert wandb_run_name_for(
             "Orchestrate", "none", None, "cuda"
         ) != wandb_run_name_for("Orchestrate", "none", None, "cpu")
+
+    def test_split_by_suffix_mirrors_train_py(self):
+        assert (
+            wandb_run_name_for("Orchestrate", "none", None, "cuda", config.SPLIT_BY)
+            == "test_Orchestrate_cuda"
+        )
+        assert (
+            wandb_run_name_for("Orchestrate", "none", None, "cuda", "recipe")
+            == "test_Orchestrate_cuda_recipe"
+        )
 
 
 class TestBatchingLabel:
