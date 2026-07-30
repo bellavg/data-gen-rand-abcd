@@ -46,7 +46,15 @@ export PYTHONPATH="$BASE_DIR/src"
 cd "$BASE_DIR"
 
 ALGORITHM="Orchestrate"
-CSV_PATH="$BASE_DIR/data/designs/design_metadata/algo_${ALGORITHM}_ml.csv"
+# CSV_PATH intentionally does NOT derive from BASE_DIR: _build_cache_signature()
+# hashes this path's literal absolute string, so running this warmup from a
+# different worktree/checkout than train.sh (e.g. BASE_DIR overridden to a
+# baselines worktree so PYTHONPATH resolves the baselines/ package) would
+# otherwise change the signature and miss train.sh's already-built manifest
+# even though the CSV content is identical. Pin it to the same checkout
+# train.sh runs from.
+DATA_BASE_DIR="${DATA_BASE_DIR:-$HOME/data-gen-rand-abcd}"
+CSV_PATH="$DATA_BASE_DIR/data/designs/design_metadata/algo_${ALGORITHM}_ml.csv"
 
 WORKSPACE="/scratch-shared/$USER/aig_baseline_run/hoga_${ALGORITHM}"
 # Reuse the primary model's own per-algorithm cache_dir (not a separate

@@ -35,7 +35,13 @@ export MKL_NUM_THREADS=1
 cd "$BASE_DIR"
 
 ALGORITHM="Orchestrate"
-CSV_PATH="$BASE_DIR/data/designs/design_metadata/algo_${ALGORITHM}_ml.csv"
+# CSV_PATH intentionally does NOT derive from BASE_DIR -- see the equivalent
+# fix in warmup_hoga_hop_cache.sh for the full rationale: _build_cache_signature()
+# hashes this path's literal absolute string, so it must stay pinned to the
+# same checkout train.sh runs from even when BASE_DIR is overridden to a
+# different worktree for PYTHONPATH.
+DATA_BASE_DIR="${DATA_BASE_DIR:-$HOME/data-gen-rand-abcd}"
+CSV_PATH="$DATA_BASE_DIR/data/designs/design_metadata/algo_${ALGORITHM}_ml.csv"
 
 WORKSPACE="/scratch-shared/$USER/aig_baseline_run/synthnet_${ALGORITHM}"
 CHECKPOINT_DIR="$WORKSPACE/checkpoints"
