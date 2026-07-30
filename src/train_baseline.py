@@ -17,10 +17,34 @@ loading/splitting/caching (AIGDataModule / AIGGraphRegressionDataset) is
 reused unchanged, since identical splits are required for a fair comparison
 against the primary model, and that part isn't "baseline config".
 
-Both baselines use a plain fixed batch size rather than this project's
-node-budget dynamic batching -- dynamic batching is this project's own
-OOM-avoidance mechanism for the primary model, not part of either paper's
-published training config.
+SynthNet uses a plain fixed batch size (its published 64), matching its paper.
+
+HOGA does NOT, and this is a deliberate, documented deviation. Upstream HOGA
+minibatches over *nodes*, not graphs: main_gamora.py builds
+`Data.TensorDataset(data.x[train_idx], ...)` with `batch_size=1024`, i.e. 1024
+nodes sampled from a single preprocessed graph, and its `HOGA.forward(x)` takes
+only `[num_nodes, num_hop_slots, feat]` -- no edge_index, no batch vector,
+because the node axis *is* the attention batch axis. That works upstream
+because the task is per-node classification on one graph. This project's task
+is one scalar per whole graph, so global_mean_pool needs every node of a graph
+present in the same forward pass, which forces graph-level batching.
+
+Batching a fixed *graph* count then makes memory unbounded: this dataset's
+graphs average ~40k nodes (max 366k), so batch_size=32 is ~1.29M nodes, and
+HOGA's trunk holds [num_nodes, 11, 256] activations = ~5.6 KB/node under the
+bf16-mixed AMP selected on H100, i.e. ~7.2 GB for a single activation tensor
+before attention and backward -- an immediate OOM. Bounding *nodes* per batch
+(--hoga_max_nodes_per_batch) is therefore closer to upstream's own batching
+unit than a fixed graph count is, not further from it. There is no published
+QoR-task batch size to match regardless: HOGA never released QoR training
+code (see baselines/hoga/regressor.py).
+
+Everything the paper DOES publish for the QoR task is kept verbatim --
+hidden_dim=256, num_layers=1, lr=0.0001, num_hops=5. Batching is adapted
+because no published value exists and the task differs (graph-level pooling
+vs upstream's per-node prediction), not because the published config was
+inconvenient. If memory still forces a change, cap graph size at the dataset
+level rather than altering those four values.
 """
 
 from __future__ import annotations
@@ -55,6 +79,7 @@ from baselines.openabc_synthnet.regressor import (
     SynthNetGraphRegressor,
 )
 from data.datamodule import AIGDataModule
+from data.sampler import BalancedDynamicBatchSampler
 from train_utils import PreciseEarlyStopping, TrainingStartupCallback
 
 torch.set_num_threads(1)
@@ -156,8 +181,32 @@ def _hoga_loader(ds, args: argparse.Namespace, *, shuffle: bool) -> DataLoader:
         cache_dir=args.hoga_hop_cache_dir,
         directed=args.hoga_directed,
     )
+
+    if not args.hoga_max_nodes_per_batch:
+        return DataLoader(
+            wrapped, shuffle=shuffle, collate_fn=collate_hoga_batch, **_loader_kwargs(args)
+        )
+
+    # Node-budget batching (see this module's docstring for why HOGA needs it
+    # and SynthNet does not). HopFeatureCache is index-aligned with `ds` --
+    # same length, __getitem__ delegates straight through -- so a plan built
+    # from ds's node counts indexes `wrapped` correctly.
+    sampler = BalancedDynamicBatchSampler(
+        batch_size=args.batch_size,
+        shuffle=shuffle,
+        seed=args.seed,
+        max_total_nodes=args.hoga_max_nodes_per_batch,
+        precomputed_batches=BalancedDynamicBatchSampler.build_batch_plan(
+            ds.get_num_nodes_list(),
+            max_total_nodes=args.hoga_max_nodes_per_batch,
+        ),
+    )
+    ds.release_runtime_caches()
+
+    kwargs = _loader_kwargs(args)
+    kwargs.pop("batch_size")
     return DataLoader(
-        wrapped, shuffle=shuffle, collate_fn=collate_hoga_batch, **_loader_kwargs(args)
+        wrapped, batch_sampler=sampler, collate_fn=collate_hoga_batch, **kwargs
     )
 
 
@@ -172,9 +221,6 @@ def main(args: argparse.Namespace) -> None:
         raise ValueError(
             f"Algorithm '{args.algorithm}' must be one of {config.VALID_ALGORITHMS}"
         )
-    if args.baseline == "hoga" and not args.hoga_hop_cache_dir:
-        raise ValueError("--hoga_hop_cache_dir is required when --baseline hoga")
-
     defaults = SYNTHNET_DEFAULTS if args.baseline == "synthnet" else HOGA_DEFAULTS
     if args.batch_size is None:
         args.batch_size = defaults["batch_size"]
@@ -210,7 +256,10 @@ def main(args: argparse.Namespace) -> None:
         hp_tuning_splits_path=args.hp_tuning_splits_path,
         tier0_cache_dir=args.tier0_cache_dir,
         tier1_cache_dir=args.tier1_cache_dir,
-        dynamic_batching=False,  # both baselines use a fixed batch size; see module docstring
+        # HOGA's node budget is applied in _hoga_loader, which builds its own
+        # sampler over these datasets; SynthNet keeps its published fixed batch
+        # size. Neither uses the datamodule's own loaders. See module docstring.
+        dynamic_batching=False,
     )
 
     print("[main] Loading datasets before Trainer/WandB init ...", flush=True)
@@ -432,10 +481,31 @@ if __name__ == "__main__":
         default=True,
     )
     parser.add_argument(
+        "--hoga_max_nodes_per_batch",
+        type=int,
+        default=150_000,
+        help=(
+            "Total-node budget per HOGA batch, replacing --batch_size for the "
+            "hoga baseline (0 disables, restoring fixed graph-count batching). "
+            "At ~5.6 KB/node per [N, 11, hidden] activation under bf16-mixed, "
+            "150k nodes is ~845 MB per activation tensor. NOTE this bounds "
+            "typical batches only: a graph larger than the budget still forms "
+            "a singleton batch (it cannot be split -- graph-level pooling "
+            "needs all its nodes at once), so the largest graph sets an "
+            "irreducible peak, ~2.1 GB/activation at config.MAX_NUM_GATES. "
+            "See this module's docstring."
+        ),
+    )
+    parser.add_argument(
         "--hoga_hop_cache_dir",
         type=str,
         default=None,
-        help="Required when --baseline hoga; see baselines/hoga/hop_features.py.",
+        help=(
+            "Optional on-disk hop-feature cache. Leave unset (the default) to "
+            "compute hop features in the dataloader workers instead -- at full "
+            "dataset scale the cache needs ~5.7 TB / ~788k files and does not "
+            "fit scratch quota. See baselines/hoga/hop_features.py."
+        ),
     )
 
     args = parser.parse_args()

@@ -35,11 +35,11 @@ export MKL_NUM_THREADS=1
 cd "$BASE_DIR"
 
 ALGORITHM="Orchestrate"
-# CSV_PATH intentionally does NOT derive from BASE_DIR -- see the equivalent
-# fix in warmup_hoga_hop_cache.sh for the full rationale: _build_cache_signature()
-# hashes this path's literal absolute string, so it must stay pinned to the
-# same checkout train.sh runs from even when BASE_DIR is overridden to a
-# different worktree for PYTHONPATH.
+# CSV_PATH intentionally does NOT derive from BASE_DIR -- see
+# train_baseline_hoga.sh's matching comment: _build_cache_signature() hashes
+# this path's literal absolute string, so it must stay pinned to the same
+# checkout train.sh runs from even when BASE_DIR is overridden to a different
+# worktree for PYTHONPATH.
 DATA_BASE_DIR="${DATA_BASE_DIR:-$HOME/data-gen-rand-abcd}"
 CSV_PATH="$DATA_BASE_DIR/data/designs/design_metadata/algo_${ALGORITHM}_ml.csv"
 
@@ -47,7 +47,7 @@ WORKSPACE="/scratch-shared/$USER/aig_baseline_run/synthnet_${ALGORITHM}"
 CHECKPOINT_DIR="$WORKSPACE/checkpoints"
 LOG_DIR="$WORKSPACE/logs"
 # Reuse the primary model's own per-algorithm cache_dir (not a separate
-# aig_baseline_run/.../cache) -- see warmup_hoga_hop_cache.sh's matching
+# aig_baseline_run/.../cache) -- see train_baseline_hoga.sh's matching
 # comment: the graph-cache manifest is keyed by cache_dir (not the cache
 # signature), so pointing here at train.sh's own CACHE_DIR lets this job
 # find the manifest the primary run already built instead of rebuilding it

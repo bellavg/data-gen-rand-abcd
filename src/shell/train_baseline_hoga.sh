@@ -35,11 +35,12 @@ export MKL_NUM_THREADS=1
 cd "$BASE_DIR"
 
 ALGORITHM="Orchestrate"
-# CSV_PATH intentionally does NOT derive from BASE_DIR -- see
-# warmup_hoga_hop_cache.sh's matching comment: _build_cache_signature()
-# hashes this path's literal absolute string, so it must stay pinned to the
-# same checkout train.sh runs from even when BASE_DIR is overridden to a
-# different worktree for PYTHONPATH.
+# CSV_PATH intentionally does NOT derive from BASE_DIR: dataset.py's
+# _build_cache_signature() hashes this path's literal absolute string, so
+# running from a different worktree than train.sh (e.g. BASE_DIR overridden so
+# PYTHONPATH resolves the baselines/ package) would change the signature and
+# miss train.sh's already-built manifest even though the CSV content is
+# identical. Pin it to the checkout train.sh runs from.
 DATA_BASE_DIR="${DATA_BASE_DIR:-$HOME/data-gen-rand-abcd}"
 CSV_PATH="$DATA_BASE_DIR/data/designs/design_metadata/algo_${ALGORITHM}_ml.csv"
 
@@ -47,11 +48,13 @@ WORKSPACE="/scratch-shared/$USER/aig_baseline_run/hoga_${ALGORITHM}"
 CHECKPOINT_DIR="$WORKSPACE/checkpoints"
 LOG_DIR="$WORKSPACE/logs"
 # Reuse the primary model's own per-algorithm cache_dir (not a separate
-# aig_baseline_run/.../cache) -- see warmup_hoga_hop_cache.sh's matching
-# comment: the graph-cache manifest is keyed by cache_dir (not the cache
-# signature), so pointing here at train.sh's own CACHE_DIR lets this job
-# find the manifest the primary run already built instead of rebuilding it
-# from scratch for all ~700k samples.
+# aig_baseline_run/.../cache). The graph-cache manifest lives at
+# cache_dir/metadata/dataset_<sig>_manifest.json and is keyed by cache_dir
+# path, not by the cache signature -- so pointing here at train.sh's own
+# CACHE_DIR lets this job load the manifest the primary run already built
+# (sub-second) instead of re-walking all ~700k samples to rebuild it. The
+# per-graph .pt files themselves live in the shared tier0/tier1 dirs below
+# regardless of this setting.
 CACHE_DIR="/scratch-shared/$USER/aig_train_run/${ALGORITHM}/cache"
 TIER0_CACHE_DIR="/scratch-shared/$USER/aig_train_run/shared_tier0_cache"
 TIER1_CACHE_DIR="/scratch-shared/$USER/aig_train_run/shared_tier1_cache"
@@ -62,13 +65,33 @@ TIER1_CACHE_DIR="/scratch-shared/$USER/aig_train_run/shared_tier1_cache"
 HP_TUNING_SPLITS="/scratch-shared/$USER/big_optuna_run/shared_dataset_cache/algo_Orchestrate_ml_algo_Deepsyn_ml_algo_Syn4_ml_algo_C2RS_ml_50000_splits.json"
 [ ! -f "$HP_TUNING_SPLITS" ] && echo "WARNING: HP Tuning split file not found at $HP_TUNING_SPLITS"
 
-# Hop-feature cache -- run src/shell/warmup_hoga_hop_cache.sh first (CPU-only
-# partition) so this GPU job never stalls computing hop features; see
-# src/baselines/hoga/hop_features.py. Must match warmup's HOGA_NUM_HOPS /
-# HOGA_DIRECTED for the cache to be reused rather than recomputed.
-HOGA_HOP_CACHE_DIR="/scratch-shared/$USER/aig_baseline_run/hoga_hop_cache"
+# Hop features are computed in the dataloader workers, NOT cached to disk.
+# An on-disk cache is not viable at this dataset's scale: [num_nodes, 11, 4]
+# float32 = 176 B/node, and Orchestrate train+val total ~32.4e9 nodes over
+# ~788k graphs -> ~5.7 TB in ~788k files, against an 8 TiB / 3M-inode scratch
+# quota already ~90% full. Recomputing is a handful of O(nnz) sparse ops per
+# graph and parallelises over NUM_WORKERS, overlapped with GPU compute. Pass
+# --hoga_hop_cache_dir only for subset runs small enough to fit. See
+# src/baselines/hoga/hop_features.py.
 HOGA_NUM_HOPS="${HOGA_NUM_HOPS:-5}"
 HOGA_DIRECTED="${HOGA_DIRECTED:-true}"
+# Node-budget batching replaces a fixed graph count. Graphs here average ~40k
+# nodes (max 366k) and HOGA's trunk holds [N, 11, 256] activations -- ~5.6
+# KB/node under the bf16-mixed AMP this script gets on H100 -- so a fixed
+# batch_size=32 (~1.29M nodes) is ~7.2 GB for a single activation tensor and
+# OOMs once the attention layer and backward are counted. 150k nodes is
+# ~845 MB/activation for a typical batch.
+#
+# Caveat: a graph bigger than the budget cannot be split (graph-level pooling
+# needs all its nodes in one pass), so it forms a singleton batch, and the
+# largest graph sets an irreducible peak of ~2.1 GB/activation at 366k nodes.
+# Lowering this budget does NOT reduce that peak. If it still OOMs, cap graph
+# SIZE (a dataset choice) rather than touching hidden_dim/num_layers/heads --
+# those are published DAC'24 QoR values and changing them would stop this
+# being a faithful HOGA baseline. Note a size cap must be applied to the
+# primary model too, or the comparison is no longer like-for-like.
+# See src/train_baseline.py's module docstring for the full rationale.
+HOGA_MAX_NODES_PER_BATCH="${HOGA_MAX_NODES_PER_BATCH:-150000}"
 
 NUM_WORKERS="${NUM_WORKERS:-12}"
 PREFETCH_FACTOR="${PREFETCH_FACTOR:-4}"
@@ -100,8 +123,8 @@ srun python -u -m train_baseline \
     --tier0_cache_dir    "$TIER0_CACHE_DIR" \
     --tier1_cache_dir    "$TIER1_CACHE_DIR" \
     --hp_tuning_splits_path "$HP_TUNING_SPLITS" \
-    --hoga_hop_cache_dir "$HOGA_HOP_CACHE_DIR" \
     --hoga_num_hops      "$HOGA_NUM_HOPS" \
+    --hoga_max_nodes_per_batch "$HOGA_MAX_NODES_PER_BATCH" \
     --hoga_directed      "$HOGA_DIRECTED" \
     --prefetch_factor    "$PREFETCH_FACTOR" \
     --num_workers        "$NUM_WORKERS" \

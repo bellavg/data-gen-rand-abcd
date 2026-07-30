@@ -61,6 +61,21 @@ class TestTrainBaselineCLI(unittest.TestCase):
         result = _run_cli("--help")
         self.assertIn("{synthnet,hoga}", result.stdout)
 
+    def test_hoga_node_budget_flag_is_wired(self):
+        # HOGA batches by total node count, not graph count -- graphs here
+        # average ~40k nodes and a fixed batch_size=32 OOMs (see
+        # train_baseline.py's module docstring). train_baseline_hoga.sh passes
+        # this flag, so a rename would break the job script silently.
+        result = _run_cli("--help")
+        self.assertIn("--hoga_max_nodes_per_batch", result.stdout)
+
+    def test_hoga_hop_cache_dir_is_optional(self):
+        # The on-disk hop cache is not size-viable at full scale, so omitting
+        # --hoga_hop_cache_dir must be allowed (it used to raise).
+        result = _run_cli("--help")
+        self.assertIn("--hoga_hop_cache_dir", result.stdout)
+        self.assertNotIn("required when --baseline hoga", result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

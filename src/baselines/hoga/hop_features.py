@@ -142,29 +142,43 @@ def num_hop_slots(num_hops: int, directed: bool = True) -> int:
 
 
 class HopFeatureCache(torch.utils.data.Dataset):
-    """Wraps a per-split AIG dataset, attaching cached HOGA hop-stacked features.
+    """Wraps a per-split AIG dataset, attaching HOGA hop-stacked features.
 
     Hop features depend only on graph structure (`edge_index`) and raw node
-    features (`x`), so they are computed once per sample and cached to disk
-    (keyed by the sample's stable `graph_path`, plus `num_hops`/`directed` so
-    different hop configs never collide) rather than recomputed every epoch.
-    Call `precompute_all()` once, on CPU, ahead of a GPU training job -- see
-    src/shell/warmup_hoga_hop_cache.sh -- so the first training epoch doesn't
-    stall computing them.
+    features (`x`), so they *can* be computed once per sample and cached to
+    disk (keyed by the sample's stable `graph_path`, plus `num_hops`/`directed`
+    so different hop configs never collide) rather than recomputed every epoch.
+
+    `cache_dir=None` disables the on-disk cache and computes hop features
+    in-process on every access instead. **This is the right choice at this
+    project's scale**, because the cache is not size-viable here: output is
+    `[num_nodes, 1 + 2*num_hops, 4]` float32, i.e. 176 B/node at num_hops=5
+    directed, and this dataset's Orchestrate train+val splits total ~32.4e9
+    nodes across ~788k graphs (~40k nodes/graph average) -- about 5.7 TB in
+    ~788k files. Measured against a Snellius 8 TiB / 3M-inode scratch quota
+    already ~90% full, that overruns both the space and the inode budget by
+    roughly an order of magnitude. Recomputation is cheap by comparison
+    (a handful of O(nnz) scipy/torch sparse ops per graph) and parallelises
+    across dataloader workers, overlapped with GPU compute.
+
+    Pass a `cache_dir` only when the split is small enough to fit -- e.g. a
+    subset experiment -- in which case `precompute_all()` can populate it on
+    CPU ahead of a GPU job.
     """
 
     def __init__(
         self,
         base_dataset,
         num_hops: int,
-        cache_dir: str | Path,
+        cache_dir: str | Path | None = None,
         directed: bool = True,
     ) -> None:
         self.base_dataset = base_dataset
         self.num_hops = num_hops
         self.directed = directed
-        self.cache_dir = Path(cache_dir)
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self.cache_dir = Path(cache_dir) if cache_dir else None
+        if self.cache_dir is not None:
+            self.cache_dir.mkdir(parents=True, exist_ok=True)
 
     def __len__(self) -> int:
         return len(self.base_dataset)
@@ -187,17 +201,25 @@ class HopFeatureCache(torch.utils.data.Dataset):
         suffix = "d" if self.directed else "u"
         return self.cache_dir / f"{key}_h{self.num_hops}_{suffix}.pt"
 
+    def _compute_for(self, data: Data) -> torch.Tensor:
+        return compute_hop_features(
+            data.x, data.edge_index, int(data.num_nodes), self.num_hops, self.directed
+        )
+
     def __getitem__(self, idx: int) -> Data:
         data = self.base_dataset[idx]
+
+        if self.cache_dir is None:
+            data.hoga_x = self._compute_for(data)
+            return data
+
         cache_path = self._cache_path(idx)
 
         if cache_path.exists():
             data.hoga_x = torch.load(cache_path)
             return data
 
-        hoga_x = compute_hop_features(
-            data.x, data.edge_index, int(data.num_nodes), self.num_hops, self.directed
-        )
+        hoga_x = self._compute_for(data)
         tmp_path = cache_path.with_suffix(f".tmp_{uuid.uuid4().hex[:8]}")
         torch.save(hoga_x, tmp_path)
         os.replace(tmp_path, cache_path)
@@ -205,8 +227,20 @@ class HopFeatureCache(torch.utils.data.Dataset):
         return data
 
     def precompute_all(self, log_every: int = 500) -> None:
-        """Populate the on-disk cache for every sample in this split. CPU-only; run
-        ahead of a GPU job so training never waits on this computation."""
+        """Populate the on-disk cache for every sample in this split, on CPU.
+
+        Only useful for subset experiments small enough to cache (see the class
+        docstring); the full-scale training path runs with `cache_dir=None` and
+        never calls this. Serial by design -- it exists for small splits, not
+        as a throughput path.
+        """
+        if self.cache_dir is None:
+            raise ValueError(
+                "precompute_all() needs a cache_dir; with cache_dir=None hop "
+                "features are computed on demand and there is nothing to "
+                "populate. See this class's docstring for why None is the "
+                "default at full dataset scale."
+            )
         total = len(self)
         for idx in range(total):
             self[idx]

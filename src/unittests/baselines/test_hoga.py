@@ -83,7 +83,9 @@ class _FakeSample:
 
 class _FakeBaseDataset:
     """Minimal stand-in for AIGGraphRegressionDataset's public surface that
-    HopFeatureCache relies on: `.samples[idx].graph_path` and `[idx]`."""
+    HopFeatureCache relies on: `.samples[idx].graph_path` and `[idx]`, plus
+    the `get_num_nodes_list()`/`release_runtime_caches()` pair that
+    train_baseline._hoga_loader uses to build its node-budget batch plan."""
 
     def __init__(self, data_list: list[Data]) -> None:
         self._data_list = data_list
@@ -95,6 +97,21 @@ class _FakeBaseDataset:
     def __getitem__(self, idx: int) -> Data:
         d = self._data_list[idx]
         return Data(x=d.x.clone(), edge_index=d.edge_index.clone(), y=d.y.clone())
+
+    def get_num_nodes_list(self) -> list[int]:
+        return [int(d.x.shape[0]) for d in self._data_list]
+
+    def release_runtime_caches(self) -> None:
+        return None
+
+
+def _make_graph_with_nodes(num_nodes: int, seed: int) -> Data:
+    """Path graph on `num_nodes` nodes, so node counts differ per sample."""
+    g = torch.Generator().manual_seed(seed)
+    x = torch.rand(num_nodes, 4, generator=g)
+    src = torch.arange(num_nodes - 1)
+    edge_index = torch.stack([src, src + 1])
+    return Data(x=x, edge_index=edge_index, y=torch.rand(1, 1, generator=g))
 
 
 def _make_small_graph(seed: int) -> Data:
@@ -161,6 +178,69 @@ class TestHopFeatureCache(unittest.TestCase):
             cache.precompute_all(log_every=0)
             for idx in range(3):
                 self.assertTrue(cache._cache_path(idx).exists())
+
+    def test_cache_dir_none_computes_without_touching_disk(self):
+        # The on-disk hop cache is not size-viable at full dataset scale
+        # (~5.7 TB / ~788k files for train+val), so cache_dir=None is the
+        # production path: compute in-process, write nothing.
+        base = _FakeBaseDataset([_make_small_graph(0), _make_small_graph(1)])
+        cache = HopFeatureCache(base, num_hops=1, cache_dir=None, directed=True)
+
+        self.assertIsNone(cache.cache_dir)
+        data0 = cache[0]
+        self.assertTrue(hasattr(data0, "hoga_x"))
+        self.assertEqual(data0.hoga_x.shape, (4, 3, 4))
+
+        # No cache path is even derivable, so nothing can be written: this is
+        # what stops the disk path being reached, so assert it directly rather
+        # than checking that some unrelated temp dir stayed empty.
+        with self.assertRaises(TypeError):
+            cache._cache_path(0)
+
+        # Recomputation must be deterministic, since every access recomputes.
+        self.assertTrue(torch.allclose(data0.hoga_x, cache[0].hoga_x))
+
+    def test_cache_dir_none_matches_cached_values(self):
+        # The two paths must be numerically identical, so a run with the disk
+        # cache disabled trains on exactly the same features as one with it.
+        with tempfile.TemporaryDirectory() as tmp:
+            graphs = [_make_small_graph(i) for i in range(3)]
+            cached = HopFeatureCache(
+                _FakeBaseDataset(list(graphs)), num_hops=2, cache_dir=tmp, directed=True
+            )
+            uncached = HopFeatureCache(
+                _FakeBaseDataset(list(graphs)), num_hops=2, cache_dir=None, directed=True
+            )
+            for idx in range(3):
+                self.assertTrue(
+                    torch.allclose(cached[idx].hoga_x, uncached[idx].hoga_x),
+                    msg=f"hop features diverged at idx={idx}",
+                )
+
+    def test_precompute_all_raises_without_cache_dir(self):
+        base = _FakeBaseDataset([_make_small_graph(0)])
+        cache = HopFeatureCache(base, num_hops=1, cache_dir=None, directed=True)
+        with self.assertRaises(ValueError):
+            cache.precompute_all(log_every=0)
+
+    def test_index_alignment_with_base_dataset(self):
+        # train_baseline._hoga_loader builds a node-budget batch plan from the
+        # BASE dataset's get_num_nodes_list() and then feeds those indices to
+        # the HopFeatureCache wrapper. That is only sound if entry i of the
+        # node-count list describes the same sample the wrapper returns at
+        # index i -- otherwise the budget is enforced against the wrong sizes.
+        # Deliberately varied node counts, so a mis-ordering actually fails.
+        sizes = [3, 9, 5, 12, 7]
+        base = _FakeBaseDataset([_make_graph_with_nodes(n, seed=n) for n in sizes])
+        cache = HopFeatureCache(base, num_hops=1, cache_dir=None, directed=True)
+
+        self.assertEqual(len(cache), len(base))
+        self.assertEqual(base.get_num_nodes_list(), sizes)
+        for idx, expected_nodes in enumerate(sizes):
+            wrapped = cache[idx]
+            self.assertEqual(int(wrapped.x.shape[0]), expected_nodes)
+            self.assertEqual(int(wrapped.hoga_x.shape[0]), expected_nodes)
+            self.assertTrue(torch.allclose(wrapped.x, base[idx].x))
 
     def test_collate_hoga_batch_builds_pyg_batch(self):
         with tempfile.TemporaryDirectory() as tmp:
