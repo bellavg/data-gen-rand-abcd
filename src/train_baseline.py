@@ -31,8 +31,8 @@ present in the same forward pass, which forces graph-level batching.
 
 Batching a fixed *graph* count then makes memory unbounded: this dataset's
 graphs average ~40k nodes (max 366k), so batch_size=32 is ~1.29M nodes, and
-HOGA's trunk holds [num_nodes, 11, 256] activations = ~5.6 KB/node under the
-bf16-mixed AMP selected on H100, i.e. ~7.2 GB for a single activation tensor
+HOGA's trunk holds [num_nodes, 6, 256] activations = ~3.0 KB/node under the
+bf16-mixed AMP selected on H100, i.e. ~3.9 GB for a single activation tensor
 before attention and backward -- an immediate OOM. Bounding *nodes* per batch
 (--hoga_max_nodes_per_batch) is therefore closer to upstream's own batching
 unit than a fixed graph count is, not further from it. There is no published
@@ -53,7 +53,7 @@ sample size over the window is the harmonic mean (~60-65), not 20 x 4.
 
 Everything the paper DOES publish for the QoR task is kept verbatim --
 hidden_dim=256, num_layers=1, lr=0.0001, num_hops=5. Note num_layers=1 is not
-an oversight: it counts gated self-attention layers over the 11-slot hop
+an oversight: it counts gated self-attention layers over the 6-slot hop
 dimension, not message-passing layers. Depth of field comes from num_hops=5,
 already baked into the precomputed features, which is why HOGA.forward() never
 sees a graph. Batching and accumulation are adapted because no published value
@@ -67,6 +67,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import random
 import time
 
 import pytorch_lightning as pl
@@ -108,6 +109,21 @@ HOGA_DEFAULTS = {
     "lr": HOGA_DEFAULT_LR,  # 0.0001, published (Deng et al. DAC'24, Sec 3.3/4.1)
     "weight_decay": 0.0,
 }
+
+
+def _batch_limit(value: str) -> int | float:
+    """Parse a Trainer batch limit, preserving Lightning's int/float distinction.
+
+    Lightning reads an `int` as an absolute batch count and a `float` as a
+    fraction of the epoch. Its `_determine_batch_limits` coerces any float > 1
+    with no fractional part back to an int, so `type=float` would in fact
+    handle `15000` fine. The distinction bites at exactly one value: `1` means
+    "a single batch", `1.0` means "the whole epoch". Under `type=float`,
+    `--limit_val_batches 1` would silently become `1.0` and run the full
+    32k-batch validation instead of one batch; this converter keeps the two
+    apart, so the flag means what it says at every value.
+    """
+    return float(value) if "." in value else int(value)
 
 
 def _select_precision() -> str:
@@ -207,15 +223,45 @@ def _hoga_loader(ds, args: argparse.Namespace, *, shuffle: bool) -> DataLoader:
     # and SynthNet does not). HopFeatureCache is index-aligned with `ds` --
     # same length, __getitem__ delegates straight through -- so a plan built
     # from ds's node counts indexes `wrapped` correctly.
+    # list(...) so the in-place shuffle below can never reach a shared object.
+    # build_batch_plan returns a fresh list today, but load_or_build_batch_plan
+    # (data/sampler.py) hands back the process-wide cache entry, and swapping
+    # to it here is the obvious next optimization -- at which point shuffling
+    # in place would corrupt that cache for every other sampler holding it.
+    plan = list(
+        BalancedDynamicBatchSampler.build_batch_plan(
+            ds.get_num_nodes_list(),
+            max_total_nodes=args.hoga_max_nodes_per_batch,
+        )
+    )
+    # build_batch_plan sorts indices by node count, then repeatedly anchors a
+    # batch on the largest remaining graph and backfills with the smallest
+    # ones that fit (data/sampler.py). The plan therefore comes out ordered by
+    # descending anchor size, so ANY PREFIX of it is "the biggest graphs plus
+    # the smallest", containing nothing from the middle of the distribution.
+    # That is harmless while a full epoch runs, but --limit_val_batches takes
+    # exactly such a prefix and the val loader is built with shuffle=False, so
+    # a capped val pass would score a bimodal extremes-only sample and hand it
+    # to ModelCheckpoint, PreciseEarlyStopping and ReduceLROnPlateau -- and it
+    # would no longer be comparable to train.py's val_loss, which is the whole
+    # point of the baseline. Shuffling the plan once, off a fixed seed, makes
+    # a truncated pass a representative sample while keeping it byte-identical
+    # from epoch to epoch. (The train loader reshuffles per epoch on top of
+    # this; the one-time shuffle costs it nothing.)
+    #
+    # seed + 1, not seed: the sampler's own per-epoch shuffle uses
+    # Random(seed + epoch), so at epoch 0 a `seed` here would replay the exact
+    # same Fisher-Yates draw over a list of the same length, making that
+    # epoch's order the square of one permutation rather than two independent
+    # ones. Harmless either way, but the offset keeps the two independent.
+    random.Random(args.seed + 1).shuffle(plan)
+
     sampler = BalancedDynamicBatchSampler(
         batch_size=args.batch_size,
         shuffle=shuffle,
         seed=args.seed,
         max_total_nodes=args.hoga_max_nodes_per_batch,
-        precomputed_batches=BalancedDynamicBatchSampler.build_batch_plan(
-            ds.get_num_nodes_list(),
-            max_total_nodes=args.hoga_max_nodes_per_batch,
-        ),
+        precomputed_batches=plan,
     )
     ds.release_runtime_caches()
 
@@ -373,6 +419,8 @@ def main(args: argparse.Namespace) -> None:
         # baseline and the primary model start training from the same point.
         num_sanity_val_steps=0,
         log_every_n_steps=args.log_steps,
+        limit_train_batches=args.limit_train_batches,
+        limit_val_batches=args.limit_val_batches,
     )
 
     print(
@@ -438,6 +486,20 @@ if __name__ == "__main__":
     # mean (~60-65), not 20 x 4. Approximates the primary model's regime; does
     # not match it exactly. See this module's docstring.
     parser.add_argument("--accumulate_grad_batches", type=int, default=1)
+    # Epoch subsampling. HOGA's node budget makes a full epoch 149,485
+    # micro-batches (~11h on an H100) plus 32,211 val batches (~1h), so a
+    # single epoch outruns any useful checkpoint/early-stop cadence and the
+    # 72h walltime allows ~6 of them. Both default to 1.0 (full epoch, no
+    # behaviour change) and are set explicitly in train_baseline_hoga.sh.
+    #
+    # The train sampler reshuffles batch ORDER per epoch (seed + epoch, see
+    # data/sampler.py), so a fractional/absolute train limit draws a different
+    # subset every epoch rather than replaying the same head of the dataset.
+    # The val loader is built with shuffle=False, so its limit always takes
+    # the same batches -- deliberately, so val_loss stays a stable signal for
+    # ModelCheckpoint and PreciseEarlyStopping instead of moving each epoch.
+    parser.add_argument("--limit_train_batches", type=_batch_limit, default=1.0)
+    parser.add_argument("--limit_val_batches", type=_batch_limit, default=1.0)
     parser.add_argument("--log_steps", type=int, default=config.LOG_EVERY_N_STEPS)
     parser.add_argument(
         "--max_batch_compute_reports",
@@ -504,10 +566,15 @@ if __name__ == "__main__":
     )
     parser.add_argument("--hoga_heads", type=int, default=HOGA_DEFAULT_HEADS)
     parser.add_argument("--hoga_head_dropout", type=float, default=0.3)
+    # Default False, matching both the paper (Section 3.1 defines a single
+    # symmetric-normalized adjacency and stacks K+1 slots) and upstream, whose
+    # --directed is action='store_true' and whose published run.sh never
+    # passes it. True selects this project's own fanin/fanout extension, which
+    # doubles the slot width to 1 + 2K.
     parser.add_argument(
         "--hoga_directed",
         type=lambda x: str(x).lower() in ("true", "1", "yes"),
-        default=True,
+        default=False,
     )
     parser.add_argument(
         "--hoga_max_nodes_per_batch",
@@ -516,12 +583,13 @@ if __name__ == "__main__":
         help=(
             "Total-node budget per HOGA batch, replacing --batch_size for the "
             "hoga baseline (0 disables, restoring fixed graph-count batching). "
-            "At ~5.6 KB/node per [N, 11, hidden] activation under bf16-mixed, "
-            "150k nodes is ~845 MB per activation tensor. NOTE this bounds "
+            "At ~3.0 KB/node per [N, 6, hidden] activation under bf16-mixed "
+            "(undirected hop features, the default), 150k nodes is ~460 MB per "
+            "activation tensor. NOTE this bounds "
             "typical batches only: a graph larger than the budget still forms "
             "a singleton batch (it cannot be split -- graph-level pooling "
             "needs all its nodes at once), so the largest graph sets an "
-            "irreducible peak, ~2.1 GB/activation at config.MAX_NUM_GATES. "
+            "irreducible peak, ~1.1 GB/activation at config.MAX_NUM_GATES. "
             "See this module's docstring."
         ),
     )
@@ -532,7 +600,7 @@ if __name__ == "__main__":
         help=(
             "Optional on-disk hop-feature cache. Leave unset (the default) to "
             "compute hop features in the dataloader workers instead -- at full "
-            "dataset scale the cache needs ~5.7 TB / ~788k files and does not "
+            "dataset scale the cache needs ~3.1 TB / ~788k files and does not "
             "fit scratch quota. See baselines/hoga/hop_features.py."
         ),
     )

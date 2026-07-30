@@ -79,6 +79,28 @@ class TestTrainBaselineCLI(unittest.TestCase):
         result = _run_cli("--help")
         self.assertIn("--accumulate_grad_batches", result.stdout)
 
+    def test_epoch_subsampling_flags_are_wired(self):
+        # train_baseline_hoga.sh passes both; a rename would silently restore
+        # the ~12h epochs these exist to cap.
+        result = _run_cli("--help")
+        self.assertIn("--limit_train_batches", result.stdout)
+        self.assertIn("--limit_val_batches", result.stdout)
+
+    def test_batch_limit_preserves_int_vs_float(self):
+        # Lightning reads an int as an absolute batch count and a float as a
+        # fraction of the epoch. It coerces any float > 1 with no fractional
+        # part back to int, so the distinction bites at exactly one value:
+        # `1` = one batch, `1.0` = the whole epoch. Under a plain type=float,
+        # "--limit_val_batches 1" would silently run all 32k val batches.
+        from train_baseline import _batch_limit
+
+        self.assertIsInstance(_batch_limit("1"), int)
+        self.assertIsInstance(_batch_limit("1.0"), float)
+        self.assertEqual(_batch_limit("15000"), 15000)
+        self.assertIsInstance(_batch_limit("15000"), int)
+        self.assertEqual(_batch_limit("0.1"), 0.1)
+        self.assertIsInstance(_batch_limit("0.1"), float)
+
     def test_hoga_hop_cache_dir_is_optional(self):
         # The on-disk hop cache is not size-viable at full scale, so omitting
         # --hoga_hop_cache_dir must be allowed (it used to raise).

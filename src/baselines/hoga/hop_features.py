@@ -23,12 +23,22 @@ rather than made silently:
    (`norm_adj_tran`) for the reverse branch -- see the upstream source linked
    above. This looks like a copy-paste bug: it makes the reverse branch a
    duplicate of the forward branch rather than genuine reverse propagation.
-   This project selects directed mode specifically to capture both
-   fanin-ward and fanout-ward structure for AIGs (causal cones matter here),
-   so `compute_hop_features` below uses `norm_adj_tran` correctly for the
+   `compute_hop_features` below uses `norm_adj_tran` correctly for the
    reverse branch. Flagged explicitly since it changes the published
    algorithm's behavior, even though it's a correction rather than a
    simplification.
+
+   NOTE the directed branch is no longer the default. `train_baseline.py`'s
+   `--hoga_directed` defaults to False, matching the paper (Section 3.1
+   defines a single symmetric-normalized adjacency, stacking K+1 slots) and
+   upstream (whose `--directed` is `action='store_true'` and whose published
+   run.sh never passes it). Directed mode remains available -- it was chosen
+   here originally to capture fanin-ward and fanout-ward structure for AIGs,
+   where causal cones matter -- but it doubles the slot width to 1 + 2K and
+   costs ~1.85x throughout, so it is opt-in rather than standard. The
+   `directed=True` defaults on the functions below are historical; every
+   caller in this project passes the flag explicitly, and
+   `train_baseline.py`'s argparse default is the operative one.
 """
 
 from __future__ import annotations
@@ -160,9 +170,10 @@ class HopFeatureCache(torch.utils.data.Dataset):
     `cache_dir=None` disables the on-disk cache and computes hop features
     in-process on every access instead. **This is the right choice at this
     project's scale**, because the cache is not size-viable here: output is
-    `[num_nodes, 1 + 2*num_hops, 4]` float32, i.e. 176 B/node at num_hops=5
-    directed, and this dataset's Orchestrate train+val splits total ~32.4e9
-    nodes across ~788k graphs (~40k nodes/graph average) -- about 5.7 TB in
+    `[num_nodes, 1 + num_hops, 4]` float32, i.e. 96 B/node at num_hops=5
+    undirected (the default; 176 B/node if `directed=True`), and this
+    dataset's Orchestrate train+val splits total ~32.4e9
+    nodes across ~788k graphs (~40k nodes/graph average) -- about 3.1 TB in
     ~788k files. Measured against a Snellius 8 TiB / 3M-inode scratch quota
     already ~90% full, that overruns both the space and the inode budget by
     roughly an order of magnitude. Recomputation is cheap by comparison

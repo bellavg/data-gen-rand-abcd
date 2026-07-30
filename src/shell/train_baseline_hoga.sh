@@ -66,25 +66,48 @@ HP_TUNING_SPLITS="/scratch-shared/$USER/big_optuna_run/shared_dataset_cache/algo
 [ ! -f "$HP_TUNING_SPLITS" ] && echo "WARNING: HP Tuning split file not found at $HP_TUNING_SPLITS"
 
 # Hop features are computed in the dataloader workers, NOT cached to disk.
-# An on-disk cache is not viable at this dataset's scale: [num_nodes, 11, 4]
-# float32 = 176 B/node, and Orchestrate train+val total ~32.4e9 nodes over
-# ~788k graphs -> ~5.7 TB in ~788k files, against an 8 TiB / 3M-inode scratch
+# An on-disk cache is not viable at this dataset's scale: [num_nodes, 6, 4]
+# float32 = 96 B/node, and Orchestrate train+val total ~32.4e9 nodes over
+# ~788k graphs -> ~3.1 TB in ~788k files, against an 8 TiB / 3M-inode scratch
 # quota already ~90% full. Recomputing is a handful of O(nnz) sparse ops per
 # graph and parallelises over NUM_WORKERS, overlapped with GPU compute. Pass
 # --hoga_hop_cache_dir only for subset runs small enough to fit. See
 # src/baselines/hoga/hop_features.py.
 HOGA_NUM_HOPS="${HOGA_NUM_HOPS:-5}"
-HOGA_DIRECTED="${HOGA_DIRECTED:-true}"
+# Undirected, matching the paper and upstream rather than deviating from both.
+# Paper Section 3.1 defines a single symmetric-normalized adjacency
+# (A_hat = D^-1/2 A D^-1/2, X^(k) = A_hat X^(k-1)) and stacks K+1 = 6 slots;
+# upstream's --directed is action='store_true' (default False) and its
+# published run.sh never passes it, so the released experiment is undirected
+# too. The previous `true` here was this project's own extension, motivated by
+# AIG causal cones -- defensible on its own terms, but it was the single
+# largest cost in the run: 11 slots instead of 6 means ~1.85x the work
+# throughout. (Cost is dominated by the four Linear(256,256) projections,
+# which are LINEAR in slot count; only the score/PV matmuls scale with
+# slots^2, and at hidden=256/heads=32 those are ~2% of the attention module.)
+# Reverting it makes the baseline both faster and more faithful. Set to `true` to restore
+# the fanin/fanout variant (hop_features.py's directed branch also fixes an
+# upstream copy-paste bug in the reverse direction; that fix still stands).
+HOGA_DIRECTED="${HOGA_DIRECTED:-false}"
 # Node-budget batching replaces a fixed graph count. Graphs here average ~40k
-# nodes (max 366k) and HOGA's trunk holds [N, 11, 256] activations -- ~5.6
+# nodes (max 366k) and HOGA's trunk holds [N, 6, 256] activations -- ~3.0
 # KB/node under the bf16-mixed AMP this script gets on H100 -- so a fixed
-# batch_size=32 (~1.29M nodes) is ~7.2 GB for a single activation tensor and
+# batch_size=32 (~1.29M nodes) is ~3.9 GB for a single activation tensor and
 # OOMs once the attention layer and backward are counted. 150k nodes is
-# ~845 MB/activation for a typical batch.
+# ~460 MB/activation for a typical batch.
+#
+# NOTE 150000 was calibrated at 11 slots (~5.5 KB/node) and has NOT been
+# retuned since HOGA_DIRECTED flipped to false and the attention stopped
+# materializing its score tensor. Both cut peak memory substantially -- the
+# run this was set for sat at ~91 GB allocated on the H100 -- so the budget is now
+# expected to be roughly 1.8x conservative. Read the real figure off
+# `nvidia-smi` (or wandb's GPU Memory Allocated) on the first epoch and raise
+# it; a bigger budget means fewer, better-utilised steps, which is the same
+# problem LIMIT_TRAIN_BATCHES below works around from the other end.
 #
 # Caveat: a graph bigger than the budget cannot be split (graph-level pooling
 # needs all its nodes in one pass), so it forms a singleton batch, and the
-# largest graph sets an irreducible peak of ~2.1 GB/activation at 366k nodes.
+# largest graph sets an irreducible peak of ~1.1 GB/activation at 366k nodes.
 # Lowering this budget does NOT reduce that peak. If it still OOMs, cap graph
 # SIZE (a dataset choice) rather than touching hidden_dim/num_layers/heads --
 # those are published DAC'24 QoR values and changing them would stop this
@@ -111,6 +134,43 @@ HOGA_MAX_NODES_PER_BATCH="${HOGA_MAX_NODES_PER_BATCH:-150000}"
 # TrainingStartupCallback prints the real avg_graphs_per_batch each epoch --
 # calibrate this value from an actual log rather than trusting the estimate.
 ACCUMULATE_GRAD_BATCHES="${ACCUMULATE_GRAD_BATCHES:-20}"
+
+# Epoch subsampling. A full epoch under the node budget above is 149,485
+# micro-batches plus 32,211 val batches. MEASURED AT ~12h TOTAL PER EPOCH, but
+# on the PRE-CHANGE configuration (11 hop slots, and an attention that
+# materialized its [N, 11, 11, heads] score tensor); GPU utilisation was ~100%
+# with tensor-core activity at ~2%, i.e. latency/bandwidth-bound, not underfed.
+# The same commit that added these caps also flipped HOGA_DIRECTED to false
+# and switched to a fused attention kernel, which together cut a CPU-side
+# fwd+bwd microbenchmark of the trunk by ~16x. The GPU figure will be smaller,
+# but the 12h number is stale in the conservative direction and 25000 below is
+# a placeholder sized off it.
+#
+# RECALIBRATE from the first "[train] Epoch summary" line (train_utils.py
+# prints avg_step_s and epoch_s) rather than trusting these values -- if the
+# epoch now runs in 2-3h, raise them and stop discarding data for no
+# scheduling benefit.
+#
+# The point of capping at all is cadence: at ~12h/epoch the 72h walltime
+# allows ~6 epochs; --patience 4 needs 5 non-improving epochs to fire, so it
+# would at best trigger right as the walltime expires. The
+# train sampler reshuffles per epoch, so each epoch draws a different subset;
+# the val plan is shuffled once off a fixed seed in train_baseline.py (see
+# _hoga_loader) so a capped val pass is representative AND identical epoch to
+# epoch. With the defaults below 25000 % 20 == 0, so no partial accumulation
+# window is left at the epoch boundary (Lightning does step on a trailing
+# partial window, giving one under-scaled update); re-check that if you
+# override either value.
+#
+# NOTE this makes "epoch" mean something different here than in train.py,
+# and it also makes val_loss mean something different: the baseline's is
+# computed on a fixed ~8% of the val split while train.py's uses 100%. That
+# number drives ModelCheckpoint, PreciseEarlyStopping and ReduceLROnPlateau,
+# so quote the FULL val/test split from a separate eval pass when reporting
+# results -- do not compare these two val_loss curves directly. Compare the
+# models on graphs seen, not on epoch index.
+LIMIT_TRAIN_BATCHES="${LIMIT_TRAIN_BATCHES:-25000}"
+LIMIT_VAL_BATCHES="${LIMIT_VAL_BATCHES:-2500}"
 
 NUM_WORKERS="${NUM_WORKERS:-16}"  # of the 18 cores auto-assigned per GPU on gpu_h100; 2 left for the main process + pin_memory thread
 PREFETCH_FACTOR="${PREFETCH_FACTOR:-4}"
@@ -145,6 +205,8 @@ srun python -u -m train_baseline \
     --hoga_num_hops      "$HOGA_NUM_HOPS" \
     --hoga_max_nodes_per_batch "$HOGA_MAX_NODES_PER_BATCH" \
     --accumulate_grad_batches  "$ACCUMULATE_GRAD_BATCHES" \
+    --limit_train_batches "$LIMIT_TRAIN_BATCHES" \
+    --limit_val_batches   "$LIMIT_VAL_BATCHES" \
     --hoga_directed      "$HOGA_DIRECTED" \
     --prefetch_factor    "$PREFETCH_FACTOR" \
     --num_workers        "$NUM_WORKERS" \

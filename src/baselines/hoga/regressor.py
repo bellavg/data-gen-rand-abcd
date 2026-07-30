@@ -1,7 +1,7 @@
 """Graph-level optimizability regressor built on HOGA's hop-wise gated attention.
 
 Adapts cornell-zhang/HOGA's `HOGA` module (see model.py in this directory,
-vendored verbatim) from its released task -- per-node classification for
+vendored with one documented fix to `MultiheadAttention`) from its released task -- per-node classification for
 Gamora functional reasoning (xor/maj/root structural role) -- to this
 project's task: a single scalar optimizability prediction per whole AIG.
 

@@ -1,9 +1,50 @@
-"""Vendored verbatim from cornell-zhang/HOGA, model.py.
+"""Vendored from cornell-zhang/HOGA, model.py, with one documented fix.
 
 Source: https://github.com/cornell-zhang/HOGA/blob/master/model.py
 License: BSD 3-Clause (see LICENSE_UPSTREAM in this directory).
 
-Unmodified from upstream. The Gamora-specific 3-head output (`self.linear[1:4]`,
+ONE DELIBERATE MODIFICATION, in `MultiheadAttention.forward` (below). Upstream
+reshapes the projections to `[b, l, head_dim, -1]` and computes
+`einsum('bldh,bndh->blnh')`, giving scores indexed `[batch, query, key, head]`
+-- then applies `Softmax(dim=-1)`, which normalizes over the **head** axis, not
+the key axis. The attention weights therefore never form a distribution over
+hop neighbours; they form one across heads, and the model cannot express
+"attend to hop 3".
+
+The authority for calling this wrong is the paper, Equation (5):
+`S = softmax(QK^T)`, described as "the self-attention matrix widely used in
+Transformer [16]" (citing Vaswani et al.) -- i.e. normalized row-wise over
+keys. The sibling class `MultiheadAttentionMix` also softmaxes over the key
+axis, and it is the class upstream's published `run.sh` actually instantiates
+(`main_gamora.py` builds `HOGA(..., attn_type="mix")`), so the vanilla class
+edited here was never exercised by the released experiment. Treat Mix as
+corroboration on the softmax *axis* only, not as a general reference
+implementation: its own reshape, `view(batch_size * num_heads, -1, head_dim)`,
+splits the flattened (seq x feature) axis rather than the feature axis, so for
+`heads > 1` its "heads" are chopped-up sequence rows and it is not multi-head
+attention either. At `heads == 1` the two reshapes coincide, which is what
+`test_single_head_matches_upstream_mix_implementation` pins.
+
+This project selected `attn_type="vanilla"` (labelled "recommended for general
+use cases"), which is how the defect reached a live path here. The forward pass
+below is rewritten to normalize over keys via `F.scaled_dot_product_attention`,
+which is both the mathematically intended operation and a fused kernel that
+(backend permitting) avoids materializing the `[nodes, heads, hops, hops]`
+score tensor. Keep that saving in proportion: the score matmuls are only ~1% of
+this module's arithmetic -- the four `Linear(256, 256)` projections dominate --
+so the win is in activation bytes and kernel count, not FLOPs. At 146k nodes
+and 11 slots the score/prob tensors were ~3.4 GB of the batch's activations,
+which mattered on a GPU sitting at 91 GB allocated; at 6 slots it is ~1.0 GB.
+
+The head split also changes layout, from upstream's interleaved
+`[b, l, head_dim, heads]` to the standard contiguous `[b, heads, l, head_dim]`.
+For training from scratch this is immaterial -- the two differ by a fixed
+permutation of input channels, which the dense Q/K/V and output projections
+absorb, and i.i.d. init makes the induced function distributions identical.
+It does mean checkpoints predating this change decode to a different function,
+but the softmax fix invalidates those regardless.
+
+The Gamora-specific 3-head output (`self.linear[1:4]`,
 returning `x1`/`x2`/`x3`/`layer_atten` for xor/maj/root node classification) is
 left in place for fidelity to the original file -- this project's
 `regressor.py` does not call `HOGA.forward()` directly; it reuses the module
@@ -93,10 +134,29 @@ class MultiheadAttention(torch.nn.Module):
         # Linear projection for the output of the attention heads
         self.output_projection = Linear(input_dim, input_dim)
 
+        # No Softmax module here: scaled_dot_product_attention applies it
+        # internally, over the key axis. Dropout is kept for its `.p`, which is
+        # forwarded to the same fused call.
         self.dropout = Dropout(dropout)
-        self.softmax = Softmax(dim=-1)
 
     def forward(self, query, key, value, mask=None):
+        """Standard scaled dot-product attention over the hop (sequence) axis.
+
+        MODIFIED vs upstream -- see this module's docstring for the full
+        rationale. Upstream reshaped to `[b, l, head_dim, -1]` and softmaxed
+        `[b, l, n, h]` over `dim=-1`, i.e. over the *head* axis rather than
+        the key axis, so the scores never normalized into a distribution over
+        hop neighbours. This normalizes over keys, per Equation (5) of the
+        paper ("S = softmax(QK^T) ... the self-attention matrix widely used in
+        Transformer") and per `MultiheadAttentionMix`, the class upstream's own
+        run.sh actually instantiates (`attn_type="mix"`).
+
+        Returns `(output, None)`. SDPA does not hand back the `[b, heads, l, n]`
+        probability tensor, and depending on the backend it dispatches to may
+        never build one -- which is the memory win here. Both call sites
+        (`HOGA.forward` here and `HOGAGraphRegressor.forward`) already discard
+        the second value via `[0]`, so nothing regresses.
+        """
         batch_size, seq_len, _ = query.size()
 
         # Linear projections for queries, keys, and values
@@ -104,26 +164,44 @@ class MultiheadAttention(torch.nn.Module):
         key = self.key_projection(key)
         value = self.value_projection(value)
 
-        # Reshape the projected queries, keys, and values
-        query = query.view(batch_size, seq_len, self.head_dim, -1)
-        key = key.view(batch_size, seq_len, self.head_dim, -1)
-        value = value.view(batch_size, seq_len, self.head_dim, -1)
+        # Reshape to [batch, heads, seq, head_dim], the layout SDPA expects.
+        def _split_heads(t):
+            return t.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
 
-        # Compute the scaled dot-product attention
-        attention_scores = torch.einsum('bldh, bndh -> blnh', query, key)
-        attention_scores = attention_scores / torch.sqrt(torch.tensor(self.head_dim, dtype=torch.float32))
+        query = _split_heads(query)
+        key = _split_heads(key)
+        value = _split_heads(value)
 
-        attention_probs = self.softmax(attention_scores)
-        attention_probs = self.dropout(attention_probs)
+        attn_mask = None
+        if mask is not None:
+            # This class accepted a `mask` argument and then silently ignored
+            # it upstream -- only MultiheadAttentionMix ever applied one. Since
+            # the rewrite has to decide what the parameter means, it follows
+            # Mix's convention (`masked_fill(mask == 0, -inf)`, so nonzero =
+            # keep), expressed as SDPA's boolean keep-mask. `[b, 1, l, n]`
+            # broadcasts against the `[b, heads, l, n]` scores. No caller in
+            # this repo passes a mask; this exists so the parameter is honest
+            # rather than inert.
+            attn_mask = mask.unsqueeze(1) != 0
 
-        # Compute the output of the attention heads
-        attention_output = torch.einsum('blnh, bndh -> bldh', attention_probs, value)
+        # Fused kernel: scales by 1/sqrt(head_dim), softmaxes over the key
+        # axis, applies dropout, and multiplies by V without ever writing the
+        # attention matrix to memory.
+        attention_output = F.scaled_dot_product_attention(
+            query,
+            key,
+            value,
+            attn_mask=attn_mask,
+            dropout_p=self.dropout.p if self.training else 0.0,
+        )
 
         # Reshape and project the output of the attention heads
-        attention_output = attention_output.reshape(batch_size, seq_len, self.input_dim)
+        attention_output = attention_output.transpose(1, 2).reshape(
+            batch_size, seq_len, self.input_dim
+        )
         attention_output = self.output_projection(attention_output)
 
-        return attention_output, attention_probs
+        return attention_output, None
 
 class HOGA(torch.nn.Module):
     def __init__(self, in_channels, hidden_channels, out_channels, num_layers,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import os
 import tempfile
 import unittest
@@ -16,7 +17,178 @@ from baselines.hoga.hop_features import (
     compute_hop_features,
     num_hop_slots,
 )
+from baselines.hoga.model import MultiheadAttention, MultiheadAttentionMix
 from baselines.hoga.regressor import HOGAGraphRegressor
+
+
+class TestMultiheadAttention(unittest.TestCase):
+    """Covers the one deliberate change to the vendored model.py.
+
+    Upstream's `MultiheadAttention` softmaxed over the head axis rather than
+    the key axis (see model.py's module docstring). These tests pin the fixed
+    behaviour to the paper's Equation (5) and to `MultiheadAttentionMix`, the
+    sibling class upstream's own run.sh actually instantiates.
+    """
+
+    def test_output_is_convex_combination_of_values(self):
+        """The property that distinguishes key-softmax from head-softmax.
+
+        Normalizing over keys makes every output row a convex combination of
+        the value rows, so it must lie within their elementwise min/max. The
+        upstream head-axis softmax gives no such guarantee. Checked with V and
+        the output projection pinned to identity so the attention weights are
+        the only thing acting on the values.
+        """
+        torch.manual_seed(0)
+        dim, seq = 8, 5
+        attn = MultiheadAttention(dim, num_heads=1)
+        attn.eval()
+        with torch.no_grad():
+            attn.value_projection.weight.copy_(torch.eye(dim))
+            attn.value_projection.bias.zero_()
+            attn.output_projection.weight.copy_(torch.eye(dim))
+            attn.output_projection.bias.zero_()
+
+        x = torch.randn(3, seq, dim)
+        with torch.no_grad():
+            out, _ = attn(x, x, x)
+
+        lo = x.min(dim=1, keepdim=True).values
+        hi = x.max(dim=1, keepdim=True).values
+        self.assertTrue(torch.all(out >= lo - 1e-5))
+        self.assertTrue(torch.all(out <= hi + 1e-5))
+
+    def test_matches_explicit_key_softmax_reference(self):
+        torch.manual_seed(1)
+        dim, heads, seq, batch = 16, 4, 6, 3
+        attn = MultiheadAttention(dim, num_heads=heads)
+        attn.eval()
+        x = torch.randn(batch, seq, dim)
+
+        def _split(t):
+            return t.view(batch, seq, heads, dim // heads).transpose(1, 2)
+
+        with torch.no_grad():
+            q = _split(attn.query_projection(x))
+            k = _split(attn.key_projection(x))
+            v = _split(attn.value_projection(x))
+            scores = (q @ k.transpose(-2, -1)) / math.sqrt(dim // heads)
+            probs = scores.softmax(dim=-1)  # over KEYS, per paper Eq. (5)
+            ref = (probs @ v).transpose(1, 2).reshape(batch, seq, dim)
+            ref = attn.output_projection(ref)
+            out, _ = attn(x, x, x)
+
+        self.assertTrue(torch.allclose(out, ref, atol=1e-5))
+
+    def test_matches_torch_native_multihead_attention(self):
+        """Independent oracle for the head split, at the production head count.
+
+        `test_matches_explicit_key_softmax_reference` re-derives the same
+        reshape it is checking, so it validates the softmax axis and the
+        1/sqrt(head_dim) scale but is a tautology with respect to head layout.
+        torch's own `nn.MultiheadAttention` is written by someone else, so
+        agreeing with it (weights mapped across) pins the layout too. Run at
+        heads=32, the value train_baseline_hoga.sh actually uses.
+        """
+        torch.manual_seed(4)
+        dim, heads, seq, batch = 256, 32, 6, 3
+        attn = MultiheadAttention(dim, num_heads=heads)
+        attn.eval()
+
+        ref = torch.nn.MultiheadAttention(
+            dim, heads, dropout=0.0, bias=True, batch_first=True
+        )
+        ref.eval()
+        with torch.no_grad():
+            ref.in_proj_weight.copy_(
+                torch.cat(
+                    [
+                        attn.query_projection.weight,
+                        attn.key_projection.weight,
+                        attn.value_projection.weight,
+                    ]
+                )
+            )
+            ref.in_proj_bias.copy_(
+                torch.cat(
+                    [
+                        attn.query_projection.bias,
+                        attn.key_projection.bias,
+                        attn.value_projection.bias,
+                    ]
+                )
+            )
+            ref.out_proj.weight.copy_(attn.output_projection.weight)
+            ref.out_proj.bias.copy_(attn.output_projection.bias)
+
+            x = torch.randn(batch, seq, dim)
+            ours, _ = attn(x, x, x)
+            theirs, _ = ref(x, x, x, need_weights=False)
+
+        self.assertTrue(torch.allclose(ours, theirs, atol=1e-4))
+
+    def test_single_head_matches_upstream_mix_implementation(self):
+        """Ties the fixed class to the one upstream actually ran -- at heads=1.
+
+        `MultiheadAttentionMix` is what `main_gamora.py` builds
+        (`attn_type="mix"`), and it softmaxes over keys. Scope is deliberately
+        num_heads=1: Mix's own reshape,
+        `view(batch_size * num_heads, -1, head_dim)`, splits the flattened
+        (seq x feature) axis rather than the feature axis, so above one head
+        its "heads" are chopped-up sequence rows and it is not a valid
+        multi-head reference. At heads=1 that reshape is the identity, which
+        makes this a clean check of the softmax axis and nothing more. Head
+        layout is covered by test_matches_torch_native_multihead_attention.
+        """
+        torch.manual_seed(2)
+        dim, seq, batch = 12, 4, 2
+        fixed = MultiheadAttention(dim, num_heads=1)
+        mix = MultiheadAttentionMix(dim, num_heads=1)
+        mix.load_state_dict(fixed.state_dict())
+        fixed.eval()
+        mix.eval()
+
+        x = torch.randn(batch, seq, dim)
+        with torch.no_grad():
+            out_fixed, _ = fixed(x, x, x)
+            out_mix, _ = mix(x, x, x)
+
+        self.assertTrue(torch.allclose(out_fixed, out_mix, atol=1e-5))
+
+    def test_returns_none_for_probs(self):
+        """Both call sites discard the second return value via `[0]`.
+
+        Deliberately does NOT assert that no score tensor is materialized:
+        whether SDPA builds one depends on the backend it dispatches to for a
+        given shape and device, which a unit test should not pin.
+        """
+        attn = MultiheadAttention(8, num_heads=2)
+        attn.eval()
+        x = torch.randn(2, 3, 8)
+        with torch.no_grad():
+            out, probs = attn(x, x, x)
+        self.assertIsNone(probs)
+        self.assertEqual(out.shape, (2, 3, 8))
+
+    def test_mask_zeros_are_excluded_from_attention(self):
+        torch.manual_seed(3)
+        dim, seq = 8, 4
+        attn = MultiheadAttention(dim, num_heads=1)
+        attn.eval()
+        x = torch.randn(1, seq, dim)
+
+        mask = torch.ones(1, seq, seq)
+        mask[:, :, -1] = 0  # forbid attending to the last key
+        with torch.no_grad():
+            masked, _ = attn(x, x, x, mask=mask)
+            # Changing the masked-out key must not change the output.
+            x_perturbed = x.clone()
+            x_perturbed[:, -1, :] += 10.0
+            masked_perturbed, _ = attn(x_perturbed, x_perturbed, x_perturbed, mask=mask)
+
+        self.assertTrue(
+            torch.allclose(masked[:, :-1], masked_perturbed[:, :-1], atol=1e-5)
+        )
 
 
 class TestNumHopSlots(unittest.TestCase):
@@ -275,6 +447,22 @@ class TestHOGAGraphRegressor(unittest.TestCase):
         self.assertEqual(out.shape, (1, 1))
         self.assertTrue(torch.all(out >= 0.0) and torch.all(out <= 1.0))
 
+    def test_forward_pass_undirected_slots(self):
+        # train_baseline_hoga.sh now defaults HOGA_DIRECTED=false (paper
+        # Section 3.1 uses a single normalized adjacency; upstream's
+        # --directed defaults off and its run.sh never sets it), so the
+        # undirected slot width needs the same end-to-end coverage as the
+        # directed one.
+        model = HOGAGraphRegressor(
+            in_channels=4, hidden_channels=8, num_layers=1, dropout=0.0,
+            num_hops=num_hop_slots(2, directed=False), heads=2,
+        )
+        model.eval()
+        batch = _make_batch_with_hoga_x(num_hops=2, directed=False, seeds=[0, 1])
+        out = model(batch)
+        self.assertEqual(out.shape, (2, 1))
+        self.assertTrue(torch.all(out >= 0.0) and torch.all(out <= 1.0))
+
     def test_batch_independence(self):
         model = HOGAGraphRegressor(
             in_channels=4, hidden_channels=8, num_layers=1, dropout=0.0,
@@ -310,6 +498,123 @@ class TestHOGAGraphRegressor(unittest.TestCase):
         for name, p in model.named_parameters():
             if p.requires_grad and name not in always_unused:
                 self.assertIsNotNone(p.grad, f"Broken graph at {name}")
+
+
+class _FakeSizedDataset:
+    """Minimal stand-in for AIGGraphRegressionDataset for _hoga_loader."""
+
+    def __init__(self, sizes: list[int]) -> None:
+        self._sizes = sizes
+
+    def __len__(self) -> int:
+        return len(self._sizes)
+
+    def __getitem__(self, idx: int) -> Data:
+        n = self._sizes[idx]
+        return Data(
+            x=torch.ones(n, 4),
+            edge_index=torch.zeros(2, 0, dtype=torch.long),
+            y=torch.tensor([0.5]),
+            num_nodes=n,
+        )
+
+    def get_num_nodes_list(self) -> list[int]:
+        return list(self._sizes)
+
+    def release_runtime_caches(self) -> None:
+        pass
+
+
+class TestHOGABatchPlanOrdering(unittest.TestCase):
+    """The val split is capped by --limit_val_batches, which takes a PREFIX.
+
+    build_batch_plan sorts by node count and anchors each batch on the largest
+    remaining graph, backfilling with the smallest that fit, so the raw plan is
+    ordered by descending anchor size. An unshuffled prefix is therefore "the
+    biggest graphs plus the smallest" with nothing from the middle -- which
+    would feed a bimodal, unrepresentative val_loss to ModelCheckpoint,
+    PreciseEarlyStopping and ReduceLROnPlateau. _hoga_loader shuffles the plan
+    once off a fixed seed to fix this.
+    """
+
+    def _args(self, seed: int = 42):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(
+            hoga_num_hops=1,
+            hoga_hop_cache_dir=None,
+            hoga_directed=False,
+            hoga_max_nodes_per_batch=4000,
+            batch_size=8,
+            seed=seed,
+            num_workers=0,
+            pin_memory=False,
+            persistent_workers=False,
+            prefetch_factor=2,
+        )
+
+    def test_raw_plan_prefix_is_size_biased(self):
+        # Documents the hazard the shuffle exists to defeat. If this ever
+        # stops holding, build_batch_plan changed and the fix may be moot.
+        from data.sampler import BalancedDynamicBatchSampler
+
+        # Fixture sized like production: every graph fits the budget, which
+        # packs ~3-4 per batch (the real run averages 150k/40k ~= 4). A budget
+        # small enough to make most graphs singletons would show a bias in the
+        # opposite direction and would not represent the actual failure.
+        sizes = list(range(1, 2001))
+        plan = BalancedDynamicBatchSampler.build_batch_plan(
+            sizes, max_total_nodes=4000
+        )
+        self.assertGreater(sum(len(b) for b in plan) / len(plan), 3.0)
+
+        prefix_sizes = [sizes[i] for b in plan[: len(plan) // 4] for i in b]
+        population_median = sorted(sizes)[len(sizes) // 2]
+        prefix_median = sorted(prefix_sizes)[len(prefix_sizes) // 2]
+        # Each batch anchors on the largest remaining graph and backfills with
+        # the smallest that fit, so an early batch is one huge graph plus
+        # several tiny ones -- median ~442 against a population median of
+        # ~1001. test_val_loader_plan_is_shuffled_and_deterministic asserts the
+        # mirror image once the plan is shuffled.
+        self.assertGreater(abs(prefix_median - population_median), 300)
+
+    def test_val_loader_plan_is_shuffled_and_deterministic(self):
+        from train_baseline import _hoga_loader
+
+        sizes = list(range(1, 2001))
+        args = self._args()
+
+        loader_a = _hoga_loader(_FakeSizedDataset(sizes), args, shuffle=False)
+        loader_b = _hoga_loader(_FakeSizedDataset(sizes), args, shuffle=False)
+        plan_a = list(loader_a.batch_sampler)
+        plan_b = list(loader_b.batch_sampler)
+
+        # Deterministic: same seed, same order, so val_loss is stable epoch to
+        # epoch even when truncated.
+        self.assertEqual(plan_a, plan_b)
+
+        # Representative: a prefix now spans the size distribution rather than
+        # its two extremes.
+        from data.sampler import BalancedDynamicBatchSampler
+
+        raw = BalancedDynamicBatchSampler.build_batch_plan(
+            sizes, max_total_nodes=4000
+        )
+        self.assertNotEqual(plan_a, raw)
+
+        quarter = plan_a[: len(plan_a) // 4]
+        prefix_sizes = [sizes[i] for b in quarter for i in b]
+        population_median = sorted(sizes)[len(sizes) // 2]
+        prefix_median = sorted(prefix_sizes)[len(prefix_sizes) // 2]
+        self.assertLess(abs(prefix_median - population_median), 200)
+
+    def test_val_plan_covers_every_sample_exactly_once(self):
+        from train_baseline import _hoga_loader
+
+        sizes = [7, 3, 50, 11, 90, 2, 45, 30]
+        loader = _hoga_loader(_FakeSizedDataset(sizes), self._args(), shuffle=False)
+        seen = [i for batch in loader.batch_sampler for i in batch]
+        self.assertEqual(sorted(seen), list(range(len(sizes))))
 
 
 class TestHOGALightningTraining(unittest.TestCase):
