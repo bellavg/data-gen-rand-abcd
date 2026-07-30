@@ -70,7 +70,15 @@ def _scipy_csr_to_torch_sparse(mat: csr_matrix) -> torch.Tensor:
     coo = mat.tocoo()
     indices = torch.from_numpy(np.vstack([coo.row, coo.col]).astype(np.int64))
     values = torch.from_numpy(coo.data.astype(np.float32))
-    return torch.sparse_coo_tensor(indices, values, coo.shape).coalesce()
+    # check_invariants=False is passed explicitly rather than left to the
+    # global default: torch warns once per process otherwise ("Sparse invariant
+    # checks are implicitly disabled"), which with persistent dataloader
+    # workers means one such block per worker in every job log. The indices
+    # come straight from scipy's own COO, so they are well-formed by
+    # construction and the checks would only add per-graph overhead.
+    return torch.sparse_coo_tensor(
+        indices, values, coo.shape, check_invariants=False
+    ).coalesce()
 
 
 def compute_hop_features(

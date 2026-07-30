@@ -4,6 +4,10 @@
 #SBATCH --nodes=1
 #SBATCH --partition=gpu_h100
 #SBATCH --gpus=1
+# 18 cores is the per-GPU share of a gpu_h100 node (72 cores / 4 GPUs).
+# Without this, SLURM allocates 1 CPU per task and the dataloader workers
+# contend for a single core while the GPU idles.
+#SBATCH --cpus-per-task=18
 #SBATCH --constraint=scratch-node
 #SBATCH --output=logs/train_baseline_synthnet_%j.out
 
@@ -62,7 +66,7 @@ TIER1_CACHE_DIR="/scratch-shared/$USER/aig_train_run/shared_tier1_cache"
 HP_TUNING_SPLITS="/scratch-shared/$USER/big_optuna_run/shared_dataset_cache/algo_Orchestrate_ml_algo_Deepsyn_ml_algo_Syn4_ml_algo_C2RS_ml_50000_splits.json"
 [ ! -f "$HP_TUNING_SPLITS" ] && echo "WARNING: HP Tuning split file not found at $HP_TUNING_SPLITS"
 
-NUM_WORKERS="${NUM_WORKERS:-12}"
+NUM_WORKERS="${NUM_WORKERS:-16}"  # 16 of the 18 requested cores; 2 left for the main process + pin_memory thread
 PREFETCH_FACTOR="${PREFETCH_FACTOR:-4}"
 PIN_MEMORY="${PIN_MEMORY:-true}"
 PERSISTENT_WORKERS="${PERSISTENT_WORKERS:-true}"

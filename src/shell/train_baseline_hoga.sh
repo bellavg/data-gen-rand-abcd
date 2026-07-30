@@ -4,6 +4,11 @@
 #SBATCH --nodes=1
 #SBATCH --partition=gpu_h100
 #SBATCH --gpus=1
+# 18 cores is the per-GPU share of a gpu_h100 node (72 cores / 4 GPUs).
+# WITHOUT this, SLURM allocates 1 CPU per task and the dataloader workers
+# contend for a single core -- HOGA computes hop features in those workers,
+# so the GPU then starves (data_wait_s >> step_s in the batch stats).
+#SBATCH --cpus-per-task=18
 #SBATCH --constraint=scratch-node
 #SBATCH --output=logs/train_baseline_hoga_%j.out
 
@@ -112,7 +117,7 @@ HOGA_MAX_NODES_PER_BATCH="${HOGA_MAX_NODES_PER_BATCH:-150000}"
 # calibrate this value from an actual log rather than trusting the estimate.
 ACCUMULATE_GRAD_BATCHES="${ACCUMULATE_GRAD_BATCHES:-20}"
 
-NUM_WORKERS="${NUM_WORKERS:-12}"
+NUM_WORKERS="${NUM_WORKERS:-16}"  # 16 of the 18 requested cores; 2 left for the main process + pin_memory thread
 PREFETCH_FACTOR="${PREFETCH_FACTOR:-4}"
 PIN_MEMORY="${PIN_MEMORY:-true}"
 PERSISTENT_WORKERS="${PERSISTENT_WORKERS:-true}"
