@@ -215,8 +215,11 @@ def main(args: argparse.Namespace) -> None:
 
     print("[main] Loading datasets before Trainer/WandB init ...", flush=True)
     ds_start = time.monotonic()
+    # "fit" only, matching train.py. The test split is evaluated separately,
+    # and setting up the test stage here would build a graph cache for ~96k
+    # test graphs during the GPU job (warmup_train_cache.sh warms train + val
+    # only, by design).
     datamodule.setup("fit")
-    datamodule.setup("test")
     print(
         f"[main] Datasets loaded in {time.monotonic() - ds_start:.1f}s", flush=True
     )
@@ -228,11 +231,9 @@ def main(args: argparse.Namespace) -> None:
     if args.baseline == "hoga":
         train_loader = _hoga_loader(datamodule.train_ds, args, shuffle=True)
         val_loader = _hoga_loader(datamodule.val_ds, args, shuffle=False)
-        test_loader = _hoga_loader(datamodule.test_ds, args, shuffle=False)
     else:
         train_loader = _plain_loader(datamodule.train_ds, args, shuffle=True)
         val_loader = _plain_loader(datamodule.val_ds, args, shuffle=False)
-        test_loader = _plain_loader(datamodule.test_ds, args, shuffle=False)
 
     base_model = _build_model(args)
     model = BaselineRegressionLightningModule(
@@ -302,6 +303,9 @@ def main(args: argparse.Namespace) -> None:
         callbacks=callbacks,
         logger=logger,
         gradient_clip_val=args.gradient_clip_val,
+        # Match train.py's explicit 0 (Lightning's own default is 2) so the
+        # baseline and the primary model start training from the same point.
+        num_sanity_val_steps=0,
         log_every_n_steps=args.log_steps,
     )
 
@@ -316,8 +320,8 @@ def main(args: argparse.Namespace) -> None:
         flush=True,
     )
 
-    print(f"--- Running Test Set for baseline={args.baseline} ---", flush=True)
-    trainer.test(model, dataloaders=test_loader, ckpt_path="best")
+    # No trainer.test() here: the test split is evaluated separately, from the
+    # saved checkpoints. Matches train.py, which also fits only.
 
 
 if __name__ == "__main__":
@@ -336,8 +340,19 @@ if __name__ == "__main__":
     parser.add_argument("--batch_size", type=int, default=None)
     parser.add_argument("--lr", type=float, default=None)
     parser.add_argument("--weight_decay", type=float, default=None)
-    parser.add_argument("--scheduler_factor", type=float, default=0.1)
-    parser.add_argument("--scheduler_patience", type=int, default=10)
+    # Unlike lr/batch_size/loss/optimizer above, the ReduceLROnPlateau settings
+    # are NOT published: neither baseline paper uses an LR scheduler at all (see
+    # baselines/common/lightning_wrapper.py). Since the values are ours either
+    # way, take config.py's -- the same schedule the primary model trains under,
+    # so the comparison differs by architecture rather than LR schedule. The
+    # previous 0.1/10 also left the scheduler inert: patience 10 epochs can
+    # never fire under --patience 4 early stopping.
+    parser.add_argument(
+        "--scheduler_factor", type=float, default=config.SCHEDULER_FACTOR
+    )
+    parser.add_argument(
+        "--scheduler_patience", type=int, default=config.SCHEDULER_PATIENCE
+    )
 
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument(
