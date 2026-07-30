@@ -48,6 +48,51 @@ SPARSIFICATION_PAGERANK_KEEP_RATIO = 0.8  # fraction of nodes to keep (0.0 to 1.
 SPARSIFICATION_PAGERANK_ALPHA = 0.85      # damping factor for PageRank
 SPARSIFICATION_SEED = 42
 
+# Summarization / coarsening configuration.
+# SUMMARIZATION_PARAMS is what the precompute driver actually passes to each
+# registered method, so these are the settings a production run uses; the
+# defaults in data/summarization.py exist only to keep the functions callable
+# on their own.
+SUMMARIZATION_SEED = 42
+# Refinement/propagation depth is tied to the encoder depth (C1): information
+# travels exactly NUM_LAYERS hops in the model, so merging nodes that agree to
+# that depth is what the model cannot distinguish.
+SUMMARIZATION_DEPTH = NUM_LAYERS
+# Target fraction of nodes removed by the two ratio-driven methods.  Picked to
+# match the sparsification sweep's mid-point so the Pareto fronts are
+# comparable at a matched compression point (C8).
+SUMMARIZATION_REDUCTION_RATIO = 0.5
+
+SUMMARIZATION_PARAMS: dict[str, dict] = {
+    # S0 — control: no compression, exercises the pipeline end to end.
+    "identity": {},
+    # S1 — level-bounded cone coarsening (domain-specific).
+    "cone": {"max_chain_length": 4, "level_band": 0},
+    # S2 — graded WL / bisimulation.  count_cap=None is exact colour
+    # refinement; set it to 1 for the bisimulation endpoint.
+    "wl": {
+        "depth": SUMMARIZATION_DEPTH,
+        "count_cap": None,
+        "direction": "backward",
+    },
+    # S3 — A-ConvMatch (convolution matching), the general SOTA bar.
+    "convmatch": {
+        "reduction_ratio": SUMMARIZATION_REDUCTION_RATIO,
+        "sgc_depth": SUMMARIZATION_DEPTH,
+        "seed": SUMMARIZATION_SEED,
+    },
+    # S4 — spectral / local-variation, the domain-blind control.  The node cap
+    # bounds the eigensolver's cost; larger graphs fall back to heavy-edge.
+    "spectral": {
+        "reduction_ratio": SUMMARIZATION_REDUCTION_RATIO,
+        "variant": "local_variation",
+        "num_eigenvectors": 4,
+        "max_spectral_nodes": 5_000,
+    },
+    # S5 — LSH / UGC hashing, the cheap linear-time tier.
+    "lsh": {"bin_width": 2.0, "num_projections": 8, "seed": SUMMARIZATION_SEED},
+}
+
 # Dynamic partitioning heuristic: k = max(MIN_K, min(MAX_K, num_nodes // TARGET_NODES_PER_PART))
 TARGET_NODES_PER_PART = 10_000  # target number of nodes per partition
 MIN_K = 2  # minimum number of partitions

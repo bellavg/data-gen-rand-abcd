@@ -18,6 +18,10 @@
 #
 #   METHOD=identity sbatch src/shell/precompute_summarization.sh
 #
+# METHOD is one of identity / cone / wl / convmatch / spectral / lsh; the
+# parameters each one runs with come from config.SUMMARIZATION_PARAMS, not
+# from this script.  One run per method, then train_summarization.sh.
+#
 # Re-running is safe, but resume is per shard, not per graph: the working
 # directory is node-local and destroyed at job end, so a shard that did not
 # finish is redone from scratch.  Completion is recorded only after every

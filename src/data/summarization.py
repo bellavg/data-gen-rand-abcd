@@ -14,6 +14,212 @@ from torch_geometric.utils import coalesce
 # causal ordering of the DAG.
 _MIN_POOLED_ATTRS = ("level", "pos_enc")
 
+# Ceiling on the matching sub-passes of one agglomerative round.  Set well
+# above what real graphs need (12-238 measured up to 366k nodes) so it only
+# ever catches a pathological cost ordering; see _greedy_disjoint_pairs.
+_MAX_MATCHING_PASSES = 512
+
+
+# =====================================================================
+# SHARED HELPERS
+# =====================================================================
+
+def _relabel(labels: torch.Tensor) -> torch.Tensor:
+    """Map arbitrary integer labels onto contiguous ids in ``[0, num_classes)``.
+
+    Every method has to return such a vector, because ``apply_merge_map``
+    rejects gaps rather than relabelling on its behalf.
+    """
+    return torch.unique(labels.reshape(-1), return_inverse=True)[1]
+
+
+def _relabel_rows(key: torch.Tensor) -> torch.Tensor:
+    """Contiguous ids for the distinct *rows* of an integer key matrix."""
+    return torch.unique(key, dim=0, return_inverse=True)[1]
+
+
+def _node_levels(data: Data) -> torch.Tensor:
+    """Integer topological level per node, from whichever attribute is present.
+
+    Raw graphs carry ``level``; cached ones carry ``pos_enc = log1p(level)``
+    instead, since ``ExtractPrecomputedPE`` consumes ``level`` and deletes it.
+    Levels are integers below ``config.MAX_DEPTH``, comfortably inside the range
+    where a float32 log1p round-trips exactly after rounding.
+    """
+    level = getattr(data, "level", None)
+    if level is not None:
+        return level.reshape(-1).round().long()
+    pos_enc = getattr(data, "pos_enc", None)
+    if pos_enc is None:
+        raise ValueError(
+            "graph carries neither 'level' nor 'pos_enc'; one is required to "
+            "recover node levels"
+        )
+
+    # pos_enc is log1p of whichever attribute PE_TYPE selected, so inverting
+    # it as a level is only valid for pe_type="level".  Under "pi_paths" it
+    # would return path counts — which reach values that saturate int64 once
+    # exponentiated — as if they were topological depths, silently.
+    import config
+
+    if config.PE_TYPE != "level":
+        raise ValueError(
+            f"cannot recover levels from pos_enc under PE_TYPE={config.PE_TYPE!r}; "
+            "it holds log1p of that attribute, not of the level"
+        )
+    return torch.expm1(pos_enc.reshape(-1).double()).round().long()
+
+
+def _edge_polarity(data: Data) -> torch.Tensor:
+    """``[E, 2]`` one-hot inverter polarity, defaulting to all-normal.
+
+    The exact-compression track folds polarity into node features and drops
+    ``edge_attr`` entirely (see ``data.exact_graph``), so a descriptor built
+    from it must not assume the attribute exists.  Note this only keeps the
+    *clustering* callable on such a graph: ``summarize_graph`` would still
+    fail in ``apply_merge_map``, which needs ``edge_attr`` to build the
+    super-edge polarity counts.  The exact track has its own rewrite.
+    """
+    edge_attr = getattr(data, "edge_attr", None)
+    if edge_attr is not None:
+        return edge_attr
+    polarity = torch.zeros(data.edge_index.size(1), 2)
+    polarity[:, 0] = 1.0
+    return polarity
+
+
+def _undirected_simple(
+    edge_index: torch.Tensor,
+    num_nodes: int,
+    weight: torch.Tensor | None = None,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Undirected simple edge list ``(i < j)`` carrying edge multiplicities.
+
+    The direction-blind methods (S3, S4) are defined on an undirected graph,
+    so this drops orientation, discards self-loops, and folds parallel edges
+    into one edge whose weight is how many originals it stands for.
+    """
+    lower = torch.minimum(edge_index[0], edge_index[1])
+    upper = torch.maximum(edge_index[0], edge_index[1])
+    keep = lower != upper
+    pairs = torch.stack([lower[keep], upper[keep]])
+    if weight is None:
+        weight = torch.ones(edge_index.size(1), dtype=torch.float32)
+    weight = weight[keep]
+    if pairs.size(1) == 0:
+        return pairs, weight
+    return coalesce(pairs, weight, num_nodes=num_nodes, reduce="sum")
+
+
+def _mutual_best_pairs(
+    pairs: torch.Tensor,
+    cost: torch.Tensor,
+    num_nodes: int,
+    budget: int,
+) -> torch.Tensor:
+    """Select disjoint node pairs that are each other's cheapest partner.
+
+    Both agglomerative methods want "merge the cheapest non-overlapping
+    candidates".  Doing that exactly means a sequential scan over every sorted
+    candidate, which is far too slow in Python at ~10^6 edges across ~10^5
+    graphs.  Mutual-best matching is the standard parallel stand-in: it selects
+    a subset of what the greedy scan would select, runs in a few vectorised
+    passes, and is deterministic (ties broken by node id).  Callers use it
+    through ``_greedy_disjoint_pairs``, which repeats it to recover most of
+    what one pass leaves behind.
+
+    Returns a ``[2, K]`` tensor of pairs with ``K <= budget``.
+    """
+    empty = torch.empty((2, 0), dtype=torch.long)
+    if budget <= 0 or pairs.size(1) == 0:
+        return empty
+
+    # Each undirected candidate is looked at from both endpoints.
+    src = torch.cat([pairs[0], pairs[1]]).numpy()
+    dst = torch.cat([pairs[1], pairs[0]]).numpy()
+    both = torch.cat([cost, cost]).double().numpy()
+
+    order = np.lexsort((dst, both, src))
+    src, dst, both = src[order], dst[order], both[order]
+    is_first = np.empty(src.size, dtype=bool)
+    is_first[0] = True
+    is_first[1:] = src[1:] != src[:-1]
+
+    best = np.full(num_nodes, -1, dtype=np.int64)
+    best_cost = np.zeros(num_nodes)
+    best[src[is_first]] = dst[is_first]
+    best_cost[src[is_first]] = both[is_first]
+
+    matched = np.flatnonzero(best >= 0)
+    matched = matched[(best[best[matched]] == matched) & (matched < best[matched])]
+    if matched.size == 0:
+        return empty
+
+    keep = matched[np.lexsort((matched, best_cost[matched]))][:budget]
+    return torch.from_numpy(np.stack([keep, best[keep]]))
+
+
+def _greedy_disjoint_pairs(
+    pairs: torch.Tensor,
+    cost: torch.Tensor,
+    num_nodes: int,
+    budget: int,
+) -> torch.Tensor:
+    """Cheapest-first disjoint pairs, by repeated mutual-best sub-passes.
+
+    One mutual-best pass alone matches very little on these graphs: primary
+    inputs and, later, super-nodes are hubs that many nodes name as their
+    cheapest partner while only one can be reciprocated.  Repeating the pass
+    over the nodes left unmatched is far cheaper than the caller's per-round
+    work (rebuilding the coarse graph, re-coalescing every edge), so several
+    passes per round is what collapses the round count — measured at 2 rounds
+    for graphs from 24k to 366k nodes, against 150-330 for a single pass.  It
+    also lands closer to the sequential greedy scan the published algorithms
+    specify than one pass does, and still selects a subset of it.
+
+    Each pass is O(num_nodes) whatever is left to match, and a pathological
+    cost ordering (monotone along a path) matches one pair per pass, so the
+    passes are capped.  Real inputs need 12-238; hitting the cap only defers
+    merges to the caller's next round, it does not change the target.
+    """
+    selected: list[torch.Tensor] = []
+    taken = 0
+    for _ in range(_MAX_MATCHING_PASSES):
+        if taken >= budget or pairs.size(1) == 0:
+            break
+        matched = _mutual_best_pairs(pairs, cost, num_nodes, budget - taken)
+        if matched.size(1) == 0:
+            break
+        selected.append(matched)
+        taken += matched.size(1)
+
+        # Drop every candidate touching a node just matched.  The rest are
+        # reused with the costs they already have: exact for spectral, where
+        # a merge elsewhere changes no other node's degree or subspace row,
+        # and a close approximation for ConvMatch, where a survivor next to a
+        # merged node drifts by a few percent (rank correlation 0.99).
+        used = torch.zeros(num_nodes, dtype=torch.bool)
+        used[matched.reshape(-1)] = True
+        keep = ~(used[pairs[0]] | used[pairs[1]])
+        pairs, cost = pairs[:, keep], cost[keep]
+
+    if not selected:
+        return torch.empty((2, 0), dtype=torch.long)
+    return torch.cat(selected, dim=1)
+
+
+def _apply_pairs(label: torch.Tensor, matched: torch.Tensor, num_clusters: int):
+    """Fold matched cluster pairs into their partner and return the new labels.
+
+    Returns ``(label, level_map, num_clusters)``: the updated per-node cluster
+    vector, the old-cluster to new-cluster map (needed to rebuild the coarse
+    graph without touching the node level), and the new cluster count.
+    """
+    level_map = torch.arange(num_clusters, dtype=torch.long)
+    level_map[matched[0]] = matched[1]
+    level_map = _relabel(level_map)
+    return level_map[label], level_map, int(level_map.max()) + 1
+
 
 # =====================================================================
 # CLUSTERING METHODS
@@ -156,13 +362,674 @@ def color_refinement(
     return colors
 
 
+def _immediate_postdominators(edge_index: torch.Tensor, num_nodes: int) -> torch.Tensor:
+    """Immediate post-dominator of every node, as ids in ``[0, num_nodes]``.
+
+    Node *p* post-dominates *v* when every path from *v* to an output passes
+    through *p*, so the immediate post-dominator is the gate at which *v*'s
+    fanout cone reconverges.  Two gates sharing one are parallel branches of
+    the same cone — which is exactly the relation the width axis merges on.
+
+    Post-dominance, not dominance.  Forward dominators were measured on this
+    corpus first and are degenerate here: ~99% of AND gates have the virtual
+    source as their immediate dominator, because a gate deep in an AIG is
+    reachable from the input frontier along many independent paths.  Grouping
+    on that collapses to "merge everything on a level", which is a different
+    (and much blunter) method than the one intended.
+
+    An AIG has many outputs rather than one, so a virtual sink is added over
+    every node of out-degree zero.  A node whose immediate post-dominator is
+    that sink is **given a private id**, not the sink's: its fanout reaches
+    several outputs without passing through any one gate, so it has no
+    reconvergence point and nothing to be a parallel branch *of*.  Grouping
+    those together would merge gates that share nothing — two of them can sit
+    in different connected components — and there are a lot of them: 29% of
+    AND gates on an adder-like circuit, 73% on a graph with no reconvergent
+    structure at all.  The same private id is given to nodes
+    that reach no output at all, which a well-formed netlist does not contain.
+    """
+    import networkx as nx
+
+    # Post-dominators of a graph are the dominators of its reverse.
+    graph = nx.DiGraph()
+    graph.add_nodes_from(range(num_nodes))
+    graph.add_edges_from(edge_index.flip(0).t().tolist())
+    sink = -1
+    graph.add_edges_from(
+        (sink, node) for node in range(num_nodes) if graph.in_degree(node) == 0
+    )
+
+    # Private ids start past every real node id so they cannot collide.
+    postdominators = torch.arange(num_nodes, dtype=torch.long) + num_nodes
+    for node, postdominator in nx.immediate_dominators(graph, sink).items():
+        if node != sink and postdominator != sink:
+            postdominators[node] = postdominator
+    return postdominators
+
+
+def _contract_chains(
+    edge_index: torch.Tensor,
+    label: torch.Tensor,
+    is_and: torch.Tensor,
+    levels: torch.Tensor,
+    max_chain_length: int,
+) -> torch.Tensor:
+    """Contract fanout-free chains of AND clusters in the quotient of *label*.
+
+    A cluster whose only outgoing edge goes to cluster *b* is absorbed into
+    *b*.  This is what shortens the circuit: it removes a level from every
+    path through the chain, which is the axis that matters for over-squashing
+    on a graph far deeper than the encoder has layers.
+
+    Acyclicity is preserved.  Every edge leaving the merged cluster leaves from
+    *b*, so a cycle would need a path ``b -> ... -> a``; together with the
+    ``a -> b`` edge that is a cycle in the input, which a netlist does not have.
+    The argument only assumes the input is a DAG, so it still holds when this
+    runs on the quotient left by the width axis.
+    """
+    num_clusters = int(label.max()) + 1
+    quotient = label[edge_index]
+    external = quotient[:, quotient[0] != quotient[1]]
+    if external.size(1) == 0:
+        return label
+
+    candidates = torch.unique(external.t(), dim=0)
+    out_degree = torch.bincount(candidates[:, 0], minlength=num_clusters)
+
+    # A cluster may only be absorbed if all of its members are AND gates:
+    # primary inputs and outputs are the circuit's fixed interface and are
+    # never merged away.
+    cluster_is_and = torch.ones(num_clusters, dtype=torch.bool)
+    cluster_is_and.scatter_reduce_(0, label, is_and, reduce="amin", include_self=False)
+
+    candidates = candidates[
+        (out_degree[candidates[:, 0]] == 1)
+        & cluster_is_and[candidates[:, 0]]
+        & cluster_is_and[candidates[:, 1]]
+    ]
+    if candidates.size(0) == 0:
+        return label
+
+    # Bottom-up, so a chain grows from the inputs toward the outputs and the
+    # length cap truncates the far end rather than an arbitrary middle.
+    cluster_level = torch.zeros(num_clusters, dtype=torch.long)
+    cluster_level.scatter_reduce_(0, label, levels, reduce="amin", include_self=False)
+    order = torch.argsort(cluster_level[candidates[:, 0]], stable=True)
+
+    parent = list(range(num_clusters))
+    chain = [1] * num_clusters
+
+    def find(node: int) -> int:
+        root = node
+        while parent[root] != root:
+            root = parent[root]
+        while parent[node] != root:
+            parent[node], node = root, parent[node]
+        return root
+
+    for tail, head in candidates[order].tolist():
+        tail_root, head_root = find(tail), find(head)
+        if tail_root == head_root:
+            continue
+        if chain[tail_root] + chain[head_root] > max_chain_length:
+            continue
+        parent[tail_root] = head_root
+        chain[head_root] += chain[tail_root]
+
+    roots = torch.tensor([find(c) for c in range(num_clusters)], dtype=torch.long)
+    return _relabel(roots[label])
+
+
+def cone_coarsening(
+    data: Data,
+    max_chain_length: int = 4,
+    level_band: int | None = 0,
+) -> torch.Tensor:
+    """Cluster nodes by level-bounded cone coarsening (the AIG-native method).
+
+    Merges along two axes, both restricted to AND gates so the primary
+    input/output interface survives intact:
+
+    *Width* — AND gates on the same topological level whose fanout cones
+    reconverge at the same gate (they share an immediate post-dominator) are
+    merged.  These are the parallel branches of one cone, so this compresses
+    circuit width while leaving every path length untouched; because merged
+    nodes share a level, the level positional encoding of the super-node is
+    the exact level of its members rather than a pooled approximation.  A gate
+    whose fanout reaches several outputs without reconverging on any single
+    gate has no cone to be a branch of and is left alone, which is most of a
+    multi-output AIG.
+
+    *Depth* — maximal fanout-free chains of AND clusters are contracted, up to
+    *max_chain_length* clusters per chain.  This is the axis that shortens
+    paths, and so the one that acts on over-squashing.
+
+    Both axes preserve acyclicity, and composing them does too: the width axis
+    only merges nodes of equal level, and every edge of a netlist runs from a
+    lower level to a strictly higher one, so no edge can exist inside a merged
+    group and no cycle can form between two of them; the depth axis then runs
+    on that quotient, which is still a DAG (see ``_contract_chains``).
+
+    *level_band* widens the width axis to bands of ``level_band + 1``
+    consecutive levels: more compression, at the cost of both the exact level
+    encoding and the acyclicity guarantee.  Bands are fixed windows rather
+    than a sliding ±k, since "within k levels of each other" is not an
+    equivalence relation and so cannot define a partition at all; one
+    consequence is that widening the band does not monotonically increase
+    compression, because two adjacent levels may fall either side of a window
+    boundary.  ``None`` disables the width axis,
+    ``max_chain_length <= 1`` disables the depth axis; either alone is the
+    single-axis ablation.
+    """
+    if level_band is not None and level_band < 0:
+        raise ValueError(f"level_band must be >= 0 or None, got {level_band}")
+
+    num_nodes = data.x.size(0)
+    is_and = data.x[:, 2] == 1.0
+    levels = _node_levels(data)
+    label = torch.arange(num_nodes, dtype=torch.long)
+
+    if level_band is not None:
+        group = _relabel_rows(
+            torch.stack(
+                [
+                    _immediate_postdominators(data.edge_index, num_nodes),
+                    levels // (level_band + 1),
+                ],
+                dim=1,
+            )
+        )
+        # Offset past the identity labels so a group id cannot collide with
+        # the private id of a node that does not take part.
+        label = _relabel(torch.where(is_and, group + num_nodes, label))
+
+    if max_chain_length > 1 and data.edge_index.numel():
+        label = _contract_chains(
+            data.edge_index, label, is_and, levels, max_chain_length
+        )
+
+    return label
+
+
+def convmatch_coarsening(
+    data: Data,
+    reduction_ratio: float = 0.5,
+    sgc_depth: int = 4,
+    num_probes: int = 2,
+    seed: int = 42,
+) -> torch.Tensor:
+    """Cluster nodes by convolution matching (A-ConvMatch, Dickens et al. 2024).
+
+    Merges the nodes whose merging perturbs the *output of a graph convolution*
+    least, rather than preserving a property of the graph itself.  Each round
+    scores candidate pairs with the closed-form upper bound of the paper's
+    Theorem 1 — the change in the two nodes' own convolved representations plus
+    the change they force on their neighbours' — then merges the cheapest
+    disjoint pairs, repeating until *reduction_ratio* of the nodes are gone.
+    The ratio is a target, not a guarantee: a graph can run out of candidate
+    pairs first, which leaves it less compressed than asked for.
+
+    Candidates come from the paper's step 1: nearest neighbours in the
+    embedding of an unparameterised *sgc_depth*-layer SGC network.  Exact
+    nearest neighbours are quadratic, so neighbours in that space are
+    approximated by pairing nodes adjacent along *num_probes* random
+    projections of it, together with every graph edge.
+
+    Deliberately domain-blind: it uses the paper's symmetrically normalised
+    undirected convolution, ignoring both edge direction and inverter polarity.
+    That is what makes it the general SOTA bar — a method with no knowledge
+    that these graphs are circuits.
+
+    Worth knowing when reading its results: the published objective is an
+    *unweighted* L1 sum over the convolution output, so it favours merging
+    low-degree nodes with small representations independently of how alike
+    they are.  Convolution equivalence decides between pairs of comparable
+    degree, not across them.
+
+    Two documented deviations from the published algorithm, both for scale:
+    disjoint pairs are chosen by repeated mutual-best matching rather than a
+    sequential greedy scan (see ``_greedy_disjoint_pairs``), and the
+    ``|C|`` self-loops a merged super-node inherits from its members are left
+    contributing their pre-merge values, which is part of what makes the cost
+    O(1) per pair.  The larger approximation — an adjacent pair's shared edge
+    — is corrected exactly.
+    """
+    if not 0.0 <= reduction_ratio < 1.0:
+        raise ValueError(f"reduction_ratio must be in [0, 1), got {reduction_ratio}")
+    if sgc_depth < 0:
+        raise ValueError(f"sgc_depth must be >= 0, got {sgc_depth}")
+
+    num_nodes = data.x.size(0)
+    target = max(1, int(round(num_nodes * (1.0 - reduction_ratio))))
+    pairs, weight = _undirected_simple(data.edge_index, num_nodes)
+    if target >= num_nodes or pairs.size(1) == 0:
+        return torch.arange(num_nodes, dtype=torch.long)
+
+    # The graph signal the model actually convolves: node type plus the level
+    # encoding, on a comparable scale so neither dominates the L1 cost.
+    levels = _node_levels(data).to(torch.float32).reshape(-1, 1)
+    features = torch.cat([data.x, torch.log1p(levels)], dim=1)
+
+    embedding = _sgc_embedding(pairs, weight, features, num_nodes, sgc_depth)
+    candidates = torch.cat(
+        [pairs, _projection_neighbour_pairs(embedding, num_probes, seed)], dim=1
+    )
+
+    label = torch.arange(num_nodes, dtype=torch.long)
+    size = torch.ones(num_nodes)
+    num_clusters = num_nodes
+
+    while num_clusters > target and candidates.size(1):
+        cost = _convmatch_costs(candidates, pairs, weight, features, size, num_clusters)
+        matched = _greedy_disjoint_pairs(
+            candidates, cost, num_clusters, num_clusters - target
+        )
+        if matched.size(1) == 0:
+            break
+
+        label, cluster_map, num_clusters = _apply_pairs(label, matched, num_clusters)
+        pairs, weight = _undirected_simple(cluster_map[pairs], num_clusters, weight)
+        features = _pool_sum(features * size.unsqueeze(1), cluster_map, num_clusters)
+        size = _pool_sum(size, cluster_map, num_clusters)
+        features = features / size.unsqueeze(1)
+        candidates = _remap_pairs(candidates, cluster_map)
+
+    return label
+
+
+def _pool_sum(
+    values: torch.Tensor, cluster: torch.Tensor, num_clusters: int
+) -> torch.Tensor:
+    """Per-cluster sum over member rows."""
+    out = torch.zeros(num_clusters, *values.shape[1:], dtype=values.dtype)
+    return out.index_add_(0, cluster, values)
+
+
+def _remap_pairs(pairs: torch.Tensor, cluster_map: torch.Tensor) -> torch.Tensor:
+    """Push candidate pairs through a merge, dropping collapsed duplicates."""
+    mapped = cluster_map[pairs]
+    lower = torch.minimum(mapped[0], mapped[1])
+    upper = torch.maximum(mapped[0], mapped[1])
+    keep = lower != upper
+    return torch.unique(torch.stack([lower[keep], upper[keep]]).t(), dim=0).t()
+
+
+def _coarse_degree(
+    pairs: torch.Tensor,
+    weight: torch.Tensor,
+    size: torch.Tensor,
+    num_nodes: int,
+) -> torch.Tensor:
+    """Degrees under ConvMatch's convention for the coarse graph.
+
+    A super-node standing for ``|C|`` original nodes carries ``|C|``
+    self-loops, so ``d_i = sum_j a_ij + |C_i|``.
+    """
+    return torch.zeros(num_nodes).index_add_(
+        0, pairs.reshape(-1), weight.repeat(2)
+    ) + size
+
+
+def _candidate_edge_weight(
+    candidates: torch.Tensor, pairs: torch.Tensor, weight: torch.Tensor, num_nodes: int
+) -> torch.Tensor:
+    """Weight of the edge joining each candidate pair, or zero if not adjacent.
+
+    ``pairs`` comes out of ``coalesce`` sorted row-major and both tensors hold
+    ``(lower, upper)``, so a single searchsorted over the flattened keys
+    answers the whole candidate set at once — keeping the merge cost O(1) per
+    candidate even though it now needs to know whether the pair is an edge.
+    """
+    if pairs.size(1) == 0 or candidates.size(1) == 0:
+        return torch.zeros(candidates.size(1))
+
+    keys = pairs[0] * num_nodes + pairs[1]
+    wanted = candidates[0] * num_nodes + candidates[1]
+    position = torch.searchsorted(keys, wanted).clamp_max(keys.numel() - 1)
+    return torch.where(keys[position] == wanted, weight[position], 0.0)
+
+
+def _sgc_embedding(
+    pairs: torch.Tensor,
+    weight: torch.Tensor,
+    features: torch.Tensor,
+    num_nodes: int,
+    depth: int,
+) -> torch.Tensor:
+    """``(D^-1/2 A D^-1/2)^depth X`` — the unparameterised SGC embedding."""
+    degree = _coarse_degree(pairs, weight, torch.ones(num_nodes), num_nodes)
+    inverse_sqrt = degree.clamp_min(1e-12).rsqrt()
+    normalized = weight * inverse_sqrt[pairs[0]] * inverse_sqrt[pairs[1]]
+    self_loop = 1.0 / degree
+    embedding = features
+    for _ in range(depth):
+        propagated = self_loop.unsqueeze(1) * embedding
+        message = normalized.unsqueeze(1) * embedding[pairs[1]]
+        propagated.index_add_(0, pairs[0], message)
+        message = normalized.unsqueeze(1) * embedding[pairs[0]]
+        propagated.index_add_(0, pairs[1], message)
+        embedding = propagated
+    return embedding
+
+
+def _projection_neighbour_pairs(
+    embedding: torch.Tensor, num_probes: int, seed: int
+) -> torch.Tensor:
+    """Approximate nearest-neighbour pairs by sorting random projections."""
+    if num_probes < 1 or embedding.size(0) < 2:
+        return torch.empty((2, 0), dtype=torch.long)
+
+    generator = torch.Generator().manual_seed(seed)
+    projections = embedding @ torch.randn(
+        embedding.size(1), num_probes, generator=generator
+    )
+    neighbours = []
+    for probe in range(num_probes):
+        order = torch.argsort(projections[:, probe], stable=True)
+        neighbours.append(torch.stack([order[:-1], order[1:]]))
+    return _remap_pairs(
+        torch.cat(neighbours, dim=1), torch.arange(embedding.size(0), dtype=torch.long)
+    )
+
+
+def _convmatch_representation(
+    pairs: torch.Tensor,
+    weight: torch.Tensor,
+    features: torch.Tensor,
+    size: torch.Tensor,
+    num_clusters: int,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """One coarse graph convolution, ``D^-1/2 (A + I) D^-1/2 X``.
+
+    Returns ``(aggregate, representation, scaled, degree)``.  *aggregate* is
+    the convolution held back one step, ``sum_j a_ij x_j / sqrt(d_j)`` without
+    the owner's own ``1/sqrt(d_i)``.  Keeping it in that form is what makes
+    the merge cost O(1) per candidate: over *disjoint* neighbourhoods it is
+    additive, so a merged super-node's aggregate is the sum of its members'
+    and needs no rebuild of the coarse graph.  When the two members are
+    themselves adjacent the shared edge appears in both terms and has to be
+    taken back out — see ``_convmatch_costs``.
+    """
+    degree = _coarse_degree(pairs, weight, size, num_clusters)
+    inverse_sqrt = degree.clamp_min(1e-12).rsqrt()
+
+    scaled = features * inverse_sqrt.unsqueeze(1)
+    aggregate = size.unsqueeze(1) * scaled
+    aggregate.index_add_(0, pairs[0], weight.unsqueeze(1) * scaled[pairs[1]])
+    aggregate.index_add_(0, pairs[1], weight.unsqueeze(1) * scaled[pairs[0]])
+    return aggregate, aggregate * inverse_sqrt.unsqueeze(1), scaled, degree
+
+
+def _convmatch_costs(
+    candidates: torch.Tensor,
+    pairs: torch.Tensor,
+    weight: torch.Tensor,
+    features: torch.Tensor,
+    size: torch.Tensor,
+    num_clusters: int,
+) -> torch.Tensor:
+    """A-ConvMatch merge cost (Theorem 1) for every candidate pair."""
+    aggregate, representation, scaled, degree = _convmatch_representation(
+        pairs, weight, features, size, num_clusters
+    )
+    inverse_sqrt = degree.clamp_min(1e-12).rsqrt()
+
+    # How much each node's neighbours weight it when they aggregate.
+    fanin = size * inverse_sqrt
+    fanin.index_add_(0, pairs[0], weight * inverse_sqrt[pairs[1]])
+    fanin.index_add_(0, pairs[1], weight * inverse_sqrt[pairs[0]])
+
+    left, right = candidates[0], candidates[1]
+
+    # Merging two *adjacent* nodes turns the edge between them into an
+    # internal one: it leaves both degrees and drops out of both aggregates.
+    # Most candidates are graph edges, so skipping this is not a rounding
+    # detail — it costs a quarter of the merged degree and pushes the cost
+    # ranking away from the exact one it is meant to approximate.
+    shared = _candidate_edge_weight(candidates, pairs, weight, num_clusters)
+
+    merged_size = size[left] + size[right]
+    merged_degree = degree[left] + degree[right] - 2.0 * shared
+    merged_inverse_sqrt = merged_degree.clamp_min(1e-12).rsqrt()
+    merged_features = (
+        size[left].unsqueeze(1) * features[left]
+        + size[right].unsqueeze(1) * features[right]
+    ) / merged_size.unsqueeze(1)
+    merged_representation = (
+        aggregate[left]
+        + aggregate[right]
+        - shared.unsqueeze(1) * (scaled[left] + scaled[right])
+    ) * merged_inverse_sqrt.unsqueeze(1)
+    merged_scaled = merged_features * merged_inverse_sqrt.unsqueeze(1)
+
+    return (
+        (representation[left] - merged_representation).abs().sum(1)
+        + (representation[right] - merged_representation).abs().sum(1)
+        + (merged_scaled - scaled[left]).abs().sum(1) * fanin[left]
+        + (merged_scaled - scaled[right]).abs().sum(1) * fanin[right]
+    )
+
+
+def spectral_coarsening(
+    data: Data,
+    reduction_ratio: float = 0.5,
+    variant: str = "local_variation",
+    num_eigenvectors: int = 4,
+    max_spectral_nodes: int = 5_000,
+) -> torch.Tensor:
+    """Cluster nodes by spectral local variation or heavy-edge matching.
+
+    The generic, logic-blind control: it contracts the edges whose contraction
+    disturbs the graph's *spectrum* least, knowing nothing about gates, levels
+    or polarity.  This is the coarsening counterpart of random edge dropout in
+    the sparsification family — principled, and principled about the wrong
+    thing.
+
+    ``variant="local_variation"`` scores an edge by Loukas' local variation,
+    the movement it forces on the subspace spanned by the *num_eigenvectors*
+    smallest non-trivial Laplacian eigenvectors, normalised by the volume of
+    the pair.  Because that costs an eigendecomposition per graph, graphs above
+    *max_spectral_nodes* fall back to ``variant="heavy_edge"``, which scores by
+    the classic ``w_ij / sqrt(d_i d_j)`` matching weight and needs no
+    eigensolver at all.  The same fallback catches an eigensolver that fails to
+    converge.  Which path a graph took is not recorded, so the cap should be
+    read as part of the method's definition rather than as an implementation
+    detail.
+
+    As for ConvMatch, *reduction_ratio* is a target rather than a guarantee:
+    a graph with too few contractible edges stops short of it.
+    """
+    if variant not in ("local_variation", "heavy_edge"):
+        raise ValueError(
+            f"variant must be 'local_variation' or 'heavy_edge', got {variant!r}"
+        )
+    if not 0.0 <= reduction_ratio < 1.0:
+        raise ValueError(f"reduction_ratio must be in [0, 1), got {reduction_ratio}")
+
+    num_nodes = data.x.size(0)
+    target = max(1, int(round(num_nodes * (1.0 - reduction_ratio))))
+    pairs, weight = _undirected_simple(data.edge_index, num_nodes)
+    if target >= num_nodes or pairs.size(1) == 0:
+        return torch.arange(num_nodes, dtype=torch.long)
+
+    subspace = None
+    if variant == "local_variation" and num_nodes <= max_spectral_nodes:
+        subspace = _laplacian_subspace(pairs, weight, num_nodes, num_eigenvectors)
+
+    label = torch.arange(num_nodes, dtype=torch.long)
+    size = torch.ones(num_nodes)
+    num_clusters = num_nodes
+
+    while num_clusters > target and pairs.size(1):
+        degree = torch.zeros(num_clusters).index_add_(
+            0, pairs.reshape(-1), weight.repeat(2)
+        )
+        if subspace is None:
+            # Negated so that, as for local variation, lower is better.
+            cost = -weight / (degree[pairs[0]] * degree[pairs[1]]).clamp_min(1e-12).sqrt()
+        else:
+            movement = (subspace[pairs[0]] - subspace[pairs[1]]).pow(2).sum(1)
+            cost = weight * movement / (degree[pairs[0]] + degree[pairs[1]])
+
+        matched = _greedy_disjoint_pairs(
+            pairs, cost, num_clusters, num_clusters - target
+        )
+        if matched.size(1) == 0:
+            break
+
+        label, cluster_map, num_clusters = _apply_pairs(label, matched, num_clusters)
+        pairs, weight = _undirected_simple(cluster_map[pairs], num_clusters, weight)
+        new_size = _pool_sum(size, cluster_map, num_clusters)
+        if subspace is not None:
+            subspace = _pool_sum(
+                subspace * size.unsqueeze(1), cluster_map, num_clusters
+            ) / new_size.unsqueeze(1)
+        size = new_size
+
+    return label
+
+
+def _laplacian_subspace(
+    pairs: torch.Tensor,
+    weight: torch.Tensor,
+    num_nodes: int,
+    num_eigenvectors: int,
+) -> torch.Tensor | None:
+    """The smallest non-trivial Laplacian eigenvectors, or None if unavailable.
+
+    Returning None is not an error path: it is how a graph too small or too
+    awkward for the eigensolver hands the caller back to heavy-edge scoring.
+    """
+    wanted = min(num_eigenvectors, num_nodes - 2)
+    if wanted < 1:
+        return None
+
+    import numpy as _np
+    from scipy.sparse import coo_matrix, diags
+    from scipy.sparse.linalg import eigsh
+
+    rows = torch.cat([pairs[0], pairs[1]]).numpy()
+    cols = torch.cat([pairs[1], pairs[0]]).numpy()
+    values = weight.double().repeat(2).numpy()
+    adjacency = coo_matrix(
+        (values, (rows, cols)), shape=(num_nodes, num_nodes)
+    ).tocsr()
+    laplacian = diags(_np.asarray(adjacency.sum(axis=1)).ravel()) - adjacency
+
+    try:
+        # Shift-invert just below zero converges on the low end of the
+        # spectrum, which "SM" on a singular Laplacian does not do reliably.
+        # A fixed v0 keeps the result reproducible run to run.
+        eigenvalues, eigenvectors = eigsh(
+            laplacian.tocsc(),
+            k=wanted + 1,
+            sigma=-1e-3,
+            which="LM",
+            v0=_np.ones(num_nodes),
+        )
+    except Exception:
+        return None
+
+    order = _np.argsort(eigenvalues)[1:]
+    return torch.from_numpy(_np.ascontiguousarray(eigenvectors[:, order])).float()
+
+
+def lsh_coarsening(
+    data: Data,
+    bin_width: float = 2.0,
+    num_projections: int = 8,
+    seed: int = 42,
+) -> torch.Tensor:
+    """Cluster nodes by locality-sensitive hashing (UGC-style).
+
+    The cheap tier: one pass to build a per-node descriptor, one matrix
+    multiply to hash it, and nodes landing in the same bucket merge.  No
+    iteration, no eigensolver, no neighbour search — linear in the size of the
+    graph, which makes it the method most obviously affordable across millions
+    of AIGs, and the naive control the principled methods have to beat.
+
+    The descriptor is the light AIG adaptation named in the design notes: node
+    type, level, the fan-in and fan-out counts split by inverter polarity, and
+    the type census of the immediate fanins and fanouts.  Columns are
+    standardised per graph, so *bin_width* is in standard deviations rather
+    than raw units.  Node type is an exact part of the bucket key rather than
+    a hashed feature, so primary inputs and outputs never dissolve into AND
+    super-nodes.
+
+    Hashing is p-stable (Euclidean) LSH.  Offsets are drawn independently of
+    *bin_width*, which makes doubling it produce a coarser partition — a true
+    refinement of the previous one — rather than merely a differently-shaped
+    one: compression responds to the knob monotonically, not just on average.
+
+    *bin_width* fixes the bucket width, **not** the compression.  The number
+    of occupied buckets saturates while the node count keeps growing, so
+    retention falls sharply with graph size: at the settings in ``config`` it
+    measures ~0.83 on an 88-node graph and ~0.001 on a 366k-node one.  That is
+    inherent to hashing rather than a defect, but it means S5 cannot be
+    compared against the ratio-driven methods at a matched compression point
+    without calibrating *bin_width* per graph first.
+    """
+    if bin_width <= 0:
+        raise ValueError(f"bin_width must be > 0, got {bin_width}")
+    if num_projections < 1:
+        raise ValueError(f"num_projections must be >= 1, got {num_projections}")
+
+    num_nodes = data.x.size(0)
+    features = _hash_descriptor(data)
+    features = (features - features.mean(dim=0)) / features.std(
+        dim=0, unbiased=False
+    ).clamp_min(1e-6)
+
+    generator = torch.Generator().manual_seed(seed)
+    projections = torch.randn(
+        features.size(1), num_projections, generator=generator, dtype=torch.float64
+    )
+    offsets = torch.rand(num_projections, generator=generator, dtype=torch.float64)
+    codes = torch.floor((features.double() @ projections + offsets) / bin_width).long()
+
+    types = data.x[:, :4].argmax(dim=1).reshape(num_nodes, 1)
+    return _relabel_rows(torch.cat([types, codes], dim=1))
+
+
+def _hash_descriptor(data: Data) -> torch.Tensor:
+    """Per-node feature + connectivity descriptor hashed by ``lsh_coarsening``."""
+    num_nodes = data.x.size(0)
+    source, destination = data.edge_index
+    polarity = _edge_polarity(data)
+
+    fanin_polarity = torch.zeros(num_nodes, 2).index_add_(0, destination, polarity)
+    fanout_polarity = torch.zeros(num_nodes, 2).index_add_(0, source, polarity)
+    fanin_types = torch.zeros(num_nodes, data.x.size(1)).index_add_(
+        0, destination, data.x[source]
+    )
+    fanout_types = torch.zeros(num_nodes, data.x.size(1)).index_add_(
+        0, source, data.x[destination]
+    )
+
+    return torch.cat(
+        [
+            data.x,
+            _node_levels(data).to(torch.float32).reshape(-1, 1),
+            fanin_polarity,
+            fanout_polarity,
+            fanin_types,
+            fanout_types,
+        ],
+        dim=1,
+    )
+
+
 # A method maps a graph to a cluster vector ``LongTensor[num_nodes]``
 # assigning each node a super-node id in ``[0, num_clusters)``.  Adding a
 # summarization method means adding an entry here; nothing downstream of
 # apply_merge_map changes.
 SUMMARIZATION_REGISTRY: dict[str, Callable[..., torch.Tensor]] = {
     "identity": identity_clustering,
+    "cone": cone_coarsening,
     "wl": color_refinement,
+    "convmatch": convmatch_coarsening,
+    "spectral": spectral_coarsening,
+    "lsh": lsh_coarsening,
 }
 
 
@@ -308,6 +1175,10 @@ __all__ = [
     "SUMMARIZATION_REGISTRY",
     "apply_merge_map",
     "color_refinement",
+    "cone_coarsening",
+    "convmatch_coarsening",
     "identity_clustering",
+    "lsh_coarsening",
+    "spectral_coarsening",
     "summarize_graph",
 ]

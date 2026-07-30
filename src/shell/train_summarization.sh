@@ -6,7 +6,7 @@
 #SBATCH --partition=gpu_h100
 #SBATCH --gpus=1
 #SBATCH --constraint=scratch-node
-#SBATCH --array=0-0
+#SBATCH --array=0-5
 #SBATCH --output=logs/train_summarization_%A_%a.out
 #
 # Train on summarized (coarsened) graphs.
@@ -30,8 +30,10 @@ set -euo pipefail
 export TEMP="$TMPDIR"
 export TMP="$TMPDIR"
 
-# Methods to train, one per array task.  Extend as methods are implemented.
-METHODS=("identity")
+# One method per array task; keep --array in step with the list length.
+# Ordered as in the thesis: control, domain-specific, adapted, SOTA, classic
+# control, cheap control.  Each needs its own precompute run first.
+METHODS=("identity" "cone" "wl" "convmatch" "spectral" "lsh")
 METHOD=${METHODS[${SLURM_ARRAY_TASK_ID:-0}]}
 ALGORITHM="Orchestrate"
 

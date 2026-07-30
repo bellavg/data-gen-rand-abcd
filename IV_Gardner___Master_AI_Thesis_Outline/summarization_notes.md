@@ -9,7 +9,170 @@ AIG), trained on Orchestrate. This matters a lot for R1 (see below).
 
 ---
 
-## STATUS (2026-07-28) — branch `summarization`, read this first
+## STATUS (2026-07-31) — all five methods built, read this box first
+
+Supersedes the 2026-07-28 box below, which said S1/S3/S4/S5 were not started.
+**All five are now implemented, registered and unit-tested** in
+`src/data/summarization.py` (one module, one registry, one shared
+`apply_merge_map`); `config.SUMMARIZATION_PARAMS` holds the parameters a
+production run actually uses. `precompute_summarization.sh` takes
+`METHOD=identity|cone|wl|convmatch|spectral|lsh`; `train_summarization.sh` is
+now a 6-task array over that list. Suite green, ruff clean.
+
+| id | name | registry key | role |
+|----|------|--------------|------|
+| — | identity | `identity` | zero-compression control |
+| S1 | Level-bounded cone coarsening | `cone` | domain-specific (the contribution) |
+| S2 | Graded WL / bisimulation | `wl` | adapted SOTA, lossless anchor |
+| S3 | A-ConvMatch | `convmatch` | general SOTA bar |
+| S4 | Spectral / local variation | `spectral` | domain-blind control |
+| S5 | LSH / UGC hashing | `lsh` | cheap naive control |
+
+### Findings from building them (these belong in the writeup, not just here)
+
+1. **Forward dominators are degenerate on AIGs — use post-dominators, and
+   require a *real* reconvergence gate.** S1's width axis was specified as
+   "same level + common immediate dominator". Measured: **~99% of AND gates
+   (2996/3000) have the virtual source as their immediate dominator**, because
+   a gate deep in an AIG is reachable from the input frontier along many
+   independent paths. Grouping on that collapses S1 to "merge everything on a
+   level". Switched to the **immediate post-dominator** — the gate at which a
+   node's fanout cone reconverges, which is what "reconvergence coarsening"
+   means anyway.
+   **The same degeneracy then reappeared on the output side** and had to be
+   closed separately: any gate whose fanout reaches two outputs without
+   passing through one common gate post-dominates to the *virtual sink*, and
+   on a multi-output AIG that is **73% of AND gates (5821/8000)**. Grouping
+   those by level merged gates in *different connected components*. They now
+   get a private id and are left alone, so the axis merges only gates with a
+   genuine shared reconvergence gate. Both halves of this are worth one
+   sentence in §3 — the naive reading of "common immediate dominator" does not
+   survive contact with an AIG in either direction.
+2. **S1 is provably DAG-preserving, and the two axes compose.** Width at
+   `level_band=0` merges only within a level, and every netlist edge runs to a
+   strictly higher level, so no edge lies inside a group and no cycle can form
+   between two. Depth contracts a cluster into the single target of its only
+   outgoing edge, which cannot close a cycle in a DAG. The depth axis runs on
+   the width quotient, still a DAG, so the composition is safe. `level_band>0`
+   gives up both this guarantee and the exact level PE. This upgrades C7/CA4
+   from "achievable" to "achieved and tested".
+3. **Level bands are fixed windows, not ±k.** `level // (band+1)`, because
+   "within ±1 level" is not an equivalence relation and so cannot define a
+   partition. Consequence to state: widening the band does **not** monotonically
+   increase compression — band=2 can merge less than band=1 when the window
+   boundary falls between two otherwise-groupable levels.
+4. **ConvMatch's objective favours low-degree nodes regardless of similarity.**
+   Eq. 7 is an *unweighted* L1 sum over the convolution output, so merging two
+   low-degree, small-representation nodes scores better than merging two
+   genuine convolution twins of higher degree. Verified on a hand-built graph:
+   twins cost less than a same-degree mismatched pair (1.876 vs 1.967), but a
+   pair of degree-2 PIs beats both (1.257). Convolution equivalence decides
+   *between* pairs of comparable degree, not across them. One sentence in the
+   S3 writeup, and a reason its behaviour on a deep DAG differs from the
+   node-classification setting it was published in.
+5. **LSH's compression knob is monotone by construction, not on average.**
+   Offsets are drawn independently of `bin_width`, so
+   `floor(y/2r) = floor(floor(y/r)/2)` makes each doubling a strict
+   coarsening. Node type is an *exact* part of the bucket key, so PI/PO never
+   dissolve into AND super-nodes (C4 by construction).
+6. **S4's spectral path is the CPU risk the plan predicted.** Measured
+   local-variation cost: 4.4 ms at n=371, 73 ms at n=1.5k, **880 ms at n=4k**
+   against 9 ms for heavy-edge. Hence `max_spectral_nodes=5000`, above which
+   it falls back to heavy-edge. That cap is part of the method's *definition*,
+   not an implementation detail — say so when reporting S4.
+
+7. **S1's compression is entirely structure-dependent, and is NOT yet
+   measured on the real corpus.** On uniform-random DAGs both axes do
+   essentially nothing: such graphs contain **zero** fanout-free AND→AND
+   chains (out-degree-1 gates exist, but every one of them feeds a PO) and
+   almost no genuine reconvergence. On a generator that draws fanins from
+   recently-created gates — which is how a synthesised netlist actually looks
+   — the depth axis contracts 331 → 233 nodes (30%). **Do not quote a
+   compression figure for S1 from synthetic graphs.** The first real number
+   has to come from a precompute run on tier0/tier1. This is also the honest
+   reading of the fix in finding 1: it removed compression that was largely
+   spurious.
+
+Measured per-graph cost and peak RSS, single core, after the fixes below, on a
+**370,801-node / 723,600-edge** graph — the largest size in the corpus:
+`identity` 0 s, `lsh` 0.6 s, `wl` 2.7 s, `cone` 8.9 s, `convmatch` 9.1 s,
+`spectral` 11.4 s, all under 1 GB. The SLURM budget is ~126 s/graph
+(700k graphs / 32 shards / 96 workers) and these are worst-case sizes, so all
+five clear R3 with room. Memory is the thing to watch, not time: 96 workers
+× ~1 GB on the largest graphs is ~100 GB, so shard by graph size if the first
+`cone` run pressures the node.
+
+### Defects an adversarial review caught (all fixed; recorded so they stay fixed)
+
+- **S3 was not computing the paper's operator.** `_convmatch_costs` carried an
+  extra `1/sqrt(d_i)` on the neighbour term, so the "convolution" it preserved
+  was not `D^-1/2(A+I)D^-1/2 X`. Partitions differed materially (size-2
+  clusters 61 vs 143 on a 1400-node graph). Now checked against a dense
+  reference in `test_representation_matches_the_gcn_operator` — the previous
+  behavioural tests all passed under both the right and the wrong formula,
+  which is why the regression test is a numeric one.
+- **S3 would not have finished.** Mutual-best matching alone merged only
+  ~50 pairs per round while each round paid a full coarse-graph rebuild, so
+  round count grew linearly with n: 522 s at 104k nodes, extrapolating to
+  **~2.2 h for one 366k-node graph** against a ~126 s/graph budget. Fixed by
+  repeating the matching pass over the still-unmatched nodes within a round
+  (`_greedy_disjoint_pairs`), which is also closer to the sequential greedy
+  the papers specify. Now **3.4 s at 154k nodes**, ~150× faster and near
+  linear.
+- **S3 double-counted the edge between two adjacent candidates.** Merging two
+  adjacent nodes makes the edge between them internal — it leaves both degrees
+  and drops out of both aggregates — and almost every candidate pair *is* a
+  graph edge. Ignoring it overestimated the merged degree by a median 25% and
+  did not perturb the cost so much as reorder it: rank correlation against an
+  exact coarse-graph recompute was **0.66**, and only 14 of the 50 cheapest
+  pairs were the right ones. Corrected (still O(1), via a searchsorted lookup
+  of the shared edge weight) it is **0.93** and 29/50. Two tests pin it, each
+  a graph where the correction changes which pair merges.
+- **S5's `bin_width` is not scale-invariant** despite the standardisation.
+  Retention measured 0.83 at 88 nodes, 0.032 at 55k, **0.001 at 366k**. So S5
+  cannot enter a matched-compression comparison (C8) without per-graph
+  calibration of `bin_width` — currently it would simply be the most
+  aggressive method on every large graph, for no principled reason. Decide
+  before running RQ3: either calibrate per graph, or report S5 only on its own
+  compression/retention curve.
+
+### Still open after this pass
+
+- [ ] **`measure_summarization.py` and the CA8 receptive-field metric are NOT
+      built.** `summarize_graphs.py` reports node/edge retention and wall-clock
+      per shard, which covers RQ2's compression table, but nothing yet measures
+      effective receptive field before vs after — so the over-squashing
+      hypothesis is still asserted, not evidenced. Note a DAG longest-path
+      metric will not work across all five: only `cone` guarantees an acyclic
+      quotient. A k-hop fanin-cone size averaged over sampled nodes (k = number
+      of encoder layers) is well defined for every method and is the metric to
+      build.
+- [ ] Which graphs took S4's heavy-edge fallback is not recorded anywhere. If
+      most of the corpus is above 5k nodes, S4 is really "heavy-edge with a
+      spectral rule on small graphs" and must be described that way.
+- [ ] The empirical S2 residual-redundancy probe (d=1..4 over ~1–10k graphs)
+      from the original plan still has not been run. CA1 says d=1 should find
+      nearly nothing; that is a reportable dataset statistic either way.
+- [ ] FRAIG leakage negative control: still not started.
+- [ ] S1's `level_band`, S3/S4's `reduction_ratio` and S5's `bin_width` are set
+      to plausible defaults in `config.SUMMARIZATION_PARAMS`, not calibrated.
+      A matched-compression comparison (C8) needs them tuned against measured
+      retention first — and for S5 that calibration is not optional (see the
+      scale-dependence defect above).
+- [ ] **S1's compression on the real corpus is unknown** and is the first thing
+      to measure. If tier0/tier1 AIGs turn out to have few fanout-free cones,
+      S1 is a weak compressor and the contribution has to lean on retention at
+      low compression rather than on the compression itself. Run `METHOD=cone`
+      precompute on one shard and read `_summary_stats_cone_shard000.json`
+      before committing to the full sweep.
+- [ ] `_immediate_postdominators` materialises a networkx DiGraph: +0.35 GB and
+      ~2.6 s on a 366k-node graph. With `--cpus-per-task=96` that is ~100 GB if
+      many workers hit large graphs at once. Watch the first `cone` precompute
+      run's memory; if it bites, shard by graph size rather than rewriting it.
+
+---
+
+## STATUS (2026-07-28) — branch `summarization`, superseded by the box above
 
 Everything below this box was written before implementation started. Three places
 in it are now **superseded by what building the code actually revealed** — each is
@@ -35,6 +198,8 @@ here. Skim this box, then treat the marked spots as historical, not current.
 All four use the **normal/production model**, not the exact one — that's a
 deliberate scope decision, revisit only if the exact track ends up training/testing
 much better than the others.
+> ⚠ **SUPERSEDED — all four are now built; see the 2026-07-31 box at the top.**
+> The "normal/production model, not the exact one" scope decision still stands.
 
 ### The exact-compression finding, briefly (full derivation lives in session history)
 

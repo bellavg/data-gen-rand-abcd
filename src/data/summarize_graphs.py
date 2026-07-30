@@ -29,8 +29,20 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import config  # noqa: E402
+
 from data.sparsification import _register_pyg_safe_globals  # noqa: E402
 from data.summarization import SUMMARIZATION_REGISTRY, summarize_graph  # noqa: E402
+
+
+def method_params(method: str) -> dict:
+    """Production parameters for *method*, from config.
+
+    ``config.SUMMARIZATION_PARAMS`` is what a real run uses; the defaults in
+    ``data.summarization`` exist only so the methods stay callable on their
+    own.  Reading them here keeps the two from drifting.
+    """
+    return dict(config.SUMMARIZATION_PARAMS.get(method, {}))
 
 # Node counts let the dataset rebuild its manifest from stat() calls instead
 # of loading every graph; the merged name and payload shape are dictated by
@@ -59,6 +71,7 @@ def _worker_initializer() -> None:
 def _summarize_single_file(
     task_tuple: tuple[str, str, str],
     method: str,
+    params: dict,
 ) -> dict | None:
     """task_tuple contains: (cache_path, out_path, graph_path).
 
@@ -81,7 +94,7 @@ def _summarize_single_file(
         edges_before = int(data_obj.edge_index.size(1))
 
         started = time.perf_counter()
-        summarized = summarize_graph(data_obj, method)
+        summarized = summarize_graph(data_obj, method, **params)
         elapsed = time.perf_counter() - started
 
         out_path = Path(out_path_str)
@@ -206,8 +219,12 @@ def summarize_from_manifests(
     out_dir: str | Path,
     shard_id: int = 0,
     num_shards: int = 1,
+    params: dict | None = None,
 ) -> None:
     _register_pyg_safe_globals()
+
+    if params is None:
+        params = method_params(method)
 
     out_root = Path(out_dir)
     tasks = build_tasks(manifest_dirs, out_root, shard_id, num_shards)
@@ -248,7 +265,7 @@ def summarize_from_manifests(
         all_cpus = os.cpu_count() or 1
     num_workers = max(1, min(all_cpus - 1, len(pending)))
 
-    worker_fn = functools.partial(_summarize_single_file, method=method)
+    worker_fn = functools.partial(_summarize_single_file, method=method, params=params)
 
     totals: dict[str, float] = defaultdict(float)
     success_count = 0
@@ -297,6 +314,9 @@ def summarize_from_manifests(
     # 3. STATS — the raw material for the compression/wall-clock table.
     stats = {
         "method": method,
+        # Recorded so a compression number can always be traced back to the
+        # settings that produced it.
+        "params": {key: str(value) for key, value in params.items()},
         "shard_id": shard_id,
         "num_shards": num_shards,
         "graphs": success_count,

@@ -3,6 +3,11 @@
 Tests cover:
 - apply_merge_map identity losslessness (requirement R1) on both the raw
   schema (level) and the cached schema (pos_enc)
+- Every registered method: contiguous cluster ids, acceptance by
+  apply_merge_map, determinism, and rejection of invalid parameters
+- Per-method behaviour: cone chain/width merging and DAG preservation, LSH
+  bucket monotonicity and type purity, spectral ratio targeting and
+  eigensolver fallback, ConvMatch twin merging and polarity blindness
 - Feature/edge merging: type counts, summed polarity counts on coalesced
   super-edges, level minimum, internal (intra-cluster) edge counting
 - Cluster-vector validation: wrong length, out-of-range ids, unused ids
@@ -24,9 +29,14 @@ from torch_geometric.data import Batch, Data
 
 from data.sparsification import _register_pyg_safe_globals
 from data.summarization import (
+    SUMMARIZATION_REGISTRY,
     apply_merge_map,
     color_refinement,
+    cone_coarsening,
+    convmatch_coarsening,
     identity_clustering,
+    lsh_coarsening,
+    spectral_coarsening,
     summarize_graph,
 )
 from data.summarize_graphs import (
@@ -569,6 +579,686 @@ class TestEncoderInvariance:
             f"graph-level output changed: {original.tolist()} vs "
             f"{summarized.tolist()}"
         )
+
+
+# =====================================================================
+# EVERY REGISTERED METHOD
+# =====================================================================
+
+
+def _build(types: list[int], edges: list[tuple[int, int]], inverted: set[int] = frozenset()) -> Data:
+    """Assemble an AIG in the schema data_utils produces.
+
+    *types* indexes the one-hot ``x`` columns [const, PI, AND, PO], *edges*
+    are fanin → node pairs, and *inverted* holds the positions in *edges*
+    that carry an inverter.  Levels are derived, so a fixture only has to
+    state its topology.
+    """
+    num_nodes = len(types)
+    x = torch.zeros(num_nodes, 4, dtype=torch.float32)
+    x[torch.arange(num_nodes), torch.tensor(types)] = 1.0
+    if edges:
+        edge_index = torch.tensor(edges, dtype=torch.long).t().contiguous()
+    else:
+        edge_index = torch.empty((2, 0), dtype=torch.long)
+    edge_attr = torch.zeros(len(edges), 2, dtype=torch.float32)
+    for position in range(len(edges)):
+        edge_attr[position, int(position in inverted)] = 1.0
+
+    data = Data(x=x, edge_index=edge_index, edge_attr=edge_attr)
+    data.num_nodes = num_nodes
+    from data.compute_levels import compute_node_levels
+
+    data.level = compute_node_levels(data).to(torch.float32).reshape(-1, 1)
+    return data
+
+
+def _quotient_is_acyclic(data: Data, cluster: torch.Tensor) -> bool:
+    import networkx as nx
+
+    quotient = cluster[data.edge_index]
+    external = quotient[:, quotient[0] != quotient[1]]
+    graph = nx.DiGraph()
+    graph.add_nodes_from(range(int(cluster.max()) + 1))
+    graph.add_edges_from(external.t().tolist())
+    return nx.is_directed_acyclic_graph(graph)
+
+
+class TestEveryMethod:
+    """Contract every method has to satisfy to be usable at all."""
+
+    @pytest.fixture(params=sorted(SUMMARIZATION_REGISTRY))
+    def method(self, request: pytest.FixtureRequest) -> str:
+        return request.param
+
+    def test_returns_contiguous_ids(self, method: str, aig_graph: Data) -> None:
+        cluster = SUMMARIZATION_REGISTRY[method](aig_graph)
+        assert cluster.dtype == torch.long
+        assert cluster.shape == (N_NODES,)
+        # apply_merge_map rejects gaps rather than relabelling, so producing a
+        # contiguous vector is the method's job, not the rewrite's.
+        assert set(cluster.tolist()) == set(range(len(cluster.unique())))
+
+    def test_round_trips_through_apply_merge_map(
+        self, method: str, aig_graph: Data
+    ) -> None:
+        out = summarize_graph(aig_graph, method)
+        assert out.num_nodes <= N_NODES
+        assert out.x.shape == (out.num_nodes, 4)
+        assert out.edge_attr.shape == (out.edge_index.size(1), 2)
+        # Members are conserved: a merge moves counts around, never adds them.
+        assert out.x.sum() == N_NODES
+        assert out.num_pis == N_PIS
+        assert out.num_pos == N_POS
+
+    def test_deterministic(self, method: str, aig_graph: Data) -> None:
+        first = SUMMARIZATION_REGISTRY[method](aig_graph)
+        second = SUMMARIZATION_REGISTRY[method](aig_graph)
+        assert torch.equal(first, second)
+
+    def test_runs_on_the_cached_schema(self, method: str, aig_graph: Data) -> None:
+        # Cached graphs carry pos_enc = log1p(level) and no level at all, and
+        # that is the form the precompute job actually reads.
+        expected = SUMMARIZATION_REGISTRY[method](aig_graph)
+        aig_graph.pos_enc = torch.log1p(aig_graph.level)
+        del aig_graph.level
+
+        assert torch.equal(SUMMARIZATION_REGISTRY[method](aig_graph), expected)
+
+    def test_runs_on_an_edgeless_graph(self, method: str, aig_graph: Data) -> None:
+        aig_graph.edge_index = torch.empty((2, 0), dtype=torch.long)
+        aig_graph.edge_attr = torch.empty((0, 2), dtype=torch.float32)
+
+        cluster = SUMMARIZATION_REGISTRY[method](aig_graph)
+        assert set(cluster.tolist()) == set(range(len(cluster.unique())))
+
+    @pytest.mark.parametrize(
+        "degenerate",
+        ["single_node", "single_type", "self_loop", "parallel_edges", "max_depth"],
+        ids=lambda case: case,
+    )
+    def test_survives_degenerate_graphs(
+        self, method: str, aig_graph: Data, degenerate: str
+    ) -> None:
+        # None of these appear in the corpus as it stands, but all of them are
+        # one upstream change away, and the failure mode of a bad cluster
+        # vector is an exception ~hours into a 700k-graph cluster job.
+        if degenerate == "single_node":
+            data = _build(types=[1], edges=[])
+        elif degenerate == "single_type":
+            data = _build(types=[2, 2, 2], edges=[(0, 1), (1, 2)])
+        elif degenerate == "self_loop":
+            data = _build(types=[1, 2, 3], edges=[(0, 1), (1, 1), (1, 2)])
+        elif degenerate == "parallel_edges":
+            data = _build(types=[1, 2, 3], edges=[(0, 1), (0, 1), (1, 2)])
+        else:
+            data = aig_graph
+            data.level = data.level * 24972.0
+
+        cluster = SUMMARIZATION_REGISTRY[method](data)
+        assert cluster.shape == (data.x.size(0),)
+        assert set(cluster.tolist()) == set(range(len(cluster.unique())))
+
+
+class TestConfigParams:
+    """config.SUMMARIZATION_PARAMS is what a cluster run actually passes."""
+
+    def test_every_method_has_an_entry(self) -> None:
+        import config
+
+        assert set(config.SUMMARIZATION_PARAMS) == set(SUMMARIZATION_REGISTRY)
+
+    def test_every_entry_is_accepted_by_its_method(self, aig_graph: Data) -> None:
+        # A typo'd key raises TypeError inside a worker, which the driver
+        # swallows per graph — so the whole corpus would come back "0 graphs,
+        # 700k errors" rather than failing fast.  Catch it here instead.
+        import config
+
+        for method, params in config.SUMMARIZATION_PARAMS.items():
+            cluster = SUMMARIZATION_REGISTRY[method](aig_graph, **params)
+            assert cluster.shape == (N_NODES,), method
+
+
+# =====================================================================
+# S1 — LEVEL-BOUNDED CONE COARSENING
+# =====================================================================
+
+
+@pytest.fixture
+def chain_aig() -> Data:
+    """A fanout-free cascade: PI,PI → 4 chained ANDs → PO.
+
+    Each AND drives exactly one successor, so the whole cascade is one
+    contractible chain and nothing merges on the width axis (every gate sits
+    on its own level).
+    """
+    return _build(
+        types=[1, 1, 2, 2, 2, 2, 3],
+        edges=[(0, 2), (1, 2), (2, 3), (0, 3), (3, 4), (1, 4), (4, 5), (0, 5), (5, 6)],
+    )
+
+
+@pytest.fixture
+def reconvergent_aig() -> Data:
+    """Two same-level cones reconverging on one gate: 4 PIs → 2 ANDs → AND → PO."""
+    return _build(
+        types=[1, 1, 1, 1, 2, 2, 2, 3],
+        edges=[(0, 4), (1, 4), (2, 5), (3, 5), (4, 6), (5, 6), (6, 7)],
+    )
+
+
+@pytest.fixture
+def banded_aig() -> Data:
+    """Two branches reconverging at gate 9 from *different* levels.
+
+    Gates 5 and 8 both have gate 9 as their immediate post-dominator but sit
+    on levels 2 and 3, so only a widened band puts them in the same group.
+    """
+    return _build(
+        types=[1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 3],
+        edges=[
+            (0, 4), (1, 4), (4, 5), (2, 5),
+            (2, 6), (3, 6), (6, 7), (3, 7), (7, 8), (0, 8),
+            (5, 9), (8, 9), (9, 10),
+        ],
+    )
+
+
+@pytest.fixture
+def wide_aig() -> Data:
+    """A ~440-node AIG with graded structure, for the hashing properties.
+
+    The LSH guarantees are asymptotic in the number of distinct descriptors:
+    on a ten-node fixture every node lands in its own bucket whatever the
+    parameters, so a violation cannot show up.  Gates here vary in level, in
+    fanout and in polarity mix, which is what makes the buckets contend.
+    """
+    types: list[int] = [1] * 20
+    edges: list[tuple[int, int]] = []
+    inverted: set[int] = set()
+    frontier = list(range(20))
+    for depth in range(1, 15):
+        layer = []
+        for offset in range(len(frontier) - 1):
+            node = len(types)
+            types.append(2)
+            for source in (frontier[offset], frontier[(offset + depth) % len(frontier)]):
+                if (source + node) % 3 == 0:
+                    inverted.add(len(edges))
+                edges.append((source, node))
+            layer.append(node)
+        frontier = layer[: max(2, len(layer) - 2)]
+        if len(frontier) < 2:
+            break
+    for source in frontier:
+        node = len(types)
+        types.append(3)
+        edges.append((source, node))
+    return _build(types=types, edges=edges, inverted=inverted)
+
+
+@pytest.fixture
+def ladder_aig() -> Data:
+    """A cascade of five ANDs, each one level deeper than the last.
+
+    Levels and fanout counts vary from gate to gate, which is what gives the
+    hashed descriptors of S5 something to spread out over.
+    """
+    return _build(
+        types=[1, 1, 2, 2, 2, 2, 2, 3],
+        edges=[
+            (0, 2), (1, 2), (2, 3), (0, 3), (3, 4), (1, 4),
+            (4, 5), (0, 5), (5, 6), (1, 6), (6, 7),
+        ],
+    )
+
+
+class TestConeCoarsening:
+    def test_fanout_free_chain_contracts(self, chain_aig: Data) -> None:
+        cluster = cone_coarsening(chain_aig, max_chain_length=4)
+        # The four ANDs collapse into one super-node; the PIs and the PO,
+        # being the circuit's fixed interface, are untouched.
+        assert cluster[2] == cluster[3] == cluster[4] == cluster[5]
+        assert len(cluster.unique()) == 4
+
+    def test_max_chain_length_caps_contraction(self, chain_aig: Data) -> None:
+        cluster = cone_coarsening(chain_aig, max_chain_length=2)
+        assert cluster[2] == cluster[3]
+        assert cluster[4] == cluster[5]
+        assert cluster[3] != cluster[4]
+
+    def test_chain_length_one_disables_the_depth_axis(self, chain_aig: Data) -> None:
+        # Nothing merges on the width axis here either, so this is identity.
+        cluster = cone_coarsening(chain_aig, max_chain_length=1)
+        assert len(cluster.unique()) == chain_aig.num_nodes
+
+    def test_width_axis_merges_reconvergent_siblings(
+        self, reconvergent_aig: Data
+    ) -> None:
+        cluster = cone_coarsening(reconvergent_aig, max_chain_length=1)
+        # Gates 4 and 5 are on the same level and both cones reconverge at 6.
+        assert cluster[4] == cluster[5]
+        assert len(cluster.unique()) == reconvergent_aig.num_nodes - 1
+
+    def test_width_axis_keeps_levels_exact(self, reconvergent_aig: Data) -> None:
+        # Merging only within a level is what keeps the level PE exact: the
+        # member minimum apply_merge_map stores is the members' actual level.
+        cluster = cone_coarsening(reconvergent_aig, max_chain_length=1)
+        levels = reconvergent_aig.level.reshape(-1)
+        for group in cluster.unique():
+            assert len(levels[cluster == group].unique()) == 1
+
+    def test_primary_inputs_and_outputs_never_merge(
+        self, reconvergent_aig: Data
+    ) -> None:
+        cluster = cone_coarsening(reconvergent_aig)
+        boundary = [0, 1, 2, 3, 7]
+        assert len(cluster[boundary].unique()) == len(boundary)
+
+    def test_multi_fanout_gate_is_not_absorbed(self) -> None:
+        # Gate 3 drives two successors, so contracting it into either would
+        # not be a fanout-free chain and would not be safe.
+        data = _build(
+            types=[1, 1, 2, 2, 2, 3, 3],
+            edges=[(0, 2), (1, 2), (2, 3), (0, 3), (3, 4), (1, 4), (4, 5), (3, 6)],
+        )
+        cluster = cone_coarsening(data)
+        assert cluster[3] != cluster[4]
+
+    def test_gates_without_a_reconvergence_point_are_left_alone(self) -> None:
+        # Two independent circuits, each fanning out to two outputs without
+        # reconverging.  Gates 2 and 6 are on the same level and neither has
+        # any single gate its whole cone passes through, so the only thing
+        # they have in common is the output boundary — which is not a cone.
+        # They are not even weakly connected, and must not be merged.
+        data = _build(
+            types=[1, 1, 2, 2, 2, 3, 3, 1, 1, 2, 2, 2, 3, 3],
+            edges=[
+                (0, 2), (1, 2), (2, 3), (0, 3), (2, 4), (1, 4), (3, 5), (4, 6),
+                (7, 9), (8, 9), (9, 10), (7, 10), (9, 11), (8, 11), (10, 12),
+                (11, 13),
+            ],
+        )
+        cluster = cone_coarsening(data, max_chain_length=1)
+
+        assert cluster[2] != cluster[9]
+        assert len(cluster.unique()) == data.num_nodes
+
+    def test_preserves_acyclicity(
+        self, aig_graph: Data, reconvergent_aig: Data, chain_aig: Data
+    ) -> None:
+        for graph in (aig_graph, reconvergent_aig, chain_aig):
+            assert _quotient_is_acyclic(graph, cone_coarsening(graph))
+
+    def test_level_band_widens_the_groups(self, banded_aig: Data) -> None:
+        tight = cone_coarsening(banded_aig, max_chain_length=1, level_band=0)
+        wide = cone_coarsening(banded_aig, max_chain_length=1, level_band=1)
+
+        assert len(tight.unique()) == banded_aig.num_nodes
+        # Gates 5 and 8 reconverge at gate 9 but sit one level apart.
+        assert wide[5] == wide[8]
+        assert len(wide.unique()) == banded_aig.num_nodes - 1
+
+    def test_both_axes_disabled_is_identity(self, aig_graph: Data) -> None:
+        cluster = cone_coarsening(aig_graph, max_chain_length=1, level_band=None)
+        assert torch.equal(cluster, torch.arange(N_NODES))
+
+    def test_negative_level_band_raises(self, aig_graph: Data) -> None:
+        with pytest.raises(ValueError, match="level_band must be"):
+            cone_coarsening(aig_graph, level_band=-1)
+
+
+# =====================================================================
+# S5 — LSH / UGC HASH COARSENING
+# =====================================================================
+
+
+class TestLshCoarsening:
+    def test_doubling_bin_width_never_increases_clusters(
+        self, wide_aig: Data
+    ) -> None:
+        # Offsets are drawn independently of bin_width, so each doubling
+        # produces a coarser bucketing rather than a differently shaped one.
+        # This is a guarantee, not a trend, and is what makes the parameter
+        # usable as a compression knob.  It needs a graph big enough for
+        # buckets to contend: on a ten-node fixture the property cannot be
+        # violated even by an implementation that does not have it.
+        widths = (0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0)
+        partitions = [lsh_coarsening(wide_aig, bin_width=w) for w in widths]
+
+        # Non-increasing counts alone would not show refinement — two
+        # partitions can have the same size and cut the graph differently.
+        # Assert the real relation: every group of the finer partition lies
+        # wholly inside one group of the coarser.
+        for finer, coarser in zip(partitions, partitions[1:], strict=False):
+            for group in finer.unique():
+                assert len(coarser[finer == group].unique()) == 1
+
+        counts = [len(p.unique()) for p in partitions]
+        assert counts[0] > counts[-1], "the knob did nothing over this range"
+
+    @pytest.mark.parametrize("bin_width", [0.25, 2.0, 1e6])
+    def test_node_types_never_merge(self, wide_aig: Data, bin_width: float) -> None:
+        # Node type is an exact part of the bucket key, so a primary input can
+        # never dissolve into an AND super-node however coarse the hashing.
+        # Needs a graph where the hashed columns alone *would* collide across
+        # types; on a small one they never do, and the test proves nothing.
+        cluster = lsh_coarsening(wide_aig, bin_width=bin_width)
+        types = wide_aig.x.argmax(dim=1)
+        for group in cluster.unique():
+            assert len(types[cluster == group].unique()) == 1
+
+    def test_structurally_identical_nodes_collide(
+        self, reconvergent_aig: Data
+    ) -> None:
+        # PIs 0-3 have identical descriptors: same level, no fanin, one
+        # regular fanout into an AND.
+        cluster = lsh_coarsening(reconvergent_aig)
+        assert len(cluster[[0, 1, 2, 3]].unique()) == 1
+
+    @pytest.mark.parametrize(
+        ("kwargs", "match"),
+        [
+            ({"bin_width": 0.0}, "bin_width must be"),
+            ({"num_projections": 0}, "num_projections must be"),
+        ],
+    )
+    def test_invalid_params_raise(
+        self, aig_graph: Data, kwargs: dict, match: str
+    ) -> None:
+        with pytest.raises(ValueError, match=match):
+            lsh_coarsening(aig_graph, **kwargs)
+
+
+# =====================================================================
+# S4 — SPECTRAL / LOCAL VARIATION
+# =====================================================================
+
+
+class TestSpectralCoarsening:
+    @pytest.mark.parametrize("ratio", [0.2, 0.5, 0.8])
+    def test_reaches_the_target_ratio(self, aig_graph: Data, ratio: float) -> None:
+        cluster = spectral_coarsening(aig_graph, reduction_ratio=ratio)
+        assert len(cluster.unique()) == round(N_NODES * (1.0 - ratio))
+
+    def test_zero_ratio_is_identity(self, aig_graph: Data) -> None:
+        cluster = spectral_coarsening(aig_graph, reduction_ratio=0.0)
+        assert torch.equal(cluster, torch.arange(N_NODES))
+
+    def test_node_cap_falls_back_to_heavy_edge(self, aig_graph: Data) -> None:
+        # Above the cap the eigensolver is skipped entirely.  The fallback is
+        # part of the method's definition, so it has to be the same partition
+        # heavy_edge would have produced, not an approximation of the spectral
+        # one.
+        capped = spectral_coarsening(aig_graph, max_spectral_nodes=0)
+        heavy = spectral_coarsening(aig_graph, variant="heavy_edge")
+        assert torch.equal(capped, heavy)
+
+    def test_the_two_variants_pick_different_edges(self, aig_graph: Data) -> None:
+        # Guards against the eigensolver silently failing and every graph
+        # quietly taking the fallback path: heavy-edge scores by degree alone,
+        # local variation by how far contraction moves the low Laplacian
+        # eigenvectors, and on this graph they disagree.
+        spectral = spectral_coarsening(aig_graph, reduction_ratio=0.3)
+        heavy = spectral_coarsening(
+            aig_graph, reduction_ratio=0.3, variant="heavy_edge"
+        )
+        assert not torch.equal(spectral, heavy)
+
+    def test_edgeless_graph_is_identity(self, aig_graph: Data) -> None:
+        aig_graph.edge_index = torch.empty((2, 0), dtype=torch.long)
+        aig_graph.edge_attr = torch.empty((0, 2), dtype=torch.float32)
+        cluster = spectral_coarsening(aig_graph, reduction_ratio=0.9)
+        assert torch.equal(cluster, torch.arange(N_NODES))
+
+    @pytest.mark.parametrize(
+        ("kwargs", "match"),
+        [
+            ({"variant": "kron"}, "variant must be"),
+            ({"reduction_ratio": 1.0}, "reduction_ratio must be"),
+            ({"reduction_ratio": -0.1}, "reduction_ratio must be"),
+        ],
+    )
+    def test_invalid_params_raise(
+        self, aig_graph: Data, kwargs: dict, match: str
+    ) -> None:
+        with pytest.raises(ValueError, match=match):
+            spectral_coarsening(aig_graph, **kwargs)
+
+
+# =====================================================================
+# S3 — CONVOLUTION MATCHING
+# =====================================================================
+
+
+@pytest.fixture
+def twin_aig() -> Data:
+    """Three AND gates of equal degree, two of which are convolution twins.
+
+    Gates 4 and 5 take the same fanins (PIs 0 and 1) and drive the same PO,
+    so they have identical neighbourhoods and are indistinguishable to an
+    undirected convolution.  Gate 6 has the same degree and the same features
+    but a different neighbourhood (PIs 2 and 3), which makes ``(4, 6)`` the
+    controlled comparison for ``(4, 5)``.
+
+    One of gate 5's fanins is inverted, so the twins compute *different*
+    functions: the pair separates a polarity-blind method from a
+    polarity-aware one.  (A real AIG is structurally hashed, so an
+    identical-fanin pair only survives because of that inversion.)
+    """
+    return _build(
+        types=[1, 1, 1, 1, 2, 2, 2, 3],
+        edges=[
+            (0, 4), (1, 4), (0, 5), (1, 5), (2, 6), (3, 6), (4, 7), (5, 7), (6, 7),
+        ],
+        inverted={2},
+    )
+
+
+class TestConvMatchCoarsening:
+    @pytest.mark.parametrize("ratio", [0.2, 0.5, 0.8])
+    def test_reaches_the_target_ratio(self, aig_graph: Data, ratio: float) -> None:
+        cluster = convmatch_coarsening(aig_graph, reduction_ratio=ratio)
+        assert len(cluster.unique()) == round(N_NODES * (1.0 - ratio))
+
+    def test_zero_ratio_is_identity(self, aig_graph: Data) -> None:
+        cluster = convmatch_coarsening(aig_graph, reduction_ratio=0.0)
+        assert torch.equal(cluster, torch.arange(N_NODES))
+
+    def test_identical_neighbourhoods_are_the_cheaper_merge(
+        self, twin_aig: Data
+    ) -> None:
+        # The defining property, isolated: gates 4, 5 and 6 have the same
+        # degree and the same features, so the only thing separating the
+        # pairs is that 4 and 5 aggregate over the same neighbours and 4 and
+        # 6 do not.  Compared at matched degree because the objective is an
+        # unweighted L1 sum, which independently favours low-degree nodes.
+        from data.summarization import (
+            _convmatch_costs,
+            _node_levels,
+            _undirected_simple,
+        )
+
+        num_nodes = twin_aig.num_nodes
+        pairs, weight = _undirected_simple(twin_aig.edge_index, num_nodes)
+        features = torch.cat(
+            [twin_aig.x, torch.log1p(_node_levels(twin_aig).float().reshape(-1, 1))],
+            dim=1,
+        )
+        twins, mismatched = _convmatch_costs(
+            torch.tensor([[4, 4], [5, 6]]),
+            pairs,
+            weight,
+            features,
+            torch.ones(num_nodes),
+            num_nodes,
+        ).tolist()
+
+        assert twins < mismatched
+
+    def test_representation_matches_the_gcn_operator(self, aig_graph: Data) -> None:
+        # The cost is only ConvMatch's if the representation it perturbs is
+        # really D^-1/2 (A+I) D^-1/2 X.  Checked against a dense reference,
+        # because an extra or missing degree factor changes which pairs get
+        # merged while leaving every behavioural assertion in this class
+        # passing.
+        from data.summarization import _convmatch_representation, _undirected_simple
+
+        num_nodes = N_NODES
+        pairs, weight = _undirected_simple(aig_graph.edge_index, num_nodes)
+        features = aig_graph.x
+
+        dense = torch.zeros(num_nodes, num_nodes)
+        dense[pairs[0], pairs[1]] = weight
+        dense[pairs[1], pairs[0]] = weight
+        dense = dense + torch.eye(num_nodes)
+        inverse_sqrt = dense.sum(1).rsqrt()
+        expected = (
+            inverse_sqrt.unsqueeze(1) * dense * inverse_sqrt.unsqueeze(0)
+        ) @ features
+
+        _, representation, _, _ = _convmatch_representation(
+            pairs, weight, features, torch.ones(num_nodes), num_nodes
+        )
+        assert torch.allclose(representation, expected, atol=1e-5)
+
+    def test_merged_degree_accounts_for_the_shared_edge(self) -> None:
+        # Merging two adjacent nodes turns the edge between them into an
+        # internal one, so the super-node's degree is d_u + d_v - 2w, not
+        # d_u + d_v.  Nearly every candidate is a graph edge, so getting this
+        # wrong skews the whole cost ranking rather than a few entries.
+        from data.summarization import _candidate_edge_weight, _undirected_simple
+
+        data = _build(
+            types=[1, 1, 2, 2, 3],
+            edges=[(0, 2), (1, 2), (2, 3), (0, 3), (3, 4)],
+        )
+        pairs, weight = _undirected_simple(data.edge_index, data.num_nodes)
+
+        # (2,3) is an edge; (0,4) is not; (0,2) is an edge.
+        shared = _candidate_edge_weight(
+            torch.tensor([[2, 0, 0], [3, 4, 2]]), pairs, weight, data.num_nodes
+        )
+        assert shared.tolist() == [1.0, 0.0, 1.0]
+
+    def test_the_shared_edge_correction_changes_which_pair_merges(self) -> None:
+        # Merging two adjacent nodes turns the edge between them into an
+        # internal one, so it leaves both degrees and drops out of both
+        # aggregates.  Nearly every candidate is a graph edge, so ignoring
+        # that does not perturb the cost, it reorders it.  Here dropping the
+        # aggregate half of the correction picks PIs 1 and 2 instead.
+        data = _build(
+            types=[1, 1, 1, 2, 2, 2, 2, 3],
+            edges=[
+                (1, 3), (2, 3), (3, 4), (1, 4), (3, 5), (2, 5), (4, 6), (1, 6),
+                (4, 7),
+            ],
+        )
+        cluster = convmatch_coarsening(data, reduction_ratio=1.0 / 8.0)
+
+        assert len(cluster.unique()) == 7
+        assert cluster[3] == cluster[5]
+        assert cluster[1] != cluster[2]
+
+    def test_the_shared_edge_leaves_the_merged_degree(self) -> None:
+        # The degree half of the same correction, isolated: with it, gates 4
+        # and 6 merge; without it, the pair 3 and 4 looks cheaper.
+        data = _build(
+            types=[1, 1, 1, 2, 2, 2, 2, 3],
+            edges=[
+                (1, 3), (2, 3), (2, 4), (3, 4), (1, 5), (3, 5), (3, 6), (4, 6),
+                (5, 7),
+            ],
+        )
+        cluster = convmatch_coarsening(data, reduction_ratio=1.0 / 8.0)
+
+        assert len(cluster.unique()) == 7
+        assert cluster[4] == cluster[6]
+        assert cluster[3] != cluster[4]
+
+    def test_merged_degree_matches_an_exact_recompute(self) -> None:
+        # The O(1) shortcut has to agree with actually performing the merge
+        # and rebuilding the coarse graph.  Checked on an adjacent pair,
+        # where the two differ.
+        from data.summarization import (
+            _candidate_edge_weight,
+            _coarse_degree,
+            _relabel,
+            _undirected_simple,
+        )
+
+        data = _build(
+            types=[1, 1, 2, 2, 3],
+            edges=[(0, 2), (1, 2), (2, 3), (0, 3), (3, 4)],
+        )
+        num_nodes = data.num_nodes
+        pairs, weight = _undirected_simple(data.edge_index, num_nodes)
+        size = torch.ones(num_nodes)
+        degree = _coarse_degree(pairs, weight, size, num_nodes)
+
+        left, right = 2, 3
+        candidates = torch.tensor([[left], [right]])
+        shared = _candidate_edge_weight(candidates, pairs, weight, num_nodes)
+        shortcut = degree[left] + degree[right] - 2.0 * shared[0]
+
+        # Exact: merge, rebuild, and read the super-node's degree back.
+        cluster_map = _relabel(
+            torch.arange(num_nodes).index_put_(
+                (torch.tensor([left]),), torch.tensor([right])
+            )
+        )
+        coarse_pairs, coarse_weight = _undirected_simple(
+            cluster_map[pairs], int(cluster_map.max()) + 1, weight
+        )
+        coarse_size = torch.zeros(int(cluster_map.max()) + 1).index_add_(
+            0, cluster_map, size
+        )
+        exact = _coarse_degree(
+            coarse_pairs, coarse_weight, coarse_size, int(cluster_map.max()) + 1
+        )[cluster_map[right]]
+
+        assert torch.allclose(shortcut, exact)
+
+    def test_is_polarity_blind_where_colour_refinement_is_not(
+        self, twin_aig: Data
+    ) -> None:
+        # The documented cost of using the paper's operator unchanged: gates 4
+        # and 5 compute different functions, ConvMatch merges them anyway, and
+        # only the AIG-adapted method can tell them apart.  This is the
+        # domain-blindness that makes ConvMatch the honest general-purpose bar
+        # rather than a strawman.
+        merged = convmatch_coarsening(twin_aig, reduction_ratio=0.5)
+        refined = color_refinement(twin_aig, depth=4, direction="backward")
+
+        assert merged[4] == merged[5]
+        assert refined[4] != refined[5]
+
+    def test_edgeless_graph_is_identity(self, aig_graph: Data) -> None:
+        aig_graph.edge_index = torch.empty((2, 0), dtype=torch.long)
+        aig_graph.edge_attr = torch.empty((0, 2), dtype=torch.float32)
+        cluster = convmatch_coarsening(aig_graph, reduction_ratio=0.9)
+        assert torch.equal(cluster, torch.arange(N_NODES))
+
+    def test_sgc_depth_changes_the_candidates(self, aig_graph: Data) -> None:
+        # sgc_depth only enters through candidate generation, so it must move
+        # the result without moving the compression the caller asked for.
+        shallow = convmatch_coarsening(aig_graph, reduction_ratio=0.3, sgc_depth=0)
+        deep = convmatch_coarsening(aig_graph, reduction_ratio=0.3, sgc_depth=4)
+        assert not torch.equal(shallow, deep)
+        assert len(shallow.unique()) == len(deep.unique())
+
+    @pytest.mark.parametrize(
+        ("kwargs", "match"),
+        [
+            ({"reduction_ratio": 1.0}, "reduction_ratio must be"),
+            ({"sgc_depth": -1}, "sgc_depth must be"),
+        ],
+    )
+    def test_invalid_params_raise(
+        self, aig_graph: Data, kwargs: dict, match: str
+    ) -> None:
+        with pytest.raises(ValueError, match=match):
+            convmatch_coarsening(aig_graph, **kwargs)
 
 
 # =====================================================================
