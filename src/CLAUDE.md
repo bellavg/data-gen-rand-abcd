@@ -17,9 +17,18 @@ bash src/shell/rebuild_venv.sh          # override with VENV_PATH=...
 
 `src/unittests/` is the **only** test location (mirrors the `src/` package layout, imports as `from data.xxx import ...` / `from models.xxx import ...`). A root-level `tests/` directory and root-level `test_*.py` scratch scripts used to exist alongside it and were removed — they duplicated/shadowed `src/unittests/` coverage and one pair (`test_sparsification*.py`) had silently gone stale (imported a function renamed years ago from `spanner_sparsification` to `spanning_forest_sparsification`). If you ever see test files outside `src/unittests/`, treat that as regression, not a second valid location — port the coverage in and remove the duplicate rather than maintaining both.
 
+A local `.venv` with all pipeline dependencies (torch/PyG/Lightning/wandb, etc.)
+already exists at the main repo checkout root (`/Users/bellavg/data-gen-rand-abcd/.venv`)
+— it's what makes running the test suite off the HPC cluster possible at all.
+`git worktree` checkouts (e.g. under `.claude/worktrees/`) do **not** get their
+own `.venv`; point `PYTHONPATH` at the worktree's own `src/` but invoke the
+interpreter from the main checkout's `.venv`:
+
 ```bash
 PYTHONPATH=src pytest src/unittests
 PYTHONPATH=src pytest src/unittests/data/test_dataset.py::TestClassName::test_name   # single test
+# From a worktree, use the main checkout's interpreter instead of a bare `pytest`:
+PYTHONPATH=src /Users/bellavg/data-gen-rand-abcd/.venv/bin/python -m pytest src/unittests
 ```
 
 The suite is fully green (`256 passed, 5 skipped`) and `ruff check src` is clean. Two things worth knowing if drift happens again:

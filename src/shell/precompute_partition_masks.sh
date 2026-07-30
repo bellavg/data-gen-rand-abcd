@@ -8,27 +8,49 @@
 #SBATCH --output=logs/precompute_partition_%j.out
 
 # ---------------------------------------------------------------------------
-# Precompute dynamic-k partition masks for training caches.
+# Precompute dynamic-k partition masks for a cache workspace.
 #
-# Run this AFTER warmup_train_cache.sh has finished, since it appends masks
-# to the existing cached graph .pt files.
+# Run this AFTER the matching cache warmup has finished, since it appends masks
+# to the existing cached graph .pt files. RUN_ROOT selects the workspace and
+# now defaults to the EVAL cache (see the RUN_ROOT block below) — so the bare
+# invocation pairs with warmup_test_cache.sh, and building masks for TRAINING
+# needs the train root passed explicitly.
 #
 # This script runs a single unified job to process all cache directories at
 # once (including shared tier-0 and tier-1 directories). It automatically
 # deduplicates .pt files to ensure each shared graph is only processed once.
 #
-# Usage:
+# A workspace with no cached .pt files yet is SKIPPED per directory (exit 0,
+# no masks written), so pointing this at the wrong/unwarmed root fails quietly
+# — check the per-directory "Skipping" lines in the job log.
+#
+# Usage (eval workspace, the default — see EVALUATION.md for the full chain):
 #   sbatch src/shell/precompute_partition_masks.sh
 #
-# Or chain it to run automatically after a successful warmup job:
+# Training workspace:
 #   WID=$(sbatch --parsable src/shell/warmup_train_cache.sh)
-#   sbatch --dependency=afterok:$WID src/shell/precompute_partition_masks.sh
+#   sbatch --export=ALL,RUN_ROOT=/scratch-shared/$USER/aig_train_run \
+#     --dependency=afterok:$WID src/shell/precompute_partition_masks.sh
+# (--export=ALL,VAR=value, not a bare `VAR=value sbatch ...` prefix: the
+# latter does not reliably propagate into the job on this cluster and would
+# silently fall back to RUN_ROOT's own eval-workspace default instead of
+# erroring.)
 # ---------------------------------------------------------------------------
 
 set -euo pipefail
 
 # Define the algorithm argument (Python script supports "all" to compute them in one pass)
 PARTITION_ALGO="all"
+
+# Workspace root + algorithm. Defaults to the EVAL workspace (see
+# EVALUATION.md) — masks for training were precomputed long ago, so eval is the
+# live use case and the safe default. To (re)build masks for TRAINING you must
+# pass the train root explicitly:
+# RUN_ROOT=/scratch-shared/$USER/aig_train_run
+# Partition masks are written in-place in the cache dirs (no redirect), so no
+# MASK_CACHE_ROOT handling is needed here.
+RUN_ROOT="${RUN_ROOT:-/scratch-shared/$USER/aig_eval_run}"
+ALGORITHM="${ALGORITHM:-Orchestrate}"
 
 echo "=========================================="
 echo "PRECOMPUTE PARTITION MASKS JOB ID: $SLURM_JOB_ID"
@@ -71,9 +93,9 @@ cd "$BASE_DIR"
 # - shared tier-1 cache
 # - Orchestrate workspace cache (tier-2 / non-tiered graphs)
 CACHE_DIRS=(
-    "/scratch-shared/$USER/aig_train_run/shared_tier0_cache"
-    "/scratch-shared/$USER/aig_train_run/shared_tier1_cache"
-    "/scratch-shared/$USER/aig_train_run/Orchestrate/cache"
+    "$RUN_ROOT/shared_tier0_cache"
+    "$RUN_ROOT/shared_tier1_cache"
+    "$RUN_ROOT/${ALGORITHM}/cache"
 )
 
 for SHARED_DIR in "${CACHE_DIRS[@]}"; do

@@ -197,8 +197,8 @@ def main(args):
     print("[main] Initialising WandB logger ...", flush=True)
     wandb_start = time.monotonic()
     logger = WandbLogger(
-        project="AIG-SUMMARIZE",
-        entity="isabella-v-gardner-university-of-amsterdam",
+        project=config.WANDB_PROJECT,
+        entity=config.WANDB_ENTITY,
         name=wandb_run_name,
         save_dir=log_dir,
     )

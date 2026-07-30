@@ -491,9 +491,15 @@ class AIGGraphRegressionDataset(PyGDataset):
 
         samples = self._apply_split(samples)
         t2 = _time.monotonic()
+        # Design count, not just sample count: the split is made at the DESIGN
+        # level, so this is the real sample size for generalization. Thousands
+        # of graphs drawn from a handful of designs is a handful of independent
+        # observations, and val/test metrics swing hard on which designs landed
+        # where.
+        n_designs = len({sample.design_key for sample in samples})
         print(
-            f"[dataset] After split/filter: {len(samples)} samples in {t2 - t1:.1f}s "
-            f"(split={self.split!r})",
+            f"[dataset] After split/filter: {len(samples)} samples from "
+            f"{n_designs} designs in {t2 - t1:.1f}s (split={self.split!r})",
             flush=True,
         )
 
