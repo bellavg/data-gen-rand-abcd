@@ -42,13 +42,22 @@ class GCNConvLayerExact(nn.Module):
     """Residual + FFN block around ``GCNConvExact``.
 
     Mirrors ``models.layers.gcn.GCNConvLayer`` (bias, FFN, residual, dropout
-    all unchanged — none of it needs removing once messages are computed
-    correctly) with one deliberate omission: no normalization anywhere.
+    all unchanged) with one deliberate omission: no normalization anywhere.
     GraphNorm and PyG's per-layer norm options are graph/batch-scoped
     statistics that a coarsened super-node cannot reproduce, which breaks
-    exact quotient recovery (verified empirically; no exactness-preserving
+    exact quotient recovery (confirmed empirically; no exactness-preserving
     replacement was found). Since there is no norm, there is also no need to
     thread ``batch`` through this layer at all.
+
+    The residual connection and FFN block need no special handling for the
+    same reason: once ``GCNConvExact`` gives every member of a WL class an
+    identical output (which is what the ``edge_weight`` multiplicity fix is
+    for), any deterministic function applied identically and elementwise —
+    residual add, FFN, real trained biases included — preserves that
+    equality trivially. It is not a property that needs verifying per
+    operation; it only breaks for something that reads a cross-node or
+    cross-graph statistic, which is exactly what normalization does and
+    nothing here does.
     """
 
     def __init__(self, dim_in: int, dim_out: int, dropout: float):

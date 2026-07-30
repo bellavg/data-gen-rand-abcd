@@ -119,7 +119,17 @@ class ExactGraphBaseModel(nn.Module):
             )
         node_size = getattr(batch, "node_size", None)
         if node_size is None:
-            node_size = torch.ones(batch.x.size(0), 1, dtype=batch.x.dtype, device=batch.x.device)
+            # Deliberately not defaulted to all-ones: Batch.from_data_list
+            # drops an attribute from the WHOLE batch if even one graph in
+            # it lacks it, so a silent default here would treat a coarsened
+            # graph's super-nodes as size-1 whenever it happens to share a
+            # batch with a graph that wasn't produced by fold_inversions_
+            # into_x / apply_exact_merge_map (both of which always set it).
+            raise ValueError(
+                "ExactGraphBaseModel requires node_size on every graph (see "
+                "data.exact_graph.fold_inversions_into_x / "
+                "apply_exact_merge_map)."
+            )
         num_graphs = getattr(batch, "num_graphs", None)
         if num_graphs is None:
             raise ValueError("Batch.num_graphs is required for explicit pooling size.")

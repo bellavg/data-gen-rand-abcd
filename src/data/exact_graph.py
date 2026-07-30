@@ -35,11 +35,18 @@ def fold_inversions_into_x(data: Data) -> Data:
     general apply_merge_map's approach) scales a value *fed into* the
     nonlinearity, which it cannot decompose over sums.
 
+    Attaches ``edge_weight = 1`` and ``node_size = 1`` on every node, so the
+    output is a complete, ready-to-train exact-schema graph whether or not
+    it is later coarsened.  Setting ``node_size`` here too (not just on
+    coarsened output) matters beyond consistency: ``Batch.from_data_list``
+    silently *drops* an attribute from the whole batch if even one graph in
+    it lacks that attribute, so a batch mixing an uncoarsened and a
+    coarsened graph would otherwise lose ``node_size`` entirely and
+    ``ExactGraphBaseModel`` would silently pool the coarsened graph's
+    super-nodes as if each stood for a single node.
+
     Drops ``edge_attr`` entirely and appends the inversion count as an extra
-    column of ``x``.  Also attaches ``edge_weight = 1`` when absent, so every
-    output of this function is a complete, ready-to-train graph whether or
-    not it is later coarsened.  Pure: returns a new Data, never mutates
-    *data*.
+    column of ``x``.  Pure: returns a new Data, never mutates *data*.
     """
     num_nodes = data.x.size(0)
     num_edges = data.edge_index.size(1)
@@ -56,6 +63,7 @@ def fold_inversions_into_x(data: Data) -> Data:
         edge_index=data.edge_index.clone(),
         edge_weight=torch.ones(num_edges, dtype=data.x.dtype),
     )
+    out.node_size = torch.ones(num_nodes, 1, dtype=torch.long)
     out.num_nodes = num_nodes
     out.num_edges = num_edges
     return out
@@ -90,6 +98,16 @@ def apply_exact_merge_map(data: Data, cluster: torch.Tensor, num_clusters: int) 
     for size-weighted pooling downstream — see models/base_model_exact.py).
     No ``edge_attr``: this schema never has one.
 
+    Raises if the cluster has any intra-cluster edges (i.e. a real edge
+    between two members of the same class). This is not a defensive
+    over-check: silently dropping such an edge, as apply_merge_map's
+    lossy quotient does, is a genuine correctness bug for THIS function,
+    since its whole purpose is an exact quotient — folding the edge back in
+    as a weighted self-loop would need its own careful derivation, deferred
+    rather than guessed at. Two structurally-repetitive but non-adjacent
+    AIG regions (e.g. duplicated adder bit-slices) can legitimately land in
+    the same WL-exact class; this is not limited to literal cycles.
+
     Same preconditions as apply_merge_map: *cluster* assigns every node an
     id in [0, num_clusters) and uses each at least once; pure (never mutates
     *data*, never returns an input tensor by reference).
@@ -104,14 +122,20 @@ def apply_exact_merge_map(data: Data, cluster: torch.Tensor, num_clusters: int) 
     x_sum.index_add_(0, cluster, data.x)
     x = x_sum / node_size.unsqueeze(1).to(data.x.dtype)
 
-    # Edges: remap, drop intra-cluster self-loops, then count how many
-    # original edges coalesce into each surviving super-edge.
+    # Edges: remap, then reject intra-cluster edges (see the docstring
+    # above) before doing anything else with them.
     merged = cluster[data.edge_index]
-    keep = merged[0] != merged[1]
-    internal_edges = int(data.edge_index.size(1) - int(keep.sum()))
-    ones = torch.ones(int(keep.sum()), 1, dtype=data.x.dtype)
+    is_internal = merged[0] == merged[1]
+    if bool(is_internal.any()):
+        raise ValueError(
+            f"{int(is_internal.sum())} edge(s) connect two members of the "
+            "same cluster; apply_exact_merge_map cannot represent these "
+            "without breaking exactness. The clustering method must not "
+            "merge nodes with a direct edge between them."
+        )
+    ones = torch.ones(merged.size(1), 1, dtype=data.x.dtype)
     edge_index, counts = coalesce(
-        merged[:, keep], ones, num_nodes=num_clusters, reduce="sum"
+        merged, ones, num_nodes=num_clusters, reduce="sum"
     )
 
     target_size = node_size[edge_index[1]].to(data.x.dtype)
@@ -119,7 +143,6 @@ def apply_exact_merge_map(data: Data, cluster: torch.Tensor, num_clusters: int) 
 
     out = Data(x=x, edge_index=edge_index, edge_weight=edge_weight)
     out.node_size = node_size.unsqueeze(1)
-    out.internal_edges = torch.tensor([internal_edges], dtype=torch.long)
     out.num_nodes = num_clusters
     out.num_edges = edge_index.size(1)
 

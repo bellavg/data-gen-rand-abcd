@@ -103,6 +103,14 @@ class TestFoldInversions:
         assert torch.equal(aig_graph.x, before_x)
         assert torch.equal(aig_graph.edge_attr, before_attr)
 
+    def test_node_size_always_present(self, aig_graph: Data) -> None:
+        # Batch.from_data_list drops an attribute from the WHOLE batch if
+        # any one graph lacks it, so this has to hold for every output, not
+        # just coarsened graphs -- otherwise a batch mixing an uncoarsened
+        # and a coarsened graph silently loses node_size for both.
+        out = fold_inversions_into_x(aig_graph)
+        assert torch.equal(out.node_size, torch.ones(6, 1, dtype=torch.long))
+
 
 # =====================================================================
 # apply_exact_merge_map
@@ -116,7 +124,6 @@ class TestApplyExactMergeMap:
 
         assert torch.equal(out.x, folded.x)  # mean of 1 member == itself
         assert torch.equal(out.node_size, torch.ones(6, 1, dtype=torch.long))
-        assert int(out.internal_edges) == 0
         # Every super-edge came from exactly 1 original edge into a
         # size-1 target class, so per-target-member multiplicity is 1.
         assert torch.allclose(out.edge_weight, torch.ones(5))
@@ -146,23 +153,29 @@ class TestApplyExactMergeMap:
         }
         assert edges[(1, 2)] == pytest.approx(2.0)  # C -> D
         assert edges[(2, 3)] == pytest.approx(2.0)  # D -> PO: 2 edges, target size 1
-        assert int(out.internal_edges) == 0
 
-    def test_internal_edges_counted(self, symmetric_graph: Data) -> None:
+    def test_internal_edges_rejected(self, symmetric_graph: Data) -> None:
+        # Merging a node with one of its own fanins creates an intra-cluster
+        # edge. Silently dropping it (as the general apply_merge_map does)
+        # would break exactness, since it discards a real neighbor
+        # connection an actual member had; this function must refuse
+        # instead. Real, structurally-repetitive AIG regions (duplicated
+        # bit-slices) can put two WL-exact-equivalent, edge-connected nodes
+        # in the same class without any literal cycle, so this isn't just a
+        # defensive check against malformed input.
         folded = fold_inversions_into_x(symmetric_graph)
-        # Merge one AND (3) with one of its own fanins (1): creates a
-        # self-loop that must be dropped and counted.
         cluster = torch.tensor([0, 1, 2, 1, 3, 4, 5, 6])
-        out = apply_exact_merge_map(folded, cluster, 7)
-        assert int(out.internal_edges) == 1
+        with pytest.raises(ValueError, match="connect two members of the same cluster"):
+            apply_exact_merge_map(folded, cluster, 7)
 
     def test_heterogeneous_cluster_averages_gracefully(self, aig_graph: Data) -> None:
-        # Not a real WL class (mixes a PI and an AND) -- representative
+        # Not a real WL class (mixes a PI and an AND, with no edge between
+        # them so the merge is even representable) -- representative
         # convention degrades to an average rather than crashing.
         folded = fold_inversions_into_x(aig_graph)
-        cluster = torch.tensor([0, 1, 2, 1, 3, 4])  # merge node1 (PI) with node3 (AND)
+        cluster = torch.tensor([0, 1, 2, 3, 1, 4])  # merge node1 (PI) with node4 (AND)
         out = apply_exact_merge_map(folded, cluster, 5)
-        assert torch.allclose(out.x[1], (folded.x[1] + folded.x[3]) / 2)
+        assert torch.allclose(out.x[1], (folded.x[1] + folded.x[4]) / 2)
 
     def test_validation_reused(self, aig_graph: Data) -> None:
         folded = fold_inversions_into_x(aig_graph)

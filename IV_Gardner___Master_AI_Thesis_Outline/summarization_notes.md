@@ -9,6 +9,104 @@ AIG), trained on Orchestrate. This matters a lot for R1 (see below).
 
 ---
 
+## STATUS (2026-07-28) — branch `summarization`, read this first
+
+Everything below this box was written before implementation started. Three places
+in it are now **superseded by what building the code actually revealed** — each is
+marked `⚠ SUPERSEDED` in place, original text kept (not deleted) with a pointer up
+here. Skim this box, then treat the marked spots as historical, not current.
+
+**Built and merged:**
+- **Backbone** (`src/data/summarization.py`) — `apply_merge_map` (the shared
+  rewrite primitive Phase 0 called for), `color_refinement` (S2, both `c=∞`
+  exact-WL and `c=1` bisimulation via `count_cap`), a method registry
+  (`SUMMARIZATION_REGISTRY`), plus `src/data/summarize_graphs.py` (sharded,
+  resumable precompute driver) and the two SLURM scripts (below).
+- **S2 exact-compression model track** — a from-scratch finding, not in the
+  original plan at all (see the S2 section and "Theory foundation" section
+  below, both marked superseded). `src/data/exact_graph.py`
+  (`fold_inversions_into_x`, `apply_exact_merge_map`) +
+  `src/models/layers/gcn_exact.py` + `src/models/base_model_exact.py`: a
+  **separate** model, verified to float32 precision, that makes `c=∞` genuinely
+  lossless — the shipped production GCN+ is not, and can't be made so without
+  giving up something (see below).
+
+**Not started:** S1 (level-bounded cone), S3 (ConvMatch), S4 (spectral), S5 (LSH).
+All four use the **normal/production model**, not the exact one — that's a
+deliberate scope decision, revisit only if the exact track ends up training/testing
+much better than the others.
+
+### The exact-compression finding, briefly (full derivation lives in session history)
+
+The original plan (see "Theory foundation" below) treated `c=∞` WL-coarsening as
+provably lossless for our GCN+, citing Grohe et al.'s equitable-partition result.
+**That result assumes an idealized sum-aggregating MPNN. GCN+ isn't one** — three
+things break it independently:
+1. **GraphNorm** (`base_model.py`) is a graph-level statistic; a coarsened graph's
+   statistics differ from the original's, full stop.
+2. **Mean pooling** counts a super-node once regardless of how many original nodes
+   it stands for.
+3. **Multiplicity representation** — coarsening `k` identical incoming edges into
+   one super-edge and scaling `edge_attr` by `k` feeds a scaled value *into* the
+   message nonlinearity, which cannot be decomposed back into `k` separate terms.
+   The fix: `edge_weight` multiplying the message *after* the nonlinearity is the
+   only mechanism that reproduces `k` identical messages exactly, and it needs the
+   **per-target-member** multiplicity (`coalesced_count / target_class_size`), not
+   the raw coalesced total.
+
+Fixing all three (dedicated model, no norm, size-weighted pooling, edge_weight
+multiplicity, node features folded to a class representative not a sum) gives
+exactness verified to float32 precision (`atol=1e-5`, residual ~1e-7) through the
+**real** forward pass — including default (non-zeroed, trained-style) weights,
+dropout enabled at train time, alternate JK modes, and a case where a merge is
+correctly *blocked* by an inversion-pattern difference. It does **not** hold for
+the production model as shipped, and no exactness-preserving normalization
+replacement was found (tried PyG's per-node `LayerNorm` too — it's graph/batch
+scoped despite the name, breaks it the same way GraphNorm does).
+
+One deliberate simplification specific to the exact track: **inverter polarity
+moved from a per-edge relation to a per-node feature** (count of inverted incoming
+edges — AIGs have fixed fan-in per node type, so this plus type fully determines
+the polarity pattern, at the cost of losing *which* specific fanin was inverted).
+This trades away something the notes elsewhere call out as important (PolarGate,
+C2/CA3) — **scoped to the exact track only**, on your call; S1–S5 on the normal
+model keep polarity as a per-edge relation.
+
+### Storage architecture (see "CPU/GPU BUDGET STRATEGY" below, partly superseded)
+
+The original plan's materialize-don't-rewrite decision was right, but its proposed
+layout (`/scratch-shared/$USER/aig_summary_cache/<method>/`, one `.pt` per graph)
+turned out to be **inode-fatal**, not just a resource cost: at ~700k graphs, one
+file per coarsened graph is ~700k inodes against ~717k of remaining scratch inode
+quota — a *single* method would eat 98% of what's left. Corrected design:
+- Precompute (`src/shell/precompute_summarization.sh`, genoa array job) writes
+  coarsened graphs to **node-local `$TMPDIR`**, then packs each cache directory
+  into a `tar.zst` shard on `/scratch-shared` — no per-graph inode ever touches
+  shared storage. ~320 inodes for all five methods combined, not 3.5M.
+- Training (`src/shell/train_summarization.sh`) stages shards back to
+  **node-local, job-independent** disk (`/scratch-node/$USER/aig_summary/<method>`,
+  deliberately *not* `$TMPDIR` — `dataset.py`'s cache signature hashes the tier
+  dir paths, so a per-job path would force a full cache rebuild every run) via a
+  `flock`-guarded parallel untar, ~3–8 min against a 48 h job. Verified both tiers
+  land non-empty before training starts — a missing tier used to silently fall
+  back to caching the raw, uncoarsened graph.
+
+### Open items this creates (not yet decided)
+
+- [ ] Does the exact track eventually get compared against S1–S5-on-normal-model
+      as a genuine competitor, or stay a validation/ablation artifact? User's call,
+      contingent on how it trains.
+- [ ] `internal_edges` (a real edge between two members of the same exact-WL
+      class) currently makes `apply_exact_merge_map` **raise**, not silently drop
+      the edge — this can legitimately happen for structurally-repetitive AIG
+      regions (duplicated bit-slices), not just literal cycles. No fix attempted
+      yet; needs its own derivation (fold into a weighted self-loop?) before S2
+      exact can run unattended over the full corpus.
+- [ ] PE (`pe_type="level"`) is unsupported on the exact track for now
+      (`pe_type="none"` only) — deferred, not evaluated as infeasible.
+
+---
+
 ## Key papers
 
 - **Bollen, Steegmans, Van den Bussche, Vansummeren (2023)** — *Learning GNNs using
@@ -119,6 +217,15 @@ AIG-native, built on levels / dominators / fanout-free structure. Two merge axes
 - Risk: compression may be modest if AIGs are fanout-rich (reconvergence is common).
 
 ### S2 — Graded WL / Bisimulation Coarsening  *(general SOTA, AIG-ADAPTED)*
+
+> ⚠ **SUPERSEDED — see "STATUS" box at top of file.** The `c=∞` "provably lossless
+> for our GCN+" claim below turned out false for the *production* model
+> (GraphNorm + mean pooling + a multiplicity-representation bug all break it
+> independently — verified, not assumed). It's genuinely lossless only for a
+> **separate, dedicated model** (`gcn_exact.py`/`base_model_exact.py`), which also
+> needed polarity moved off edges onto a node feature. Original text kept below;
+> read the STATUS box for the corrected picture before acting on this section.
+
 Bollen exact compression + FLUID k-bisimulation, unified by the count-cap `c`.
 - Knobs: `c` (∞ = exact WL/lossless, 1 = bisimulation/lossy), depth `d` (=4, couple to
   #layers), direction (forward toward PO / backward toward PI / both).
@@ -372,6 +479,17 @@ Goal: **zero summarization work on the GPU node.** All coarsening happens offlin
 `genoa` (CPU); the GPU job should be unable to tell it's training on coarsened graphs.
 
 ### Decision: MATERIALIZE the coarsened graphs — do not rewrite at `get()` time
+
+> ⚠ **PARTIALLY SUPERSEDED — see "STATUS" box at top of file.** The
+> materialize-don't-rewrite call below is still right. The proposed *layout*
+> (one `.pt` per graph directly on `/scratch-shared`) is not — it's ~700k inodes
+> per method against ~717k of remaining scratch quota, discovered only once real
+> numbers were pulled. Corrected: node-local `$TMPDIR` during precompute, packed
+> into `tar.zst` shards for the shared filesystem, staged back to node-local
+> (job-independent) disk at train time. Original reasoning kept below, still
+> correct; only the "write directly to `/scratch-shared/.../<method>/`" part
+> needs replacing.
+
 This **differs from the sparsification pattern**, deliberately:
 - Sparsification stores a boolean **mask** and applies it in `get()` — that's just an
   `index_select`, genuinely cheap.
@@ -610,6 +728,17 @@ memory reduction** — coarsening **contracts paths**, which mitigates **over-sq
   literature (Ricci-curvature rewiring, LRGB), which no AIG paper has used.
 
 ## Theory foundation for M1 losslessness (equitable partitions / orbits)
+
+> ⚠ **SUPERSEDED (scope narrowed) — see "STATUS" box at top of file.** The
+> permutation-equivariance argument below is correct for the class of GNN it
+> assumes, but "GNNs are permutation-equivariant → lossless" quietly assumed a
+> plain sum-aggregating MPNN. GraphNorm, mean pooling, and how multiplicity gets
+> represented in message passing are all extra structure real architectures add
+> that this argument doesn't cover — GCN+ as shipped has all three, and isn't
+> lossless as a result. Still true, now demonstrated rather than assumed, for a
+> dedicated bias-and-architecture-matched model built to actually satisfy the
+> argument's preconditions (`gcn_exact.py`). Keep this section for the citation
+> and the orbit-counting idea; don't cite it as applying to GCN+ directly.
 
 Tightens *why* WL-coarsening is lossless, with citable formal basis:
 
