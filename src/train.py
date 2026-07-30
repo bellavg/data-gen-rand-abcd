@@ -100,6 +100,7 @@ def main(args):
         tier1_cache_dir=args.tier1_cache_dir,
         dynamic_batching=getattr(args, "dynamic_batching", False),
         max_total_nodes=args.max_total_nodes_per_batch,
+        use_graph_cache=args.use_graph_cache,
     )
 
     print("[main] Loading datasets before Trainer/WandB init ...", flush=True)
@@ -321,6 +322,18 @@ if __name__ == "__main__":
         "--torch_compile",
         type=lambda x: str(x).lower() in ("true", "1", "yes"),
         default=config.TORCH_COMPILE,
+    )
+    parser.add_argument(
+        "--use_graph_cache",
+        type=lambda x: str(x).lower() in ("true", "1", "yes"),
+        default=True,
+        help=(
+            "Preprocess every graph into a cache dir. Only worth it when "
+            "--normalize_edges adds data to the file; otherwise the cached copy "
+            "is the raw graph minus attributes get() drops anyway. Required by "
+            "--sparsification/--partition, whose masks are keyed on cache "
+            "filenames."
+        ),
     )
     parser.add_argument("--log_steps", type=int, default=config.LOG_EVERY_N_STEPS)
     parser.add_argument(

@@ -106,4 +106,5 @@ srun python -u -m train \
     --pin_memory        "$PIN_MEMORY" \
     --persistent_workers "$PERSISTENT_WORKERS" \
     --torch_compile     "$TORCH_COMPILE" \
+    --use_graph_cache   "false" \
     --patience          4

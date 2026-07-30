@@ -284,12 +284,25 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
         import data.dataset as dataset_module
 
         dataset_module._CSV_SAMPLE_CACHE.clear()
-        observed_usecols: list[tuple[str, ...]] = []
+        observed_usecols: list[set[str]] = []
         original_read_csv = dataset_module.pd.read_csv
 
+        # usecols is a predicate now (the abc stat columns are optional), so
+        # probe it with every column name a real CSV can carry.
+        candidate_cols = (
+            "unoptimized_graph_path",
+            "optimizability",
+            *dataset_module._CSV_NODE_COUNT_COLS,
+            "design",
+            "algorithm",
+            "tier_id",
+            "depth_optimizability",
+            "post_nodes",
+        )
+
         def _spy_read_csv(*args, **kwargs):
-            usecols = kwargs.get("usecols", ())
-            observed_usecols.append(tuple(usecols))
+            predicate = kwargs.get("usecols")
+            observed_usecols.append({c for c in candidate_cols if predicate(c)})
             return original_read_csv(*args, **kwargs)
 
         try:
@@ -306,8 +319,12 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
             self.assertEqual(len(ds), 10)
             self.assertTrue(observed_usecols)
             self.assertEqual(
-                set(observed_usecols[0]),
-                {"unoptimized_graph_path", "optimizability"},
+                observed_usecols[0],
+                {
+                    "unoptimized_graph_path",
+                    "optimizability",
+                    *dataset_module._CSV_NODE_COUNT_COLS,
+                },
             )
         finally:
             dataset_module._CSV_SAMPLE_CACHE.clear()
@@ -1838,3 +1855,125 @@ class TestGetNumNodesList(unittest.TestCase):
         ds.get_num_nodes_list()
         json_files = list(self.root.rglob("*_node_sizes.json"))
         self.assertEqual(len(json_files), 0)
+
+
+class TestUseGraphCacheFalse(unittest.TestCase):
+    """use_graph_cache=False: raw .pt files are read in place and node counts
+    come from the CSV's abc stats instead of a full preprocessing pass."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.pt_paths = _make_graph_pts(self.root / "graphs", 6)
+        self.num_nodes = torch.load(
+            self.pt_paths[0], map_location="cpu", weights_only=True
+        ).x.shape[0]
+        self.csv_path = self.root / "orchestrate.csv"
+        self._write_stats_csv(self.csv_path, self.pt_paths)
+        self.cache_dir = self.root / "cache"
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _write_stats_csv(self, path: Path, pt_paths, *, node_split=None):
+        """CSV carrying the abc stat columns, split so that
+        1 + pre_num_PI + pre_nodes + pre_num_PO == the real node count."""
+        import csv as _csv
+
+        pi = 1
+        po = 1
+        ands = self.num_nodes - 1 - pi - po
+        rows = []
+        for i, p in enumerate(pt_paths):
+            stats = node_split(p) if node_split else (ands, pi, po)
+            rows.append(
+                {
+                    "unoptimized_graph_path": str(p),
+                    "optimizability": str(round(0.1 + i * 0.01, 4)),
+                    "pre_nodes": str(stats[0]),
+                    "pre_num_PI": str(stats[1]),
+                    "pre_num_PO": str(stats[2]),
+                }
+            )
+        with open(path, "w", newline="") as f:
+            writer = _csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+            writer.writeheader()
+            writer.writerows(rows)
+
+    def _make_ds(self, **kwargs):
+        from data.dataset import AIGGraphRegressionDataset
+
+        kwargs.setdefault("csv_paths", self.csv_path)
+        kwargs.setdefault("cache_dir", self.cache_dir)
+        kwargs.setdefault("use_graph_cache", False)
+        return AIGGraphRegressionDataset(kwargs.pop("csv_paths"), **kwargs)
+
+    def test_manifest_points_at_raw_paths_and_writes_no_graph_cache(self):
+        ds = self._make_ds()
+        for sample in ds.samples:
+            self.assertEqual(
+                ds._graph_cache_path_map[sample.graph_path], Path(sample.graph_path)
+            )
+        self.assertFalse((self.cache_dir / "processed_graphs").exists())
+
+    def test_raw_graphs_are_not_rewritten(self):
+        before = [p.stat().st_mtime_ns for p in self.pt_paths]
+        ds = self._make_ds()
+        ds.get_num_nodes_list()
+        self.assertEqual([p.stat().st_mtime_ns for p in self.pt_paths], before)
+
+    def test_node_sizes_come_from_csv_without_loading_graphs(self):
+        from data.dataset import AIGGraphRegressionDataset
+
+        with patch.object(
+            AIGGraphRegressionDataset,
+            "_torch_load_graph",
+            side_effect=AssertionError("graphs must not be loaded to size them"),
+        ):
+            ds = self._make_ds()
+            sizes = ds.get_num_nodes_list()
+
+        self.assertEqual(sizes, [self.num_nodes] * len(ds))
+
+    def test_step21_graph_is_read_from_disk_not_trusted_from_csv(self):
+        """The `dch` step's abc stats understate the written AIG, so those
+        graphs must be sized from the file even though the CSV has a value."""
+        step21_paths = _make_graph_pts(self.root / "dch", 1)
+        step21 = step21_paths[0].parent / "design_syn7_step21.pt"
+        step21_paths[0].rename(step21)
+
+        csv_path = self.root / "with_step21.csv"
+        # Deliberately wrong stats for the step21 row, correct for the rest.
+        self._write_stats_csv(
+            csv_path,
+            [*self.pt_paths, step21],
+            node_split=lambda p: (99, 99, 99)
+            if p == step21
+            else (self.num_nodes - 3, 1, 1),
+        )
+
+        ds = self._make_ds(csv_paths=csv_path, cache_dir=self.root / "cache_step21")
+        sizes = dict(zip([s.graph_path for s in ds.samples], ds.get_num_nodes_list()))
+        self.assertEqual(sizes[str(step21)], self.num_nodes)
+
+    def test_csv_without_stat_columns_falls_back_to_loading(self):
+        plain_csv = self.root / "plain.csv"
+        _write_csv(plain_csv, _make_rows(self.pt_paths))
+
+        ds = self._make_ds(csv_paths=plain_csv, cache_dir=self.root / "cache_plain")
+        self.assertIsNone(ds.samples[0].csv_num_nodes)
+        self.assertEqual(ds.get_num_nodes_list(), [self.num_nodes] * len(ds))
+
+    def test_rejects_sparsification_and_partition(self):
+        for kwargs in ({"sparsification": "pagerank"}, {"partition": "random"}):
+            with self.subTest(**kwargs):
+                with self.assertRaises(ValueError) as ctx:
+                    self._make_ds(**kwargs)
+                self.assertIn("use_graph_cache=False", str(ctx.exception))
+
+    def test_signature_differs_from_cached_mode(self):
+        no_cache = self._make_ds()
+        cached = self._make_ds(
+            use_graph_cache=True, cache_dir=self.root / "cache_cached"
+        )
+        self.assertNotEqual(no_cache._cache_signature, cached._cache_signature)

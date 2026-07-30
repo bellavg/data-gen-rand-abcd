@@ -41,6 +41,7 @@ class AIGDataModule(pl.LightningDataModule):
         hp_tuning_splits_path: str | Path | None = None,
         tier0_cache_dir: str | Path | None = None,
         tier1_cache_dir: str | Path | None = None,
+        use_graph_cache: bool = True,
     ) -> None:
         super().__init__()
         self.csv_paths = csv_paths
@@ -64,6 +65,7 @@ class AIGDataModule(pl.LightningDataModule):
         self.hp_tuning_splits_path = hp_tuning_splits_path
         self.tier0_cache_dir = tier0_cache_dir
         self.tier1_cache_dir = tier1_cache_dir
+        self.use_graph_cache = bool(use_graph_cache)
 
         if self.num_workers > 0 and self.prefetch_factor < 1:
             raise ValueError(
@@ -124,6 +126,7 @@ class AIGDataModule(pl.LightningDataModule):
             num_samples=num_samples,
             num_workers=self.num_workers,
             hp_tuning_splits_path=self.hp_tuning_splits_path,
+            use_graph_cache=self.use_graph_cache,
         )
 
     def _ensure_val_plan(self) -> None:

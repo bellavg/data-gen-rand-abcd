@@ -338,6 +338,7 @@ def test_train_main_passes_sparsification_and_partition_to_datamodule(
         num_sanity_val_steps=0,
         log_steps=1,
         torch_compile=False,
+        use_graph_cache=True,
     )
 
     with (
@@ -405,6 +406,7 @@ def _base_train_args(tmp_path, **overrides) -> SimpleNamespace:
         num_sanity_val_steps=0,
         log_steps=1,
         torch_compile=False,
+        use_graph_cache=True,
     )
     for key, value in overrides.items():
         setattr(args, key, value)
@@ -526,6 +528,7 @@ def test_main_falls_back_to_cpu_when_cuda_driver_init_fails(tmp_path):
         num_sanity_val_steps=0,
         log_steps=1,
         torch_compile=False,
+        use_graph_cache=True,
         seed=42,
     )
 
@@ -602,6 +605,7 @@ def test_main_does_not_materialize_node_local_partition_cache_before_fit(
         num_sanity_val_steps=0,
         log_steps=1,
         torch_compile=False,
+        use_graph_cache=True,
         seed=42,
     )
     with (
@@ -676,6 +680,7 @@ def test_main_raises_when_gpu_required_but_cuda_init_fails(tmp_path, monkeypatch
         num_sanity_val_steps=0,
         log_steps=1,
         torch_compile=False,
+        use_graph_cache=True,
         seed=42,
     )
     monkeypatch.setenv("AIG_REQUIRE_GPU", "1")

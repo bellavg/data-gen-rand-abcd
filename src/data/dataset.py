@@ -50,6 +50,26 @@ class GraphSample:
     design_key: str
     recipe_key: str
     y_node_opt: float
+    # Node count derived from the CSV's abc stats, or None when the CSV lacks
+    # the stat columns.  See _CSV_NODE_COUNT_COLS.
+    csv_num_nodes: int | None = None
+
+
+# abc `print_stats` columns describing the *input* (unoptimized) graph, written
+# by data/creation/shell/10_algorithm_csv.sh.  The PyG graph built by
+# data_utils._extract_topology is const0 + PIs + AND gates + POs, so
+#     num_nodes == 1 + pre_num_PI + pre_nodes + pre_num_PO
+# lets us size every graph straight from the CSV instead of loading it.
+_CSV_NODE_COUNT_COLS = ("pre_nodes", "pre_num_PI", "pre_num_PO")
+
+# ...with one exception.  Position 21 of every reference recipe in
+# data/abc_scripts.zip is `dch`, which builds a *choice* network: abc reports
+# the AND count of the representative structure while `write_aiger` also emits
+# the choice nodes, so pre_nodes understates the real graph whenever dch found
+# equivalences.  Measured on the Orchestrate CSV: steps 1-20 matched 200/200,
+# step21 missed on 43/200.  Those graphs (4.76% of the dataset) have to be read
+# from disk; everything else is exact.
+_UNTRUSTED_NODE_COUNT_MARKER = "_step21."
 
 
 # Module-level cache for raw CSV samples. The CSVs do not change during a run,
@@ -164,6 +184,7 @@ class AIGGraphRegressionDataset(PyGDataset):
         num_samples: int | None = None,
         num_workers: int = 0,
         hp_tuning_splits_path: str | Path | None = None,
+        use_graph_cache: bool = True,
     ) -> None:
         if isinstance(csv_paths, (str, Path)):
             self.csv_paths = [Path(csv_paths)]
@@ -193,6 +214,20 @@ class AIGGraphRegressionDataset(PyGDataset):
         self.num_samples = num_samples
         self.num_workers = num_workers
         self.hp_tuning_splits_path = hp_tuning_splits_path
+        self.use_graph_cache = bool(use_graph_cache)
+        if not self.use_graph_cache and (
+            self.sparsification is not None or self.partition is not None
+        ):
+            # Precomputed sparsification/partition masks are keyed on the sha1
+            # cache filename from _stable_graph_cache_name (see
+            # sparsification.get_sparse_entry). Without the cache the lookup
+            # key is a raw filename that matches nothing, and every graph would
+            # silently fall back to unmasked -- fail loudly instead.
+            raise ValueError(
+                "use_graph_cache=False is incompatible with sparsification/"
+                "partition: their precomputed masks are indexed by graph-cache "
+                "filename. Re-enable the cache or precompute masks for raw paths."
+            )
         self._cache_precomputed_level_pe = (
             str(self.positional_encoding).lower() == "level"
             if self.positional_encoding is not None
@@ -251,6 +286,9 @@ class AIGGraphRegressionDataset(PyGDataset):
         hasher.update(str(self._tier0_cache_dir).encode())
         hasher.update(str(self._tier1_cache_dir).encode())
         hasher.update(str(self.positional_encoding).encode())
+        # Manifests from the two modes are not interchangeable: one stores
+        # sha1 cache filenames, the other raw .pt paths.
+        hasher.update(f"use_graph_cache={self.use_graph_cache}".encode())
 
         for csv_path in sorted(self.csv_paths):
             hasher.update(str(csv_path.absolute()).encode())
@@ -357,20 +395,35 @@ class AIGGraphRegressionDataset(PyGDataset):
             return _CSV_SAMPLE_CACHE[cache_key]
 
         required_cols = ["unoptimized_graph_path", "optimizability"]
+        # The stat columns are optional: only the generated per-algorithm CSVs
+        # carry them.  A callable usecols keeps a CSV without them readable
+        # instead of raising, so their absence just means csv_num_nodes=None.
+        wanted_cols = set(required_cols) | set(_CSV_NODE_COUNT_COLS)
         frames = [
             pd.read_csv(
                 p,
-                usecols=required_cols,
+                usecols=lambda c: c in wanted_cols,
                 dtype={"unoptimized_graph_path": str, "optimizability": float},
             )
             for p in self.csv_paths
         ]
         df = pd.concat(frames, ignore_index=True)
 
+        if all(col in df.columns for col in _CSV_NODE_COUNT_COLS):
+            # NaN survives the sum as NaN, so a row with an incomplete stat
+            # triple degrades to None rather than a wrong count.
+            csv_sizes = 1 + sum(
+                pd.to_numeric(df[col], errors="coerce") for col in _CSV_NODE_COUNT_COLS
+            )
+            csv_sizes = [None if pd.isna(v) else int(v) for v in csv_sizes]
+        else:
+            csv_sizes = [None] * len(df)
+
         samples = []
-        for graph_path, node_opt in zip(
+        for graph_path, node_opt, csv_num_nodes in zip(
             df["unoptimized_graph_path"].fillna(""),
             df["optimizability"],
+            csv_sizes,
             strict=False,
         ):
             norm_path = self._normalize_graph_path(str(graph_path))
@@ -381,10 +434,11 @@ class AIGGraphRegressionDataset(PyGDataset):
                     design_key=design_key,
                     recipe_key=self._infer_recipe_key(norm_path, design_key),
                     y_node_opt=float(node_opt),
+                    csv_num_nodes=csv_num_nodes,
                 )
             )
 
-        del df, frames
+        del df, frames, csv_sizes
         _CSV_SAMPLE_CACHE[cache_key] = samples
         return samples
 
@@ -569,6 +623,20 @@ class AIGGraphRegressionDataset(PyGDataset):
                     flush=True,
                 )
 
+        # Without a graph cache there is nothing to validate the CSV against,
+        # but there is also nothing to validate: data/creation/shell/
+        # 10_algorithm_csv.sh already ran check_exists_parallel over every
+        # unoptimized_graph_path and dropped the rows whose .pt was missing, so
+        # a stat() here re-derives a fact the CSV was built on. On 700k+ GPFS
+        # paths that scan costs ~10 minutes.
+        if not self.use_graph_cache:
+            print(
+                f"[dataset] Skipping existence check for {len(samples)} samples "
+                "(CSV rows were existence-filtered at generation time).",
+                flush=True,
+            )
+            return samples
+
         # No manifest for this exact signature (e.g. first run of a new
         # split_by/num_samples combination). Before falling back to a raw
         # ThreadPool existence scan, consult the global per-cache-root graph
@@ -708,6 +776,8 @@ class AIGGraphRegressionDataset(PyGDataset):
         return Path(graph_path).parent
 
     def _cached_graph_path(self, graph_path: str) -> Path:
+        if not self.use_graph_cache:
+            return Path(graph_path)
         if self._cache_graph_dir is None:
             return Path(graph_path)
         return self._cache_root_for_graph(graph_path) / self._stable_graph_cache_name(
@@ -748,6 +818,12 @@ class AIGGraphRegressionDataset(PyGDataset):
 
     def _cache_single_graph(self, graph_path: str) -> tuple[str, int]:
         cache_path = self._cached_graph_path(graph_path)
+        if not self.use_graph_cache:
+            # cache_path IS the raw graph here; the refresh branch below would
+            # rewrite the source dataset in place. Only read.
+            return str(cache_path), int(
+                self._torch_load_graph(cache_path).x.shape[0]
+            )
         if cache_path.is_file():
             obj = self._torch_load_graph(cache_path)
             needs_refresh = (
@@ -802,21 +878,91 @@ class AIGGraphRegressionDataset(PyGDataset):
             return None
         return manifest
 
-    def _rebuild_graph_cache(self) -> dict:
-        unique_paths = sorted({sample.graph_path for sample in self.samples})
-
+    def _io_thread_count(self) -> int:
         cpu_limit = (
             len(os.sched_getaffinity(0))
             if hasattr(os, "sched_getaffinity")
             else (os.cpu_count() or 1)
         )
-        n_threads = max(
+        return max(
             1,
             min(
                 self.num_workers if self.num_workers > 0 else cpu_limit,
                 cpu_limit,
             ),
         )
+
+    def _build_manifest_from_csv(self) -> dict:
+        """Manifest for use_graph_cache=False: raw .pt paths, CSV node counts.
+
+        Nothing is written to a graph cache -- get() reads the raw file and
+        applies pe_transform itself. The only per-graph fact still needed is
+        num_nodes (for dynamic batch planning), and the CSV's abc stats give it
+        exactly for every graph except the `dch` step (see
+        _UNTRUSTED_NODE_COUNT_MARKER), which is read from disk.
+        """
+        unique_paths = sorted({sample.graph_path for sample in self.samples})
+        csv_sizes = {
+            s.graph_path: s.csv_num_nodes
+            for s in self.samples
+            if s.csv_num_nodes is not None
+        }
+
+        num_nodes_map = {
+            p: csv_sizes[p]
+            for p in unique_paths
+            if p in csv_sizes and _UNTRUSTED_NODE_COUNT_MARKER not in p
+        }
+        must_read = [p for p in unique_paths if p not in num_nodes_map]
+        print(
+            f"[cache] Sizing {len(unique_paths)} unique graphs: "
+            f"{len(num_nodes_map)} from CSV stats, {len(must_read)} read from disk.",
+            flush=True,
+        )
+
+        if must_read:
+            n_threads = self._io_thread_count()
+            completed = 0
+            with ThreadPoolExecutor(max_workers=n_threads) as executor:
+                for path, obj in zip(
+                    must_read,
+                    executor.map(self._torch_load_graph, must_read),
+                    strict=False,
+                ):
+                    num_nodes_map[path] = int(obj.x.shape[0])
+                    completed += 1
+                    if completed % 5000 == 0 or completed == len(must_read):
+                        print(
+                            f"[cache] {completed}/{len(must_read)} graphs read",
+                            flush=True,
+                        )
+
+        processed_dir_path = Path(self.processed_dir)
+        processed_dir_path.mkdir(parents=True, exist_ok=True)
+        node_sizes_path = processed_dir_path / "node_sizes.json"
+        tmp_ns = node_sizes_path.with_suffix(f".tmp_{uuid.uuid4().hex[:8]}")
+        tmp_ns.write_text(
+            json.dumps(num_nodes_map, indent=2, sort_keys=True), encoding="utf-8"
+        )
+        os.replace(tmp_ns, node_sizes_path)
+
+        return {
+            "version": self._MANIFEST_VERSION,
+            "num_samples": len(self.samples),
+            "entries": [
+                {
+                    "graph_path": sample.graph_path,
+                    "cache_path": sample.graph_path,
+                    "num_nodes": num_nodes_map[sample.graph_path],
+                }
+                for sample in self.samples
+            ],
+        }
+
+    def _rebuild_graph_cache(self) -> dict:
+        unique_paths = sorted({sample.graph_path for sample in self.samples})
+
+        n_threads = self._io_thread_count()
         print(
             f"[cache] Building graph cache: {len(unique_paths)} unique graphs "
             f"using {n_threads} threads -> {self._cache_graph_dir}",
@@ -957,7 +1103,11 @@ class AIGGraphRegressionDataset(PyGDataset):
 
         manifest = self._load_manifest()
         if manifest is None:
-            manifest = self._rebuild_graph_cache()
+            manifest = (
+                self._rebuild_graph_cache()
+                if self.use_graph_cache
+                else self._build_manifest_from_csv()
+            )
             tmp = self._manifest_path.with_suffix(f".tmp_{uuid.uuid4().hex[:8]}")
             tmp.write_text(json.dumps(manifest, indent=2, sort_keys=True))
             tmp.replace(self._manifest_path)

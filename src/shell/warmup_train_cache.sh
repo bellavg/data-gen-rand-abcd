@@ -111,7 +111,10 @@ HP_TUNING_SPLITS="$HP_TUNING_WORKSPACE/shared_dataset_cache/algo_Orchestrate_ml_
 # Number of parallel I/O workers.  Default: all SLURM-allocated CPUs.
 N_IO_WORKERS="${N_IO_WORKERS:-$(nproc)}"
 SPLIT_CACHE_VERSION="${SPLIT_CACHE_VERSION:-2}"
-CACHE_LAYOUT_VERSION="${CACHE_LAYOUT_VERSION:-3}"
+# Bumped 3 -> 4 with use_graph_cache=False: manifests now hold raw .pt paths
+# instead of sha1 cache filenames, so a sentinel from a layout-3 run must not
+# let this job skip.
+CACHE_LAYOUT_VERSION="${CACHE_LAYOUT_VERSION:-4}"
 
 # The default strategy stays untagged and the others get a tag, so the caches
 # and sentinels written before split_by was configurable remain valid. Same
@@ -283,6 +286,11 @@ dm = AIGDataModule(
     tier1_cache_dir="$TIER1_CACHE_DIR",
     num_workers=$N_IO_WORKERS,
     hp_tuning_splits_path=$splits_arg,
+    # No graph cache: with NORMALIZE_EDGES=False the "cached" copy is just the
+    # raw graph minus pi_paths/local_sp_sum (which get() drops anyway), so
+    # rewriting 700k+ files bought ~10% file size for >30h of wall time. The
+    # manifest is built from the CSV's abc stats instead.
+    use_graph_cache=False,
     # Precompute node-sizes so dynamic_batching=True is instant at training time.
     dynamic_batching=config.DYNAMIC_BATCHING,
     max_total_nodes=config.MAX_TOTAL_NODES_PER_BATCH,
