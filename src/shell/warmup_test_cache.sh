@@ -85,11 +85,18 @@ N_IO_WORKERS="${N_IO_WORKERS:-$(nproc)}"
 # The sentinel is keyed on it so warming "design" does not make a later
 # "recipe" warmup skip itself with a cache that lacks its graphs.
 SPLIT_BY="${SPLIT_BY:-}"
+DEFAULT_SPLIT_BY=$(python -c 'import config; print(config.SPLIT_BY)')
 if [[ -n "$SPLIT_BY" ]]; then
     SPLIT_BY_PY="\"$SPLIT_BY\""
-    SENTINEL="$CACHE_DIR/test_cache_ready_${SPLIT_BY}.sentinel"
 else
     SPLIT_BY_PY="config.SPLIT_BY"
+fi
+# Only non-default strategies get a tag, matching
+# data.dataset.splits_cache_filename and train.py's run_label. So an explicit
+# SPLIT_BY=design reuses the untagged sentinel instead of forking a second one.
+if [[ -n "$SPLIT_BY" && "$SPLIT_BY" != "$DEFAULT_SPLIT_BY" ]]; then
+    SENTINEL="$CACHE_DIR/test_cache_ready_${SPLIT_BY}.sentinel"
+else
     SENTINEL="$CACHE_DIR/test_cache_ready.sentinel"
 fi
 

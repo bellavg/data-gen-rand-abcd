@@ -885,6 +885,16 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
         cache_files = sorted(cache_dir.glob("*_splits.json"))
         self.assertEqual(len(cache_files), 2, "expected one cache file per split_by mode")
 
+        # The default strategy is UNsuffixed and only the others carry a tag, so
+        # splits files written before split_by was configurable keep being found
+        # instead of being regenerated under a new name. Assumes config.SPLIT_BY
+        # is still "design" -- changing it is meant to fail here, since it moves
+        # which strategy owns the untagged filename.
+        self.assertEqual(
+            [f.name for f in cache_files],
+            ["cache_split_by_all_random_splits.json", "cache_split_by_all_splits.json"],
+        )
+
         # Both reload correctly on a second construction with the same args.
         design_ds2 = AIGGraphRegressionDataset(
             csv, split="train", cache_dir=cache_dir, split_by="design", seed=1

@@ -69,6 +69,28 @@ _SPLIT_CACHE_VERSION = 2
 _GRAPH_CACHE_CONTENT_VERSION = 2
 
 
+def splits_cache_filename(
+    csv_paths: list[str | Path],
+    num_samples: int | None,
+    split_by: str = SPLIT_BY,
+) -> str:
+    """Filename of the splits JSON for one (csvs, num_samples, split_by) combo.
+
+    The default strategy (config.SPLIT_BY) is deliberately left UNsuffixed and
+    only the others get a tag, mirroring train.py's run_label rule. That keeps
+    every splits file written before split_by was configurable readable instead
+    of silently regenerating an identical 78MB file under a new name.
+
+    Shell warmup jobs need to locate this file too, so they import this rather
+    than rebuilding the pattern (globbing "*_splits.json" and taking the first
+    match picks up whichever num_samples/split_by tag sorts first).
+    """
+    algo_tag = "_".join(Path(p).stem for p in csv_paths)
+    sample_tag = f"_{num_samples}" if num_samples is not None else "_all"
+    split_tag = "" if split_by == SPLIT_BY else f"_{split_by}"
+    return f"{algo_tag}{sample_tag}{split_tag}_splits.json"
+
+
 def clear_dataset_global_caches() -> None:
     """Drop module-level sample/split caches.
 
@@ -373,9 +395,9 @@ class AIGGraphRegressionDataset(PyGDataset):
             return self._create_split_keys(samples)
 
         self.cache_dir.mkdir(parents=True, exist_ok=True)
-        algo_tag = "_".join(p.stem for p in self.csv_paths)
-        sample_tag = f"_{self.num_samples}" if self.num_samples is not None else "_all"
-        cache_file = self.cache_dir / f"{algo_tag}{sample_tag}_{self.split_by}_splits.json"
+        cache_file = self.cache_dir / splits_cache_filename(
+            self.csv_paths, self.num_samples, self.split_by
+        )
         cache_key = str(cache_file)
 
         cached_payload = _SPLITS_CACHE.get(cache_key)

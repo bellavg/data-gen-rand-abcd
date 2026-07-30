@@ -4,29 +4,40 @@
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=32
 #SBATCH --partition=genoa
-#SBATCH --array=0-3
+#SBATCH --array=0-2%1
 #SBATCH --output=logs/warmup_train_%A_%a.out
 
 # ---------------------------------------------------------------------------
-# Pre-warm the per-algorithm dataset cache for final training.
+# Pre-warm the train+val dataset cache for final training.
 #
-# Run this BEFORE submitting train.sh so the GPU node does not waste time on
-# disk I/O.  This job runs on a cheap CPU partition and builds the graph
-# cache (and optional node-sizes JSON) for the algorithm assigned to this
-# array task (index 0-3 → Orchestrate/Deepsyn/Syn4/C2RS).
+# Run this BEFORE submitting the train job so the GPU node does not waste time
+# on disk I/O.  This job runs on a cheap CPU partition and builds the graph
+# cache (and optional node-sizes JSON) for the split strategy assigned to this
+# array task (index 0-2 → design/recipe/random), matching
+# train_no_sparsification.sh's array convention so the two line up task-for-task.
+#
+# The %1 throttle runs the tasks one at a time on purpose. Unlike the previous
+# per-algorithm array, every strategy writes the SAME cache_dir and shared tier
+# dirs, and their graph sets overlap heavily -- run concurrently they would
+# re-read the same graphs from GPFS and clobber each other's last-writer-wins
+# _num_nodes_global.json updates.
+#
+# Only Orchestrate is warmed: it is the sole algorithm training accepts
+# (config.VALID_ALGORITHMS). The other three exist on disk from the data
+# generation pipeline but nothing reads their train caches.
 #
 # CHAIN WITH TRAIN JOB
 # --------------------
 #   WID=$(sbatch --parsable src/shell/warmup_train_cache.sh)
-#   sbatch --dependency=afterok:$WID src/shell/train.sh
+#   sbatch --dependency=afterok:$WID --array=0-2 src/shell/train_no_sparsification.sh
 #
-# If the sentinel already exists for an algorithm the warmup skips it, so
+# If the sentinel already exists for a strategy the warmup skips it, so
 # re-running or re-chaining is always safe.
 # ---------------------------------------------------------------------------
 
 set -euo pipefail
 
-# Array-task id, or 0 when run outside an array for local debugging.
+# Array-task id, or 0 (design) when run outside an array for local debugging.
 TASK_ID=${SLURM_ARRAY_TASK_ID:-0}
 
 echo "=========================================="
@@ -58,12 +69,25 @@ export PYTHONPATH="$BASE_DIR/src"
 cd "$BASE_DIR"
 
 # =========================================================
-# 2. ARRAY MAPPING (Algorithm)
+# 2. ARRAY MAPPING (split strategy)
 # =========================================================
 
-ALGORITHMS=("Orchestrate" "Deepsyn" "Syn4" "C2RS")
-ALGO=${ALGORITHMS[$TASK_ID]}
-echo "Task ${TASK_ID} assigned to ALGORITHM: ${ALGO}"
+# Training only ever runs on Orchestrate (config.VALID_ALGORITHMS), so the
+# array slot selects the split strategy instead of the algorithm.
+ALGO="Orchestrate"
+
+# Same mapping as train_no_sparsification.sh, so `--array=0-2` on both means
+# the same three runs. SLURM_ARRAY_TASK_ID is injected by the scheduler
+# directly (unlike an exported env var, its delivery does not depend on
+# --export policy), so the strategy is selected with no environment passing.
+# Falls back to the SPLIT_BY env var for a plain, non-array submission.
+declare -A SPLIT_BY_MODES=([0]="design" [1]="recipe" [2]="random")
+if [ -n "${SLURM_ARRAY_TASK_ID:-}" ]; then
+    SPLIT_BY="${SPLIT_BY_MODES[$SLURM_ARRAY_TASK_ID]:?Unknown SLURM_ARRAY_TASK_ID=$SLURM_ARRAY_TASK_ID, expected one of: ${!SPLIT_BY_MODES[*]}}"
+else
+    SPLIT_BY="${SPLIT_BY:-design}"
+fi
+echo "Task ${TASK_ID} assigned to SPLIT_BY: ${SPLIT_BY} (ALGORITHM: ${ALGO})"
 
 # =========================================================
 # 3. SHARED PATHS
@@ -88,6 +112,18 @@ HP_TUNING_SPLITS="$HP_TUNING_WORKSPACE/shared_dataset_cache/algo_Orchestrate_ml_
 N_IO_WORKERS="${N_IO_WORKERS:-$(nproc)}"
 SPLIT_CACHE_VERSION="${SPLIT_CACHE_VERSION:-2}"
 CACHE_LAYOUT_VERSION="${CACHE_LAYOUT_VERSION:-3}"
+
+# The default strategy stays untagged and the others get a tag, so the caches
+# and sentinels written before split_by was configurable remain valid. Same
+# rule as data.dataset.splits_cache_filename and train.py's run_label. Both the
+# sentinel and the staleness check are keyed on it, so warming "design" cannot
+# make a later "recipe" warmup skip itself with a cache that lacks its graphs.
+DEFAULT_SPLIT_BY=$(python -c 'import config; print(config.SPLIT_BY)')
+if [[ "$SPLIT_BY" != "$DEFAULT_SPLIT_BY" ]]; then
+    SENTINEL_SUFFIX="_$SPLIT_BY"
+else
+    SENTINEL_SUFFIX=""
+fi
 
 S1_SPLITS="$HP_TUNING_WORKSPACE/shared_dataset_cache/algo_Orchestrate_ml_algo_Deepsyn_ml_algo_Syn4_ml_algo_C2RS_ml_15000_splits.json"
 S2_SPLITS="$HP_TUNING_WORKSPACE/shared_dataset_cache/algo_Orchestrate_ml_algo_Deepsyn_ml_algo_Syn4_ml_algo_C2RS_ml_35000_splits.json"
@@ -152,25 +188,34 @@ warm_algorithm() {
     local csv_path="$BASE_DIR/data/designs/design_metadata/algo_${algo}_ml.csv"
     local workspace="/scratch-shared/$USER/aig_train_run/${algo}"
     local cache_dir="$workspace/cache"
-    local sentinel="$cache_dir/train_cache_ready.sentinel"
+    local sentinel="$cache_dir/train_cache_ready${SENTINEL_SUFFIX}.sentinel"
     local layout_version_file="$cache_dir/cache_layout_version.txt"
 
     mkdir -p "$cache_dir"
 
     if [[ -f "$sentinel" ]]; then
-        if python - "$cache_dir" "$SPLIT_CACHE_VERSION" "$CACHE_LAYOUT_VERSION" <<'PYEOF'
+        if python - "$cache_dir" "$SPLIT_CACHE_VERSION" "$CACHE_LAYOUT_VERSION" "$csv_path" "$SPLIT_BY" <<'PYEOF'
 import json
 import sys
 from pathlib import Path
 
+from data.dataset import splits_cache_filename
+
 cache_dir = Path(sys.argv[1])
 expected_version = int(sys.argv[2])
 expected_layout_version = int(sys.argv[3])
-split_files = sorted(cache_dir.glob("*_splits.json"))
-if not split_files:
+csv_path = sys.argv[4]
+split_by = sys.argv[5]
+
+# The exact file this warmup would write, NOT the alphabetically-first
+# "*_splits.json": a cache_dir legitimately holds one per (num_samples,
+# split_by) combination, so globbing checks a subset's or another strategy's
+# metadata and reports a cache warm that was never built.
+splits_file = cache_dir / splits_cache_filename([csv_path], None, split_by)
+if not splits_file.is_file():
     raise SystemExit(1)
 
-payload = json.loads(split_files[0].read_text(encoding="utf-8"))
+payload = json.loads(splits_file.read_text(encoding="utf-8"))
 meta = payload.get("__meta__")
 if not isinstance(meta, dict):
     raise SystemExit(1)
@@ -187,7 +232,7 @@ except ValueError:
 raise SystemExit(
     0
     if meta.get("version") == expected_version
-    and meta.get("split_by") == "design"
+    and meta.get("split_by") == split_by
     and layout_version == expected_layout_version
     else 1
 )
@@ -222,6 +267,7 @@ from pathlib import Path
 sys.path.insert(0, "$BASE_DIR/src")
 import config
 from data.datamodule import AIGDataModule
+from data.dataset import splits_cache_filename
 
 t0 = time.monotonic()
 
@@ -230,6 +276,7 @@ dm = AIGDataModule(
     positional_encoding=config.PE_TYPE if config.PE_TYPE != "none" else None,
     batch_size=config.BATCH_SIZE,
     split_ratios=(0.8, 0.1, 0.1),
+    split_by="$SPLIT_BY",
     seed=42,
     cache_dir="$cache_dir",
     tier0_cache_dir="$TIER0_CACHE_DIR",
@@ -247,11 +294,15 @@ n_train = len(dm.train_ds)
 n_val   = len(dm.val_ds)
 n_sizes = len(dm.train_ds.get_num_nodes_list()) if getattr(dm, "train_ds", None) is not None else 0
 
-# Log test split membership without building the graph cache for it.
+# Log test split membership without building the graph cache for it. Read the
+# file this run just wrote, not the first "*_splits.json" in the directory --
+# that picks up another num_samples/split_by tag and logs its test count here.
 n_test = 0
-split_files = sorted(Path("$cache_dir").glob("*_splits.json"))
-if split_files:
-    test_splits = json.loads(split_files[0].read_text(encoding="utf-8"))
+splits_file = Path("$cache_dir") / splits_cache_filename(
+    ["$csv_path"], None, dm.split_by
+)
+if splits_file.is_file():
+    test_splits = json.loads(splits_file.read_text(encoding="utf-8"))
     n_test = len(test_splits.get("test", []))
     print(f"[warmup:${algo}] test split: {n_test} samples logged (not warmed up)", flush=True)
 
@@ -275,12 +326,12 @@ PYEOF
 
 echo ""
 echo "------------------------------------------"
-echo "Processing algorithm: $ALGO"
+echo "Processing $ALGO with split_by=$SPLIT_BY"
 echo "------------------------------------------"
 warm_algorithm "$ALGO"
 
 echo ""
 echo "=========================================="
-echo "Warmup complete for ${ALGO}."
+echo "Warmup complete for ${ALGO} (split_by=${SPLIT_BY})."
 echo "End time: $(date)"
 echo "=========================================="
