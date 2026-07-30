@@ -409,6 +409,16 @@ class AIGGraphRegressionDataset(PyGDataset):
         ]
         df = pd.concat(frames, ignore_index=True)
 
+        # A list usecols used to raise on a CSV missing a required column; the
+        # predicate accepts anything, so check explicitly rather than letting it
+        # surface as a bare KeyError below with no filename attached.
+        missing = [col for col in required_cols if col not in df.columns]
+        if missing:
+            raise ValueError(
+                f"CSV(s) {[str(p) for p in self.csv_paths]} are missing required "
+                f"column(s) {missing}. Found: {sorted(df.columns)}"
+            )
+
         if all(col in df.columns for col in _CSV_NODE_COUNT_COLS):
             # NaN survives the sum as NaN, so a row with an incomplete stat
             # triple degrades to None rather than a wrong count.
@@ -892,6 +902,51 @@ class AIGGraphRegressionDataset(PyGDataset):
             ),
         )
 
+    _CSV_NODE_COUNT_AUDIT_SIZE = 500
+
+    def _audit_csv_node_counts(
+        self, num_nodes_map: dict[str, int], *, skip: set[str]
+    ) -> None:
+        """Spot-check CSV-derived node counts against the graphs themselves.
+
+        An undercount here is not caught anywhere downstream: it feeds
+        BalancedDynamicBatchSampler's node budget, and the resulting batch plan
+        is cached to disk, so a too-large batch OOMs the GPU and then does it
+        again on every retry. `dch` (see _UNTRUSTED_NODE_COUNT_MARKER) is the
+        one known source of undercounts and is excluded before we get here;
+        this samples the rest so a second, unknown source fails loudly at
+        warmup time on a CPU node instead.
+        """
+        candidates = sorted(set(num_nodes_map) - skip)
+        if not candidates:
+            return
+        sample = random.Random(0).sample(
+            candidates, min(self._CSV_NODE_COUNT_AUDIT_SIZE, len(candidates))
+        )
+        with ThreadPoolExecutor(max_workers=self._io_thread_count()) as executor:
+            actual = list(executor.map(self._torch_load_graph, sample))
+        mismatches = [
+            (p, num_nodes_map[p], int(obj.x.shape[0]))
+            for p, obj in zip(sample, actual, strict=False)
+            if num_nodes_map[p] != int(obj.x.shape[0])
+        ]
+        if mismatches:
+            shown = "\n".join(
+                f"  {p}: CSV says {csv_n}, graph has {real_n}"
+                for p, csv_n, real_n in mismatches[:5]
+            )
+            raise ValueError(
+                f"CSV node counts disagree with the graphs for "
+                f"{len(mismatches)}/{len(sample)} sampled files:\n{shown}\n"
+                "Batch planning would use these numbers, so refusing to "
+                "continue. Widen _UNTRUSTED_NODE_COUNT_MARKER or rebuild the "
+                "CSV stats."
+            )
+        print(
+            f"[cache] Audited {len(sample)} CSV node counts against disk: all match.",
+            flush=True,
+        )
+
     def _build_manifest_from_csv(self) -> dict:
         """Manifest for use_graph_cache=False: raw .pt paths, CSV node counts.
 
@@ -936,6 +991,8 @@ class AIGGraphRegressionDataset(PyGDataset):
                             f"[cache] {completed}/{len(must_read)} graphs read",
                             flush=True,
                         )
+
+        self._audit_csv_node_counts(num_nodes_map, skip=set(must_read))
 
         processed_dir_path = Path(self.processed_dir)
         processed_dir_path.mkdir(parents=True, exist_ok=True)

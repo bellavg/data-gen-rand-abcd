@@ -1925,15 +1925,56 @@ class TestUseGraphCacheFalse(unittest.TestCase):
     def test_node_sizes_come_from_csv_without_loading_graphs(self):
         from data.dataset import AIGGraphRegressionDataset
 
-        with patch.object(
-            AIGGraphRegressionDataset,
-            "_torch_load_graph",
-            side_effect=AssertionError("graphs must not be loaded to size them"),
+        # The audit deliberately reads a sample from disk; disable it so this
+        # test can assert the bulk path performs no graph I/O at all.
+        with (
+            patch.object(AIGGraphRegressionDataset, "_CSV_NODE_COUNT_AUDIT_SIZE", 0),
+            patch.object(
+                AIGGraphRegressionDataset,
+                "_torch_load_graph",
+                side_effect=AssertionError("graphs must not be loaded to size them"),
+            ),
         ):
             ds = self._make_ds()
             sizes = ds.get_num_nodes_list()
 
         self.assertEqual(sizes, [self.num_nodes] * len(ds))
+
+    def test_audit_rejects_csv_counts_that_disagree_with_the_graphs(self):
+        """A silent undercount would inflate dynamic batches past the node
+        budget and OOM the GPU, with the bad plan cached to disk."""
+        bad_csv = self.root / "bad_stats.csv"
+        self._write_stats_csv(
+            bad_csv, self.pt_paths, node_split=lambda p: (self.num_nodes - 12, 1, 1)
+        )
+
+        with self.assertRaises(ValueError) as ctx:
+            self._make_ds(csv_paths=bad_csv, cache_dir=self.root / "cache_bad")
+        self.assertIn("disagree with the graphs", str(ctx.exception))
+
+    def test_audit_passes_on_correct_csv_counts(self):
+        ds = self._make_ds()
+        self.assertEqual(ds.get_num_nodes_list(), [self.num_nodes] * len(ds))
+
+    def test_missing_required_column_names_the_csv(self):
+        import csv as _csv
+
+        broken = self.root / "no_target.csv"
+        with open(broken, "w", newline="") as f:
+            w = _csv.DictWriter(f, fieldnames=["unoptimized_graph_path"])
+            w.writeheader()
+            w.writerows({"unoptimized_graph_path": str(p)} for p in self.pt_paths)
+
+        import data.dataset as dataset_module
+
+        dataset_module._CSV_SAMPLE_CACHE.clear()
+        try:
+            with self.assertRaises(ValueError) as ctx:
+                self._make_ds(csv_paths=broken, cache_dir=self.root / "cache_broken")
+            self.assertIn("optimizability", str(ctx.exception))
+            self.assertIn(str(broken), str(ctx.exception))
+        finally:
+            dataset_module._CSV_SAMPLE_CACHE.clear()
 
     def test_step21_graph_is_read_from_disk_not_trusted_from_csv(self):
         """The `dch` step's abc stats understate the written AIG, so those

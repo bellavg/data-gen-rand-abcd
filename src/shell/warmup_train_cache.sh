@@ -11,10 +11,17 @@
 # Pre-warm the train+val dataset cache for final training.
 #
 # Run this BEFORE submitting the train job so the GPU node does not waste time
-# on disk I/O.  This job runs on a cheap CPU partition and builds the graph
-# cache (and optional node-sizes JSON) for the split strategy assigned to this
-# array task (index 0-2 → design/recipe/random), matching
-# train_no_sparsification.sh's array convention so the two line up task-for-task.
+# on disk I/O.  This job runs on a cheap CPU partition and writes the splits
+# JSON plus the dataset manifest (graph paths + node counts) for the split
+# strategy assigned to this array task (index 0-2 → design/recipe/random),
+# matching train_no_sparsification.sh's array convention so the two line up
+# task-for-task.
+#
+# It does NOT build a preprocessed graph cache -- it runs with
+# use_graph_cache=False and sizes graphs from the CSV's abc stats instead.
+# train.sh (sparsification sweep) and test.sh still default to
+# use_graph_cache=True and will build their own cache in $WORKSPACE/cache on
+# first run; this job no longer warms it for them.
 #
 # The %1 throttle runs the tasks one at a time on purpose. Unlike the previous
 # per-algorithm array, every strategy writes the SAME cache_dir and shared tier
@@ -192,12 +199,15 @@ warm_algorithm() {
     local workspace="/scratch-shared/$USER/aig_train_run/${algo}"
     local cache_dir="$workspace/cache"
     local sentinel="$cache_dir/train_cache_ready${SENTINEL_SUFFIX}.sentinel"
-    local layout_version_file="$cache_dir/cache_layout_version.txt"
+    # Suffixed like the sentinel: one shared layout file per cache_dir would be
+    # written by whichever strategy rebuilt first, letting the remaining array
+    # tasks read the NEW version next to their own OLD sentinel and skip.
+    local layout_version_file="$cache_dir/cache_layout_version${SENTINEL_SUFFIX}.txt"
 
     mkdir -p "$cache_dir"
 
     if [[ -f "$sentinel" ]]; then
-        if python - "$cache_dir" "$SPLIT_CACHE_VERSION" "$CACHE_LAYOUT_VERSION" "$csv_path" "$SPLIT_BY" <<'PYEOF'
+        if python - "$cache_dir" "$SPLIT_CACHE_VERSION" "$CACHE_LAYOUT_VERSION" "$csv_path" "$SPLIT_BY" "$layout_version_file" <<'PYEOF'
 import json
 import sys
 from pathlib import Path
@@ -209,6 +219,7 @@ expected_version = int(sys.argv[2])
 expected_layout_version = int(sys.argv[3])
 csv_path = sys.argv[4]
 split_by = sys.argv[5]
+layout_file = Path(sys.argv[6])
 
 # The exact file this warmup would write, NOT the alphabetically-first
 # "*_splits.json": a cache_dir legitimately holds one per (num_samples,
@@ -223,7 +234,6 @@ meta = payload.get("__meta__")
 if not isinstance(meta, dict):
     raise SystemExit(1)
 
-layout_file = cache_dir / "cache_layout_version.txt"
 if not layout_file.is_file():
     raise SystemExit(1)
 
