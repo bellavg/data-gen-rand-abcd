@@ -40,7 +40,13 @@ CSV_PATH="$BASE_DIR/data/designs/design_metadata/algo_${ALGORITHM}_ml.csv"
 WORKSPACE="/scratch-shared/$USER/aig_baseline_run/synthnet_${ALGORITHM}"
 CHECKPOINT_DIR="$WORKSPACE/checkpoints"
 LOG_DIR="$WORKSPACE/logs"
-CACHE_DIR="$WORKSPACE/cache"
+# Reuse the primary model's own per-algorithm cache_dir (not a separate
+# aig_baseline_run/.../cache) -- see warmup_hoga_hop_cache.sh's matching
+# comment: the graph-cache manifest is keyed by cache_dir (not the cache
+# signature), so pointing here at train.sh's own CACHE_DIR lets this job
+# find the manifest the primary run already built instead of rebuilding it
+# from scratch for all ~700k samples.
+CACHE_DIR="/scratch-shared/$USER/aig_train_run/${ALGORITHM}/cache"
 TIER0_CACHE_DIR="/scratch-shared/$USER/aig_train_run/shared_tier0_cache"
 TIER1_CACHE_DIR="/scratch-shared/$USER/aig_train_run/shared_tier1_cache"
 

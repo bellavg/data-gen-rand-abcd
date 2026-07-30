@@ -49,7 +49,20 @@ ALGORITHM="Orchestrate"
 CSV_PATH="$BASE_DIR/data/designs/design_metadata/algo_${ALGORITHM}_ml.csv"
 
 WORKSPACE="/scratch-shared/$USER/aig_baseline_run/hoga_${ALGORITHM}"
-CACHE_DIR="$WORKSPACE/cache"
+# Reuse the primary model's own per-algorithm cache_dir (not a separate
+# aig_baseline_run/.../cache). The per-graph .pt cache files themselves
+# already land in the shared tier0_cache_dir/tier1_cache_dir regardless of
+# cache_dir (every training sample is a tier0/tier1 raw graph -- tier2 is
+# only ever used to derive the optimizability label, never as an input
+# graph, so it never hits dataset.py's per-graph caching path at all). What
+# is NOT shared is the graph-cache *manifest*, which lives at
+# cache_dir/metadata/dataset_<sig>_manifest.json (see dataset.py's
+# _manifest_path/_cache_meta_dir) -- keyed by cache_dir, not by the cache
+# signature hash. Pointing cache_dir at train.sh's own CACHE_DIR lets this
+# warmup find the manifest the primary run already built and take the
+# sub-second manifest fast-path, instead of re-walking and rebuilding it
+# from scratch for all ~700k samples every time.
+CACHE_DIR="/scratch-shared/$USER/aig_train_run/${ALGORITHM}/cache"
 TIER0_CACHE_DIR="/scratch-shared/$USER/aig_train_run/shared_tier0_cache"
 TIER1_CACHE_DIR="/scratch-shared/$USER/aig_train_run/shared_tier1_cache"
 HP_TUNING_SPLITS="/scratch-shared/$USER/big_optuna_run/shared_dataset_cache/algo_Orchestrate_ml_algo_Deepsyn_ml_algo_Syn4_ml_algo_C2RS_ml_50000_splits.json"
