@@ -102,10 +102,42 @@ What is given up, and why it is affordable:
   as preserving GNN output — is a good sentence, but `cone` vs `convmatch`
   already carries the domain-specific vs domain-blind contrast that RQ needs.
 
-Gap this leaves: no cheap/naive floor, so "does *any* principled merging beat
-something trivial?" is unanswered. If a reviewer asks, the cheap answer is not
-a fourth precompute — it is `wl` at `depth=1`, which is the trivial
-structural-twin merge and is a parameter change on a method already being run.
+Gap this leaves: **no cheap/naive floor.** All three arms are sophisticated —
+`wl` is provably lossless, `cone` knows about reconvergence, `convmatch`
+optimises the GCN output — so if they land within noise of each other, "all
+three are good" cannot be told apart from "this task does not care how you
+merge". See the candidate below.
+
+### CANDIDATE 4th arm — random within-type merging (the naive floor)
+
+**Merge uniformly random nodes of the same type until the node count matches
+whichever arm it is being compared against.** If `cone` does not beat this at
+matched compression, the domain knowledge earned nothing — and that is the
+single question a reviewer is most likely to ask.
+
+Why this one rather than the alternatives considered:
+- **Genuinely trivial.** No theory, no parameters beyond the target ratio and a
+  seed, no reference implementation to check fidelity against. ~10 lines on top
+  of `apply_merge_map`, 0 s/graph.
+- **Non-degenerate at any compression**, which the other candidate was not.
+  `wl` at `depth=1` was considered and rejected: ABC already strashes every
+  graph in the corpus, and strash *is* the 1-hop structural-equivalence merge,
+  so `d=1` would find almost nothing among AND gates and behave like
+  `identity`. (That is CA1, flagged under "Structural hashing (strash)" below;
+  `d=1` is separately ruled out under S2, where it is noted as subsuming
+  k-SNAP.)
+- **Symmetry with the sparsification half.** `random_edge_dropout` is already
+  the naive control there, so a random *merge* is its exact counterpart and both
+  halves of the study get a floor built the same way.
+
+Restrict merges to one node type, matching every other method's C4 guarantee,
+so the comparison isolates *which* nodes get merged rather than confounding it
+with whether the PI/PO interface survives.
+
+Cost, stated honestly: it is still a fourth precompute + training arm — the
+coarsened graphs differ, so no existing cache is reusable — and it needs a
+`METHODS` entry appended at index 6 (`--array=192-223`) to be submittable. The
+clustering is free; the runs are not.
 
 ### Findings from building them (these belong in the writeup, not just here)
 
@@ -365,6 +397,10 @@ not. Cite the repositories alongside the papers.
       defaults in `config.SUMMARIZATION_PARAMS`, not calibrated. A
       matched-compression comparison (C8) needs them tuned against measured
       retention first.
+- [ ] **Build the random within-type merge arm** (see "CANDIDATE 4th arm" in
+      the scope-decision box). Agreed as a good baseline; not yet written.
+      ~10 lines plus a `METHODS` append at index 6, then its own precompute and
+      training run.
 - [ ] **DECIDE: can S5 be in C8 at all?** It now calibrates its own bin width
       per graph, but that cannot beat the descriptor ceiling (finding 8), and
       at a 0.5 target the ceiling binds on every AIG measured. Three ways out,
