@@ -30,11 +30,18 @@ set -euo pipefail
 export TEMP="$TMPDIR"
 export TMP="$TMPDIR"
 
-# One method per array task; keep --array in step with the list length.
-# Ordered as in the thesis: control, domain-specific, adapted, SOTA, classic
-# control, cheap control.  Each needs its own precompute run first.
-METHODS=("identity" "cone" "wl" "convmatch" "spectral" "lsh")
-METHOD=${METHODS[${SLURM_ARRAY_TASK_ID:-0}]}
+# One method per array task, from the list shared with
+# precompute_summarization.sh so the two can never disagree about which index
+# means which method.  Each method needs its own precompute run first.
+source "${BASE_DIR:-$HOME/data-gen-rand-abcd}/src/shell/summarization_methods.sh"
+
+TASK_ID=${SLURM_ARRAY_TASK_ID:-0}
+if (( TASK_ID >= ${#METHODS[@]} )); then
+    echo "ERROR: array index $TASK_ID has no method; valid range is 0-$(( ${#METHODS[@]} - 1 ))." >&2
+    echo "Methods: ${METHODS[*]}" >&2
+    exit 1
+fi
+METHOD=${METHODS[$TASK_ID]}
 ALGORITHM="Orchestrate"
 
 echo "=========================================="
@@ -90,7 +97,9 @@ UNTAR_JOBS="${UNTAR_JOBS:-16}"
 # UNSUMMARIZED graph into the empty staging directory.
 if ! compgen -G "$ARCHIVE_DIR/*_shard*.tar.zst" > /dev/null; then
     echo "ERROR: no summarized archives in $ARCHIVE_DIR" >&2
-    echo "Run: METHOD=$METHOD sbatch src/shell/precompute_summarization.sh" >&2
+    echo "Precompute '$METHOD' first — it is that method's array range, not" >&2
+    echo "an environment variable (METHOD= is not propagated by sbatch here):" >&2
+    echo "  sbatch --array=$(( TASK_ID * SHARDS_PER_METHOD ))-$(( (TASK_ID + 1) * SHARDS_PER_METHOD - 1 )) src/shell/precompute_summarization.sh" >&2
     exit 1
 fi
 

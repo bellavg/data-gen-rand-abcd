@@ -15,9 +15,30 @@ Supersedes the 2026-07-28 box below, which said S1/S3/S4/S5 were not started.
 **All five are now implemented, registered and unit-tested** in
 `src/data/summarization.py` (one module, one registry, one shared
 `apply_merge_map`); `config.SUMMARIZATION_PARAMS` holds the parameters a
-production run actually uses. `precompute_summarization.sh` takes
-`METHOD=identity|cone|wl|convmatch|spectral|lsh`; `train_summarization.sh` is
-now a 6-task array over that list. Suite green, ruff clean.
+production run actually uses. Suite green, ruff clean.
+
+**Submitting a method is an array range, not an environment variable.** A
+bare `METHOD=wl sbatch ...` is *not propagated to the job on Snellius* — it
+silently ran whatever the default was, which is why pairing a method with a
+submission never worked. Both job scripts now read the method out of the
+Slurm array index, using one shared ordered list
+(`src/shell/summarization_methods.sh`) so the two can never disagree about
+which index means which method. That list is **append-only**: ranges people
+submit by hand are positional, so reordering it would silently repoint a
+range at a different method.
+
+| method | precompute range (32 shards each) | train task |
+|---|---|---|
+| identity  | `--array=0-31`    | `--array=0` |
+| cone      | `--array=32-63`   | `--array=1` |
+| wl        | `--array=64-95`   | `--array=2` |
+| convmatch | `--array=96-127`  | `--array=3` |
+| spectral  | `--array=128-159` | `--array=4` |
+| lsh       | `--array=160-191` | `--array=5` |
+
+Each job prints its own method and range on the first lines of its log.
+Precompute defaults to `--array=0-31` (identity only), the cheapest
+end-to-end check of the precompute → pack → stage → train path.
 
 | id | name | registry key | role |
 |----|------|--------------|------|
@@ -208,9 +229,9 @@ not. Cite the repositories alongside the papers.
 - [ ] **S1's compression on the real corpus is unknown** and is the first thing
       to measure. If tier0/tier1 AIGs turn out to have few fanout-free cones,
       S1 is a weak compressor and the contribution has to lean on retention at
-      low compression rather than on the compression itself. Run `METHOD=cone`
-      precompute on one shard and read `_summary_stats_cone_shard000.json`
-      before committing to the full sweep.
+      low compression rather than on the compression itself. Run one shard of
+      cone (`sbatch --array=32 src/shell/precompute_summarization.sh`) and read
+      `_summary_stats_cone_shard000.json` before committing to the full sweep.
 - [ ] `_immediate_postdominators` materialises a networkx DiGraph: +0.35 GB and
       ~2.6 s on a 366k-node graph. With `--cpus-per-task=96` that is ~100 GB if
       many workers hit large graphs at once. Watch the first `cone` precompute
