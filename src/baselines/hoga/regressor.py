@@ -146,11 +146,24 @@ class HOGAGraphRegressor(HOGA):
             x = F.relu(x)
             x = F.dropout(x, p=self.dropout, training=self.training)
 
-        target = x[:, 0, :].unsqueeze(1).repeat(1, self.num_hops - 1, 1)
         split_tensor = torch.split(x, [1, self.num_hops - 1], dim=1)
         node_tensor = split_tensor[0]
         neighbor_tensor = split_tensor[1]
-        layer_atten = self.attn_layer(torch.cat((target, neighbor_tensor), dim=2))
+        # Algebraically identical to upstream's
+        #   attn_layer(cat(node.repeat(1, num_hops-1, 1), neighbor))
+        # but without building either intermediate. A Linear over a
+        # concatenation is the sum of its two halves applied separately:
+        # `[a || b] W^T = a W_a^T + b W_b^T`. Upstream materializes the repeat
+        # ([N, hops-1, hidden]) and the concatenation ([N, hops-1, 2*hidden])
+        # purely to express that; at 366k nodes the concatenation alone is
+        # ~1.9 GB under bf16, and it showed up at ~3.5% of trunk CPU time in
+        # profiling. The node half is [N, 1, 1] and broadcasts over hops.
+        w_node, w_neighbor = self.attn_layer.weight.split(
+            self.attn_layer.in_features // 2, dim=1
+        )
+        layer_atten = F.linear(node_tensor, w_node) + F.linear(
+            neighbor_tensor, w_neighbor, self.attn_layer.bias
+        )
         layer_atten = F.softmax(layer_atten, dim=1)
         neighbor_tensor = neighbor_tensor * layer_atten
         neighbor_tensor = torch.sum(neighbor_tensor, dim=1, keepdim=True)

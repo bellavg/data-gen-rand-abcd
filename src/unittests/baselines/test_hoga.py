@@ -463,6 +463,41 @@ class TestHOGAGraphRegressor(unittest.TestCase):
         self.assertEqual(out.shape, (2, 1))
         self.assertTrue(torch.all(out >= 0.0) and torch.all(out <= 1.0))
 
+    def test_attentive_readout_matches_naive_concat_formulation(self):
+        """The split-Linear readout must equal upstream's repeat+cat exactly.
+
+        regressor.forward replaces
+        `attn_layer(cat(node.repeat(...), neighbor))` with the sum of the two
+        halves applied separately, to avoid materializing either intermediate.
+        This recomputes the naive form and requires bit-comparable agreement.
+        """
+        torch.manual_seed(7)
+        hidden, slots, n = 16, 6, 12
+        model = HOGAGraphRegressor(
+            in_channels=4, hidden_channels=hidden, num_layers=1, dropout=0.0,
+            num_hops=slots, heads=2,
+        )
+        model.eval()
+
+        h = torch.randn(n, slots, hidden)
+        node_tensor, neighbor_tensor = torch.split(h, [1, slots - 1], dim=1)
+
+        with torch.no_grad():
+            target = h[:, 0, :].unsqueeze(1).repeat(1, slots - 1, 1)
+            naive = model.attn_layer(torch.cat((target, neighbor_tensor), dim=2))
+
+            w_node, w_neighbor = model.attn_layer.weight.split(
+                model.attn_layer.in_features // 2, dim=1
+            )
+            fast = torch.nn.functional.linear(
+                node_tensor, w_node
+            ) + torch.nn.functional.linear(
+                neighbor_tensor, w_neighbor, model.attn_layer.bias
+            )
+
+        self.assertEqual(naive.shape, fast.shape)
+        self.assertTrue(torch.allclose(naive, fast, atol=1e-6))
+
     def test_batch_independence(self):
         model = HOGAGraphRegressor(
             in_channels=4, hidden_channels=8, num_layers=1, dropout=0.0,

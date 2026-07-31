@@ -98,17 +98,21 @@ HOGA_DIRECTED="${HOGA_DIRECTED:-false}"
 # nodes (max 366k) and HOGA's trunk holds [N, 6, 256] activations -- ~3.0
 # KB/node under the bf16-mixed AMP this script gets on H100 -- so a fixed
 # batch_size=32 (~1.29M nodes) is ~3.9 GB for a single activation tensor and
-# OOMs once the attention layer and backward are counted. 150k nodes is
-# ~460 MB/activation for a typical batch.
+# OOMs once the attention layer and backward are counted. 300k nodes is
+# ~920 MB/activation for a typical batch.
 #
-# NOTE 150000 was calibrated at 11 slots (~5.5 KB/node) and has NOT been
-# retuned since HOGA_DIRECTED flipped to false and the attention stopped
-# materializing its score tensor. Both cut peak memory substantially -- the
-# run this was set for sat at ~91 GB allocated on the H100 -- so the budget is now
-# expected to be roughly 1.8x conservative. Read the real figure off
-# `nvidia-smi` (or wandb's GPU Memory Allocated) on the first epoch and raise
-# it; a bigger budget means fewer, better-utilised steps, which is the same
-# problem LIMIT_TRAIN_BATCHES below works around from the other end.
+# RAISED from 150000, which was calibrated at 11 slots and an attention that
+# materialized its [N, heads, 11, 11] score tensor. That run sat at ~91 GB
+# allocated. Dropping to 6 slots scales the trunk by 6/11, and the fused
+# attention removes the score tensors (~8.5 GB at the 366k-node worst case),
+# putting the estimated peak near ~45 GB -- roughly half the card.
+#
+# 300000 is deliberately below MAX_NUM_GATES (366040): the largest single
+# graph cannot be split, so it forms a singleton batch and sets the true peak
+# no matter what this is set to. Anything up to 366040 therefore costs no
+# extra peak memory, only steadier utilisation. VERIFY on the first epoch
+# (nvidia-smi, or wandb GPU Memory Allocated) -- if it lands near 45 GB there
+# is room to go to 366040 and shave another ~20% of the steps.
 #
 # Caveat: a graph bigger than the budget cannot be split (graph-level pooling
 # needs all its nodes in one pass), so it forms a singleton batch, and the
@@ -119,37 +123,40 @@ HOGA_DIRECTED="${HOGA_DIRECTED:-false}"
 # being a faithful HOGA baseline. Note a size cap must be applied to the
 # primary model too, or the comparison is no longer like-for-like.
 # See src/train_baseline.py's module docstring for the full rationale.
-HOGA_MAX_NODES_PER_BATCH="${HOGA_MAX_NODES_PER_BATCH:-150000}"
+HOGA_MAX_NODES_PER_BATCH="${HOGA_MAX_NODES_PER_BATCH:-300000}"
 
-# The node budget above yields only ~4 graphs per micro-batch (150k / ~40k avg
+# The node budget above yields ~7.5 graphs per micro-batch (300k / ~40k avg
 # nodes) -- one graph is one label, so node count buys no variance reduction.
 # The primary model averages ~75 graphs per step (its 3M budget / ~40k), so
 # without accumulation HOGA trains on far fewer loss terms per update than the
 # model it is compared against (gradient-noise std scales ~1/sqrt(N), so
-# roughly 4x noisier, not 20x). Accumulating 20 steps closes most of that gap
-# while leaving the published lr=0.0001 untouched.
+# noisier). Accumulating 10 steps gives ~75 graphs per update, matching the
+# primary model, while leaving the published lr=0.0001 untouched. Halved from
+# 20 when the node budget doubled -- these two must move together, or the
+# effective batch silently changes with the memory tuning.
 #
 # Two honest caveats on "parity". Lightning divides each micro-batch loss by
 # the CONSTANT accumulate_grad_batches, so micro-batches are weighted equally
 # regardless of how many graphs they hold; since node-budget packing puts
 # fewer graphs in batches holding big graphs, large graphs end up carrying
-# more per-graph gradient weight. And the effective sample size over a 20-step
-# window is the harmonic mean, ~60-65 graphs, not 20 x 4 = 80. So this
+# more per-graph gradient weight. And the effective sample size over a 10-step
+# window is the harmonic mean, somewhat below 10 x 7.5 = 75. So this
 # approximates the primary model's regime rather than matching it exactly.
 # TrainingStartupCallback prints the real avg_graphs_per_batch each epoch --
 # calibrate this value from an actual log rather than trusting the estimate.
-ACCUMULATE_GRAD_BATCHES="${ACCUMULATE_GRAD_BATCHES:-20}"
+ACCUMULATE_GRAD_BATCHES="${ACCUMULATE_GRAD_BATCHES:-10}"
 
-# Epoch subsampling. A full epoch under the node budget above is 149,485
-# micro-batches plus 32,211 val batches. MEASURED AT ~12h TOTAL PER EPOCH, but
-# on the PRE-CHANGE configuration (11 hop slots, and an attention that
+# Epoch subsampling. A full epoch was 149,485 micro-batches plus 32,211 val
+# batches at the OLD 150k budget; at 300k it is roughly half that (~75k /
+# ~16k). That epoch was MEASURED AT ~12h, but on the PRE-CHANGE
+# configuration (11 hop slots, and an attention that
 # materialized its [N, 11, 11, heads] score tensor); GPU utilisation was ~100%
 # with tensor-core activity at ~2%, i.e. latency/bandwidth-bound, not underfed.
 # The same commit that added these caps also flipped HOGA_DIRECTED to false
 # and switched to a fused attention kernel, which together cut a CPU-side
 # fwd+bwd microbenchmark of the trunk by ~16x. The GPU figure will be smaller,
-# but the 12h number is stale in the conservative direction and 25000 below is
-# a placeholder sized off it.
+# but the 12h number is stale in the conservative direction and 12500 below
+# is a placeholder sized off it.
 #
 # RECALIBRATE from the first "[train] Epoch summary" line (train_utils.py
 # prints avg_step_s and epoch_s) rather than trusting these values -- if the
@@ -162,7 +169,7 @@ ACCUMULATE_GRAD_BATCHES="${ACCUMULATE_GRAD_BATCHES:-20}"
 # train sampler reshuffles per epoch, so each epoch draws a different subset;
 # the val plan is shuffled once off a fixed seed in train_baseline.py (see
 # _hoga_loader) so a capped val pass is representative AND identical epoch to
-# epoch. With the defaults below 25000 % 20 == 0, so no partial accumulation
+# epoch. With the defaults above 12500 % 10 == 0, so no partial accumulation
 # window is left at the epoch boundary (Lightning does step on a trailing
 # partial window, giving one under-scaled update); re-check that if you
 # override either value.
@@ -174,8 +181,8 @@ ACCUMULATE_GRAD_BATCHES="${ACCUMULATE_GRAD_BATCHES:-20}"
 # so quote the FULL val/test split from a separate eval pass when reporting
 # results -- do not compare these two val_loss curves directly. Compare the
 # models on graphs seen, not on epoch index.
-LIMIT_TRAIN_BATCHES="${LIMIT_TRAIN_BATCHES:-25000}"
-LIMIT_VAL_BATCHES="${LIMIT_VAL_BATCHES:-2500}"
+LIMIT_TRAIN_BATCHES="${LIMIT_TRAIN_BATCHES:-12500}"
+LIMIT_VAL_BATCHES="${LIMIT_VAL_BATCHES:-1250}"
 
 NUM_WORKERS="${NUM_WORKERS:-16}"  # of the 18 cores auto-assigned per GPU on gpu_h100; 2 left for the main process + pin_memory thread
 PREFETCH_FACTOR="${PREFETCH_FACTOR:-4}"
