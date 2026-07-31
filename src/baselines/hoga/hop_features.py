@@ -106,7 +106,9 @@ def compute_hop_features(
             (matches data/data_utils.py's AIG edge convention: fanin -> node).
         num_nodes: Number of nodes in this graph.
         num_hops: Number of propagation steps per direction.
-        directed: If True (recommended for AIGs), propagate along both the
+        directed: If True (NOT the default -- see this module's docstring;
+            the paper and upstream's released run are both undirected),
+            propagate along both the
             forward (fanin -> node) and reverse (node -> fanin) directions
             separately, giving `1 + 2 * num_hops` stacked feature sets. If
             False, symmetrize the graph first and propagate once, giving

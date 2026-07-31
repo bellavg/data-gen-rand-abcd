@@ -3,7 +3,7 @@
 Source: https://github.com/cornell-zhang/HOGA/blob/master/model.py
 License: BSD 3-Clause (see LICENSE_UPSTREAM in this directory).
 
-ONE DELIBERATE MODIFICATION, in `MultiheadAttention.forward` (below). Upstream
+THREE DELIBERATE MODIFICATIONS, in `MultiheadAttention.forward` (below). Upstream
 reshapes the projections to `[b, l, head_dim, -1]` and computes
 `einsum('bldh,bndh->blnh')`, giving scores indexed `[batch, query, key, head]`
 -- then applies `Softmax(dim=-1)`, which normalizes over the **head** axis, not
@@ -27,14 +27,21 @@ attention either. At `heads == 1` the two reshapes coincide, which is what
 
 This project selected `attn_type="vanilla"` (labelled "recommended for general
 use cases"), which is how the defect reached a live path here. The forward pass
-below is rewritten to normalize over keys via `F.scaled_dot_product_attention`,
-which is both the mathematically intended operation and a fused kernel that
-(backend permitting) avoids materializing the `[nodes, heads, hops, hops]`
-score tensor. Keep that saving in proportion: the score matmuls are only ~1% of
-this module's arithmetic -- the four `Linear(256, 256)` projections dominate --
-so the win is in activation bytes and kernel count, not FLOPs. At 146k nodes
-and 11 slots the score/prob tensors were ~3.4 GB of the batch's activations,
-which mattered on a GPU sitting at 91 GB allocated; at 6 slots it is ~1.0 GB.
+below is rewritten to normalize over keys, written out as an explicit
+matmul -> scale -> softmax(dim=-1) -> matmul.
+
+`F.scaled_dot_product_attention` would express the same thing and fuse it, and
+was used here initially, but it is NOT safe at this model's shapes: the
+attention batch axis is the NODE count (one independent hops x hops problem
+per node), which reaches config.MAX_NUM_GATES = 366040 for a single large AIG.
+Both fused backends put that axis on a CUDA grid y/z dimension capped at 65535
+(FlashAttention-2 forward: `dim3 grid(num_m_block, params.b, params.h)`), and
+PyTorch's dispatcher does not check batch against the grid limit -- so a fused
+backend is selected and then fails at launch with `invalid configuration
+argument`. Keep the lost saving in proportion: the score matmuls are only ~1%
+of this module's arithmetic -- the four `Linear(256, 256)` projections dominate
+-- so fusing would have won activation bytes and kernel count, not FLOPs, and
+at 6 slots the score/prob tensors are ~1.0 GB against a ~45 GB peak.
 
 The head split also changes layout, from upstream's interleaved
 `[b, l, head_dim, heads]` to the standard contiguous `[b, heads, l, head_dim]`.
@@ -134,10 +141,11 @@ class MultiheadAttention(torch.nn.Module):
         # Linear projection for the output of the attention heads
         self.output_projection = Linear(input_dim, input_dim)
 
-        # No Softmax module here: scaled_dot_product_attention applies it
-        # internally, over the key axis. Dropout is kept for its `.p`, which is
-        # forwarded to the same fused call.
+        # Restored from upstream, but with dim=-1 now meaning the KEY axis
+        # under the [batch, heads, seq, seq] score layout (upstream's layout
+        # left heads last, which is the bug this class fixes).
         self.dropout = Dropout(dropout)
+        self.softmax = Softmax(dim=-1)
 
     def forward(self, query, key, value, mask=None):
         """Standard scaled dot-product attention over the hop (sequence) axis.
@@ -151,11 +159,9 @@ class MultiheadAttention(torch.nn.Module):
         Transformer") and per `MultiheadAttentionMix`, the class upstream's own
         run.sh actually instantiates (`attn_type="mix"`).
 
-        Returns `(output, None)`. SDPA does not hand back the `[b, heads, l, n]`
-        probability tensor, and depending on the backend it dispatches to may
-        never build one -- which is the memory win here. Both call sites
-        (`HOGA.forward` here and `HOGAGraphRegressor.forward`) already discard
-        the second value via `[0]`, so nothing regresses.
+        Returns `(output, attention_probs)`, matching upstream's contract. The
+        probabilities are `[batch, heads, seq, seq]` here rather than upstream's
+        `[b, l, n, h]`, since the head axis moved.
         """
         batch_size, seq_len, _ = query.size()
 
@@ -184,16 +190,36 @@ class MultiheadAttention(torch.nn.Module):
             # rather than inert.
             attn_mask = mask.unsqueeze(1) != 0
 
-        # Fused kernel: scales by 1/sqrt(head_dim), softmaxes over the key
-        # axis, applies dropout, and multiplies by V without ever writing the
-        # attention matrix to memory.
-        attention_output = F.scaled_dot_product_attention(
-            query,
-            key,
-            value,
-            attn_mask=attn_mask,
-            dropout_p=self.dropout.p if self.training else 0.0,
-        )
+        # Written out rather than delegated to F.scaled_dot_product_attention,
+        # deliberately. In this model the attention batch axis is the NODE
+        # count -- one independent (num_hop_slots x num_hop_slots) problem per
+        # node -- so `batch_size` here reaches config.MAX_NUM_GATES (366040)
+        # for a single large AIG. Both fused SDPA backends put that batch axis
+        # on a CUDA grid y/z dimension (FlashAttention-2 forward launches
+        # `dim3 grid(num_m_block, params.b, params.h)`; the mem-efficient
+        # kernel `dim3(m_blocks, num_heads, num_batches)`), and those axes are
+        # capped at 65535. PyTorch's SDPA dispatcher does not check batch
+        # against the grid limit, so a fused backend would be selected and then
+        # fail at launch with `invalid configuration argument` -- a sticky,
+        # unrecoverable CUDA error minutes into a 72h job.
+        #
+        # The fusion was never the point of this rewrite; the softmax axis was
+        # (see the class docstring). Writing the three steps explicitly keeps
+        # that fix exactly, costs ~15% of the trunk speedup, and matches paper
+        # Eq. 5 (`S = softmax(QK^T)`, then `SV`) more legibly besides. The
+        # scores are [nodes, heads, slots, slots] -- at 6 slots and 32 heads
+        # that is ~0.8 GB at the worst-case node count, against a ~45 GB peak.
+        attention_scores = torch.matmul(query, key.transpose(-2, -1))
+        attention_scores = attention_scores * (self.head_dim**-0.5)
+        if attn_mask is not None:
+            attention_scores = attention_scores.masked_fill(~attn_mask, float("-inf"))
+
+        # dim=-1 is the KEY axis under the [batch, heads, seq, seq] layout
+        # above. This is the corrected axis; upstream's einsum left heads last
+        # and normalized over those instead.
+        attention_probs = self.softmax(attention_scores)
+        attention_probs = self.dropout(attention_probs)
+        attention_output = torch.matmul(attention_probs, value)
 
         # Reshape and project the output of the attention heads
         attention_output = attention_output.transpose(1, 2).reshape(
@@ -201,7 +227,7 @@ class MultiheadAttention(torch.nn.Module):
         )
         attention_output = self.output_projection(attention_output)
 
-        return attention_output, None
+        return attention_output, attention_probs
 
 class HOGA(torch.nn.Module):
     def __init__(self, in_channels, hidden_channels, out_channels, num_layers,

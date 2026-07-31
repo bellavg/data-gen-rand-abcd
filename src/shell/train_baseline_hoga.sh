@@ -164,7 +164,7 @@ ACCUMULATE_GRAD_BATCHES="${ACCUMULATE_GRAD_BATCHES:-10}"
 # scheduling benefit.
 #
 # The point of capping at all is cadence: at ~12h/epoch the 72h walltime
-# allows ~6 epochs; --patience 4 needs 5 non-improving epochs to fire, so it
+# allows ~6 epochs; --patience 4 needs 4 non-improving epochs to fire, so it
 # would at best trigger right as the walltime expires. The
 # train sampler reshuffles per epoch, so each epoch draws a different subset;
 # the val plan is shuffled once off a fixed seed in train_baseline.py (see

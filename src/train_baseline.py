@@ -39,17 +39,22 @@ unit than a fixed graph count is, not further from it. There is no published
 QoR-task batch size to match regardless: HOGA never released QoR training
 code (see baselines/hoga/regressor.py).
 
-A node budget alone leaves each optimizer step averaging only ~4 graph-level
-losses (150k / ~40k), versus ~75 for the primary model, because one graph is
+A node budget alone leaves each optimizer step averaging only ~7.5 graph-level
+losses (300k / ~40k), versus ~75 for the primary model, because one graph is
 one label regardless of its node count -- so a 40k-node graph reduces gradient
 variance no more than a 400-node one does. HOGA therefore also accumulates
-(--accumulate_grad_batches, 20 in train_baseline_hoga.sh) so the two models
+(--accumulate_grad_batches, 10 in train_baseline_hoga.sh) so the two models
 are optimized under comparable gradient noise. This is approximate, not exact:
 Lightning divides each micro-batch loss by the constant accumulate_grad_batches
 rather than by its graph count, so micro-batches weigh equally however many
 graphs they hold -- and since node-budget packing puts fewer graphs in batches
 containing large graphs, large graphs draw more per-graph weight. Effective
-sample size over the window is the harmonic mean (~60-65), not 20 x 4.
+sample size over the window is the harmonic mean, somewhat below 10 x 7.5.
+
+The node budget and the accumulation count MUST be retuned together: their
+product is the effective batch, and the whole point of the pairing is to hold
+it near the primary model's ~75 graphs/update. Changing one alone silently
+changes the optimization regime this file exists to keep comparable.
 
 Everything the paper DOES publish for the QoR task is kept verbatim --
 hidden_dim=256, num_layers=1, lr=0.0001, num_hops=5. Note num_layers=1 is not
@@ -249,11 +254,14 @@ def _hoga_loader(ds, args: argparse.Namespace, *, shuffle: bool) -> DataLoader:
     # from epoch to epoch. (The train loader reshuffles per epoch on top of
     # this; the one-time shuffle costs it nothing.)
     #
-    # seed + 1, not seed: the sampler's own per-epoch shuffle uses
-    # Random(seed + epoch), so at epoch 0 a `seed` here would replay the exact
-    # same Fisher-Yates draw over a list of the same length, making that
-    # epoch's order the square of one permutation rather than two independent
-    # ones. Harmless either way, but the offset keeps the two independent.
+    # Offset from `seed`, because the sampler's own per-epoch shuffle uses
+    # Random(seed + epoch): an unoffset `seed` here would replay the identical
+    # Fisher-Yates draw at epoch 0, making that epoch's order the square of one
+    # permutation rather than two independent ones. Note +1 only RELOCATES that
+    # collision to epoch 1 rather than removing it -- a large offset would be
+    # needed to avoid it entirely. Left as is because the consequence is
+    # cosmetic: one epoch out of ~60 sees a composed-with-itself batch order,
+    # which is still a valid permutation of the same batches.
     random.Random(args.seed + 1).shuffle(plan)
 
     sampler = BalancedDynamicBatchSampler(
@@ -489,21 +497,23 @@ if __name__ == "__main__":
     parser.add_argument("--patience", type=int, default=config.PATIENCE)
     parser.add_argument("--gradient_clip_val", type=float, default=1.0)
     # Defaults to 1 (no accumulation) so SynthNet keeps its published
-    # batch_size=64 effective batch untouched. train_baseline_hoga.sh sets 20:
-    # HOGA's node budget yields only ~4 graphs per micro-batch (150k / ~40k
+    # batch_size=64 effective batch untouched. train_baseline_hoga.sh sets 10:
+    # HOGA's node budget yields ~7.5 graphs per micro-batch (300k / ~40k
     # nodes) against the primary model's ~75 (3M / ~40k), an optimization
     # confound rather than an architectural difference. Node count buys no
     # variance reduction -- one graph is one label is one loss term, whether
     # it has 400 nodes or 400k. Caveat: Lightning divides by the CONSTANT
     # accumulate_grad_batches, so micro-batches are weighted equally however
     # many graphs they hold, and the effective sample size is the harmonic
-    # mean (~60-65), not 20 x 4. Approximates the primary model's regime; does
-    # not match it exactly. See this module's docstring.
+    # mean, somewhat below 10 x 7.5. Approximates the primary model's regime;
+    # does not match it exactly. Must be retuned whenever
+    # --hoga_max_nodes_per_batch changes. See this module's docstring.
     parser.add_argument("--accumulate_grad_batches", type=int, default=1)
-    # Epoch subsampling. HOGA's node budget makes a full epoch 149,485
-    # micro-batches (~11h on an H100) plus 32,211 val batches (~1h), so a
-    # single epoch outruns any useful checkpoint/early-stop cadence and the
-    # 72h walltime allows ~6 of them. Both default to 1.0 (full epoch, no
+    # Epoch subsampling. A full epoch is ~75k micro-batches plus ~16k val
+    # batches at the 300k node budget train_baseline_hoga.sh sets (it was
+    # 149,485 / 32,211 at the old 150k budget, measured at ~12h/epoch before
+    # the hop-slot and attention fixes), so a single epoch outruns any useful
+    # checkpoint/early-stop cadence. Both default to 1.0 (full epoch, no
     # behaviour change) and are set explicitly in train_baseline_hoga.sh.
     #
     # The train sampler reshuffles batch ORDER per epoch (seed + epoch, see
@@ -593,13 +603,14 @@ if __name__ == "__main__":
     parser.add_argument(
         "--hoga_max_nodes_per_batch",
         type=int,
-        default=150_000,
+        default=300_000,
         help=(
             "Total-node budget per HOGA batch, replacing --batch_size for the "
             "hoga baseline (0 disables, restoring fixed graph-count batching). "
             "At ~3.0 KB/node per [N, 6, hidden] activation under bf16-mixed "
-            "(undirected hop features, the default), 150k nodes is ~460 MB per "
-            "activation tensor. NOTE this bounds "
+            "(undirected hop features, the default), 300k nodes is ~920 MB per "
+            "activation tensor. Retune --accumulate_grad_batches alongside "
+            "this: their product is the effective batch. NOTE this bounds "
             "typical batches only: a graph larger than the budget still forms "
             "a singleton batch (it cannot be split -- graph-level pooling "
             "needs all its nodes at once), so the largest graph sets an "

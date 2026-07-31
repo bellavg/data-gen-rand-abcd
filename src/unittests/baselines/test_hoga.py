@@ -22,7 +22,7 @@ from baselines.hoga.regressor import HOGAGraphRegressor
 
 
 class TestMultiheadAttention(unittest.TestCase):
-    """Covers the one deliberate change to the vendored model.py.
+    """Covers the deliberate changes to the vendored model.py.
 
     Upstream's `MultiheadAttention` softmaxed over the head axis rather than
     the key axis (see model.py's module docstring). These tests pin the fixed
@@ -155,20 +155,22 @@ class TestMultiheadAttention(unittest.TestCase):
 
         self.assertTrue(torch.allclose(out_fixed, out_mix, atol=1e-5))
 
-    def test_returns_none_for_probs(self):
-        """Both call sites discard the second return value via `[0]`.
+    def test_returns_probs_normalized_over_keys(self):
+        """Upstream's `(output, attention_probs)` contract is preserved.
 
-        Deliberately does NOT assert that no score tensor is materialized:
-        whether SDPA builds one depends on the backend it dispatches to for a
-        given shape and device, which a unit test should not pin.
+        The probabilities are `[batch, heads, seq, seq]` here rather than
+        upstream's `[b, l, n, h]`, since the head axis moved -- and they sum to
+        1 over the LAST axis, which under this layout is keys. That sum is the
+        whole fix: under upstream's layout dim=-1 was the head axis.
         """
         attn = MultiheadAttention(8, num_heads=2)
         attn.eval()
         x = torch.randn(2, 3, 8)
         with torch.no_grad():
             out, probs = attn(x, x, x)
-        self.assertIsNone(probs)
         self.assertEqual(out.shape, (2, 3, 8))
+        self.assertEqual(probs.shape, (2, 2, 3, 3))
+        self.assertTrue(torch.allclose(probs.sum(dim=-1), torch.ones(2, 2, 3), atol=1e-6))
 
     def test_mask_zeros_are_excluded_from_attention(self):
         torch.manual_seed(3)
@@ -469,34 +471,82 @@ class TestHOGAGraphRegressor(unittest.TestCase):
         regressor.forward replaces
         `attn_layer(cat(node.repeat(...), neighbor))` with the sum of the two
         halves applied separately, to avoid materializing either intermediate.
-        This recomputes the naive form and requires bit-comparable agreement.
+
+        Deliberately compared END-TO-END against `model(batch)` rather than by
+        recomputing the split-Linear expression here: a test that re-derives
+        `weight.split(...)` the same way the implementation does would pass
+        even if the two halves were swapped, since it would swap them too. The
+        reference below reproduces upstream's whole readout independently, so
+        the assertion is sensitive to operand order. `test_..._detects_swapped_
+        weight_halves` proves that sensitivity directly.
         """
+        model, batch = self._readout_fixture()
+        with torch.no_grad():
+            self.assertTrue(
+                torch.allclose(model(batch), self._naive_readout_forward(model, batch), atol=1e-6)
+            )
+
+    def test_attentive_readout_equivalence_is_sensitive_to_operand_order(self):
+        """Guard the guard: the comparison above must discriminate operand order.
+
+        Builds the reference with the two operands concatenated the WRONG way
+        round and requires that it now disagrees with `model(batch)`. Only the
+        reference is perturbed -- swapping the stored weight instead would be
+        read identically by both paths, so they would still agree and prove
+        nothing. Without this, a future edit inverting w_node/w_neighbor in
+        regressor.forward would attend on the wrong operand, train happily and
+        converge to a different model, with every test still green.
+        """
+        model, batch = self._readout_fixture()
+        with torch.no_grad():
+            self.assertFalse(
+                torch.allclose(
+                    model(batch),
+                    self._naive_readout_forward(model, batch, swap_operands=True),
+                    atol=1e-6,
+                ),
+                "the equivalence test cannot detect operand order",
+            )
+
+    @staticmethod
+    def _readout_fixture():
         torch.manual_seed(7)
-        hidden, slots, n = 16, 6, 12
         model = HOGAGraphRegressor(
-            in_channels=4, hidden_channels=hidden, num_layers=1, dropout=0.0,
-            num_hops=slots, heads=2,
+            in_channels=4, hidden_channels=16, num_layers=1, dropout=0.0,
+            num_hops=6, heads=2,
         )
         model.eval()
+        return model, _make_batch_with_hoga_x(num_hops=5, directed=False, seeds=[1, 2])
 
-        h = torch.randn(n, slots, hidden)
-        node_tensor, neighbor_tensor = torch.split(h, [1, slots - 1], dim=1)
+    @staticmethod
+    def _naive_readout_forward(model, batch, swap_operands: bool = False):
+        """Upstream's readout verbatim; every other stage identical to forward.
 
-        with torch.no_grad():
-            target = h[:, 0, :].unsqueeze(1).repeat(1, slots - 1, 1)
-            naive = model.attn_layer(torch.cat((target, neighbor_tensor), dim=2))
+        `swap_operands` concatenates neighbour-then-node instead of
+        node-then-neighbour, used only to prove the comparison is sensitive to
+        which weight half pairs with which operand.
+        """
+        from torch_geometric.nn import global_mean_pool
 
-            w_node, w_neighbor = model.attn_layer.weight.split(
-                model.attn_layer.in_features // 2, dim=1
-            )
-            fast = torch.nn.functional.linear(
-                node_tensor, w_node
-            ) + torch.nn.functional.linear(
-                neighbor_tensor, w_neighbor, model.attn_layer.bias
-            )
+        f = torch.nn.functional
+        x = model.lins[0](batch.hoga_x)
+        for i, tran in enumerate(model.trans):
+            x = model.lns[i](model.gates[i](x) * (tran(x, x, x)[0]))
+            x = f.relu(x)
+            x = f.dropout(x, p=model.dropout, training=model.training)
 
-        self.assertEqual(naive.shape, fast.shape)
-        self.assertTrue(torch.allclose(naive, fast, atol=1e-6))
+        target = x[:, 0, :].unsqueeze(1).repeat(1, model.num_hops - 1, 1)
+        node_tensor, neighbor_tensor = torch.split(x, [1, model.num_hops - 1], dim=1)
+        halves = (neighbor_tensor, target) if swap_operands else (target, neighbor_tensor)
+        layer_atten = model.attn_layer(torch.cat(halves, dim=2))
+        layer_atten = f.softmax(layer_atten, dim=1)
+        neighbor_tensor = torch.sum(neighbor_tensor * layer_atten, dim=1, keepdim=True)
+
+        x = (node_tensor + neighbor_tensor).squeeze(1)
+        x = model.linear[0](x)
+        x = model.bn(f.relu(x))
+        x = f.dropout(x, p=model.dropout, training=model.training)
+        return torch.sigmoid(model.regression_head(global_mean_pool(x, batch.batch)))
 
     def test_batch_independence(self):
         model = HOGAGraphRegressor(
@@ -594,7 +644,7 @@ class TestHOGABatchPlanOrdering(unittest.TestCase):
         from data.sampler import BalancedDynamicBatchSampler
 
         # Fixture sized like production: every graph fits the budget, which
-        # packs ~3-4 per batch (the real run averages 150k/40k ~= 4). A budget
+        # packs ~3-4 per batch (the real run averages 300k/40k ~= 7.5). A budget
         # small enough to make most graphs singletons would show a bias in the
         # opposite direction and would not represent the actual failure.
         sizes = list(range(1, 2001))
