@@ -62,6 +62,11 @@ TIER1_CACHE_DIR="/scratch-shared/$USER/aig_train_run/shared_tier1_cache"
 # Same HP-tuning exclusion file as the primary model's train.sh, so the
 # baseline's train/val/test rows never overlap with graphs used for HP
 # tuning, and both models are compared on identical held-out splits.
+#
+# Note this job trains on UNREDUCED graphs (train_baseline.py hardcodes
+# sparsification=None -- sparsification is this project's contribution, not
+# part of either baseline paper). Compare its results against
+# train_no_sparsification.sh, not against the train.sh sparsification array.
 HP_TUNING_SPLITS="/scratch-shared/$USER/big_optuna_run/shared_dataset_cache/algo_Orchestrate_ml_algo_Deepsyn_ml_algo_Syn4_ml_algo_C2RS_ml_50000_splits.json"
 [ ! -f "$HP_TUNING_SPLITS" ] && echo "WARNING: HP Tuning split file not found at $HP_TUNING_SPLITS"
 

@@ -306,6 +306,20 @@ def main(args: argparse.Namespace) -> None:
         # hit the already-built shared cache; the resulting unused pos_enc
         # attribute is harmless (the baseline models never read it).
         positional_encoding=config.PE_TYPE if config.PE_TYPE != "none" else None,
+        # Baselines train on UNREDUCED graphs, deliberately and always -- there
+        # is no --sparsification flag on this entrypoint. Both baseline papers
+        # define their model over the full netlist, and sparsification is this
+        # project's own contribution, not part of either baseline.
+        #
+        # The consequence for reporting: the like-for-like counterpart is
+        # train.py run via shell/train_no_sparsification.sh (--sparsification
+        # none), NOT the shell/train.sh array, whose four tasks each apply one
+        # of and_gate_only / random_edge_dropout / spanning_forest / pagerank.
+        # Comparing a baseline against a sparsified primary run confounds
+        # architecture with sparsification and cannot support a claim about
+        # either. It also means every node-count figure quoted in this file and
+        # in train_baseline_hoga.sh (~40k mean, 366k max, ~32.4e9 per epoch) is
+        # the unreduced count, which is the regime these jobs actually run in.
         sparsification=None,
         partition=None,
         batch_size=args.batch_size,

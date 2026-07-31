@@ -23,6 +23,27 @@ number of hops K as 5 for experiments on OpenABC-D". So:
     `DEFAULT_DROPOUT` falls back to this project's own primary-model value
     (config.DROPOUT), since no better source exists for either.
 
+    On `heads` specifically, the gap is wider than "unspecified": the paper's
+    formulation is SINGLE-head. Equations (4) and (5) carry no head index --
+    `Q = HW_Q`, `K = HW_K` with `W_Q, W_K` in R^{d x d}, and
+    `S = softmax(QK^T)`. Multi-head exists only in the released code, where
+    neither class implements it correctly (see model.py's docstring: the
+    vanilla class interleaves heads across channels, and Mix splits the
+    flattened seq x feature axis). So heads=32 applies a Gamora-task value to
+    a mechanism the paper never describes. Defensible for a baseline -- it is
+    the authors' own published number for their other task, and this file's
+    corrected attention is genuine multi-head -- but do not describe it as
+    "the paper's setting".
+
+CITING TABLE 2: use the MAPE values without the "%" sign. The repo's
+`openabcd_logs/README.md` (published after the paper) records that MAPE was
+computed with sklearn, which omits the x100 factor the authors expected, so
+"the '%' symbol should be disregarded for all results in Table 2" -- HOGA-5's
+headline 5.0% is a MAPE of 5.0, not 5 percent, and likewise GCN's 26.0%. The
+same note reports a later fix improving HOGA-5 from 5.0 to 2.9. The relative
+claims (e.g. the 46.76% error reduction over GCN) are unaffected, since both
+models were scored identically.
+
 HOGA's trunk (hop-wise linear projection -> gated self-attention layers ->
 node+neighbor fusion) is reused unmodified by subclassing `HOGA` itself and
 overriding only `forward()`; the 3 Gamora classification heads
