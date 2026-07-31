@@ -131,6 +131,48 @@ Two consequences worth keeping:
    has to come from a precompute run on tier0/tier1. This is also the honest
    reading of the fix in finding 1: it removed compression that was largely
    spurious.
+8. **S5's reachable compression is a narrow band bounded at BOTH ends, and
+   neither bound is `bin_width`.** Found while porting the reference's
+   bin-width calibration (see below). `lsh_coarsening` now takes a
+   `reduction_ratio` like S3/S4, and searching for the bin width that delivers
+   it exposed two hard limits:
+   - **Ceiling on retention** = the number of *distinct descriptors*. Nodes
+     with identical (type, level, fanin/fanout polarity, neighbour type
+     census) project to identical scores, so no bin width ever separates them.
+     Measured **0.2246 at n=5k, 0.3644 at n=50k, 0.3738 at n=200k** on
+     synthetic AIGs. So S5 **cannot compress less than ~63%** on such a graph
+     whatever is asked. This is itself a reportable dataset statistic: only
+     ~37% of nodes in an AIG have a structurally distinct local descriptor,
+     which is direct evidence for the redundancy the whole summarization
+     argument rests on.
+   - **Floor on retention** = the number of distinct projection *sign*
+     patterns. As `bin_width` grows every score collapses to its sign, so the
+     partition saturates at **≤ 2^num_projections per node type — independent
+     of graph size**. At the default 8 projections that is a few hundred
+     clusters however large the graph, which is exactly the ~0.001 retention
+     measured earlier at 366k nodes: not a defect of the descriptor, a
+     saturation of the hash.
+   Consequence for RQ3, and it is worse than it first looked: at
+   `SUMMARIZATION_REDUCTION_RATIO = 0.5` the ceiling binds on every AIG
+   measured, so **the calibration never runs at the production setting** — S5
+   returns its finest partition, delivering ~0.63 reduction where 0.50 was
+   asked, and **0.998 on a structurally regular 200k-node netlist**. Since real
+   optimized AIGs are regular (repeated cells), the corpus is likely to sit at
+   the bad end of that range.
+   **`num_projections` does NOT fix this** — an earlier version of this note
+   said it did, and that was wrong. The ceiling is the distinct-*descriptor*
+   count; projections only decide how finely those descriptors are bucketed, so
+   raising it lifts the compression floor and leaves the ceiling untouched
+   (measured identical at 8, 64 and 512 projections: 18222 clusters every
+   time). Only a **more discriminating descriptor** raises the ceiling. That
+   makes S5-vs-S3/S4 at matched compression an open design question, not a
+   tuning exercise — see the decision recorded under "Still open".
+9. **The calibration is free.** The retention ceiling is known in closed form
+   (one `unique` over the scores), so it is checked before searching instead of
+   being discovered by a descending walk. Calibrated cost equals fixed-bin_width
+   cost to two decimals — 0.37 s vs 0.37 s at 200k nodes — so S5 keeps its
+   cheapest-tier claim. Only a target *inside* the band pays for the bisection
+   (1.7–4.4 s at 200k), and that search lands within 0.1–3.6% of the request.
 
 Measured per-graph cost and peak RSS, single core, after the fixes below, on a
 **370,801-node / 723,600-edge** graph — the largest size in the corpus:
@@ -182,9 +224,31 @@ not. Cite the repositories alongside the papers.
   formula in the reference's own variable names and assert equality. These
   replaced two behavioural tests that had been fixture-hunted, and they catch
   mutations those could not.
-- **S5 (UGC/AH-UGC)** — no public code found for either paper; the
-  implementation follows the papers' description only. Worth one sentence of
-  disclosure in the writeup.
+- **S5 — `github.com/katariaMohit/UGC-Universal-Graph-Coarsening`** (Kataria's
+  own release; AH-UGC is at `katariaMohit/AdaptiveUGC`). **This corrects an
+  earlier note here that said no public code existed** — it does, and reading it
+  changes what we should do about the `bin_width` defect (see below). Four
+  divergences, all ours, three deliberate:
+  1. **Offsets.** The reference draws `bias ~ U(-r, r)` — *scaled by* the bin
+     width, as in Datar et al. We draw `U(0, 1)`, independent of it. **Keep and
+     document:** it is precisely what makes doubling `bin_width` a strict
+     refinement (finding 5 above); with the reference's bias, doubling redraws
+     the offset and the monotonicity is lost. Ours is not textbook p-stable LSH
+     and the writeup should say so rather than claim a port.
+  2. **Projectors.** The reference *defaults* to `uniform_(0,1)` projectors
+     (`normal` is an option it does not use by default). Euclidean p-stable LSH
+     needs Gaussians, and AH-UGC's own §3.1 says "sampled from a p-stable
+     distribution". We use `torch.randn`. **Ours matches the theory the papers
+     state; the reference default does not.** Worth a footnote.
+  3. **Number of projectors.** Reference default is **500** (`UGC.py`) / 1000
+     (`BinWidthFinder.py`); ours is **8**. Not a fidelity question, but a large
+     untuned gap — fewer projectors means coarser buckets and more merging, so
+     this interacts with the retention numbers below and should be swept with
+     `bin_width` rather than left at 8 by default.
+  4. **Descriptor.** Reference hashes `data.x` under the α-blend; ours is the AIG
+     descriptor. Already recorded, still the right call for a circuit.
+  Hash function matches: reference offers dot / L1 / L2 and defaults to the dot
+  product, which is what we compute.
 - **S1** is ours, so there is nothing to compare it against.
 
 ### Defects an adversarial review caught (all fixed; recorded so they stay fixed)
@@ -217,9 +281,27 @@ not. Cite the repositories alongside the papers.
   Retention measured 0.83 at 88 nodes, 0.032 at 55k, **0.001 at 366k**. So S5
   cannot enter a matched-compression comparison (C8) without per-graph
   calibration of `bin_width` — currently it would simply be the most
-  aggressive method on every large graph, for no principled reason. Decide
-  before running RQ3: either calibrate per graph, or report S5 only on its own
-  compression/retention curve.
+  aggressive method on every large graph, for no principled reason.
+  **FIXED — calibration ported, `reduction_ratio` is now S5's knob.** The
+  authors do not treat `bin_width` as a parameter either:
+  `BinWidthFinder.Find_Binwidth` runs a **multiplicative walk per dataset**
+  (`bw *= 0.5` when the achieved ratio overshoots, `bw *= 1.5` when it
+  undershoots, until `|ratio - target| < precision`), and `UGC_bin_widths.py`
+  ships the resulting values as a hardcoded per-(dataset, hash function)
+  dictionary. AH-UGC exists to remove exactly that step. So the scale
+  dependence is the published method's, and the published workaround is a
+  search. `lsh_coarsening` now takes `reduction_ratio`, searching **per graph**
+  rather than per dataset, and `config.SUMMARIZATION_PARAMS["lsh"]` uses it.
+  Two deliberate improvements over the reference's walk, both licensed by the
+  offset convention (finding 5) making cluster count monotone in bin width:
+  bracket-then-bisect on a log scale instead of `×0.5 / ×1.5`, which actually
+  converges; and the retention ceiling computed in closed form up front rather
+  than discovered by descending, which is what keeps the calibrated path the
+  same cost as the fixed one. Fixed-`bin_width` mode is retained as the
+  as-published ablation. **Caveat that survives the fix:** calibration cannot
+  widen the reachable band, so a 0.5 target still lands at ~0.37 on a large
+  graph (finding 8) — report achieved against requested, and consider raising
+  `num_projections` before C8.
 
 ### Still open after this pass
 
@@ -239,11 +321,32 @@ not. Cite the repositories alongside the papers.
       from the original plan still has not been run. CA1 says d=1 should find
       nearly nothing; that is a reportable dataset statistic either way.
 - [ ] FRAIG leakage negative control: still not started.
-- [ ] S1's `level_band`, S3/S4's `reduction_ratio` and S5's `bin_width` are set
-      to plausible defaults in `config.SUMMARIZATION_PARAMS`, not calibrated.
-      A matched-compression comparison (C8) needs them tuned against measured
-      retention first — and for S5 that calibration is not optional (see the
-      scale-dependence defect above).
+- [ ] S1's `level_band` and S3/S4's `reduction_ratio` are set to plausible
+      defaults in `config.SUMMARIZATION_PARAMS`, not calibrated. A
+      matched-compression comparison (C8) needs them tuned against measured
+      retention first.
+- [ ] **DECIDE: can S5 be in C8 at all?** It now calibrates its own bin width
+      per graph, but that cannot beat the descriptor ceiling (finding 8), and
+      at a 0.5 target the ceiling binds on every AIG measured. Three ways out,
+      pick one before running RQ3:
+      1. **Report S5 on its own compression/retention curve** and exclude it
+         from the matched-compression table. Cheapest, and defensible — S5 is
+         the naive control, and "hashing cannot be dialled to a target
+         compression on AIGs" is itself a finding about the method.
+      2. **Enrich the descriptor** until the ceiling clears 0.5. Raises S5's
+         ceiling but makes it less of a *naive* control, and the enrichment
+         would be ours, not UGC's.
+      3. **Implement AH-UGC's consistent-hashing merge** instead of bucketing:
+         sort nodes by aggregated hash score, merge neighbours pairwise until
+         the target is hit. Reaches **any** ratio exactly by construction —
+         which is precisely the limitation AH-UGC was written to remove — at
+         the cost of implementing a second S5 variant.
+      Option 1 costs nothing and is the honest default; 3 is the strongest
+      result if there is time.
+- [ ] `num_projections` is 8 against the reference's 500–1000. It sets the
+      *compression* end of S5's band (not the retention ceiling — see finding
+      8), so it only matters if S5 turns out to over-compress on the real
+      corpus. Sweep it against measured retention if so.
 - [ ] **S1's compression on the real corpus is unknown** and is the first thing
       to measure. If tier0/tier1 AIGs turn out to have few fanout-free cones,
       S1 is a weak compressor and the contribution has to lean on retention at
@@ -386,8 +489,43 @@ quota — a *single* method would eat 98% of what's left. Corrected design:
   gap section — narrows our claim, strengthens our motivation.
 - **ConvMatch / A-ConvMatch** (Dickens et al., WWW'24) — coarsening by **convolution
   matching**; ~95% performance at **1%** graph size. Our SOTA bar (S3).
-- **UGC / AH-UGC** (2024/2025) — **LSH-based, linear-time** universal coarsening. Our
-  cheap/scalable tier (S5).
+- **Kataria, Kumar, Jayadeva (2024)** — *UGC: Universal Graph Coarsening.* NeurIPS
+  2024, vol. 37, pp. 63057–63081. **LSH-based, linear-time** universal coarsening;
+  hashes an augmented representation `(1-α)·X ⊕ α·A` (node features concatenated
+  with adjacency rows, blended by a heterophily factor α) and merges nodes sharing
+  a bucket. Our cheap/scalable tier (S5). Note we do **not** use their descriptor —
+  ours is the AIG adaptation below — so cite this as the method S5 follows, not as
+  a port. Code: `github.com/katariaMohit/UGC-Universal-Graph-Coarsening`.
+- **Kataria, Bhilwade, Kumar, Jayadeva (2025)** — *AH-UGC: Adaptive and
+  Heterogeneous-Universal Graph Coarsening.* arXiv 2505.15842. Successor to UGC.
+  Two things bear directly on S5: (i) §3.1 states plainly that UGC's **bin width is
+  hard to set for a target ratio**, and replaces it with consistent hashing — i.e.
+  the authors independently name the scale-dependence defect recorded above, so it
+  is a limitation of the method, not of our adaptation; (ii) their **type-isolated
+  coarsening** restricts merges to nodes of the same type, which is exactly what
+  our exact node-type bucket key does (C4). Code: `github.com/katariaMohit/AdaptiveUGC`.
+- **Datar, Immorlica, Indyk, Mirrokni (2004)** — *Locality-Sensitive Hashing Scheme
+  Based on p-Stable Distributions.* SoCG, pp. 253–262. The hash family S5 actually
+  implements, `h(v) = floor((a·v + b)/r)` with Gaussian `a`. Cite alongside UGC:
+  UGC is the idea of coarsening by hashing, this is the hash. (Indyk & Motwani,
+  STOC 1998, for LSH as a concept, if a general reference is wanted.)
+- **LSH elsewhere in the GNN literature** (use in related work to show S5's
+  family is not a one-paper curiosity, and to position it against
+  *sparsification*, which is the other half of this study):
+  - **Kosman, Oren, Di Castro (2021)** — *LSP: Acceleration and Regularization
+    of GNNs via Locality Sensitive Pruning of Graphs.* arXiv 2111.05694. LSH
+    applied to **edge pruning**, not node merging — i.e. the same hash idea on
+    the *sparsification* side of our comparison. The closest thing to a direct
+    precedent for "hash-based reduction for GNNs", and the natural citation when
+    contrasting our two families.
+  - **Wu, Li, Luo, Nejdl (2021)** — *Hashing-Accelerated GNNs for Link
+    Prediction (HashGNN).* WWW 2021. MinHash **inside** message passing rather
+    than as a preprocessing step. Contrast class: hashing the model vs hashing
+    the input.
+  - **Ding, Rabbani, An, Wang, Huang (2022)** — *Sketch-GNN: Scalable GNNs with
+    Sublinear Training Complexity.* NeurIPS 2022. **Learnable** LSH with hash
+    tables updated online. Cite as the "the hash could be learned" limitation of
+    our fixed-projection S5, which is a fair reviewer question.
 - **DeepGate3 / DeepGate4** (2024/2025) — AIG scaling via *architecture* (pooling
   transformer; GAT sparse transformer, sub-linear memory, −84% inference time vs DG3).
   Contrast class: they scale the **model**, we reduce the **input**.
@@ -510,10 +648,25 @@ Bollen exact compression + FLUID k-bisimulation, unified by the count-cap `c`.
 ### S5 — Hash-Based Universal Coarsening (UGC / AH-UGC, LSH)  *(general, cheap/naive tier)*
 - **Locality-sensitive hashing** over node feature+connectivity → merge colliding nodes.
   **Linear time**, no eigendecomposition, no iterative refinement.
+- Refs: UGC (Kataria et al., NeurIPS 2024) for the method, Datar et al. (SoCG 2004)
+  for the p-stable hash family it uses, AH-UGC (arXiv 2505.15842) for the successor.
+  See Key papers. Maturity is split and worth one sentence: the **hash** is 20+ years
+  old and standard; **hashing as graph coarsening** is 2024, two papers by one group,
+  evaluated on node classification over citation/heterophily benchmarks — not on
+  graph-level regression over DAGs. Related LSH-for-GNN work exists but attacks
+  different targets (LSP prunes edges, HashGNN and Sketch-GNN hash inside the model;
+  see Key papers). That immaturity is the point: S5 is the naive control, not a
+  contender.
 - Role: the cheap scalable tier — the one method certain to satisfy **R3** at 3.9M
   graphs, and a naive control for "does *any* principled merging beat hashing?"
-- Light AIG adaptation: hash on (type, level, fan-in/out polarity profile).
+- Light AIG adaptation: hash on (type, level, fan-in/out polarity profile). This
+  **replaces** UGC's `(1-α)·X ⊕ α·A` descriptor rather than extending it.
 - Risk: feature-similarity ≠ logical equivalence; expect weak retention, strong speed.
+- **Not an exact method, and must not enter the exact-GCN track.** The exactness
+  proof needs the partition to be *equitable* (stable under colour refinement);
+  nothing constrains two nodes in an LSH bucket to have matching neighbour colour
+  multisets, so the guarantee simply does not apply. S5 belongs on the production
+  model with S1/S3/S4. Only S2 at `c=∞` feeds the exact track.
 
 ### Negative control (not a 6th method) — FRAIG / functional reduction
 Run as a **leakage probe**, not a summarizer. SAT-sweeping merges *functionally*
@@ -824,16 +977,19 @@ optimization. Report GPU-hours per epoch alongside VRAM.
 - [ ] M5: define the leakage boundary for rewrite-potential features.
 - [ ] Confirm GCN+ edge encoder can ingest edge multiplicities (C6) or decide to
       re-simplify.
-- [ ] Cite the two reference **implementations** as well as the papers:
-      `github.com/amazon-science/convolution-matching` (S3, authors' own) and
-      `github.com/loukasa/graph-coarsening` (S4). Both were used to verify
-      fidelity; see the comparison section at the top. No public code exists
-      for UGC/AH-UGC (S5) — disclose that S5 follows the paper description
-      only.
+- [ ] Cite the reference **implementations** as well as the papers:
+      `github.com/amazon-science/convolution-matching` (S3, authors' own),
+      `github.com/loukasa/graph-coarsening` (S4), and
+      `github.com/katariaMohit/UGC-Universal-Graph-Coarsening` +
+      `katariaMohit/AdaptiveUGC` (S5, authors' own). All three were used to
+      verify fidelity; see the comparison section at the top. **Every method
+      except S1 now has a reference implementation checked against it** — the
+      earlier "no public code for S5" disclosure is withdrawn.
 - [ ] Citations to add: Bollen 2023, Generale 2022, Hashemi 2024, Chen-Saad-Zhang,
       Shabani 2023, Loukas 2019, Tian 2008 (SNAP/k-SNAP), Huang 2021 (SCAL),
       Buffelli 2022, Dickens 2023 (CONVMATCH), Dorfler-Bullo 2012 + Sugiyama-Sato
-      2023 (Kron).
+      2023 (Kron). **S5's three are done** — Kataria 2024 (UGC), Kataria 2025
+      (AH-UGC), Datar 2004 (p-stable LSH); see Key papers.
 
 ---
 

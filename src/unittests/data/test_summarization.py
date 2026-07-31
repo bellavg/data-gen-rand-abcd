@@ -30,6 +30,7 @@ from torch_geometric.data import Batch, Data
 from data.sparsification import _register_pyg_safe_globals
 from data.summarization import (
     SUMMARIZATION_REGISTRY,
+    _hash_descriptor,
     apply_merge_map,
     color_refinement,
     cone_coarsening,
@@ -961,6 +962,8 @@ class TestLshCoarsening:
         [
             ({"bin_width": 0.0}, "bin_width must be"),
             ({"num_projections": 0}, "num_projections must be"),
+            ({"reduction_ratio": 1.0}, "reduction_ratio must be"),
+            ({"reduction_ratio": -0.1}, "reduction_ratio must be"),
         ],
     )
     def test_invalid_params_raise(
@@ -968,6 +971,122 @@ class TestLshCoarsening:
     ) -> None:
         with pytest.raises(ValueError, match=match):
             lsh_coarsening(aig_graph, **kwargs)
+
+    # These three ratios are the ones that actually reach the bisection on this
+    # fixture (4, 7 and 11 bin-width evaluations respectively).  Ratios outside
+    # them are served by the closed-form ceiling or by the saturation floor
+    # without searching, so parametrizing on those would test nothing —
+    # the two tests below cover those paths deliberately instead.
+    @pytest.mark.parametrize("ratio", [0.55, 0.6, 0.65])
+    def test_reduction_ratio_hits_reachable_targets(
+        self, wide_aig: Data, ratio: float
+    ) -> None:
+        num_nodes = wide_aig.x.size(0)
+        target = round(num_nodes * (1.0 - ratio))
+        achieved = len(lsh_coarsening(wide_aig, reduction_ratio=ratio).unique())
+        # Tighter than the search's own 5% stopping tolerance, so a loosened
+        # tolerance or a deleted refinement loop fails here rather than passing
+        # on slack.
+        assert abs(achieved - target) <= 0.06 * target, (
+            f"asked for {target} clusters, got {achieved}"
+        )
+
+    def test_bisection_beats_the_bracket_walk_alone(self, wide_aig: Data) -> None:
+        # The bracketing walk moves in powers of two, so it alone can only ever
+        # land on a doubling boundary.  This pins that the refinement loop runs
+        # and improves on it: without bisection the 0.65 target lands >=4
+        # clusters out, with it the error is 1.
+        num_nodes = wide_aig.x.size(0)
+        target = round(num_nodes * (1.0 - 0.65))
+        achieved = len(lsh_coarsening(wide_aig, reduction_ratio=0.65).unique())
+        assert abs(achieved - target) <= 1
+
+        bracket_only = min(
+            (
+                len(lsh_coarsening(wide_aig, bin_width=2.0**e).unique())
+                for e in range(-6, 14)
+            ),
+            key=lambda count: abs(count - target),
+        )
+        assert abs(bracket_only - target) > abs(achieved - target), (
+            "a power-of-two bin width already hits the target; the fixture "
+            "cannot show that refinement does anything"
+        )
+
+    def test_ratio_cannot_beat_the_descriptor_ceiling(self, wide_aig: Data) -> None:
+        # Nodes with identical descriptors project to identical scores, so no
+        # bin width separates them.  Asking for less compression than that
+        # ceiling allows must return the finest partition rather than loop or
+        # silently return something coarser.
+        ceiling = len(torch.unique(_hash_descriptor(wide_aig), dim=0))
+        assert ceiling < wide_aig.x.size(0), "fixture cannot exercise the ceiling"
+        assert len(lsh_coarsening(wide_aig, reduction_ratio=0.0).unique()) == ceiling
+
+        # And it is genuinely a ceiling: nothing reaches more clusters.
+        for ratio in (0.0, 0.01, 0.05):
+            achieved = len(lsh_coarsening(wide_aig, reduction_ratio=ratio).unique())
+            assert achieved <= ceiling
+
+    def test_ratio_saturates_at_the_projection_floor(self, wide_aig: Data) -> None:
+        # At large bin widths every score collapses to the sign of its
+        # projection, so the partition saturates at the distinct sign patterns
+        # and further compression is unavailable at any bin width.  The search
+        # must return that floor instead of spinning through its iteration cap
+        # or reporting success.
+        num_nodes = wide_aig.x.size(0)
+        floors = {
+            len(lsh_coarsening(wide_aig, reduction_ratio=r).unique())
+            for r in (0.9, 0.95, 0.99)
+        }
+        assert len(floors) == 1, f"expected one saturated count, got {floors}"
+
+        floor = floors.pop()
+        assert floor > round(num_nodes * (1.0 - 0.9)), (
+            "fixture does not actually saturate; the test proves nothing"
+        )
+        # Bounded by distinct sign patterns per node type, not by graph size.
+        num_types = len(wide_aig.x.argmax(dim=1).unique())
+        assert floor <= 2**8 * num_types
+
+    def test_calibration_still_never_merges_node_types(self, wide_aig: Data) -> None:
+        # C4 has to survive the search, not just the fixed-width path.
+        cluster = lsh_coarsening(wide_aig, reduction_ratio=0.7)
+        types = wide_aig.x.argmax(dim=1)
+        for group in cluster.unique():
+            assert len(types[cluster == group].unique()) == 1
+
+    @pytest.mark.parametrize(("bin_width", "expected"), [(1.5, 44), (8.0, 30)])
+    def test_fixed_bin_width_path_is_unchanged(
+        self, wide_aig: Data, bin_width: float, expected: int
+    ) -> None:
+        # The fixed-bin_width mode is the as-published ablation, and adding
+        # calibration must not perturb it.  Golden counts rather than a
+        # self-comparison: `reduction_ratio=None` is the signature default, so
+        # asserting the two calls agree cannot fail under any implementation.
+        # These pin the offset convention and the standardisation together —
+        # changing either moves them.
+        assert len(lsh_coarsening(wide_aig, bin_width=bin_width).unique()) == expected
+
+    def test_calibration_is_deterministic(self, wide_aig: Data) -> None:
+        assert torch.equal(
+            lsh_coarsening(wide_aig, reduction_ratio=0.6),
+            lsh_coarsening(wide_aig, reduction_ratio=0.6),
+        )
+
+    def test_calibrated_output_survives_the_merge_map(self, wide_aig: Data) -> None:
+        # The registry-wide contract tests call each method with no kwargs, so
+        # they exercise the fixed-width path only — leaving the path production
+        # actually runs unverified.  apply_merge_map rejects gaps rather than
+        # relabelling, so contiguity is a hard requirement, not a nicety.
+        import config
+
+        cluster = lsh_coarsening(wide_aig, **config.SUMMARIZATION_PARAMS["lsh"])
+        num_clusters = int(cluster.max()) + 1
+        assert torch.equal(cluster.unique(), torch.arange(num_clusters))
+
+        merged = apply_merge_map(wide_aig, cluster, num_clusters)
+        assert merged.num_nodes == num_clusters
+        assert int(merged.x.sum()) == wide_aig.x.size(0)
 
 
 # =====================================================================

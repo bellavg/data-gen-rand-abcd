@@ -89,8 +89,22 @@ SUMMARIZATION_PARAMS: dict[str, dict] = {
         "num_eigenvectors": 4,
         "max_spectral_nodes": 5_000,
     },
-    # S5 — LSH / UGC hashing, the cheap linear-time tier.
-    "lsh": {"bin_width": 2.0, "num_projections": 8, "seed": SUMMARIZATION_SEED},
+    # S5 — LSH / UGC hashing, the cheap linear-time tier.  Driven by
+    # reduction_ratio rather than bin_width because the reference implementation
+    # calibrates the bin width per dataset too rather than fixing it, and a fixed
+    # bin width makes compression depend on graph size instead of on the knob.
+    #
+    # This does NOT put S5 on the same footing as S3/S4 for a matched-compression
+    # comparison (C8).  S5's retention is capped by the number of distinct node
+    # descriptors, which on an AIG is usually well below 0.5 — so at this setting
+    # the calibration is inoperative and S5 returns its finest partition, more
+    # compressed than requested.  The achieved ratio must be read off the
+    # precompute stats, never assumed to be this value.  See lsh_coarsening.
+    "lsh": {
+        "reduction_ratio": SUMMARIZATION_REDUCTION_RATIO,
+        "num_projections": 8,
+        "seed": SUMMARIZATION_SEED,
+    },
 }
 
 # Dynamic partitioning heuristic: k = max(MIN_K, min(MAX_K, num_nodes // TARGET_NODES_PER_PART))
