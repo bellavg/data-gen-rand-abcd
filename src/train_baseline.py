@@ -178,6 +178,7 @@ def _build_model(args: argparse.Namespace) -> nn.Module:
             fc_hidden_dim=args.synthnet_fc_hidden_dim,
             drop_ratio=args.synthnet_drop_ratio,
             task_out_dim=config.TASK_OUT_DIM,
+            upstream_edge_direction=args.synthnet_upstream_edge_direction,
         )
     if args.baseline == "hoga":
         return HOGAGraphRegressor(
@@ -570,6 +571,15 @@ if __name__ == "__main__":
         "--synthnet_fc_hidden_dim", type=int, default=DEFAULT_FC_HIDDEN_DIM
     )
     parser.add_argument("--synthnet_drop_ratio", type=float, default=DEFAULT_DROP_RATIO)
+    # True (default) reverses this project's fanin -> node edges to upstream's
+    # node -> fanin convention before the GCN, so messages flow toward the
+    # primary inputs exactly as in OpenABC-D. False keeps this project's native
+    # direction. See baselines/openabc_synthnet/regressor.py's docstring.
+    parser.add_argument(
+        "--synthnet_upstream_edge_direction",
+        type=lambda x: str(x).lower() in ("true", "1", "yes"),
+        default=True,
+    )
 
     # HOGA hyperparameters. hidden_dim/num_layers/num_hops/lr are published
     # (Deng et al. DAC'24, Sec 3.3/4.1); heads carries over from the Gamora

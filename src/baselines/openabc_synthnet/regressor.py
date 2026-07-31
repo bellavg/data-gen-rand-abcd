@@ -5,7 +5,21 @@ near-verbatim from models/qor/SynthNetV3/model.py) to this project's task:
 single-fixed-algorithm optimizability regression from a raw AIG, no synthesis
 recipe conditioning.
 
-Two deviations from the upstream architecture, both intentional:
+Edge direction matches upstream by default (`upstream_edge_direction=True`).
+OpenABC-D builds each edge as node -> fanin (`andAIG2Graphml.py:56` for AND
+nodes, :71 for the PO buffer) and hands `list(G.edges)` straight to
+`edge_index` with no reversal, so under PyG's default
+`flow="source_to_target"` messages travel toward the primary inputs and every
+node ends up summarising its *fanout* cone. This project's own graphs are
+built the other way round (fanin -> node, `data/data_utils.py:150`), so
+`encode()` reverses `edge_index` before the GCN sees it. Pass
+`upstream_edge_direction=False` to run the trunk on this project's native
+direction instead, where each node summarises its *fanin* cone -- arguably the
+better inductive bias for optimizability, since whether a node can be
+collapsed depends on the logic feeding it, not on what it drives. Both are
+single-direction; neither adds reverse edges. Run both and report the pair.
+
+Two further deviations from the upstream architecture, both intentional:
   - `SynthFlowEncoder` and the 4 parallel `SynthConv` branches are dropped.
     Those exist upstream to condition on a variable-length synthesis recipe
     (`synVec`) across OpenABC-D's many recipes; this project trains on a
@@ -31,6 +45,8 @@ unaffected.
 """
 
 from __future__ import annotations
+
+from types import SimpleNamespace
 
 import torch
 import torch.nn as nn
@@ -97,6 +113,7 @@ class SynthNetGraphRegressor(nn.Module):
         fc_hidden_dim: int = DEFAULT_FC_HIDDEN_DIM,
         drop_ratio: float = DEFAULT_DROP_RATIO,
         task_out_dim: int = 1,
+        upstream_edge_direction: bool = True,
     ) -> None:
         super().__init__()
         if num_fc_layer < 2:
@@ -106,6 +123,7 @@ class SynthNetGraphRegressor(nn.Module):
         del num_node_types  # NodeEncoder reads the class count from model.allowable_features.
 
         self.drop_ratio = drop_ratio
+        self.upstream_edge_direction = upstream_edge_direction
 
         node_encoder = NodeEncoder(emb_dim=node_emb_dim)
         # node_input_dim = node_emb_dim (categorical embedding) + 1 (num_inverted_predecessors scalar).
@@ -118,6 +136,38 @@ class SynthNetGraphRegressor(nn.Module):
             self.fcs.append(nn.Linear(fc_hidden_dim, fc_hidden_dim))
         self.fcs.append(nn.Linear(fc_hidden_dim, task_out_dim))
 
+    def encode(self, batch) -> torch.Tensor:
+        """Graph-level embedding, `(num_graphs, 2 * gnn_hidden_dim)`.
+
+        Split out of `forward` so the trunk can be inspected on its own -- see
+        `diagnose_synthnet_baseline.py`, which measures how much this varies
+        between graphs.
+        """
+        num_nodes = batch.x.size(0)
+        edge_index = batch.edge_index
+
+        # Passed as a shim rather than assigned onto `batch`: the edge
+        # direction below deliberately differs from the caller's, and
+        # rewriting `batch.edge_index` in place would corrupt a Batch the
+        # caller may still use.
+        gnn_input = SimpleNamespace(
+            batch=batch.batch,
+            node_type=derive_node_type_index(batch.x),
+            # Always counted on this project's own fanin -> node edges, never
+            # on the (possibly reversed) edge_index handed to the GCN below:
+            # upstream derives num_inverted_predecessors from the netlist at
+            # graph-build time (andAIG2Graphml.py:47-57), not from edge_index,
+            # so it means "inverted fanins of this node" under either
+            # convention.
+            num_inverted_predecessors=derive_num_inverted_predecessors(
+                edge_index, batch.edge_attr, num_nodes
+            ),
+            edge_index=edge_index.flip(0)
+            if self.upstream_edge_direction
+            else edge_index,
+        )
+        return self.gnn(gnn_input)
+
     def forward(self, batch) -> torch.Tensor:
         """Args:
             batch: a `torch_geometric.data.Batch` with `.x`, `.edge_index`,
@@ -126,16 +176,15 @@ class SynthNetGraphRegressor(nn.Module):
         Returns:
             Tensor of shape `(num_graphs, task_out_dim)` in `[0, 1]`.
         """
-        num_nodes = batch.x.size(0)
-        # SynthNet's GNN.forward reads these two attributes directly off the batch.
-        batch.node_type = derive_node_type_index(batch.x)
-        batch.num_inverted_predecessors = derive_num_inverted_predecessors(
-            batch.edge_index, batch.edge_attr, num_nodes
-        )
+        return self.head(self.encode(batch))
 
-        h = self.gnn(batch)
+    def head(self, h: torch.Tensor) -> torch.Tensor:
+        """Regression head over a graph embedding from `encode`.
+
+        Separate from `forward` so callers that already hold an embedding do
+        not have to re-run the trunk to get a prediction.
+        """
         for fc in self.fcs[:-1]:
             h = F.relu(fc(h))
             h = F.dropout(h, p=self.drop_ratio, training=self.training)
-        h = self.fcs[-1](h)
-        return torch.sigmoid(h)
+        return torch.sigmoid(self.fcs[-1](h))
