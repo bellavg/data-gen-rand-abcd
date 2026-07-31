@@ -5,7 +5,7 @@
 #SBATCH --cpus-per-task=96
 #SBATCH --partition=genoa
 #SBATCH --constraint=scratch-node
-#SBATCH --array=0-31
+#SBATCH --array=32-63
 #SBATCH --output=logs/precompute_summarization_%A_%a.out
 
 # ---------------------------------------------------------------------------
@@ -36,11 +36,15 @@
 #   sbatch --array=128-159 ...   # spectral   (S4, classic control)
 #   sbatch --array=160-191 ...   # lsh        (S5, cheap control)
 # The job prints its own method and range on the first lines of the log, so
-# check there rather than recounting.  The default --array above runs only
-# identity, because that is the cheapest end-to-end check.
+# check there rather than recounting.  A bare `sbatch` runs the default
+# --array above, which is cone — the first method whose compression on the
+# real corpus is unknown.  identity is a test fixture, not an experiment: its
+# output equals the raw graph on everything the encoder reads, so a run on it
+# only reproduces the unsummarized baseline while writing ~700k full-size
+# graphs.  Use it to tell a broken pipeline from a broken method, nothing else.
 #
 # SMOKE TEST — one shard of one method (~1/32 of the corpus):
-#   sbatch --array=0 src/shell/precompute_summarization.sh
+#   sbatch --array=32 src/shell/precompute_summarization.sh    # cone, shard 0
 #
 # Parameters for each method come from config.SUMMARIZATION_PARAMS, not from
 # this script.  The method list lives in summarization_methods.sh, shared
@@ -53,9 +57,12 @@
 # archive is in place, so a shard interrupted mid-packing is retried rather
 # than left with a missing tier.
 #
-# CHAIN WITH TRAINING (one method's range, then train on it)
+# CHAIN WITH TRAINING (one method's range, then train on that same method).
+# The two scripts index the shared list differently — precompute packs method
+# and shard into one index, train uses one task per method — so the ranges are
+# NOT the same number.  For cone (method slot 1):
 #   PID=$(sbatch --parsable --array=32-63 src/shell/precompute_summarization.sh)
-#   sbatch --dependency=afterok:$PID src/shell/train_summarization.sh
+#   sbatch --dependency=afterok:$PID --array=1 src/shell/train_summarization.sh
 # ---------------------------------------------------------------------------
 
 set -euo pipefail
