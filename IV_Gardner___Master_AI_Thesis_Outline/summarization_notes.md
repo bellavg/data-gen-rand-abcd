@@ -67,6 +67,46 @@ Two consequences worth keeping:
 | S4 | Spectral / local variation | `spectral` | domain-blind control |
 | S5 | LSH / UGC hashing | `lsh` | cheap naive control |
 
+### SCOPE DECISION (2026-07-31) — run three, cite five
+
+Only **`wl`, `cone`, `convmatch`** get precompute + training runs. `spectral`
+and `lsh` move to Related Work; they stay implemented, tested and in the
+registry, so this is a decision about which array ranges get submitted, not a
+code change. **Do not edit `METHODS` in `summarization_methods.sh`** — it is
+append-only and positional, and reordering it silently repoints any queued
+range at a different method.
+
+| method | role | axis | precompute | train |
+|---|---|---|---|---|
+| `wl` | the proof | exact · GNN-aware · domain-adapted | `--array=64-95` | `--array=2` |
+| `cone` | the contribution | approximate · domain-specific | `--array=32-63` | `--array=1` |
+| `convmatch` | the SOTA bar | approximate · GNN-aware · domain-blind | `--array=96-127` | `--array=3` |
+
+Why `convmatch` over `spectral` as the general bar: the claim is that
+domain-specific coarsening beats general coarsening **for GNN training**, so
+the bar has to be the GNN-aware SOTA. Spectral coarsening optimises the graph's
+spectrum, which nobody argues is the right objective for graph-level
+regression — beating it is a weaker result than beating ConvMatch. It is also
+the *more* expensive of the two (11.4 s/graph vs 9.1 s), so this is not a cost
+tradeoff.
+
+What is given up, and why it is affordable:
+- **`lsh` was never independent of `wl`.** At the calibrated production setting
+  it lands exactly on the distinct-descriptor partition — measured perfectly
+  homogeneous clusters (mean intra-cluster spread 0.0000 against 12.0 total
+  variance) at k = the distinct-descriptor count. That is "merge nodes with
+  identical 1-hop descriptors", i.e. a hand-built one-round WL. It was a weaker
+  `wl`, not a separate family, so the naive-control role it was carrying was
+  always partly illusory.
+- **`spectral`'s argument** — that preserving graph structure is not the same
+  as preserving GNN output — is a good sentence, but `cone` vs `convmatch`
+  already carries the domain-specific vs domain-blind contrast that RQ needs.
+
+Gap this leaves: no cheap/naive floor, so "does *any* principled merging beat
+something trivial?" is unanswered. If a reviewer asks, the cheap answer is not
+a fourth precompute — it is `wl` at `depth=1`, which is the trivial
+structural-twin merge and is a parameter change on a method already being run.
+
 ### Findings from building them (these belong in the writeup, not just here)
 
 1. **Forward dominators are degenerate on AIGs — use post-dominators, and
