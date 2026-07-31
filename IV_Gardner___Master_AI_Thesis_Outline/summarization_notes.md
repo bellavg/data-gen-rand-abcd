@@ -102,6 +102,52 @@ five clear R3 with room. Memory is the thing to watch, not time: 96 workers
 × ~1 GB on the largest graphs is ~100 GB, so shard by graph size if the first
 `cone` run pressures the node.
 
+### Checked against the authors' own code (do this before citing fidelity)
+
+Both general-purpose methods have official reference implementations, and
+comparing against them found divergences that reading the papers alone had
+not. Cite the repositories alongside the papers.
+
+- **S3 — `github.com/amazon-science/convolution-matching`** (Dickens et al.,
+  the authors' own release; also vendors Loukas' coarsening code, so both
+  references live in one place). Three divergences found:
+  1. My influence term (`sum over i in N({u})` of Theorem 1) wrongly included
+     a term for the node itself. It ranges over **neighbours only**.
+  2. It also has to have the merge partner's contribution removed —
+     `influence[u] - w_uv / sqrt(d_v)` — which I was not doing.
+  3. **Deliberate divergence, keep and document:** the reference keeps an
+     internal edge as a **self-loop** on the super-node (degree unchanged,
+     `self_loop_weight += 2w`), whereas `apply_merge_map` **drops** internal
+     edges. So our degree is `d_u + d_v - 2w` and our self-loop weight is
+     always zero. Ours is the one that matches the graph the model will
+     actually be trained on; say so rather than claiming a straight port.
+  After fixing 1 and 2 the cost matches the reference to **9.5e-7**.
+  One further difference is scale, not correctness: the reference finds
+  candidates by exact KD-tree kNN on a PCA-reduced, standardised SGC
+  embedding; we use random-projection sorting, because exact kNN per graph
+  over 700k graphs is not affordable.
+- **S4 — `github.com/loukasa/graph-coarsening`** (`contract_variation_edges`).
+  My local-variation cost had **the degree dependence inverted**: the
+  reference's `||B' L_e B||_F` works out to `(d_i + d_j) * ||a_i - a_j||^2`,
+  and I was *dividing* by `(d_i + d_j)` and multiplying by the edge weight
+  (which in fact cancels out of `L_e` entirely). That is the kind of error
+  that still produces a plausible-looking coarsening, which is exactly why it
+  survived the unit tests. Two more fidelity fixes came with it: the
+  preserved subspace is `U_k diag(lambda_k^-1/2)` (eigenvalue-weighted, flat
+  directions weighted 1), not raw eigenvectors; and heavy-edge proximity is
+  `w_ij / max(heaviest edge at either endpoint)`, not `w_ij / sqrt(d_i d_j)`.
+  The corrected cost is exactly **2x** the reference (the constant in his
+  norm), so the ranking — all that drives the matching — is identical,
+  rank correlation **1.0000**.
+- Both are now pinned by **differential tests** that transcribe the reference
+  formula in the reference's own variable names and assert equality. These
+  replaced two behavioural tests that had been fixture-hunted, and they catch
+  mutations those could not.
+- **S5 (UGC/AH-UGC)** — no public code found for either paper; the
+  implementation follows the papers' description only. Worth one sentence of
+  disclosure in the writeup.
+- **S1** is ours, so there is nothing to compare it against.
+
 ### Defects an adversarial review caught (all fixed; recorded so they stay fixed)
 
 - **S3 was not computing the paper's operator.** `_convmatch_costs` carried an
@@ -739,6 +785,12 @@ optimization. Report GPU-hours per epoch alongside VRAM.
 - [ ] M5: define the leakage boundary for rewrite-potential features.
 - [ ] Confirm GCN+ edge encoder can ingest edge multiplicities (C6) or decide to
       re-simplify.
+- [ ] Cite the two reference **implementations** as well as the papers:
+      `github.com/amazon-science/convolution-matching` (S3, authors' own) and
+      `github.com/loukasa/graph-coarsening` (S4). Both were used to verify
+      fidelity; see the comparison section at the top. No public code exists
+      for UGC/AH-UGC (S5) — disclose that S5 follows the paper description
+      only.
 - [ ] Citations to add: Bollen 2023, Generale 2022, Hashemi 2024, Chen-Saad-Zhang,
       Shabani 2023, Loukas 2019, Tian 2008 (SNAP/k-SNAP), Huang 2021 (SCAL),
       Buffelli 2022, Dickens 2023 (CONVMATCH), Dorfler-Bullo 2012 + Sugiyama-Sato

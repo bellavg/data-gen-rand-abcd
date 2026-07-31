@@ -1011,6 +1011,57 @@ class TestSpectralCoarsening:
         cluster = spectral_coarsening(aig_graph, reduction_ratio=0.9)
         assert torch.equal(cluster, torch.arange(N_NODES))
 
+    def test_cost_ranks_edges_as_the_reference_implementation_does(
+        self, aig_graph: Data
+    ) -> None:
+        """Differential test against Loukas' ``contract_variation_edges``.
+
+        That reference scores a candidate edge as
+        ``||B^T L_e B||_F`` with ``B = (I - 11^T/2) A[edge]`` and
+        ``L_e = [[2d_i - w, -w], [-w, 2d_j - w]]``.  Written out, the edge
+        weight cancels and what is left is the movement of the preserved
+        subspace scaled by the volume of the pair — so the degrees multiply
+        rather than divide, which is exactly the kind of inversion that still
+        produces a plausible-looking coarsening.  Costs are compared as a
+        ranking, since only the ordering drives the matching.
+        """
+        import numpy as np
+
+        from data.summarization import (
+            _laplacian_subspace,
+            _spectral_edge_costs,
+            _undirected_simple,
+        )
+
+        num_nodes = N_NODES
+        pairs, weight = _undirected_simple(aig_graph.edge_index, num_nodes)
+        subspace = _laplacian_subspace(pairs, weight, num_nodes, 4)
+        assert subspace is not None, "eigensolver did not run on this graph"
+
+        degree = torch.zeros(num_nodes).index_add_(
+            0, pairs.reshape(-1), weight.repeat(2)
+        )
+        projector = np.eye(2) - np.ones((2, 2)) / 2
+        basis = subspace.double().numpy()
+        reference = []
+        for edge in range(pairs.size(1)):
+            i, j = int(pairs[0, edge]), int(pairs[1, edge])
+            edge_weight = float(weight[edge])
+            diagonal = 2 * np.array([float(degree[i]), float(degree[j])]) - edge_weight
+            local = np.array(
+                [[diagonal[0], -edge_weight], [-edge_weight, diagonal[1]]]
+            )
+            projected = projector @ basis[[i, j], :]
+            reference.append(np.linalg.norm(projected.T @ local @ projected))
+
+        actual = _spectral_edge_costs(pairs, weight, subspace, num_nodes)
+
+        ratio = actual / torch.tensor(reference, dtype=actual.dtype)
+        assert torch.allclose(ratio, ratio[0].expand_as(ratio), atol=1e-4), (
+            "cost is not a constant multiple of the reference, so it ranks "
+            f"edges differently: ratios {ratio.tolist()}"
+        )
+
     @pytest.mark.parametrize(
         ("kwargs", "match"),
         [
@@ -1141,40 +1192,95 @@ class TestConvMatchCoarsening:
         )
         assert shared.tolist() == [1.0, 0.0, 1.0]
 
-    def test_the_shared_edge_correction_changes_which_pair_merges(self) -> None:
-        # Merging two adjacent nodes turns the edge between them into an
-        # internal one, so it leaves both degrees and drops out of both
-        # aggregates.  Nearly every candidate is a graph edge, so ignoring
-        # that does not perturb the cost, it reorders it.  Here dropping the
-        # aggregate half of the correction picks PIs 1 and 2 instead.
-        data = _build(
-            types=[1, 1, 1, 2, 2, 2, 2, 3],
-            edges=[
-                (1, 3), (2, 3), (3, 4), (1, 4), (3, 5), (2, 5), (4, 6), (1, 6),
-                (4, 7),
-            ],
+    def test_cost_matches_the_reference_implementation(self, aig_graph: Data) -> None:
+        """Differential test against amazon-science/convolution-matching.
+
+        The body below is the cost of that repository's
+        ``ApproximateConvolutionMatchingCoarsener._compute_edge_costs_internal``
+        transcribed in its own terms — ``current_sum``, ``influence``,
+        ``scaled_feat``, ``self_loop_weight``.  Each piece of the published
+        bound is easy to get subtly wrong in a way no behavioural assertion
+        notices (the influence sum ranges over neighbours only, and the edge
+        between an adjacent candidate pair has to leave the degree, the
+        neighbour sums *and* the influences), so the whole formula is pinned
+        at once.
+
+        One deliberate difference is parameterised here rather than hidden:
+        the reference keeps an internal edge as a self-loop on the super-node,
+        while ``apply_merge_map`` drops it, so this graph's degrees lose it.
+        """
+        from data.summarization import (
+            _candidate_edge_weight,
+            _convmatch_costs,
+            _node_levels,
+            _projection_neighbour_pairs,
+            _sgc_embedding,
+            _undirected_simple,
         )
-        cluster = convmatch_coarsening(data, reduction_ratio=1.0 / 8.0)
 
-        assert len(cluster.unique()) == 7
-        assert cluster[3] == cluster[5]
-        assert cluster[1] != cluster[2]
-
-    def test_the_shared_edge_leaves_the_merged_degree(self) -> None:
-        # The degree half of the same correction, isolated: with it, gates 4
-        # and 6 merge; without it, the pair 3 and 4 looks cheaper.
-        data = _build(
-            types=[1, 1, 1, 2, 2, 2, 2, 3],
-            edges=[
-                (1, 3), (2, 3), (2, 4), (3, 4), (1, 5), (3, 5), (3, 6), (4, 6),
-                (5, 7),
-            ],
+        num_nodes = N_NODES
+        pairs, weight = _undirected_simple(aig_graph.edge_index, num_nodes)
+        features = torch.cat(
+            [aig_graph.x, torch.log1p(_node_levels(aig_graph).float().reshape(-1, 1))],
+            dim=1,
         )
-        cluster = convmatch_coarsening(data, reduction_ratio=1.0 / 8.0)
+        size = torch.ones(num_nodes)
+        candidates = torch.cat(
+            [
+                pairs,
+                _projection_neighbour_pairs(
+                    _sgc_embedding(pairs, weight, features, num_nodes, 4), 2, 42
+                ),
+            ],
+            dim=1,
+        )
 
-        assert len(cluster.unique()) == 7
-        assert cluster[4] == cluster[6]
-        assert cluster[3] != cluster[4]
+        degree = torch.zeros(num_nodes).index_add_(
+            0, pairs.reshape(-1), weight.repeat(2)
+        )
+        inv_sqrt_degree = 1.0 / torch.sqrt(degree + size)
+        scaled_feat = features * inv_sqrt_degree.unsqueeze(1)
+        current_sum = torch.zeros_like(scaled_feat)
+        current_sum.index_add_(0, pairs[0], weight.unsqueeze(1) * scaled_feat[pairs[1]])
+        current_sum.index_add_(0, pairs[1], weight.unsqueeze(1) * scaled_feat[pairs[0]])
+        influence = torch.zeros(num_nodes)
+        influence.index_add_(0, pairs[0], weight * inv_sqrt_degree[pairs[1]])
+        influence.index_add_(0, pairs[1], weight * inv_sqrt_degree[pairs[0]])
+        h = (current_sum + size.unsqueeze(1) * scaled_feat) * inv_sqrt_degree.unsqueeze(1)
+
+        src, dst = candidates[0], candidates[1]
+        edge_weight = _candidate_edge_weight(candidates, pairs, weight, num_nodes)
+        sn_size = size[src] + size[dst]
+        sn_feat = (
+            size[src].unsqueeze(1) * features[src]
+            + size[dst].unsqueeze(1) * features[dst]
+        ) / sn_size.unsqueeze(1)
+        # self_loop_weight stays zero: apply_merge_map drops internal edges.
+        sn_degree = degree[src] + degree[dst] - 2.0 * edge_weight
+        sqrt_degrees = torch.sqrt(sn_degree + sn_size)
+        sn_scaled = sn_feat / sqrt_degrees.unsqueeze(1)
+        sn_sums = (
+            current_sum[src]
+            + current_sum[dst]
+            - edge_weight.unsqueeze(1) * scaled_feat[src]
+            - edge_weight.unsqueeze(1) * scaled_feat[dst]
+        )
+        sn_h = (
+            sn_sums + sn_size.unsqueeze(1) * sn_scaled
+        ) / sqrt_degrees.unsqueeze(1)
+        expected = (
+            (sn_h - h[src]).abs().sum(1)
+            + (sn_h - h[dst]).abs().sum(1)
+            + (scaled_feat[src] - sn_scaled).abs().sum(1)
+            * (influence[src] - edge_weight * inv_sqrt_degree[dst])
+            + (scaled_feat[dst] - sn_scaled).abs().sum(1)
+            * (influence[dst] - edge_weight * inv_sqrt_degree[src])
+        )
+
+        actual = _convmatch_costs(
+            candidates, pairs, weight, features, size, num_nodes
+        )
+        assert torch.allclose(actual, expected, atol=1e-5)
 
     def test_merged_degree_matches_an_exact_recompute(self) -> None:
         # The O(1) shortcut has to agree with actually performing the merge

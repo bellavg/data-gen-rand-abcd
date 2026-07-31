@@ -774,18 +774,19 @@ def _convmatch_costs(
     )
     inverse_sqrt = degree.clamp_min(1e-12).rsqrt()
 
-    # How much each node's neighbours weight it when they aggregate.
-    fanin = size * inverse_sqrt
-    fanin.index_add_(0, pairs[0], weight * inverse_sqrt[pairs[1]])
-    fanin.index_add_(0, pairs[1], weight * inverse_sqrt[pairs[0]])
+    # How much a node's *neighbours* weight it when they aggregate — the
+    # `sum over i in N({u})` of Theorem 1, which ranges over neighbours only
+    # and so carries no term for the node itself.
+    influence = torch.zeros(num_clusters)
+    influence.index_add_(0, pairs[0], weight * inverse_sqrt[pairs[1]])
+    influence.index_add_(0, pairs[1], weight * inverse_sqrt[pairs[0]])
 
     left, right = candidates[0], candidates[1]
 
     # Merging two *adjacent* nodes turns the edge between them into an
-    # internal one: it leaves both degrees and drops out of both aggregates.
-    # Most candidates are graph edges, so skipping this is not a rounding
-    # detail — it costs a quarter of the merged degree and pushes the cost
-    # ranking away from the exact one it is meant to approximate.
+    # internal one, so it leaves both degrees, both neighbour sums and both
+    # influences.  Most candidates are graph edges, so skipping this is not a
+    # rounding detail — it reorders the costs rather than perturbing them.
     shared = _candidate_edge_weight(candidates, pairs, weight, num_clusters)
 
     merged_size = size[left] + size[right]
@@ -795,18 +796,29 @@ def _convmatch_costs(
         size[left].unsqueeze(1) * features[left]
         + size[right].unsqueeze(1) * features[right]
     ) / merged_size.unsqueeze(1)
-    merged_representation = (
-        aggregate[left]
-        + aggregate[right]
-        - shared.unsqueeze(1) * (scaled[left] + scaled[right])
-    ) * merged_inverse_sqrt.unsqueeze(1)
     merged_scaled = merged_features * merged_inverse_sqrt.unsqueeze(1)
+
+    # Neighbour sums are additive once the shared edge is removed; the super
+    # node's own self term is then rebuilt from its merged feature, so the
+    # representation is exact rather than approximated.
+    merged_neighbours = (
+        aggregate[left]
+        - size[left].unsqueeze(1) * scaled[left]
+        + aggregate[right]
+        - size[right].unsqueeze(1) * scaled[right]
+        - shared.unsqueeze(1) * (scaled[left] + scaled[right])
+    )
+    merged_representation = (
+        merged_neighbours + merged_size.unsqueeze(1) * merged_scaled
+    ) * merged_inverse_sqrt.unsqueeze(1)
 
     return (
         (representation[left] - merged_representation).abs().sum(1)
         + (representation[right] - merged_representation).abs().sum(1)
-        + (merged_scaled - scaled[left]).abs().sum(1) * fanin[left]
-        + (merged_scaled - scaled[right]).abs().sum(1) * fanin[right]
+        + (merged_scaled - scaled[left]).abs().sum(1)
+        * (influence[left] - shared * inverse_sqrt[right])
+        + (merged_scaled - scaled[right]).abs().sum(1)
+        * (influence[right] - shared * inverse_sqrt[left])
     )
 
 
@@ -861,16 +873,7 @@ def spectral_coarsening(
     num_clusters = num_nodes
 
     while num_clusters > target and pairs.size(1):
-        degree = torch.zeros(num_clusters).index_add_(
-            0, pairs.reshape(-1), weight.repeat(2)
-        )
-        if subspace is None:
-            # Negated so that, as for local variation, lower is better.
-            cost = -weight / (degree[pairs[0]] * degree[pairs[1]]).clamp_min(1e-12).sqrt()
-        else:
-            movement = (subspace[pairs[0]] - subspace[pairs[1]]).pow(2).sum(1)
-            cost = weight * movement / (degree[pairs[0]] + degree[pairs[1]])
-
+        cost = _spectral_edge_costs(pairs, weight, subspace, num_clusters)
         matched = _greedy_disjoint_pairs(
             pairs, cost, num_clusters, num_clusters - target
         )
@@ -889,13 +892,50 @@ def spectral_coarsening(
     return label
 
 
+def _spectral_edge_costs(
+    pairs: torch.Tensor,
+    weight: torch.Tensor,
+    subspace: torch.Tensor | None,
+    num_clusters: int,
+) -> torch.Tensor:
+    """Score each edge for contraction; lower is better.
+
+    With a *subspace*, this is Loukas' edge-family local variation.  For a
+    two-node contraction set his general form ``||B' L_e B||_F`` collapses to
+    the movement the contraction forces on the preserved subspace scaled by
+    the volume of the pair — the edge weight cancels out of ``L_e``, and the
+    degrees **multiply**.  Without one it is his heavy-edge proximity,
+    ``w_ij`` over the heaviest edge incident to either endpoint, negated so
+    that lower stays better.
+    """
+    degree = torch.zeros(num_clusters).index_add_(
+        0, pairs.reshape(-1), weight.repeat(2)
+    )
+    if subspace is None:
+        heaviest = torch.zeros(num_clusters).scatter_reduce_(
+            0, pairs.reshape(-1), weight.repeat(2), reduce="amax", include_self=False
+        )
+        return -weight / torch.maximum(
+            heaviest[pairs[0]], heaviest[pairs[1]]
+        ).clamp_min(1e-12)
+
+    movement = (subspace[pairs[0]] - subspace[pairs[1]]).pow(2).sum(1)
+    return (degree[pairs[0]] + degree[pairs[1]]) * movement
+
+
 def _laplacian_subspace(
     pairs: torch.Tensor,
     weight: torch.Tensor,
     num_nodes: int,
     num_eigenvectors: int,
 ) -> torch.Tensor | None:
-    """The smallest non-trivial Laplacian eigenvectors, or None if unavailable.
+    """Loukas' preserved subspace, or None if the eigensolver is unavailable.
+
+    The subspace is the ``num_eigenvectors`` lowest Laplacian eigenvectors
+    scaled by the inverse square root of their eigenvalues, as the reference
+    implementation builds it — an eigenvector is worth preserving in inverse
+    proportion to its frequency, and the flat nullspace directions are given
+    unit weight rather than infinite.
 
     Returning None is not an error path: it is how a graph too small or too
     awkward for the eigensolver hands the caller back to heavy-edge scoring.
@@ -905,7 +945,7 @@ def _laplacian_subspace(
         return None
 
     import numpy as _np
-    from scipy.sparse import coo_matrix, diags
+    from scipy.sparse import coo_matrix, diags, eye
     from scipy.sparse.linalg import eigsh
 
     rows = torch.cat([pairs[0], pairs[1]]).numpy()
@@ -914,24 +954,30 @@ def _laplacian_subspace(
     adjacency = coo_matrix(
         (values, (rows, cols)), shape=(num_nodes, num_nodes)
     ).tocsr()
-    laplacian = diags(_np.asarray(adjacency.sum(axis=1)).ravel()) - adjacency
+    degrees = _np.asarray(adjacency.sum(axis=1)).ravel()
+    laplacian = diags(degrees) - adjacency
 
     try:
-        # Shift-invert just below zero converges on the low end of the
-        # spectrum, which "SM" on a singular Laplacian does not do reliably.
-        # A fixed v0 keeps the result reproducible run to run.
+        # Reflecting the spectrum turns the smallest eigenvalues into the
+        # largest, which converges without the sparse factorization that
+        # shift-invert needs and that "SM" on a singular Laplacian does not
+        # reach reliably.  A fixed v0 keeps the result reproducible.
+        offset = 2.0 * float(degrees.max()) if degrees.size else 1.0
+        reflected = offset * eye(num_nodes, format="csc") - laplacian
         eigenvalues, eigenvectors = eigsh(
-            laplacian.tocsc(),
-            k=wanted + 1,
-            sigma=-1e-3,
-            which="LM",
-            v0=_np.ones(num_nodes),
+            reflected, k=wanted + 1, which="LM", tol=1e-5, v0=_np.ones(num_nodes)
         )
+        eigenvalues = offset - eigenvalues
     except Exception:
         return None
 
-    order = _np.argsort(eigenvalues)[1:]
-    return torch.from_numpy(_np.ascontiguousarray(eigenvectors[:, order])).float()
+    order = _np.argsort(eigenvalues)
+    eigenvalues = eigenvalues[order]
+    # A flat direction carries no frequency information to trade off, so it
+    # is weighted 1 instead of blowing up as lambda^-1/2.
+    eigenvalues[eigenvalues < 1e-10] = 1.0
+    subspace = eigenvectors[:, order] * (eigenvalues ** -0.5)
+    return torch.from_numpy(_np.ascontiguousarray(subspace)).float()
 
 
 def lsh_coarsening(
