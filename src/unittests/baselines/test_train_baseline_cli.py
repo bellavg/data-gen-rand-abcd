@@ -16,12 +16,14 @@ to catch this class of bug going forward.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 import unittest
 from pathlib import Path
 
 _SRC_DIR = str(Path(__file__).resolve().parents[2])
+_SHELL_DIR = Path(_SRC_DIR) / "shell"
 
 
 def _run_cli(*args: str) -> subprocess.CompletedProcess:
@@ -57,9 +59,73 @@ class TestTrainBaselineCLI(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("--baseline", result.stderr)
 
-    def test_baseline_choices_are_synthnet_and_hoga(self):
+    def test_baseline_choices_are_synthnet_hoga_and_deepgate4(self):
         result = _run_cli("--help")
-        self.assertIn("{synthnet,hoga}", result.stdout)
+        self.assertIn("{synthnet,hoga,deepgate4}", result.stdout)
+
+    def test_every_flag_used_by_a_job_script_exists(self):
+        """Generalises the per-flag checks below.
+
+        These SLURM scripts are the only way these baselines are ever launched,
+        and a renamed or removed flag surfaces as an argparse error minutes into
+        a queued GPU job rather than here. Parses each script for the
+        `--flag` tokens it passes and requires all of them to appear in --help.
+        """
+        known = set(re.findall(r"--[A-Za-z0-9_]+", _run_cli("--help").stdout))
+        self.assertIn("--baseline", known, "sanity: --help did not parse")
+
+        scripts = sorted(_SHELL_DIR.glob("train_baseline_*.sh"))
+        self.assertTrue(scripts, "no baseline job scripts found")
+        for script in scripts:
+            with self.subTest(script=script.name):
+                used = set(
+                    re.findall(r"^\s+(--[a-z0-9_]+)\s", script.read_text(), re.M)
+                )
+                self.assertTrue(used, f"{script.name} passes no flags -- parser changed?")
+                self.assertEqual(
+                    sorted(used - known), [], f"{script.name} passes unknown flags"
+                )
+
+    def test_max_epochs_is_resolved_per_baseline(self):
+        """Each baseline paper publishes its own epoch count: SynthNet 80
+        (models/qor/SynthNetV3/train.py), DeepGate4 200 (Zheng et al. ICLR'25
+        Sec 4.1, "We train all models for 200 epochs", and upstream's
+        run/train_large.sh --epoch 200). HOGA publishes none and keeps 80.
+        A single shared default would silently give DeepGate4 SynthNet's number.
+        """
+        sys.path.insert(0, _SRC_DIR)
+        try:
+            import train_baseline
+        finally:
+            sys.path.remove(_SRC_DIR)
+
+        self.assertEqual(train_baseline.DEEPGATE4_DEFAULTS["max_epochs"], 200)
+        self.assertEqual(train_baseline.SYNTHNET_DEFAULTS["max_epochs"], 80)
+        self.assertEqual(
+            set(train_baseline._BASELINE_DEFAULTS), {"synthnet", "hoga", "deepgate4"}
+        )
+        for name, defaults in train_baseline._BASELINE_DEFAULTS.items():
+            with self.subTest(baseline=name):
+                self.assertEqual(
+                    set(defaults), {"batch_size", "lr", "weight_decay", "max_epochs"}
+                )
+
+    def test_deepgate4_flags_are_wired(self):
+        # train_baseline_deepgate4.sh passes all of these; a rename would break
+        # the job script silently. --deepgate4_num_hops is the virtual-edge
+        # radius k and the baseline's dominant cost knob, and
+        # --deepgate4_gradient_checkpointing must stay reachable because the
+        # model does not fit in GPU memory without it (see
+        # src/baselines/deepgate4/regressor.py).
+        result = _run_cli("--help")
+        for flag in (
+            "--deepgate4_num_hops",
+            "--deepgate4_max_nodes_per_batch",
+            "--deepgate4_symmetric_virtual_edges",
+            "--deepgate4_gradient_checkpointing",
+            "--deepgate4_pretrained_tokenizer",
+        ):
+            self.assertIn(flag, result.stdout)
 
     def test_hoga_node_budget_flag_is_wired(self):
         # HOGA batches by total node count, not graph count -- graphs here

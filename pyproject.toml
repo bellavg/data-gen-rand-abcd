@@ -40,6 +40,21 @@ pyg = [
 [tool.setuptools]
 package-dir = {"" = "src"}
 
+[tool.ruff.lint.per-file-ignores]
+# Vendored third-party source -- see src/baselines/deepgate4/PROVENANCE.md.
+# Both findings are in upstream's own code, not imports, so unlike the unused
+# imports removed from the vendored files they cannot be silently "fixed":
+#   E711  `G.batch == None` in `generate_hs_init`. For a tensor, `== None` is
+#         elementwise and `is None` is a plain bool, so this is a behavioural
+#         difference, not a style one -- even though the function is dead code
+#         in this project.
+#   E713  `not (k in state_dict)` in `load()`. Cosmetic, but left alone so the
+#         file still diffs cleanly against upstream.
+# Scoped to this one file: aig_features.py and regressor.py in the same
+# directory are ours and ARE linted. The HOGA and OpenABC-D vendored files need
+# no entry; they are already clean under Ruff defaults.
+"src/baselines/deepgate4/dg2.py" = ["E711", "E713"]
+
 [tool.pytest.ini_options]
 filterwarnings = [
     "ignore::DeprecationWarning:torch_geometric.*",

@@ -1,4 +1,4 @@
-"""Training entrypoint for baseline models (SynthNet, HOGA) on this project's AIG dataset.
+"""Training entrypoint for baseline models (SynthNet, HOGA, DeepGate4) on this project's AIG dataset.
 
 Mirrors train.py's structure (argparse -> AIGDataModule -> Lightning module ->
 Trainer) but swaps in a baseline model + baselines.common.lightning_wrapper
@@ -66,6 +66,51 @@ exists and the task differs (graph-level pooling vs upstream's per-node
 prediction), not because the published config was inconvenient. If memory
 still forces a change, cap graph size at the dataset level rather than
 altering those four values.
+
+DEEPGATE4 uses the same node-budget + accumulation treatment as HOGA, for a
+different underlying reason, and its budget is far tighter. Upstream's own
+batching unit is a *cone* (batch_size 1, mini_batch_size 128 in paper Sec 4.1,
+where "1" is one circuit split into cones); this port does not partition (see
+baselines/deepgate4/regressor.py for why -- and note the paper's own "w/o
+Partition" row is OOM, so that ablation names the setting rather than
+endorsing it), so neither published number transfers and
+--deepgate4_max_nodes_per_batch governs instead.
+
+What sets that budget is the virtual edge set of paper Section 3.5, which is
+much denser than the circuit. Measured on synthetic AIGs matching this
+dataset's shape: an average 40k-node graph expands to ~66k nodes (NOT-node
+expansion) carrying **7.36M virtual edges** at the published radius k=8, i.e.
+~112 per expanded node or ~182 per original node. Each of the 12 GATConv
+layers materialises an [E, heads, out_channels] message tensor -- ~3.8 GB at
+bf16 -- so retaining all 12 costs ~45 GB for a single average graph. Gradient
+checkpointing (on by default, verified to leave forward values and gradients
+bit-identical) collapses that to one layer at a time, which is what makes the
+baseline runnable at all.
+
+Those figures are for the DEFAULT one-way virtual edges. Both the paper
+(Section 3.5, `Ē = {(u, v) : u ≼_k v}`) and the released code emit
+ancestor->descendant only -- `get_fanin_fanout_cone` marks the fanin cone 1
+and the fanout cone 2, and the consumer keeps `== 1`. Turning on
+--deepgate4_symmetric_virtual_edges doubles every number above AND departs
+from both sources, so leave it off.
+
+The consequence is that a batch holds roughly 2-3 average graphs, versus ~75
+for the primary model, so --accumulate_grad_batches has to do the rest of the
+work; train_baseline_deepgate4.sh pairs a 100k-node budget with 30. The same
+caveat HOGA's section above records applies here and bites harder: Lightning
+divides each micro-batch loss by the constant accumulate_grad_batches rather
+than by its graph count, so effective sample size over the window is the
+harmonic mean, below 30 x 2.5. Budget and accumulation must be retuned
+together -- their product is the effective batch.
+
+An irreducible peak remains that no budget can lower: a graph bigger than the
+budget still forms a singleton batch, because graph-level pooling cannot split
+one graph across batches. At config.MAX_NUM_GATES = 366,040 that is ~67M
+virtual edges, ~34 GB for one layer even checkpointed. If those graphs OOM,
+lower --deepgate4_num_hops (k=6 is ~2.6x cheaper, k=4 ~7.5x) and report the
+change -- though note k=6 is itself ablated in Appendix A.3 and scores the
+best functional loss of any setting there, so it is a published option rather
+than an improvisation.
 """
 
 from __future__ import annotations
@@ -85,6 +130,27 @@ from torch_geometric.data import Batch
 
 import config
 from baselines.common.lightning_wrapper import BaselineRegressionLightningModule
+from baselines.deepgate4.aig_features import (
+    DEFAULT_NUM_HOPS as DG4_DEFAULT_NUM_HOPS,
+)
+from baselines.deepgate4.aig_features import (
+    DeepGateGraphAdapter,
+    collate_deepgate_batch,
+)
+from baselines.deepgate4.regressor import DEFAULT_HEAD_DROPOUT as DG4_DEFAULT_HEAD_DROPOUT
+from baselines.deepgate4.regressor import DEFAULT_HEADS as DG4_DEFAULT_HEADS
+from baselines.deepgate4.regressor import DEFAULT_HIDDEN_DIM as DG4_DEFAULT_HIDDEN_DIM
+from baselines.deepgate4.regressor import DEFAULT_LR as DG4_DEFAULT_LR
+from baselines.deepgate4.regressor import DEFAULT_MLP_HIDDEN as DG4_DEFAULT_MLP_HIDDEN
+from baselines.deepgate4.regressor import DEFAULT_MLP_LAYER as DG4_DEFAULT_MLP_LAYER
+from baselines.deepgate4.regressor import (
+    DEFAULT_NUM_EPOCHS as DG4_DEFAULT_NUM_EPOCHS,
+)
+from baselines.deepgate4.regressor import (
+    DEFAULT_NUM_TF_LAYERS as DG4_DEFAULT_NUM_TF_LAYERS,
+)
+from baselines.deepgate4.regressor import DEFAULT_TF_DROPOUT as DG4_DEFAULT_TF_DROPOUT
+from baselines.deepgate4.regressor import DeepGate4GraphRegressor
 from baselines.hoga.hop_features import HopFeatureCache, collate_hoga_batch, num_hop_slots
 from baselines.hoga.regressor import DEFAULT_HEADS as HOGA_DEFAULT_HEADS
 from baselines.hoga.regressor import DEFAULT_HIDDEN_DIM as HOGA_DEFAULT_HIDDEN_DIM
@@ -108,11 +174,38 @@ torch.set_num_threads(1)
 
 # Published defaults for each baseline paper's own training setup -- see the
 # regressor modules for exactly where each of these comes from.
-SYNTHNET_DEFAULTS = {"batch_size": 64, "lr": 0.001, "weight_decay": 0.0}
+SYNTHNET_DEFAULTS = {
+    "batch_size": 64,
+    "lr": 0.001,
+    "weight_decay": 0.0,
+    "max_epochs": 80,  # models/qor/SynthNetV3/train.py default
+}
 HOGA_DEFAULTS = {
     "batch_size": config.BATCH_SIZE,  # no published QoR-task batch size; see baselines/hoga/regressor.py
     "lr": HOGA_DEFAULT_LR,  # 0.0001, published (Deng et al. DAC'24, Sec 3.3/4.1)
     "weight_decay": 0.0,
+    # HOGA publishes no epoch count for the QoR task; keep SynthNet's 80 rather
+    # than inventing one. (Early stopping governs in practice either way.)
+    "max_epochs": 80,
+}
+DEEPGATE4_DEFAULTS = {
+    # Upstream trains with batch_size 1 and mini_batch_size 128, where the unit
+    # is a *cone*, not a circuit (paper Sec 4.1). Without partitioning there are
+    # no cones, so neither number transfers; --deepgate4_max_nodes_per_batch
+    # governs instead. See this module's docstring.
+    "batch_size": config.BATCH_SIZE,
+    "lr": DG4_DEFAULT_LR,  # 1e-4, published (Zheng et al. ICLR'25, Sec 4.1)
+    "weight_decay": 0.0,
+    # "We train all models for 200 epochs to ensure convergence" (Sec 4.1), and
+    # upstream's run/train_large.sh passes --epoch 200. This is why max_epochs
+    # is resolved per-baseline rather than left at the shared 80, which is
+    # SynthNet's number from a different paper.
+    "max_epochs": DG4_DEFAULT_NUM_EPOCHS,
+}
+_BASELINE_DEFAULTS = {
+    "synthnet": SYNTHNET_DEFAULTS,
+    "hoga": HOGA_DEFAULTS,
+    "deepgate4": DEEPGATE4_DEFAULTS,
 }
 
 
@@ -191,6 +284,22 @@ def _build_model(args: argparse.Namespace) -> nn.Module:
             head_dropout=args.hoga_head_dropout,
             task_out_dim=config.TASK_OUT_DIM,
         )
+    if args.baseline == "deepgate4":
+        model = DeepGate4GraphRegressor(
+            hidden=args.deepgate4_hidden_dim,
+            num_tf_layers=args.deepgate4_num_tf_layers,
+            heads=args.deepgate4_heads,
+            tf_dropout=args.deepgate4_tf_dropout,
+            task_out_dim=config.TASK_OUT_DIM,
+            mlp_hidden=args.deepgate4_mlp_hidden,
+            mlp_layer=args.deepgate4_mlp_layer,
+            head_dropout=args.deepgate4_head_dropout,
+            head_norm_layer=args.deepgate4_head_norm_layer,
+            gradient_checkpointing=args.deepgate4_gradient_checkpointing,
+        )
+        if args.deepgate4_pretrained_tokenizer:
+            model.load_pretrained_tokenizer(args.deepgate4_pretrained_tokenizer)
+        return model
     raise ValueError(f"Unknown baseline: {args.baseline!r}")
 
 
@@ -212,23 +321,29 @@ def _plain_loader(ds, args: argparse.Namespace, *, shuffle: bool) -> DataLoader:
     )
 
 
-def _hoga_loader(ds, args: argparse.Namespace, *, shuffle: bool) -> DataLoader:
-    wrapped = HopFeatureCache(
-        ds,
-        num_hops=args.hoga_num_hops,
-        cache_dir=args.hoga_hop_cache_dir,
-        directed=args.hoga_directed,
-    )
+def _node_budget_loader(
+    wrapped,
+    ds,
+    args: argparse.Namespace,
+    *,
+    shuffle: bool,
+    collate_fn,
+    max_nodes: int,
+) -> DataLoader:
+    """Build a loader that batches to a total-node budget instead of a graph count.
 
-    if not args.hoga_max_nodes_per_batch:
+    Shared by the HOGA and DeepGate4 baselines; SynthNet keeps its published
+    fixed batch size and does not use this. `wrapped` must be index-aligned
+    with `ds` -- same length, `__getitem__` delegating straight through -- so a
+    plan built from `ds`'s node counts indexes `wrapped` correctly.
+    """
+    if not max_nodes:
         return DataLoader(
-            wrapped, shuffle=shuffle, collate_fn=collate_hoga_batch, **_loader_kwargs(args)
+            wrapped, shuffle=shuffle, collate_fn=collate_fn, **_loader_kwargs(args)
         )
 
-    # Node-budget batching (see this module's docstring for why HOGA needs it
-    # and SynthNet does not). HopFeatureCache is index-aligned with `ds` --
-    # same length, __getitem__ delegates straight through -- so a plan built
-    # from ds's node counts indexes `wrapped` correctly.
+    # See this module's docstring for why these two baselines need a node
+    # budget and SynthNet does not.
     # list(...) so the in-place shuffle below can never reach a shared object.
     # build_batch_plan returns a fresh list today, but load_or_build_batch_plan
     # (data/sampler.py) hands back the process-wide cache entry, and swapping
@@ -237,7 +352,7 @@ def _hoga_loader(ds, args: argparse.Namespace, *, shuffle: bool) -> DataLoader:
     plan = list(
         BalancedDynamicBatchSampler.build_batch_plan(
             ds.get_num_nodes_list(),
-            max_total_nodes=args.hoga_max_nodes_per_batch,
+            max_total_nodes=max_nodes,
         )
     )
     # build_batch_plan sorts indices by node count, then repeatedly anchors a
@@ -269,15 +384,46 @@ def _hoga_loader(ds, args: argparse.Namespace, *, shuffle: bool) -> DataLoader:
         batch_size=args.batch_size,
         shuffle=shuffle,
         seed=args.seed,
-        max_total_nodes=args.hoga_max_nodes_per_batch,
+        max_total_nodes=max_nodes,
         precomputed_batches=plan,
     )
     ds.release_runtime_caches()
 
     kwargs = _loader_kwargs(args)
     kwargs.pop("batch_size")
-    return DataLoader(
-        wrapped, batch_sampler=sampler, collate_fn=collate_hoga_batch, **kwargs
+    return DataLoader(wrapped, batch_sampler=sampler, collate_fn=collate_fn, **kwargs)
+
+
+def _hoga_loader(ds, args: argparse.Namespace, *, shuffle: bool) -> DataLoader:
+    wrapped = HopFeatureCache(
+        ds,
+        num_hops=args.hoga_num_hops,
+        cache_dir=args.hoga_hop_cache_dir,
+        directed=args.hoga_directed,
+    )
+    return _node_budget_loader(
+        wrapped,
+        ds,
+        args,
+        shuffle=shuffle,
+        collate_fn=collate_hoga_batch,
+        max_nodes=args.hoga_max_nodes_per_batch,
+    )
+
+
+def _deepgate4_loader(ds, args: argparse.Namespace, *, shuffle: bool) -> DataLoader:
+    wrapped = DeepGateGraphAdapter(
+        ds,
+        num_hops=args.deepgate4_num_hops,
+        symmetric=args.deepgate4_symmetric_virtual_edges,
+    )
+    return _node_budget_loader(
+        wrapped,
+        ds,
+        args,
+        shuffle=shuffle,
+        collate_fn=collate_deepgate_batch,
+        max_nodes=args.deepgate4_max_nodes_per_batch,
     )
 
 
@@ -292,28 +438,36 @@ def main(args: argparse.Namespace) -> None:
         raise ValueError(
             f"Algorithm '{args.algorithm}' must be one of {config.VALID_ALGORITHMS}"
         )
-    defaults = SYNTHNET_DEFAULTS if args.baseline == "synthnet" else HOGA_DEFAULTS
+    defaults = _BASELINE_DEFAULTS[args.baseline]
     if args.batch_size is None:
         args.batch_size = defaults["batch_size"]
     if args.lr is None:
         args.lr = defaults["lr"]
     if args.weight_decay is None:
         args.weight_decay = defaults["weight_decay"]
+    if args.max_epochs is None:
+        args.max_epochs = defaults["max_epochs"]
 
     print(f"--- Starting Baseline Training: {args.baseline} / {args.algorithm} ---")
 
     datamodule = AIGDataModule(
         csv_paths=args.csv_paths,
-        # Neither baseline reads .pos_enc -- both derive their own features
-        # from .x/.edge_index/.edge_attr directly -- but the per-graph cache
-        # filename AND content in dataset.py both key on positional_encoding
-        # (see _stable_graph_cache_name/_prepare_cached_graph). Passing None
-        # here would silently miss the primary model's existing shared
-        # tier0_cache_dir/tier1_cache_dir cache entirely (different hash,
-        # different file) and rebuild a full second copy of the same ~700k
-        # graphs from scratch. Matching config.PE_TYPE makes cache lookups
-        # hit the already-built shared cache; the resulting unused pos_enc
-        # attribute is harmless (the baseline models never read it).
+        # The per-graph cache filename AND content in dataset.py both key on
+        # positional_encoding (see _stable_graph_cache_name /
+        # _prepare_cached_graph). Passing None here would silently miss the
+        # primary model's existing shared tier0_cache_dir/tier1_cache_dir cache
+        # entirely (different hash, different file) and rebuild a full second
+        # copy of the same ~700k graphs from scratch. Matching config.PE_TYPE
+        # makes cache lookups hit the already-built shared cache.
+        #
+        # None of the three baselines reads .pos_enc. DeepGate4 does need a
+        # per-node logic level (paper Eq. 2's structural encoding, and to
+        # schedule the tokenizer's level walk), but it recomputes that from the
+        # edge list rather than taking the cached value -- see
+        # baselines/deepgate4/aig_features.forward_levels for the two reasons
+        # (pos_enc holds log1p(level), and even unscaled the cached level is
+        # not topological on circuits with dangling logic). So this argument is
+        # purely the cache-key formality described above.
         positional_encoding=config.PE_TYPE if config.PE_TYPE != "none" else None,
         # Baselines train on UNREDUCED graphs, deliberately and always -- there
         # is no --sparsification flag on this entrypoint. Both baseline papers
@@ -365,6 +519,9 @@ def main(args: argparse.Namespace) -> None:
     if args.baseline == "hoga":
         train_loader = _hoga_loader(datamodule.train_ds, args, shuffle=True)
         val_loader = _hoga_loader(datamodule.val_ds, args, shuffle=False)
+    elif args.baseline == "deepgate4":
+        train_loader = _deepgate4_loader(datamodule.train_ds, args, shuffle=True)
+        val_loader = _deepgate4_loader(datamodule.val_ds, args, shuffle=False)
     else:
         train_loader = _plain_loader(datamodule.train_ds, args, shuffle=True)
         val_loader = _plain_loader(datamodule.val_ds, args, shuffle=False)
@@ -467,7 +624,7 @@ if __name__ == "__main__":
     )
 
     parser.add_argument(
-        "--baseline", type=str, required=True, choices=["synthnet", "hoga"]
+        "--baseline", type=str, required=True, choices=["synthnet", "hoga", "deepgate4"]
     )
     parser.add_argument("--algorithm", type=str, default="Orchestrate")
     parser.add_argument("--csv_paths", nargs="+", required=True)
@@ -492,9 +649,10 @@ if __name__ == "__main__":
     )
 
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument(
-        "--max_epochs", type=int, default=80
-    )  # models/qor/SynthNetV3/train.py default
+    # Per-baseline, like lr/batch_size/weight_decay: each paper publishes its
+    # own. SynthNet 80, DeepGate4 200, HOGA unpublished (keeps 80). Resolved
+    # from _BASELINE_DEFAULTS in main().
+    parser.add_argument("--max_epochs", type=int, default=None)
     parser.add_argument("--patience", type=int, default=config.PATIENCE)
     parser.add_argument("--gradient_clip_val", type=float, default=1.0)
     # Defaults to 1 (no accumulation) so SynthNet keeps its published
@@ -637,6 +795,121 @@ if __name__ == "__main__":
             "compute hop features in the dataloader workers instead -- at full "
             "dataset scale the cache needs ~3.1 TB / ~788k files and does not "
             "fit scratch quota. See baselines/hoga/hop_features.py."
+        ),
+    )
+
+    # DeepGate4 hyperparameters. hidden_dim / num_tf_layers / num_hops (k) / lr
+    # are published (Zheng et al. ICLR'25, Sec 4.1); heads and tf_dropout are
+    # upstream's constructor defaults with no published source -- see
+    # baselines/deepgate4/regressor.py's module docstring for the breakdown.
+    parser.add_argument(
+        "--deepgate4_hidden_dim", type=int, default=DG4_DEFAULT_HIDDEN_DIM
+    )
+    parser.add_argument(
+        "--deepgate4_num_tf_layers", type=int, default=DG4_DEFAULT_NUM_TF_LAYERS
+    )
+    parser.add_argument("--deepgate4_heads", type=int, default=DG4_DEFAULT_HEADS)
+    parser.add_argument(
+        "--deepgate4_tf_dropout", type=float, default=DG4_DEFAULT_TF_DROPOUT
+    )
+    # Task-head shape, all upstream values: "All training task heads are 3-layer
+    # multilayer perceptrons" (Sec 4.1), `--mlp_hidden 128 --mlp_layer 3`, and
+    # dg4.py's init_MLP leaving MLP's own p_drop at 0.5.
+    parser.add_argument(
+        "--deepgate4_mlp_hidden", type=int, default=DG4_DEFAULT_MLP_HIDDEN
+    )
+    parser.add_argument(
+        "--deepgate4_mlp_layer", type=int, default=DG4_DEFAULT_MLP_LAYER
+    )
+    parser.add_argument(
+        "--deepgate4_head_dropout", type=float, default=DG4_DEFAULT_HEAD_DROPOUT
+    )
+    parser.add_argument(
+        "--deepgate4_head_norm_layer",
+        type=lambda x: None if str(x).lower() in ("none", "") else str(x),
+        default=None,
+        help=(
+            "Norm inside the readout MLP. Upstream uses 'batchnorm', but this "
+            "port defaults to None: upstream's heads see thousands of gates per "
+            "call while this one sees ~1 GRAPH per micro-batch, and MLP.forward "
+            "pads a 1-row input by repeating it, so BatchNorm would see zero "
+            "variance and emit a constant. Set 'batchnorm' only if the node "
+            "budget allows genuinely large graph batches. See "
+            "src/baselines/deepgate4/regressor.py."
+        ),
+    )
+    parser.add_argument(
+        "--deepgate4_num_hops",
+        type=int,
+        default=DG4_DEFAULT_NUM_HOPS,
+        help=(
+            "Virtual-edge radius k (paper Sec 3.5/4.1, published as 8). This is "
+            "the single biggest cost knob in the baseline: measured on AIGs "
+            "matching this dataset's shape, virtual edges per expanded node run "
+            "~4 at k=2, ~15 at k=4, ~43 at k=6 and ~112 at k=8. k=6 is itself "
+            "ablated in Appendix A.3 (Table 8) at roughly half the memory and "
+            "the best functional loss of any setting there, so it is a "
+            "published fallback rather than an improvisation. Report whichever "
+            "k was used."
+        ),
+    )
+    parser.add_argument(
+        "--deepgate4_symmetric_virtual_edges",
+        type=lambda x: str(x).lower() in ("true", "1", "yes"),
+        default=False,
+        help=(
+            "False (default) matches BOTH the paper and the released code: "
+            "virtual edges run one way, ancestor -> descendant. "
+            "get_fanin_fanout_cone marks the fanin cone 1 and the fanout cone "
+            "2, and the consumer selects `== 1` only, so fanout pairs never "
+            "become edges. True adds the reverse direction -- a deviation from "
+            "both, and it doubles this baseline's dominant memory term."
+        ),
+    )
+    parser.add_argument(
+        "--deepgate4_gradient_checkpointing",
+        type=lambda x: str(x).lower() in ("true", "1", "yes"),
+        default=True,
+        help=(
+            "Recompute sparse-transformer activations in the backward pass. "
+            "Verified numerically transparent (identical forward values and "
+            "gradients). ON by default because the baseline does not fit in "
+            "GPU memory without it -- see baselines/deepgate4/regressor.py."
+        ),
+    )
+    parser.add_argument(
+        "--deepgate4_max_nodes_per_batch",
+        type=int,
+        default=100_000,
+        help=(
+            "Total-node budget per DeepGate4 batch, replacing --batch_size for "
+            "this baseline (0 disables, restoring fixed graph-count batching). "
+            "Counted in pre-expansion nodes, which is what the dataset's node "
+            "list holds; NOT-node expansion then adds ~60%% more. At the "
+            "published k=8 that is ~182 virtual edges per original node, so "
+            "100k nodes is ~18M edges, ~9.3 GB for one checkpointed GAT layer "
+            "and ~2.5 average graphs. Retune --accumulate_grad_batches "
+            "alongside this: their product is the effective batch. NOTE this "
+            "bounds typical batches only -- a graph larger than the budget "
+            "still forms a singleton batch, since graph-level pooling cannot "
+            "split one graph, so the largest graph sets an irreducible peak "
+            "(~34 GB/layer at config.MAX_NUM_GATES). See this module's "
+            "docstring."
+        ),
+    )
+    parser.add_argument(
+        "--deepgate4_pretrained_tokenizer",
+        type=str,
+        default=None,
+        help=(
+            "Optional path to upstream's trained/model_last.pth to initialise "
+            "the DeepGate2 tokenizer. Those checkpoints hold tokenizer weights "
+            "ONLY -- there is no pretrained sparse transformer to transfer "
+            "(see baselines/deepgate4/PROVENANCE.md). Off by default, matching "
+            "how the SynthNet and HOGA baselines train from scratch; turning it "
+            "on makes this a partially-pretrained baseline, which is a "
+            "different claim and must be reported as one. Requires "
+            "--deepgate4_hidden_dim 128."
         ),
     )
 
