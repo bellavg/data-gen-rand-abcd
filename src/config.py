@@ -76,9 +76,16 @@ SUMMARIZATION_PARAMS: dict[str, dict] = {
         "direction": "backward",
     },
     # S3 — A-ConvMatch (convolution matching), the general SOTA bar.
+    # num_probes replaces the reference's exact kNN over the SGC embedding, so it
+    # sets how good the candidate set is; 8 rather than the function default of 2
+    # buys a measurable improvement in the paper's own objective at a real cost in
+    # time and memory.  Numbers, and the reason not to go higher, live in
+    # summarization_notes.md under "S3 measured against the paper's own
+    # objective" — kept there rather than duplicated here.
     "convmatch": {
         "reduction_ratio": SUMMARIZATION_REDUCTION_RATIO,
         "sgc_depth": SUMMARIZATION_DEPTH,
+        "num_probes": 8,
         "seed": SUMMARIZATION_SEED,
     },
     # S4 — spectral / local-variation, the domain-blind control.  The node cap

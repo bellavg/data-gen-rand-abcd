@@ -86,9 +86,13 @@ Why `convmatch` over `spectral` as the general bar: the claim is that
 domain-specific coarsening beats general coarsening **for GNN training**, so
 the bar has to be the GNN-aware SOTA. Spectral coarsening optimises the graph's
 spectrum, which nobody argues is the right objective for graph-level
-regression — beating it is a weaker result than beating ConvMatch. It is also
-the *more* expensive of the two (11.4 s/graph vs 9.1 s), so this is not a cost
-tradeoff.
+regression — beating it is a weaker result than beating ConvMatch.
+(This used to add "and spectral is also the more expensive of the two,
+11.4 s/graph vs 9.1 s, so this is not a cost tradeoff." **That is no longer
+true and the argument does not need it:** raising `num_probes` to 8 puts
+`convmatch` at ~25 s and ~1.6 GB, the most expensive of the five. The choice
+of ConvMatch over spectral rests on it being the GNN-aware bar, which is the
+only part of the reason that ever mattered.)
 
 What is given up, and why it is affordable:
 - **`lsh` was never independent of `wl`.** At the calibrated production setting
@@ -249,11 +253,23 @@ clustering is free; the runs are not.
 Measured per-graph cost and peak RSS, single core, after the fixes below, on a
 **370,801-node / 723,600-edge** graph — the largest size in the corpus:
 `identity` 0 s, `lsh` 0.6 s, `wl` 2.7 s, `cone` 8.9 s, `convmatch` 9.1 s,
-`spectral` 11.4 s, all under 1 GB. The SLURM budget is ~126 s/graph
+`spectral` 11.4 s, all under 1 GB. **`convmatch` is now ~25 s and ~1.6 GB**,
+not 9.1 s / under 1 GB: `num_probes` went 2 → 8 (see the Eq. 7 measurement
+box below). That is ~2.7× the time and ~1.8× the peak RSS, and it makes S3
+the **most expensive of the five in both**, ahead of `spectral`. The extra
+time is spread across candidate generation, the per-round candidate dedup in
+the main loop (`_remap_pairs`/`torch.unique`, the largest single share) and
+the matching — not generation alone. Still ~5× inside the time budget;
+memory is the part that now bites (next paragraph).
+The SLURM budget is ~126 s/graph
 (700k graphs / 32 shards / 96 workers) and these are worst-case sizes, so all
 five clear R3 with room. Memory is the thing to watch, not time: 96 workers
 × ~1 GB on the largest graphs is ~100 GB, so shard by graph size if the first
-`cone` run pressures the node.
+`cone` run pressures the node. **For `convmatch` that estimate is now ~155 GB
+(96 × 1.6 GB), so treat size-sharding as required rather than contingent.**
+Note the 1.6 GB is a laptop measurement of peak RSS; it is the figure that
+transfers to a genoa node, unlike the wall-clock above ~1.5 GB. Check it
+against the node's actual RAM before assuming 96 workers fit.
 
 ### Checked against the authors' own code (do this before citing fidelity)
 
@@ -279,6 +295,32 @@ not. Cite the repositories alongside the papers.
   candidates by exact KD-tree kNN on a PCA-reduced, standardised SGC
   embedding; we use random-projection sorting, because exact kNN per graph
   over 700k graphs is not affordable.
+  Three more divergences from the reference, found on a second pass and all
+  kept — see the measurement box below for why:
+  4. **Merge schedule.** The reference merges `pairs_per_level` pairs per
+     level (250 default; **1** for Cora/Citeseer, **100 000** for
+     OGBN-Arxiv/Products) and recomputes costs between levels. We merge
+     everything the target allows in one round, which is ~2 rounds at
+     `reduction_ratio=0.5`. At Arxiv/Products scale the reference is doing
+     the same thing — 100 000 pairs is ~59% of Arxiv's nodes — so this is
+     the reference's *large-graph* setting, not a departure from it.
+  5. **Candidate set.** The reference's merge graph is kNN pairs only. We add
+     **every graph edge** as a candidate on top of the projection pairs.
+  6. **Shared-edge weight.** The reference stores the merge graph's
+     `edge_weight` as a 0/1 `has_edges_between` indicator, so on a coarse
+     graph with weighted edges its shared-edge correction is binarised. Ours
+     reads the true coarse weight (`_candidate_edge_weight`). Ours is the
+     exact one; note it rather than claiming a straight port.
+  **Checked and clean, i.e. no divergence beyond the ones listed above:** the
+  normalisation `d̃ = d + |C|` (as opposed to any other degree convention),
+  the size-weighted feature average, the off-diagonal `A' = P^T A P` edge-weight
+  accumulation, and the neighbour-sum caching of Eqs. 11–15. Note this is
+  *within* divergence 3, not a retraction of it: the diagonal of `A'` is where
+  we differ and it is still zeroed. Reference hyperparameters for A-ConvMatch,
+  for the record: `num_hops` 2 (large) / 3 (small), `top_k_nn` 1–3,
+  `nearest_neighbors_keep_rate` 0.001–0.1, `knn_embedding_space_dim` 10 —
+  which is *twice* the width of our SGC embedding, see point 5 below.
+
 - **S4 — `github.com/loukasa/graph-coarsening`** (`contract_variation_edges`).
   My local-variation cost had **the degree dependence inverted**: the
   reference's `||B' L_e B||_F` works out to `(d_i + d_j) * ||a_i - a_j||^2`,
@@ -322,6 +364,118 @@ not. Cite the repositories alongside the papers.
   Hash function matches: reference offers dot / L1 / L2 and defaults to the dot
   product, which is what we compute.
 - **S1** is ours, so there is nothing to compare it against.
+
+#### S3 measured against the paper's own objective (Eq. 7)
+
+Divergences 4 and 5 are choices, not slips, so they were settled by
+measurement rather than by argument. Metric: the **exact** Eq. 7 objective
+`||P H̃' − H̃||_{1,1}` computed densely on the final coarsening (0.0 for
+identity), divided per graph by the objective of a random-merge floor.
+20 synthetic AIGs (4 shapes × 5 seeds, 476–1650 nodes). Lower is better.
+
+| variant | r=0.3 | r=0.5 | r=0.7 |
+|---|---|---|---|
+| edges+proj, `num_probes=2` (the old setting) | 0.410 | 0.401 | 0.480 |
+| **`num_probes=8` (now shipped)** | 0.397 | **0.365** | 0.440 |
+| `num_probes=16` | 0.388 | 0.351 | 0.428 |
+| `num_probes=32` | 0.389 | 0.348 | 0.423 |
+| paper's candidate set (projections only) | 0.538 | 0.249 | 0.448 |
+| standardised embedding (as the reference) | 0.389 | 0.367 | 0.442 |
+| `sgc_depth=2` (the paper's value) | 0.395 | 0.363 | 0.437 |
+| reference schedule (10% of nodes per round) | **0.349** | 0.456 | 0.546 |
+
+**Caveat on provenance:** the harness that produced this table is not in the
+repo — it is a throwaway that builds synthetic netlist-shaped AIGs and
+evaluates Eq. 7 densely. Everything else in this section is pinned by a
+committed differential test; this table is not. If S3's numbers get argued
+over, the honest answer is to fold the Eq. 7 evaluator into the (still
+unbuilt) `measure_summarization.py` and re-run it on real tier0 graphs.
+
+Five things follow, in decreasing order of how much they matter:
+
+1. **`num_probes` was the one real defect, and it is now 8** in
+   `config.SUMMARIZATION_PARAMS`. The gain holds at every ratio and shape
+   (it is not quite monotone — r=0.3 goes 0.388 at 16 to 0.389 at 32, i.e.
+   flat inside noise past 16). **The cost is real and is paid in memory:**
+   isolated single-process runs on a 356k-node synthetic AIG give peak RSS
+   0.91 GB at 2 probes, **1.61 GB at 8**, 1.88 GB at 16, 2.47 GB at 32 —
+   roughly linear in probe count, because the candidate tensor and every
+   per-candidate intermediate scale with it. That moves the fleet estimate
+   below from ~100 GB to **~155 GB at 96 workers**, and is a reason to shard
+   `convmatch` by graph size.
+   **Read every number in this paragraph as a laptop measurement, because
+   that is what it is** — an 8 GB machine, not a genoa node. Two consequences
+   and they pull in opposite directions:
+   - The wall-clock at 2 and 8 probes (9.6 s, 25.5 s) is trustworthy — the
+     former matches the 9.1 s recorded below on the real corpus — but the
+     16- and 32-probe timings are **swap artifacts**, and came out
+     non-monotone (302 s at 16 against 211 s at 32) to prove it. There is no
+     evidence here that 16 is slow on real hardware; the linear trend through
+     2 and 8 predicts ~50 s, comfortably inside the ~126 s budget.
+   - The RSS figures are the ones that transfer, and they are what actually
+     decides this. Whether 16 is affordable is a question about the genoa
+     node's RAM against 96 × 1.88 GB ≈ 180 GB, not about time.
+   So **8 is the provisional setting, not a verdict against 16.** Read the
+   first `convmatch` shard's peak RSS off the node and raise it to 16 if the
+   headroom is there — the objective gain from 8 → 16 (0.365 → 0.351 at
+   r=0.5) is about as large as the one from 2 → 8 that motivated this change.
+   Do not re-run without deleting the cache first (see "Still open").
+2. **Divergence 4 is not a quality compromise at the production ratio.**
+   The reference's incremental schedule wins at r=0.3 (0.349 vs 0.397) and
+   loses badly at r=0.5 and r=0.7. Mechanism is finding 4 above: taking
+   merges strictly cheapest-first concentrates them on low-degree nodes,
+   which the Theorem-1 bound scores well and the true objective does not.
+   Worth a sentence — a documented "deviation for scale" that turns out to
+   be the better choice on the paper's own metric is a strong thing to have.
+3. **Divergence 5 stays as it is, and this is the one to be careful about.**
+   Dropping graph edges (i.e. matching the paper exactly) is a large win at
+   r=0.5 and a large loss at r=0.3. Along a single greedy path the objective
+   is smooth and monotone with edges included and oscillates wildly without
+   them, so the r=0.5 win is a property of that ratio, not a better method.
+   Do **not** quote "we improved on the paper's candidate set"; if S3's
+   compression point ever moves off 0.5, re-measure this.
+4. **Why the probe curve flattens, which is structural rather than
+   empirical.** The SGC embedding is 5 columns wide (`x` [N,4] plus
+   `log1p(level)`), so past 5 probes the projection directions can no longer
+   be independent — extra probes add candidate *pairs* but no new
+   information about the space. The reference's `knn_embedding_space_dim` is
+   10, twice our width. If S3 ever needs a genuinely better candidate set,
+   widening the descriptor is the lever, not raising `num_probes`.
+5. **Two reference details buy nothing here, but "nothing" is the honest
+   word, not "worse":** standardising the SGC embedding before projecting is
+   ratio-dependent and within noise (better at r=0.3, worse at 0.5 and 0.7),
+   and `sgc_depth=2` — the paper's value — is very slightly *better* than our
+   4 at all three ratios (by 0.002-0.003, i.e. inside noise). Keeping 4 is
+   justified by C1, alignment to the encoder depth; it is not free on this
+   metric, it is just too cheap to matter.
+
+**Before re-running S3 precompute, delete its cache.** `ARCHIVE_DIR` in
+`precompute_summarization.sh` is keyed on `${METHOD}` alone, the shard
+`.shardNNN.done` sentinels short-circuit a resubmission, and
+`summarize_graphs.py` skips any graph whose output file already exists — so
+**nothing in the pipeline notices a parameter change**. `params` is written
+into `_summary_stats_*.json` but nothing reads it back. If a convmatch shard
+ever ran at `num_probes=2`, resubmitting `--array=96-127` will recompute
+nothing and leave a corpus that is part-2, part-8 with no error anywhere.
+This is the invariant "key by signature hash" further down promises and the
+summarization pipeline does not currently keep; the same trap applies to any
+future change to `reduction_ratio` or `sgc_depth`.
+
+**Undocumented divergence still to write up (no code change):** the cost
+model scores a merge assuming the super-node feature is the size-weighted
+**mean** of its members (the paper's `X' = C^-1 P^T X`), but
+`apply_merge_map` writes type **counts** and pools level by **minimum**. So
+S3 optimises a slightly different graph from the one it emits. Keep the mean
+in the cost: with counts, `|x' − x_u|_1` is 1 whether or not the two nodes
+share a type, which would make the objective blind to type matching — the
+main thing it has to get right. One sentence in §3.
+
+**Also true of S3, unchanged:** candidates are never regenerated once
+exhausted (the reference re-initialises its merge graph), so the reduction
+ratio is a target rather than a guarantee. Not currently binding — the
+target was hit exactly on every graph measured, up to r=0.99 and 356k
+nodes — because the projection pairs alone supply ~`num_probes · n`
+candidates against the `n/2` merges a 0.5 target needs.
 
 ### Defects an adversarial review caught (all fixed; recorded so they stay fixed)
 
@@ -377,6 +531,18 @@ not. Cite the repositories alongside the papers.
 
 ### Still open after this pass
 
+- [ ] **The summarization precompute cache is not keyed by parameters, only by
+      method.** `ARCHIVE_DIR=.../aig_summary_cache/${METHOD}`, the
+      `.shardNNN.done` sentinels short-circuit resubmission, and
+      `summarize_graphs.py` skips graphs whose output already exists — so
+      changing `num_probes`, `reduction_ratio` or `sgc_depth` and resubmitting
+      recomputes **nothing** and silently produces a mixed-vintage corpus.
+      `params` is written into `_summary_stats_*.json` but never read back.
+      Either put a params hash in the path (which is what the storage section
+      further down already promises: "key by signature hash") or make deleting
+      the method's archive part of the runbook. Until then: **delete
+      `aig_summary_cache/<method>/` by hand before re-running after any
+      parameter change.** Hit for real by the `num_probes` 2 → 8 change.
 - [ ] **`measure_summarization.py` and the CA8 receptive-field metric are NOT
       built.** `summarize_graphs.py` reports node/edge retention and wall-clock
       per shard, which covers RQ2's compression table, but nothing yet measures
@@ -385,7 +551,8 @@ not. Cite the repositories alongside the papers.
       metric will not work across all five: only `cone` guarantees an acyclic
       quotient. A k-hop fanin-cone size averaged over sampled nodes (k = number
       of encoder layers) is well defined for every method and is the metric to
-      build.
+      build. The Eq. 7 evaluator behind the S3 table above is a throwaway too;
+      fold it in here so S3's headline number is reproducible from the repo.
 - [ ] Which graphs took S4's heavy-edge fallback is not recorded anywhere. If
       most of the corpus is above 5k nodes, S4 is really "heavy-edge with a
       spectral rule on small graphs" and must be described that way.
