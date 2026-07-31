@@ -228,10 +228,12 @@ def _apply_pairs(label: torch.Tensor, matched: torch.Tensor, num_clusters: int):
 def identity_clustering(data: Data) -> torch.Tensor:
     """Assign every node to its own super-node (zero compression).
 
-    Not a real summarizer.  It exercises the whole precompute/staging
-    pipeline before any method exists, and doubles as an experimental
-    control: a run at zero compression must reproduce the unsummarized
-    baseline exactly.
+    A test fixture, not an experiment.  Its output compares equal to the
+    input on everything the production encoder reads, so training on it only
+    reproduces the unsummarized baseline — and it cannot serve as a control
+    for the staging path either, since a run that silently fell back to raw
+    graphs would produce exactly this.  Useful for telling a broken pipeline
+    apart from a broken method, and as the identity case of apply_merge_map.
     """
     return torch.arange(data.x.size(0), dtype=torch.long)
 

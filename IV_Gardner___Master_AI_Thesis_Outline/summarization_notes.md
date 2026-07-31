@@ -37,8 +37,26 @@ range at a different method.
 | lsh       | `--array=160-191` | `--array=5` |
 
 Each job prints its own method and range on the first lines of its log.
-Precompute defaults to `--array=0-31` (identity only), the cheapest
-end-to-end check of the precompute → pack → stage → train path.
+
+**Do not spend a training run on `identity`** — it is a test fixture, not an
+experiment. Checked directly: identity output compares *equal* to the raw
+graph on `x`, `edge_index`, `edge_attr` and `level`, i.e. on everything the
+production encoder reads. The only additions (`internal_edges`, `num_edges`,
+`num_pis`, `num_pos`) are unconsumed, and `node_size` is not emitted at all —
+it is recoverable as `x.sum(1)`, since a member has exactly one type. So an
+identity run reproduces the existing full-graph baseline while writing ~700k
+full-size graphs to disk to do it.
+
+Two consequences worth keeping:
+- **R1 is satisfied trivially.** Full graphs do *not* need identity-processing
+  before cross-state inference; the size-1 super-node schema *is* the one-hot
+  schema, so the shared weights already ingest raw graphs.
+- **Identity cannot detect the silent-fallback bug** it looks like a control
+  for. If a tier is missing, `dataset.py` falls back to caching the raw
+  unsummarized graph — which is byte-for-byte what a correct identity run
+  produces. The tier guards in `train_summarization.sh` are the real defence;
+  identity would pass either way. Use identity only to isolate plumbing from
+  method when a *real* method looks wrong.
 
 | id | name | registry key | role |
 |----|------|--------------|------|
