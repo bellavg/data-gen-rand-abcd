@@ -234,3 +234,8 @@ __marimo__/
 
 # WandB run artifacts (test.py stages these under --results_dir)
 wandb/
+results/predictions/
+results/inference_results/
+results/training_benchmark/
+results/benchmark_per_graph/
+results/measurements/
