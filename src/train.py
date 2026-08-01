@@ -89,6 +89,7 @@ def main(args):
         partition=args.partition,
         batch_size=args.batch_size,
         split_ratios=(0.8, 0.1, 0.1),
+        split_by=args.split_by,
         num_workers=args.num_workers,
         pin_memory=args.pin_memory,
         persistent_workers=args.persistent_workers,
@@ -99,6 +100,7 @@ def main(args):
         tier1_cache_dir=args.tier1_cache_dir,
         dynamic_batching=getattr(args, "dynamic_batching", False),
         max_total_nodes=args.max_total_nodes_per_batch,
+        use_graph_cache=args.use_graph_cache,
     )
 
     print("[main] Loading datasets before Trainer/WandB init ...", flush=True)
@@ -164,6 +166,10 @@ def main(args):
         run_label = args.algorithm
         wandb_run_name = f"train_{args.algorithm}"
 
+    if args.split_by != config.SPLIT_BY:
+        run_label = f"{run_label}_{args.split_by}"
+        wandb_run_name = f"{wandb_run_name}_{args.split_by}"
+
     algo_checkpoint_dir = os.path.join(args.checkpoint_dir, run_label)
     os.makedirs(algo_checkpoint_dir, exist_ok=True)
 
@@ -192,8 +198,8 @@ def main(args):
     print("[main] Initialising WandB logger ...", flush=True)
     wandb_start = time.monotonic()
     logger = WandbLogger(
-        project="AIG-SUMMARIZE",
-        entity="isabella-v-gardner-university-of-amsterdam",
+        project=config.WANDB_PROJECT,
+        entity=config.WANDB_ENTITY,
         name=wandb_run_name,
         save_dir=log_dir,
     )
@@ -317,6 +323,18 @@ if __name__ == "__main__":
         type=lambda x: str(x).lower() in ("true", "1", "yes"),
         default=config.TORCH_COMPILE,
     )
+    parser.add_argument(
+        "--use_graph_cache",
+        type=lambda x: str(x).lower() in ("true", "1", "yes"),
+        default=True,
+        help=(
+            "Preprocess every graph into a cache dir. Only worth it when "
+            "--normalize_edges adds data to the file; otherwise the cached copy "
+            "is the raw graph minus attributes get() drops anyway. Required by "
+            "--sparsification/--partition, whose masks are keyed on cache "
+            "filenames."
+        ),
+    )
     parser.add_argument("--log_steps", type=int, default=config.LOG_EVERY_N_STEPS)
     parser.add_argument(
         "--max_batch_compute_reports",
@@ -343,6 +361,16 @@ if __name__ == "__main__":
     parser.add_argument("--tier0_cache_dir", type=str, default=None)
     parser.add_argument("--tier1_cache_dir", type=str, default=None)
     parser.add_argument("--hp_tuning_splits_path", type=str, default=None)
+    parser.add_argument(
+        "--split_by",
+        type=str,
+        default=config.SPLIT_BY,
+        choices=sorted(config.VALID_SPLIT_BY),
+        help="Train/val/test grouping strategy: 'design' (default, whole circuit "
+        "per split, unseen-IP), 'recipe' (whole ABC synthesis recipe held out "
+        "across all designs, seen-IP/unseen-recipe), or 'random' (no grouping, "
+        "per-row split).",
+    )
     parser.add_argument(
         "--sparsification",
         type=lambda x: x.lower() if x.lower() != "none" else None,

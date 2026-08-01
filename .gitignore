@@ -231,3 +231,6 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# WandB run artifacts (test.py stages these under --results_dir)
+wandb/

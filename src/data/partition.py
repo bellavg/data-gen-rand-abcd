@@ -375,10 +375,16 @@ def update_existing_cache_with_masks(
             try:
                 with os.scandir(str(top_dir)) as scanner:
                     for entry in scanner:
+                        # Cached graphs are named "<sha1>.pt", so they never
+                        # start with "_"; every sidecar index written into these
+                        # dirs does ("_masks_", "_sparse_", "_levels.pt"). Skip
+                        # the whole underscore namespace rather than just our own
+                        # prefix — loading e.g. a sparsification index as a graph
+                        # raises inside a pool worker, which kills the run.
                         if (
                             entry.is_file(follow_symlinks=False)
                             and entry.name.endswith(".pt")
-                            and not entry.name.startswith(_MASKS_PREFIX)
+                            and not entry.name.startswith("_")
                             and entry.name not in done_set
                         ):
                             yield d_str, Path(entry.path)

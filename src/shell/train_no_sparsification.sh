@@ -5,7 +5,7 @@
 #SBATCH --partition=gpu_h100
 #SBATCH --gpus=1
 #SBATCH --constraint=scratch-node
-#SBATCH --output=logs/train_no_sparsification_%j.out
+#SBATCH --output=logs/train_no_sparsification_%A_%a.out
 
 set -euo pipefail
 
@@ -22,7 +22,17 @@ export LD_PRELOAD="${EBROOTGPERFTOOLS}/lib/libtcmalloc.so${LD_PRELOAD:+:${LD_PRE
 VENV_PATH="${VENV_PATH:-/scratch-shared/$USER/.venv}"
 source "$VENV_PATH/bin/activate"
 
-BASE_DIR="${BASE_DIR:-$HOME/data-gen-rand-abcd}"
+# SLURM_SUBMIT_DIR is injected directly by the scheduler (not subject to
+# --export policy the way an sbatch-side env var is), so `cd` into the
+# worktree you want before `sbatch`-ing this script and it picks up
+# correctly with no flags needed. BASE_DIR still wins if explicitly set.
+BASE_DIR="${BASE_DIR:-${SLURM_SUBMIT_DIR:-$HOME/data-gen-rand-abcd}}"
+if [ ! -f "$BASE_DIR/src/train.py" ]; then
+    echo "ERROR: BASE_DIR=$BASE_DIR does not look like a data-gen-rand-abcd checkout" \
+         "(missing src/train.py). sbatch this script from the worktree you intend" \
+         "to run, or set BASE_DIR explicitly." >&2
+    exit 1
+fi
 unset PYTHONPATH
 unset PYTHONHOME
 export PYTHONNOUSERSITE=1
@@ -52,12 +62,26 @@ PREFETCH_FACTOR="${PREFETCH_FACTOR:-4}"
 PIN_MEMORY="${PIN_MEMORY:-true}"
 PERSISTENT_WORKERS="${PERSISTENT_WORKERS:-true}"
 TORCH_COMPILE="${TORCH_COMPILE:-true}"
+# Array-job task ID -> split_by mode. SLURM_ARRAY_TASK_ID is injected by the
+# scheduler directly (unlike an exported env var, its delivery does not
+# depend on --export policy), so `sbatch -a 0-2 ...` reliably selects a
+# mode per task with no environment-passing involved. Falls back to the
+# SPLIT_BY env var (or "design") for a plain, non-array submission.
+declare -A SPLIT_BY_MODES=([0]="design" [1]="recipe" [2]="random")
+if [ -n "${SLURM_ARRAY_TASK_ID:-}" ]; then
+    SPLIT_BY="${SPLIT_BY_MODES[$SLURM_ARRAY_TASK_ID]:?Unknown SLURM_ARRAY_TASK_ID=$SLURM_ARRAY_TASK_ID, expected one of: ${!SPLIT_BY_MODES[*]}}"
+else
+    SPLIT_BY="${SPLIT_BY:-design}"
+fi
 
+echo "Using BASE_DIR=$BASE_DIR (SLURM_SUBMIT_DIR=${SLURM_SUBMIT_DIR:-<unset>})."
+echo "SLURM_ARRAY_TASK_ID=${SLURM_ARRAY_TASK_ID:-<not an array job>}."
 echo "Using NUM_WORKERS=$NUM_WORKERS for data loading."
 echo "Using PREFETCH_FACTOR=$PREFETCH_FACTOR."
 echo "Using PIN_MEMORY=$PIN_MEMORY."
 echo "Using PERSISTENT_WORKERS=$PERSISTENT_WORKERS."
 echo "Using TORCH_COMPILE=$TORCH_COMPILE."
+echo "Using SPLIT_BY=$SPLIT_BY."
 echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-<unset>}"
 
 # =========================================================
@@ -76,9 +100,11 @@ srun python -u -m train \
     --tier0_cache_dir   "$TIER0_CACHE_DIR" \
     --tier1_cache_dir   "$TIER1_CACHE_DIR" \
     --hp_tuning_splits_path "$HP_TUNING_SPLITS" \
+    --split_by          "$SPLIT_BY" \
     --prefetch_factor   "$PREFETCH_FACTOR" \
     --num_workers       "$NUM_WORKERS" \
     --pin_memory        "$PIN_MEMORY" \
     --persistent_workers "$PERSISTENT_WORKERS" \
     --torch_compile     "$TORCH_COMPILE" \
+    --use_graph_cache   "false" \
     --patience          4

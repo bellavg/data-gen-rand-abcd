@@ -127,6 +127,58 @@ def _make_design_rows(
     return rows
 
 
+def _make_recipe_rows(
+    root: Path,
+    designs: list[str],
+    *,
+    suffixes: list[str],
+    include_tier1: bool = False,
+    opt_start: float = 0.1,
+) -> list[dict]:
+    """One tier0 row per (design, suffix) pair (and optionally a same-suffix
+    tier1 row too), with real tier0/tier1 filename-stem shapes so
+    dataset_utils.infer_recipe_id can actually match them. A tier0 stem is
+    `{design}_{suffix}` where suffix looks like `synX_stepN`; its tier1
+    sibling is `{design}_Orchestrate_tier1_{suffix}` (same suffix -> same
+    recipe_key). Reusing the same `suffixes` list across multiple `designs`
+    lets tests prove recipe grouping is design-independent (the same recipe
+    ID on two different designs must land in the same split).
+    """
+    data = aig_to_pytorch_geometric(_AIG_PATH)
+    rows: list[dict] = []
+    opt_value = opt_start
+    for design in designs:
+        design_dir = root / "designs" / design / "tier0"
+        design_dir.mkdir(parents=True, exist_ok=True)
+        for suffix in suffixes:
+            tier0_path = design_dir / f"{design}_{suffix}.pt"
+            torch.save(data, tier0_path)
+            rows.append(
+                {
+                    "unoptimized_graph_path": str(tier0_path),
+                    "design": design,
+                    "algorithm": "Orchestrate",
+                    "tier_id": "0",
+                    "optimizability": str(round(opt_value, 4)),
+                }
+            )
+            opt_value += 0.01
+            if include_tier1:
+                tier1_path = design_dir / f"{design}_Orchestrate_tier1_{suffix}.pt"
+                torch.save(data, tier1_path)
+                rows.append(
+                    {
+                        "unoptimized_graph_path": str(tier1_path),
+                        "design": design,
+                        "algorithm": "Orchestrate",
+                        "tier_id": "1",
+                        "optimizability": str(round(opt_value, 4)),
+                    }
+                )
+                opt_value += 0.01
+    return rows
+
+
 # ---------------------------------------------------------------------------
 # Dataset tests
 # ---------------------------------------------------------------------------
@@ -232,12 +284,25 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
         import data.dataset as dataset_module
 
         dataset_module._CSV_SAMPLE_CACHE.clear()
-        observed_usecols: list[tuple[str, ...]] = []
+        observed_usecols: list[set[str]] = []
         original_read_csv = dataset_module.pd.read_csv
 
+        # usecols is a predicate now (the abc stat columns are optional), so
+        # probe it with every column name a real CSV can carry.
+        candidate_cols = (
+            "unoptimized_graph_path",
+            "optimizability",
+            *dataset_module._CSV_NODE_COUNT_COLS,
+            "design",
+            "algorithm",
+            "tier_id",
+            "depth_optimizability",
+            "post_nodes",
+        )
+
         def _spy_read_csv(*args, **kwargs):
-            usecols = kwargs.get("usecols", ())
-            observed_usecols.append(tuple(usecols))
+            predicate = kwargs.get("usecols")
+            observed_usecols.append({c for c in candidate_cols if predicate(c)})
             return original_read_csv(*args, **kwargs)
 
         try:
@@ -254,8 +319,12 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
             self.assertEqual(len(ds), 10)
             self.assertTrue(observed_usecols)
             self.assertEqual(
-                set(observed_usecols[0]),
-                {"unoptimized_graph_path", "optimizability"},
+                observed_usecols[0],
+                {
+                    "unoptimized_graph_path",
+                    "optimizability",
+                    *dataset_module._CSV_NODE_COUNT_COLS,
+                },
             )
         finally:
             dataset_module._CSV_SAMPLE_CACHE.clear()
@@ -609,6 +678,150 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
         self.assertFalse(val_paths & test_paths, "val and test share graph paths")
         self.assertEqual(len(train_ds) + len(val_ds) + len(test_ds), 40)
 
+    # --- split_by modes ---
+
+    def test_invalid_split_by_raises(self):
+        from data.dataset import AIGGraphRegressionDataset
+
+        pts = _make_graph_pts(self.root / "invalid_split_by_graphs", 5)
+        csv = self.root / "invalid_split_by.csv"
+        _write_csv(csv, _make_rows(pts))
+
+        with self.assertRaises(ValueError):
+            AIGGraphRegressionDataset(csv, split_by="bogus")
+
+    def test_split_cache_meta_reflects_split_by(self):
+        from data.dataset import AIGGraphRegressionDataset
+
+        pts = _make_graph_pts(self.root / "meta_graphs", 10)
+        csv = self.root / "meta.csv"
+        _write_csv(csv, _make_rows(pts))
+
+        for split_by in ("design", "recipe", "random"):
+            cache_dir = self.root / f"meta_cache_{split_by}"
+            AIGGraphRegressionDataset(
+                csv, split="train", cache_dir=cache_dir, split_by=split_by, seed=1
+            )
+            cache_file = next(cache_dir.glob("*_splits.json"))
+            splits = json.loads(cache_file.read_text())
+            self.assertEqual(splits["__meta__"]["split_by"], split_by)
+
+    def test_recipe_split_keeps_tier_family_together(self):
+        from data.dataset import AIGGraphRegressionDataset
+
+        csv = self.root / "recipe_family.csv"
+        suffixes = [f"syn{i}_step0" for i in range(10)]
+        _write_csv(
+            csv,
+            _make_recipe_rows(
+                self.root, ["adder"], suffixes=suffixes, include_tier1=True
+            ),
+        )
+
+        train_ds = AIGGraphRegressionDataset(csv, split_by="recipe", split="train", seed=2)
+        val_ds = AIGGraphRegressionDataset(csv, split_by="recipe", split="val", seed=2)
+        test_ds = AIGGraphRegressionDataset(csv, split_by="recipe", split="test", seed=2)
+
+        split_of_path: dict[str, str] = {}
+        for name, ds in (("train", train_ds), ("val", val_ds), ("test", test_ds)):
+            for sample in ds.samples:
+                split_of_path[sample.graph_path] = name
+
+        for suffix in suffixes:
+            tier0_path = str(self.root / "designs" / "adder" / "tier0" / f"adder_{suffix}.pt")
+            tier1_path = str(
+                self.root / "designs" / "adder" / "tier0" / f"adder_Orchestrate_tier1_{suffix}.pt"
+            )
+            self.assertEqual(
+                split_of_path[tier0_path],
+                split_of_path[tier1_path],
+                f"tier0/tier1 pair for suffix {suffix} landed in different splits",
+            )
+
+    def test_recipe_split_allows_same_design_different_recipes_to_split(self):
+        from data.dataset import AIGGraphRegressionDataset
+
+        csv = self.root / "recipe_divergence.csv"
+        suffixes = [f"syn{i}_step0" for i in range(10)]
+        rows = _make_recipe_rows(self.root, ["adder"], suffixes=suffixes)
+        _write_csv(csv, rows)
+
+        # A single design forces "design" split_by to put everything in train
+        # (one group, ratio math rounds it entirely into the first split).
+        design_val_ds = AIGGraphRegressionDataset(csv, split_by="design", split="val", seed=2)
+        design_test_ds = AIGGraphRegressionDataset(csv, split_by="design", split="test", seed=2)
+        self.assertEqual(len(design_val_ds), 0)
+        self.assertEqual(len(design_test_ds), 0)
+
+        # 10 distinct recipes within that same design distribute across all
+        # three splits under "recipe" grouping.
+        recipe_val_ds = AIGGraphRegressionDataset(csv, split_by="recipe", split="val", seed=2)
+        recipe_test_ds = AIGGraphRegressionDataset(csv, split_by="recipe", split="test", seed=2)
+        self.assertGreater(len(recipe_val_ds), 0)
+        self.assertGreater(len(recipe_test_ds), 0)
+
+    def test_recipe_split_holds_out_recipe_across_designs(self):
+        """The defining property of "recipe" grouping vs a design::recipe
+        pairing: the SAME recipe ID reused on two different designs must
+        land in the same split for both, so a held-out recipe never appears
+        in train for ANY design (seen-IP, unseen-recipe)."""
+        from data.dataset import AIGGraphRegressionDataset
+
+        csv = self.root / "recipe_cross_design.csv"
+        suffixes = [f"syn{i}_step0" for i in range(10)]
+        rows = _make_recipe_rows(self.root, ["adder", "aes"], suffixes=suffixes)
+        _write_csv(csv, rows)
+
+        train_ds = AIGGraphRegressionDataset(csv, split_by="recipe", split="train", seed=2)
+        val_ds = AIGGraphRegressionDataset(csv, split_by="recipe", split="val", seed=2)
+        test_ds = AIGGraphRegressionDataset(csv, split_by="recipe", split="test", seed=2)
+
+        split_of_recipe: dict[str, str] = {}
+        for name, ds in (("train", train_ds), ("val", val_ds), ("test", test_ds)):
+            for sample in ds.samples:
+                stem = Path(sample.graph_path).stem
+                recipe_id = stem.split("_")[-2]  # "..._synI_step0" -> "synI"
+                if recipe_id in split_of_recipe:
+                    self.assertEqual(
+                        split_of_recipe[recipe_id],
+                        name,
+                        f"recipe {recipe_id} appears in both "
+                        f"{split_of_recipe[recipe_id]} and {name}",
+                    )
+                else:
+                    split_of_recipe[recipe_id] = name
+
+        # Both designs should be represented in train (seen-IP)...
+        train_designs = {
+            Path(s.graph_path).parent.parent.name for s in train_ds.samples
+        }
+        self.assertEqual(train_designs, {"adder", "aes"})
+        # ...while some recipes are absent from train for both designs at once
+        # (unseen-recipe): every recipe present in val/test is entirely
+        # missing from train, verified above by split_of_recipe.
+
+    def test_random_split_has_no_grouping_guarantee(self):
+        from data.dataset import AIGGraphRegressionDataset
+
+        csv = self.root / "random_split.csv"
+        design_names = ["design_a", "design_b"]
+        _write_csv(
+            csv,
+            _make_design_rows(self.root, design_names, graphs_per_design=15),
+        )
+
+        # 2 designs forces "design" split_by's val to be empty (ratio math
+        # assigns one whole design to train, the other to test, none to val).
+        design_val_ds = AIGGraphRegressionDataset(csv, split_by="design", split="val", seed=4)
+        self.assertEqual(len(design_val_ds), 0)
+
+        # The same 30 rows, ungrouped, deterministically produce non-empty
+        # val/test splits (30 rows * 0.1 ratio = 3 each) regardless of shuffle.
+        random_val_ds = AIGGraphRegressionDataset(csv, split_by="random", split="val", seed=4)
+        random_test_ds = AIGGraphRegressionDataset(csv, split_by="random", split="test", seed=4)
+        self.assertGreater(len(random_val_ds), 0)
+        self.assertGreater(len(random_test_ds), 0)
+
     # --- HP tuning split exclusion testing ---
 
     def test_hp_tuning_splits_path_excludes_samples(self):
@@ -670,6 +883,50 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
         self.assertIn("test", splits)
         self.assertIn("__meta__", splits)
         self.assertEqual(splits["__meta__"]["split_by"], "design")
+
+    def test_cache_filename_disambiguates_split_by(self):
+        from data.dataset import AIGGraphRegressionDataset
+
+        pts = _make_graph_pts(self.root / "cache_split_by_graphs", 10)
+        csv = self.root / "cache_split_by.csv"
+        _write_csv(csv, _make_rows(pts))
+        cache_dir = self.root / "cache_split_by"
+
+        design_ds = AIGGraphRegressionDataset(
+            csv, split="train", cache_dir=cache_dir, split_by="design", seed=1
+        )
+        random_ds = AIGGraphRegressionDataset(
+            csv, split="train", cache_dir=cache_dir, split_by="random", seed=1
+        )
+
+        cache_files = sorted(cache_dir.glob("*_splits.json"))
+        self.assertEqual(len(cache_files), 2, "expected one cache file per split_by mode")
+
+        # The default strategy is UNsuffixed and only the others carry a tag, so
+        # splits files written before split_by was configurable keep being found
+        # instead of being regenerated under a new name. Assumes config.SPLIT_BY
+        # is still "design" -- changing it is meant to fail here, since it moves
+        # which strategy owns the untagged filename.
+        self.assertEqual(
+            [f.name for f in cache_files],
+            ["cache_split_by_all_random_splits.json", "cache_split_by_all_splits.json"],
+        )
+
+        # Both reload correctly on a second construction with the same args.
+        design_ds2 = AIGGraphRegressionDataset(
+            csv, split="train", cache_dir=cache_dir, split_by="design", seed=1
+        )
+        random_ds2 = AIGGraphRegressionDataset(
+            csv, split="train", cache_dir=cache_dir, split_by="random", seed=1
+        )
+        self.assertEqual(
+            [s.graph_path for s in design_ds.samples],
+            [s.graph_path for s in design_ds2.samples],
+        )
+        self.assertEqual(
+            [s.graph_path for s in random_ds.samples],
+            [s.graph_path for s in random_ds2.samples],
+        )
 
     def test_cache_loaded_on_second_call(self):
         from data.dataset import AIGGraphRegressionDataset
@@ -781,6 +1038,65 @@ class TestAIGGraphRegressionDataset(unittest.TestCase):
             len(load_calls),
             0,
             f"Expected 0 graph loads on rerun (all in global map), got {len(load_calls)}",
+        )
+
+    def test_new_split_by_reuses_cache_across_signatures(self):
+        """A brand-new split_by value produces a brand-new cache signature
+        (no manifest exists for it yet), but graphs already cached under a
+        different split_by must be reused via the global per-cache-root
+        index -- no raw-file stat() to recompute their cache path."""
+        from unittest.mock import patch
+
+        from data.dataset import AIGGraphRegressionDataset
+
+        tier0_dir = self.root / "designs" / "gcd" / "tier0"
+        tier0_pts = _make_graph_pts(tier0_dir, 6)
+        csv = self.root / "split_by_reuse.csv"
+        _write_csv(csv, _make_rows(tier0_pts))
+
+        cache_dir = self.root / "split_by_reuse_cache"
+        tier0_cache_dir = self.root / "split_by_reuse_tier0"
+
+        # First run: split_by="design" builds .pt files + the global index.
+        # A single design here means the whole dataset lands in "train".
+        AIGGraphRegressionDataset(
+            csv,
+            split="train",
+            split_by="design",
+            cache_dir=cache_dir,
+            tier0_cache_dir=tier0_cache_dir,
+            seed=0,
+        )
+
+        # Second run: a DIFFERENT split_by -> a new cache signature -> no
+        # manifest exists for it -> _rebuild_graph_cache() must run, but
+        # should not need to re-stat the raw source files for graphs already
+        # indexed by the first run.
+        _orig = AIGGraphRegressionDataset._cached_graph_path
+        raw_stat_calls: list[str] = []
+
+        def _counting(self_inner, graph_path):
+            raw_stat_calls.append(graph_path)
+            return _orig(self_inner, graph_path)
+
+        with patch.object(
+            AIGGraphRegressionDataset, "_cached_graph_path", _counting
+        ):
+            AIGGraphRegressionDataset(
+                csv,
+                split="train",
+                split_by="random",
+                cache_dir=cache_dir,
+                tier0_cache_dir=tier0_cache_dir,
+                seed=0,
+            )
+
+        self.assertEqual(
+            len(raw_stat_calls),
+            0,
+            "Expected 0 raw-file cache-path lookups when reusing graphs "
+            f"already cached under a different split_by, got "
+            f"{len(raw_stat_calls)}: {raw_stat_calls}",
         )
 
     def test_tier0_graphs_routed_to_tier0_cache_dir(self):
@@ -1235,9 +1551,42 @@ class TestAIGDataModule(unittest.TestCase):
         batch = next(iter(dm.test_dataloader()))
         self.assertEqual(batch.y.shape[1], 1)
 
+    def test_test_loader_ignores_dynamic_batching_by_default(self):
+        from data.datamodule import AIGDataModule
+        from data.sampler import BalancedDynamicBatchSampler
+
+        dm = AIGDataModule(self.csv_path, batch_size=4)
+        dm.setup(stage="test")
+        self.assertNotIsInstance(
+            dm.test_dataloader().batch_sampler, BalancedDynamicBatchSampler
+        )
+
+    def test_test_loader_uses_node_budget_when_dynamic_batching(self):
+        # test.py packs eval batches to a node budget to fill the GPU; the
+        # test loader must honour dynamic_batching the same way val does,
+        # and the plan must still cover every test graph exactly once.
+        from data.datamodule import AIGDataModule
+        from data.sampler import BalancedDynamicBatchSampler
+
+        dm = AIGDataModule(self.csv_path, batch_size=4, dynamic_batching=True)
+        dm.setup(stage="test")
+        loader = dm.test_dataloader()
+
+        self.assertIsInstance(loader.batch_sampler, BalancedDynamicBatchSampler)
+        emitted = [idx for batch in loader.batch_sampler for idx in batch]
+        self.assertEqual(sorted(emitted), list(range(len(dm.test_ds))))
+
     def test_datamodule_split_sizes_sum_to_total(self):
         dm = self._make_dm()
         self.assertEqual(len(dm.train_ds) + len(dm.val_ds) + len(dm.test_ds), 30)
+
+    def test_datamodule_split_by_passthrough(self):
+        # split_by defaults to "design"; explicit "random" should reach the
+        # underlying AIGGraphRegressionDataset instances unchanged.
+        dm = self._make_dm(split_by="random")
+        self.assertEqual(dm.train_ds.split_by, "random")
+        self.assertEqual(dm.val_ds.split_by, "random")
+        self.assertEqual(dm.test_ds.split_by, "random")
 
     def test_hp_tuning_splits_path_datamodule(self):
         # Pick 5 samples from the 30 existing ones
@@ -1506,3 +1855,166 @@ class TestGetNumNodesList(unittest.TestCase):
         ds.get_num_nodes_list()
         json_files = list(self.root.rglob("*_node_sizes.json"))
         self.assertEqual(len(json_files), 0)
+
+
+class TestUseGraphCacheFalse(unittest.TestCase):
+    """use_graph_cache=False: raw .pt files are read in place and node counts
+    come from the CSV's abc stats instead of a full preprocessing pass."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.pt_paths = _make_graph_pts(self.root / "graphs", 6)
+        self.num_nodes = torch.load(
+            self.pt_paths[0], map_location="cpu", weights_only=True
+        ).x.shape[0]
+        self.csv_path = self.root / "orchestrate.csv"
+        self._write_stats_csv(self.csv_path, self.pt_paths)
+        self.cache_dir = self.root / "cache"
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _write_stats_csv(self, path: Path, pt_paths, *, node_split=None):
+        """CSV carrying the abc stat columns, split so that
+        1 + pre_num_PI + pre_nodes + pre_num_PO == the real node count."""
+        import csv as _csv
+
+        pi = 1
+        po = 1
+        ands = self.num_nodes - 1 - pi - po
+        rows = []
+        for i, p in enumerate(pt_paths):
+            stats = node_split(p) if node_split else (ands, pi, po)
+            rows.append(
+                {
+                    "unoptimized_graph_path": str(p),
+                    "optimizability": str(round(0.1 + i * 0.01, 4)),
+                    "pre_nodes": str(stats[0]),
+                    "pre_num_PI": str(stats[1]),
+                    "pre_num_PO": str(stats[2]),
+                }
+            )
+        with open(path, "w", newline="") as f:
+            writer = _csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+            writer.writeheader()
+            writer.writerows(rows)
+
+    def _make_ds(self, **kwargs):
+        from data.dataset import AIGGraphRegressionDataset
+
+        kwargs.setdefault("csv_paths", self.csv_path)
+        kwargs.setdefault("cache_dir", self.cache_dir)
+        kwargs.setdefault("use_graph_cache", False)
+        return AIGGraphRegressionDataset(kwargs.pop("csv_paths"), **kwargs)
+
+    def test_manifest_points_at_raw_paths_and_writes_no_graph_cache(self):
+        ds = self._make_ds()
+        for sample in ds.samples:
+            self.assertEqual(
+                ds._graph_cache_path_map[sample.graph_path], Path(sample.graph_path)
+            )
+        self.assertFalse((self.cache_dir / "processed_graphs").exists())
+
+    def test_raw_graphs_are_not_rewritten(self):
+        before = [p.stat().st_mtime_ns for p in self.pt_paths]
+        ds = self._make_ds()
+        ds.get_num_nodes_list()
+        self.assertEqual([p.stat().st_mtime_ns for p in self.pt_paths], before)
+
+    def test_node_sizes_come_from_csv_without_loading_graphs(self):
+        from data.dataset import AIGGraphRegressionDataset
+
+        # The audit deliberately reads a sample from disk; disable it so this
+        # test can assert the bulk path performs no graph I/O at all.
+        with (
+            patch.object(AIGGraphRegressionDataset, "_CSV_NODE_COUNT_AUDIT_SIZE", 0),
+            patch.object(
+                AIGGraphRegressionDataset,
+                "_torch_load_graph",
+                side_effect=AssertionError("graphs must not be loaded to size them"),
+            ),
+        ):
+            ds = self._make_ds()
+            sizes = ds.get_num_nodes_list()
+
+        self.assertEqual(sizes, [self.num_nodes] * len(ds))
+
+    def test_audit_rejects_csv_counts_that_disagree_with_the_graphs(self):
+        """A silent undercount would inflate dynamic batches past the node
+        budget and OOM the GPU, with the bad plan cached to disk."""
+        bad_csv = self.root / "bad_stats.csv"
+        self._write_stats_csv(
+            bad_csv, self.pt_paths, node_split=lambda p: (self.num_nodes - 12, 1, 1)
+        )
+
+        with self.assertRaises(ValueError) as ctx:
+            self._make_ds(csv_paths=bad_csv, cache_dir=self.root / "cache_bad")
+        self.assertIn("disagree with the graphs", str(ctx.exception))
+
+    def test_audit_passes_on_correct_csv_counts(self):
+        ds = self._make_ds()
+        self.assertEqual(ds.get_num_nodes_list(), [self.num_nodes] * len(ds))
+
+    def test_missing_required_column_names_the_csv(self):
+        import csv as _csv
+
+        broken = self.root / "no_target.csv"
+        with open(broken, "w", newline="") as f:
+            w = _csv.DictWriter(f, fieldnames=["unoptimized_graph_path"])
+            w.writeheader()
+            w.writerows({"unoptimized_graph_path": str(p)} for p in self.pt_paths)
+
+        import data.dataset as dataset_module
+
+        dataset_module._CSV_SAMPLE_CACHE.clear()
+        try:
+            with self.assertRaises(ValueError) as ctx:
+                self._make_ds(csv_paths=broken, cache_dir=self.root / "cache_broken")
+            self.assertIn("optimizability", str(ctx.exception))
+            self.assertIn(str(broken), str(ctx.exception))
+        finally:
+            dataset_module._CSV_SAMPLE_CACHE.clear()
+
+    def test_step21_graph_is_read_from_disk_not_trusted_from_csv(self):
+        """The `dch` step's abc stats understate the written AIG, so those
+        graphs must be sized from the file even though the CSV has a value."""
+        step21_paths = _make_graph_pts(self.root / "dch", 1)
+        step21 = step21_paths[0].parent / "design_syn7_step21.pt"
+        step21_paths[0].rename(step21)
+
+        csv_path = self.root / "with_step21.csv"
+        # Deliberately wrong stats for the step21 row, correct for the rest.
+        self._write_stats_csv(
+            csv_path,
+            [*self.pt_paths, step21],
+            node_split=lambda p: (99, 99, 99)
+            if p == step21
+            else (self.num_nodes - 3, 1, 1),
+        )
+
+        ds = self._make_ds(csv_paths=csv_path, cache_dir=self.root / "cache_step21")
+        sizes = dict(zip([s.graph_path for s in ds.samples], ds.get_num_nodes_list()))
+        self.assertEqual(sizes[str(step21)], self.num_nodes)
+
+    def test_csv_without_stat_columns_falls_back_to_loading(self):
+        plain_csv = self.root / "plain.csv"
+        _write_csv(plain_csv, _make_rows(self.pt_paths))
+
+        ds = self._make_ds(csv_paths=plain_csv, cache_dir=self.root / "cache_plain")
+        self.assertIsNone(ds.samples[0].csv_num_nodes)
+        self.assertEqual(ds.get_num_nodes_list(), [self.num_nodes] * len(ds))
+
+    def test_rejects_sparsification_and_partition(self):
+        for kwargs in ({"sparsification": "pagerank"}, {"partition": "random"}):
+            with self.subTest(**kwargs):
+                with self.assertRaises(ValueError) as ctx:
+                    self._make_ds(**kwargs)
+                self.assertIn("use_graph_cache=False", str(ctx.exception))
+
+    def test_signature_differs_from_cached_mode(self):
+        no_cache = self._make_ds()
+        cached = self._make_ds(
+            use_graph_cache=True, cache_dir=self.root / "cache_cached"
+        )
+        self.assertNotEqual(no_cache._cache_signature, cached._cache_signature)

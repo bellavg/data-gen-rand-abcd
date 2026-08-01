@@ -328,7 +328,7 @@ Partition graphs in dataset offline. Removes edges between partitions.
 \subsection{Experimental Setup}
 
 \begin{itemize}
-    \item \textbf{Data Splitting:} An 80/10/10 volume split and a functional design level split. This prevents data leakage, ensuring the model never sees structurally identical circuits in different optimization states across the train/test sets.
+    \item \textbf{Data Splitting:} Three grouping strategies are compared to isolate leakage sources: (1) \textit{design-disjoint} (default, 80/10/10 by design count) --- no circuit family spans more than one split; (2) \textit{lineage-disjoint} --- same-circuit different-optimization-state samples kept together, but distinct lineages of a design may split; (3) \textit{random} (row-level, no grouping) --- the leakiest baseline, quantifying how much naive splitting inflates reported accuracy.
     \item \textbf{Hardware Mitigation:} Dynamic batching is employed by setting a maximum number of nodes per batch and using a greedy bin-packing algorithm to prevent CUDA Out-Of-Memory errors on massive AIGs.
     \item \textbf{Graph Scale and Tractability}: The dataset is bounded to a specific node/edge threshold (e.g., max X,000 nodes per AIG). This intermediate scale guarantees that a single, unreduced graph can fit into GPU VRAM, making the ground-truth baseline in RQ1 computationally tractable, while still providing sufficient structural complexity to rigorously stress-test the reduction methods.
     \item \textbf{Predictive Model:} An Edge-Aware Graph Convolutional Network (GCN+) is trained to predict the optimizability of a circuit when subjected to the Orchestrate synthesis script.
@@ -346,6 +346,8 @@ Partition graphs in dataset offline. Removes edges between partitions.
 \section{Results and Comparisons to Collect and Analyze}
 
 \subsection{Baseline Predictive Performance on Full AIGs (Answers RQ1)}
+
+The design/lineage/random split-methodology ablation (see Data Splitting, above) is reported here, alongside the full-AIG baseline metrics below.
 
 \subsubsection{Predictive Accuracy Metrics}
 \begin{itemize}

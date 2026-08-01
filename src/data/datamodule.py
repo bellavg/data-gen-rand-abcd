@@ -27,6 +27,7 @@ class AIGDataModule(pl.LightningDataModule):
         normalize_edges: bool = config.NORMALIZE_EDGES,
         cache_dir: str | Path | None = None,
         split_ratios: tuple[float, float, float] = (0.8, 0.1, 0.1),
+        split_by: str = config.SPLIT_BY,
         seed: int = 42,
         batch_size: int = 32,
         num_workers: int = config.NUM_WORKERS,
@@ -40,6 +41,7 @@ class AIGDataModule(pl.LightningDataModule):
         hp_tuning_splits_path: str | Path | None = None,
         tier0_cache_dir: str | Path | None = None,
         tier1_cache_dir: str | Path | None = None,
+        use_graph_cache: bool = True,
     ) -> None:
         super().__init__()
         self.csv_paths = csv_paths
@@ -49,6 +51,7 @@ class AIGDataModule(pl.LightningDataModule):
         self.normalize_edges = bool(normalize_edges)
         self.cache_dir = cache_dir
         self.split_ratios = split_ratios
+        self.split_by = split_by
         self.seed = seed
         self.batch_size = batch_size
         self.num_workers = num_workers
@@ -62,6 +65,7 @@ class AIGDataModule(pl.LightningDataModule):
         self.hp_tuning_splits_path = hp_tuning_splits_path
         self.tier0_cache_dir = tier0_cache_dir
         self.tier1_cache_dir = tier1_cache_dir
+        self.use_graph_cache = bool(use_graph_cache)
 
         if self.num_workers > 0 and self.prefetch_factor < 1:
             raise ValueError(
@@ -117,10 +121,12 @@ class AIGDataModule(pl.LightningDataModule):
             tier0_cache_dir=self.tier0_cache_dir,
             tier1_cache_dir=self.tier1_cache_dir,
             split_ratios=self.split_ratios,
+            split_by=self.split_by,
             seed=self.seed,
             num_samples=num_samples,
             num_workers=self.num_workers,
             hp_tuning_splits_path=self.hp_tuning_splits_path,
+            use_graph_cache=self.use_graph_cache,
         )
 
     def _ensure_val_plan(self) -> None:
@@ -242,7 +248,29 @@ class AIGDataModule(pl.LightningDataModule):
             **self._loader_kwargs(is_train=False),
         )
 
+    def _ensure_test_plan(self) -> None:
+        if not self.dynamic_batching:
+            return
+        self._test_batch_plan: list[list[int]] = (
+            BalancedDynamicBatchSampler.build_batch_plan(
+                self.test_ds.get_num_nodes_list(),
+                max_total_nodes=self.max_total_nodes,
+            )
+        )
+        self.test_ds.release_runtime_caches()
+
     def test_dataloader(self) -> DataLoader:
+        if self.dynamic_batching:
+            precomputed = getattr(self, "_test_batch_plan", None)
+            if precomputed is None:
+                self._ensure_test_plan()
+                precomputed = self._test_batch_plan
+            return self._make_budgeted_dataloader(
+                self.test_ds,
+                precomputed,
+                shuffle=False,
+                is_train=False,
+            )
         return DataLoader(
             self.test_ds,
             shuffle=False,

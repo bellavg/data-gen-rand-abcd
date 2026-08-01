@@ -17,6 +17,8 @@ from torch_geometric.data import Dataset as PyGDataset
 from torch_geometric.data import storage as _pyg_storage
 from torch_geometric.utils import degree
 
+from config import SPLIT_BY, VALID_SPLIT_BY
+from data import dataset_utils
 from data.partition_utils import PartitionedData, precomputed_partitioning
 from data.sparsification import get_sparse_entry, precomputed_sparsification
 from models.layers.positional_encodings import get_pe_transform
@@ -46,7 +48,28 @@ class GraphSample:
 
     graph_path: str
     design_key: str
+    recipe_key: str
     y_node_opt: float
+    # Node count derived from the CSV's abc stats, or None when the CSV lacks
+    # the stat columns.  See _CSV_NODE_COUNT_COLS.
+    csv_num_nodes: int | None = None
+
+
+# abc `print_stats` columns describing the *input* (unoptimized) graph, written
+# by data/creation/shell/10_algorithm_csv.sh.  The PyG graph built by
+# data_utils._extract_topology is const0 + PIs + AND gates + POs, so
+#     num_nodes == 1 + pre_num_PI + pre_nodes + pre_num_PO
+# lets us size every graph straight from the CSV instead of loading it.
+_CSV_NODE_COUNT_COLS = ("pre_nodes", "pre_num_PI", "pre_num_PO")
+
+# ...with one exception.  Position 21 of every reference recipe in
+# data/abc_scripts.zip is `dch`, which builds a *choice* network: abc reports
+# the AND count of the representative structure while `write_aiger` also emits
+# the choice nodes, so pre_nodes understates the real graph whenever dch found
+# equivalences.  Measured on the Orchestrate CSV: steps 1-20 matched 200/200,
+# step21 missed on 43/200.  Those graphs (4.76% of the dataset) have to be read
+# from disk; everything else is exact.
+_UNTRUSTED_NODE_COUNT_MARKER = "_step21."
 
 
 # Module-level cache for raw CSV samples. The CSVs do not change during a run,
@@ -64,6 +87,28 @@ _HP_SPLITS_CACHE: dict[str, dict] = {}
 
 _SPLIT_CACHE_VERSION = 2
 _GRAPH_CACHE_CONTENT_VERSION = 2
+
+
+def splits_cache_filename(
+    csv_paths: list[str | Path],
+    num_samples: int | None,
+    split_by: str = SPLIT_BY,
+) -> str:
+    """Filename of the splits JSON for one (csvs, num_samples, split_by) combo.
+
+    The default strategy (config.SPLIT_BY) is deliberately left UNsuffixed and
+    only the others get a tag, mirroring train.py's run_label rule. That keeps
+    every splits file written before split_by was configurable readable instead
+    of silently regenerating an identical 78MB file under a new name.
+
+    Shell warmup jobs need to locate this file too, so they import this rather
+    than rebuilding the pattern (globbing "*_splits.json" and taking the first
+    match picks up whichever num_samples/split_by tag sorts first).
+    """
+    algo_tag = "_".join(Path(p).stem for p in csv_paths)
+    sample_tag = f"_{num_samples}" if num_samples is not None else "_all"
+    split_tag = "" if split_by == SPLIT_BY else f"_{split_by}"
+    return f"{algo_tag}{sample_tag}{split_tag}_splits.json"
 
 
 def clear_dataset_global_caches() -> None:
@@ -134,10 +179,12 @@ class AIGGraphRegressionDataset(PyGDataset):
         tier0_cache_dir: str | Path | None = None,
         tier1_cache_dir: str | Path | None = None,
         split_ratios: tuple[float, float, float] = (0.8, 0.1, 0.1),
+        split_by: str = SPLIT_BY,
         seed: int = 42,
         num_samples: int | None = None,
         num_workers: int = 0,
         hp_tuning_splits_path: str | Path | None = None,
+        use_graph_cache: bool = True,
     ) -> None:
         if isinstance(csv_paths, (str, Path)):
             self.csv_paths = [Path(csv_paths)]
@@ -158,10 +205,29 @@ class AIGGraphRegressionDataset(PyGDataset):
             Path(tier1_cache_dir) if tier1_cache_dir is not None else None
         )
         self.split_ratios = split_ratios
+        if split_by not in VALID_SPLIT_BY:
+            raise ValueError(
+                f"split_by must be one of {sorted(VALID_SPLIT_BY)}. Got: {split_by!r}"
+            )
+        self.split_by = split_by
         self.seed = seed
         self.num_samples = num_samples
         self.num_workers = num_workers
         self.hp_tuning_splits_path = hp_tuning_splits_path
+        self.use_graph_cache = bool(use_graph_cache)
+        if not self.use_graph_cache and (
+            self.sparsification is not None or self.partition is not None
+        ):
+            # Precomputed sparsification/partition masks are keyed on the sha1
+            # cache filename from _stable_graph_cache_name (see
+            # sparsification.get_sparse_entry). Without the cache the lookup
+            # key is a raw filename that matches nothing, and every graph would
+            # silently fall back to unmasked -- fail loudly instead.
+            raise ValueError(
+                "use_graph_cache=False is incompatible with sparsification/"
+                "partition: their precomputed masks are indexed by graph-cache "
+                "filename. Re-enable the cache or precompute masks for raw paths."
+            )
         self._cache_precomputed_level_pe = (
             str(self.positional_encoding).lower() == "level"
             if self.positional_encoding is not None
@@ -212,7 +278,7 @@ class AIGGraphRegressionDataset(PyGDataset):
         hasher = hashlib.sha1()
         hasher.update(f"split_cache_v{_SPLIT_CACHE_VERSION}".encode())
         hasher.update(f"graph_cache_v{_GRAPH_CACHE_CONTENT_VERSION}".encode())
-        hasher.update(b"split_by=design")
+        hasher.update(f"split_by={self.split_by}".encode())
         hasher.update(str(self.seed).encode())
         hasher.update(str(self.split).encode())
         hasher.update(str(self.num_samples).encode())
@@ -220,6 +286,9 @@ class AIGGraphRegressionDataset(PyGDataset):
         hasher.update(str(self._tier0_cache_dir).encode())
         hasher.update(str(self._tier1_cache_dir).encode())
         hasher.update(str(self.positional_encoding).encode())
+        # Manifests from the two modes are not interchangeable: one stores
+        # sha1 cache filenames, the other raw .pt paths.
+        hasher.update(f"use_graph_cache={self.use_graph_cache}".encode())
 
         for csv_path in sorted(self.csv_paths):
             hasher.update(str(csv_path.absolute()).encode())
@@ -249,6 +318,23 @@ class AIGGraphRegressionDataset(PyGDataset):
             if design_idx < len(parts) and parts[design_idx]:
                 return parts[design_idx]
         return graph_path
+
+    def _infer_recipe_key(self, graph_path: str, design_key: str) -> str:
+        stem = Path(graph_path).stem
+        recipe_id = dataset_utils.infer_recipe_id(stem)
+        if recipe_id is None:
+            # Unrecognized stem format: degrade gracefully to design-level
+            # grouping rather than falling back to per-row (fully leaky) keys.
+            # Logged because this quietly weakens split_by="recipe"'s
+            # unseen-recipe guarantee for this sample.
+            print(
+                f"[dataset] WARNING: could not infer recipe ID from {stem!r}; "
+                f"falling back to design-level grouping ({design_key!r}) for "
+                "split_by='recipe'.",
+                flush=True,
+            )
+            return design_key
+        return recipe_id
 
     def _sample_rows(self, samples: list[GraphSample]) -> list[GraphSample]:
         if self.num_samples is None or self.num_samples >= len(samples):
@@ -283,7 +369,7 @@ class AIGGraphRegressionDataset(PyGDataset):
 
         self._cached_split_meta = {
             "version": _SPLIT_CACHE_VERSION,
-            "split_by": "design",
+            "split_by": self.split_by,
             "seed": self.seed,
             "split_ratios": list(self.split_ratios),
             "num_samples": self.num_samples,
@@ -309,32 +395,60 @@ class AIGGraphRegressionDataset(PyGDataset):
             return _CSV_SAMPLE_CACHE[cache_key]
 
         required_cols = ["unoptimized_graph_path", "optimizability"]
+        # The stat columns are optional: only the generated per-algorithm CSVs
+        # carry them.  A callable usecols keeps a CSV without them readable
+        # instead of raising, so their absence just means csv_num_nodes=None.
+        wanted_cols = set(required_cols) | set(_CSV_NODE_COUNT_COLS)
         frames = [
             pd.read_csv(
                 p,
-                usecols=required_cols,
+                usecols=lambda c: c in wanted_cols,
                 dtype={"unoptimized_graph_path": str, "optimizability": float},
             )
             for p in self.csv_paths
         ]
         df = pd.concat(frames, ignore_index=True)
 
+        # A list usecols used to raise on a CSV missing a required column; the
+        # predicate accepts anything, so check explicitly rather than letting it
+        # surface as a bare KeyError below with no filename attached.
+        missing = [col for col in required_cols if col not in df.columns]
+        if missing:
+            raise ValueError(
+                f"CSV(s) {[str(p) for p in self.csv_paths]} are missing required "
+                f"column(s) {missing}. Found: {sorted(df.columns)}"
+            )
+
+        if all(col in df.columns for col in _CSV_NODE_COUNT_COLS):
+            # NaN survives the sum as NaN, so a row with an incomplete stat
+            # triple degrades to None rather than a wrong count.
+            csv_sizes = 1 + sum(
+                pd.to_numeric(df[col], errors="coerce") for col in _CSV_NODE_COUNT_COLS
+            )
+            csv_sizes = [None if pd.isna(v) else int(v) for v in csv_sizes]
+        else:
+            csv_sizes = [None] * len(df)
+
         samples = []
-        for graph_path, node_opt in zip(
+        for graph_path, node_opt, csv_num_nodes in zip(
             df["unoptimized_graph_path"].fillna(""),
             df["optimizability"],
+            csv_sizes,
             strict=False,
         ):
             norm_path = self._normalize_graph_path(str(graph_path))
+            design_key = self._infer_design_key(norm_path)
             samples.append(
                 GraphSample(
                     graph_path=norm_path,
-                    design_key=self._infer_design_key(norm_path),
+                    design_key=design_key,
+                    recipe_key=self._infer_recipe_key(norm_path, design_key),
                     y_node_opt=float(node_opt),
+                    csv_num_nodes=csv_num_nodes,
                 )
             )
 
-        del df, frames
+        del df, frames, csv_sizes
         _CSV_SAMPLE_CACHE[cache_key] = samples
         return samples
 
@@ -345,9 +459,9 @@ class AIGGraphRegressionDataset(PyGDataset):
             return self._create_split_keys(samples)
 
         self.cache_dir.mkdir(parents=True, exist_ok=True)
-        algo_tag = "_".join(p.stem for p in self.csv_paths)
-        sample_tag = f"_{self.num_samples}" if self.num_samples is not None else "_all"
-        cache_file = self.cache_dir / f"{algo_tag}{sample_tag}_splits.json"
+        cache_file = self.cache_dir / splits_cache_filename(
+            self.csv_paths, self.num_samples, self.split_by
+        )
         cache_key = str(cache_file)
 
         cached_payload = _SPLITS_CACHE.get(cache_key)
@@ -373,31 +487,47 @@ class AIGGraphRegressionDataset(PyGDataset):
         _SPLITS_CACHE[cache_key] = split_keys
         return split_keys
 
+    def _group_key_for_sample(self, sample: GraphSample) -> str:
+        """The unit that stays together in one split, per self.split_by.
+
+        "design": whole base circuit. "recipe": one ABC synthesis recipe ID,
+        held out across ALL designs at once (every tier0 step plus its
+        tier1/tier2 descendants for that recipe, regardless of design).
+        "random": every row is its own group (i.e. no grouping at all).
+        """
+        if self.split_by == "design":
+            return sample.design_key
+        if self.split_by == "recipe":
+            return sample.recipe_key
+        return sample.graph_path
+
     def _create_split_keys(
         self, samples: list[GraphSample]
     ) -> dict[str, list[str] | dict[str, object]]:
         samples = self._sample_rows(samples)
-        design_keys = list(dict.fromkeys(sample.design_key for sample in samples))
+        group_keys = list(
+            dict.fromkeys(self._group_key_for_sample(sample) for sample in samples)
+        )
         rng = random.Random(self.seed)
-        rng.shuffle(design_keys)
+        rng.shuffle(group_keys)
 
         total = sum(self.split_ratios)
         train_f = self.split_ratios[0] / total
         val_f = self.split_ratios[1] / total
 
-        n = len(design_keys)
+        n = len(group_keys)
         n_train = int(n * train_f)
         n_val = int(n * val_f)
         if n > 0 and train_f > 0.0 and n_train == 0:
             n_train = 1
         n_val = min(n_val, n - n_train)
 
-        design_to_split = {design_key: "train" for design_key in design_keys[:n_train]}
-        design_to_split.update(
-            {design_key: "val" for design_key in design_keys[n_train : n_train + n_val]}
+        group_to_split = {group_key: "train" for group_key in group_keys[:n_train]}
+        group_to_split.update(
+            {group_key: "val" for group_key in group_keys[n_train : n_train + n_val]}
         )
-        design_to_split.update(
-            {design_key: "test" for design_key in design_keys[n_train + n_val :]}
+        group_to_split.update(
+            {group_key: "test" for group_key in group_keys[n_train + n_val :]}
         )
 
         split_keys: dict[str, list[str] | dict[str, object]] = {
@@ -406,7 +536,7 @@ class AIGGraphRegressionDataset(PyGDataset):
             "test": [],
         }
         for sample in samples:
-            split_name = design_to_split[sample.design_key]
+            split_name = group_to_split[self._group_key_for_sample(sample)]
             split_keys[split_name].append(sample.graph_path)
         split_keys["__meta__"] = self._split_cache_meta()
 
@@ -447,9 +577,15 @@ class AIGGraphRegressionDataset(PyGDataset):
 
         samples = self._apply_split(samples)
         t2 = _time.monotonic()
+        # Design count, not just sample count: the split is made at the DESIGN
+        # level, so this is the real sample size for generalization. Thousands
+        # of graphs drawn from a handful of designs is a handful of independent
+        # observations, and val/test metrics swing hard on which designs landed
+        # where.
+        n_designs = len({sample.design_key for sample in samples})
         print(
-            f"[dataset] After split/filter: {len(samples)} samples in {t2 - t1:.1f}s "
-            f"(split={self.split!r})",
+            f"[dataset] After split/filter: {len(samples)} samples from "
+            f"{n_designs} designs in {t2 - t1:.1f}s (split={self.split!r})",
             flush=True,
         )
 
@@ -497,22 +633,138 @@ class AIGGraphRegressionDataset(PyGDataset):
                     flush=True,
                 )
 
-        print(
-            f"[dataset] No manifest found — checking file existence for "
-            f"{len(samples)} graph paths (using ThreadPool) ...",
-            flush=True,
-        )
-        valid_samples = []
-        with ThreadPoolExecutor(max_workers=32) as executor:
-            is_file_mask = list(executor.map(os.path.isfile, (s.graph_path for s in samples)))
-            valid_samples = [s for s, valid in zip(samples, is_file_mask, strict=False) if valid]
+        # Without a graph cache there is nothing to validate the CSV against,
+        # but there is also nothing to validate: data/creation/shell/
+        # 10_algorithm_csv.sh already ran check_exists_parallel over every
+        # unoptimized_graph_path and dropped the rows whose .pt was missing, so
+        # a stat() here re-derives a fact the CSV was built on. On 700k+ GPFS
+        # paths that scan costs ~10 minutes.
+        if not self.use_graph_cache:
+            print(
+                f"[dataset] Skipping existence check for {len(samples)} samples "
+                "(CSV rows were existence-filtered at generation time).",
+                flush=True,
+            )
+            return samples
 
+        # No manifest for this exact signature (e.g. first run of a new
+        # split_by/num_samples combination). Before falling back to a raw
+        # ThreadPool existence scan, consult the global per-cache-root graph
+        # index: it is shared across every split/signature and already
+        # proves these graph paths were valid and cached by an earlier run
+        # (a different split_by, the design-split warmup job, ...), so there
+        # is no need to touch the raw filesystem for them again.
+        global_maps = (
+            self._load_global_num_nodes_maps() if self._cache_roots() else {}
+        )
+        known_flags: list[bool | None] = [None] * len(samples)
+        unknown_idx: list[int] = []
+        for i, s in enumerate(samples):
+            if self._global_cache_hit(s.graph_path, global_maps) is not None:
+                known_flags[i] = True
+            else:
+                unknown_idx.append(i)
+
+        if unknown_idx:
+            print(
+                f"[dataset] Global graph-cache index matched "
+                f"{len(samples) - len(unknown_idx)}/{len(samples)} samples; "
+                f"checking remaining {len(unknown_idx)} via ThreadPool "
+                "is_file() ...",
+                flush=True,
+            )
+            with ThreadPoolExecutor(max_workers=32) as executor:
+                results = list(
+                    executor.map(
+                        os.path.isfile, (samples[i].graph_path for i in unknown_idx)
+                    )
+                )
+            for idx, ok in zip(unknown_idx, results, strict=False):
+                known_flags[idx] = ok
+        else:
+            print(
+                f"[dataset] Global graph-cache index matched all "
+                f"{len(samples)} samples; skipping raw file existence check.",
+                flush=True,
+            )
+
+        valid_samples = [s for s, ok in zip(samples, known_flags, strict=False) if ok]
         print(
             f"[dataset] File check done: {len(valid_samples)} valid, "
             f"{len(samples) - len(valid_samples)} missing, took {_time.monotonic() - t2:.1f}s",
             flush=True,
         )
         return valid_samples
+
+    def _cache_index_tag(self) -> str:
+        """Tag identifying which (content-version, PE, normalize_edges) a
+        global-index cache_path entry was built under, so a fast-path hit can
+        never return a file built for a different config -- both PE and
+        normalize_edges affect what `_prepare_cached_graph` writes into the
+        cached .pt (pos_enc / edge_weight respectively)."""
+        return (
+            f"v{_GRAPH_CACHE_CONTENT_VERSION}|pe={self.positional_encoding}|"
+            f"norm_edges={self.normalize_edges}"
+        )
+
+    def _cache_roots(self) -> dict[str, Path]:
+        return {
+            str(root): root
+            for root in (
+                self._cache_graph_dir,
+                self._tier0_cache_dir,
+                self._tier1_cache_dir,
+            )
+            if root is not None
+        }
+
+    def _load_global_num_nodes_maps(self) -> dict[str, dict]:
+        """Load the per-cache-root `_num_nodes_global.json` index.
+
+        This index is keyed only by graph_path and lives in the cache-root
+        directory itself, so it is shared across every split/split_by/
+        num_samples signature that writes into the same cache_dir/tier0/tier1
+        directories -- unlike the per-signature manifest. Values are either a
+        legacy bare int (num_nodes only, written before cache_path tracking)
+        or `[cache_path, num_nodes, index_tag]`.
+        """
+        maps: dict[str, dict] = {}
+        for cache_key, root in self._cache_roots().items():
+            gpath = root / "_num_nodes_global.json"
+            data: dict = {}
+            if gpath.is_file():
+                try:
+                    data = json.loads(gpath.read_text(encoding="utf-8"))
+                except (json.JSONDecodeError, OSError):
+                    data = {}
+            maps[cache_key] = data
+        return maps
+
+    def _global_cache_hit(
+        self, graph_path: str, maps: dict[str, dict]
+    ) -> tuple[str, int] | None:
+        """Return (cache_path, num_nodes) if some earlier run -- any split,
+        split_by, or num_samples value -- already cached this exact graph
+        under the current PE/normalize_edges/content-version, without
+        touching the raw source file (only a cheap stat of the cache file
+        itself, which lives on the fast cache filesystem, not GPFS).
+
+        Verifying the cache file still exists here (not just trusting the
+        JSON index) matters for callers like `_build_samples`: without it, a
+        graph whose cache file was later deleted would be reported "valid"
+        purely from stale index data, silently including a missing raw graph
+        instead of filtering it out.
+        """
+        cache_key = str(self._cache_root_for_graph(graph_path))
+        entry = maps.get(cache_key, {}).get(graph_path)
+        if (
+            isinstance(entry, list)
+            and len(entry) == 3
+            and entry[2] == self._cache_index_tag()
+            and os.path.isfile(str(entry[0]))
+        ):
+            return str(entry[0]), int(entry[1])
+        return None
 
     def _stable_graph_cache_name(self, graph_path: str) -> str:
         source = Path(graph_path)
@@ -534,6 +786,8 @@ class AIGGraphRegressionDataset(PyGDataset):
         return Path(graph_path).parent
 
     def _cached_graph_path(self, graph_path: str) -> Path:
+        if not self.use_graph_cache:
+            return Path(graph_path)
         if self._cache_graph_dir is None:
             return Path(graph_path)
         return self._cache_root_for_graph(graph_path) / self._stable_graph_cache_name(
@@ -574,6 +828,12 @@ class AIGGraphRegressionDataset(PyGDataset):
 
     def _cache_single_graph(self, graph_path: str) -> tuple[str, int]:
         cache_path = self._cached_graph_path(graph_path)
+        if not self.use_graph_cache:
+            # cache_path IS the raw graph here; the refresh branch below would
+            # rewrite the source dataset in place. Only read.
+            return str(cache_path), int(
+                self._torch_load_graph(cache_path).x.shape[0]
+            )
         if cache_path.is_file():
             obj = self._torch_load_graph(cache_path)
             needs_refresh = (
@@ -628,61 +888,178 @@ class AIGGraphRegressionDataset(PyGDataset):
             return None
         return manifest
 
-    def _rebuild_graph_cache(self) -> dict:
-        unique_paths = sorted({sample.graph_path for sample in self.samples})
-
+    def _io_thread_count(self) -> int:
         cpu_limit = (
             len(os.sched_getaffinity(0))
             if hasattr(os, "sched_getaffinity")
             else (os.cpu_count() or 1)
         )
-        n_threads = max(
+        return max(
             1,
             min(
                 self.num_workers if self.num_workers > 0 else cpu_limit,
                 cpu_limit,
             ),
         )
+
+    _CSV_NODE_COUNT_AUDIT_SIZE = 500
+
+    def _audit_csv_node_counts(
+        self, num_nodes_map: dict[str, int], *, skip: set[str]
+    ) -> None:
+        """Spot-check CSV-derived node counts against the graphs themselves.
+
+        An undercount here is not caught anywhere downstream: it feeds
+        BalancedDynamicBatchSampler's node budget, and the resulting batch plan
+        is cached to disk, so a too-large batch OOMs the GPU and then does it
+        again on every retry. `dch` (see _UNTRUSTED_NODE_COUNT_MARKER) is the
+        one known source of undercounts and is excluded before we get here;
+        this samples the rest so a second, unknown source fails loudly at
+        warmup time on a CPU node instead.
+        """
+        candidates = sorted(set(num_nodes_map) - skip)
+        if not candidates:
+            return
+        sample = random.Random(0).sample(
+            candidates, min(self._CSV_NODE_COUNT_AUDIT_SIZE, len(candidates))
+        )
+        with ThreadPoolExecutor(max_workers=self._io_thread_count()) as executor:
+            actual = list(executor.map(self._torch_load_graph, sample))
+        mismatches = [
+            (p, num_nodes_map[p], int(obj.x.shape[0]))
+            for p, obj in zip(sample, actual, strict=False)
+            if num_nodes_map[p] != int(obj.x.shape[0])
+        ]
+        if mismatches:
+            shown = "\n".join(
+                f"  {p}: CSV says {csv_n}, graph has {real_n}"
+                for p, csv_n, real_n in mismatches[:5]
+            )
+            raise ValueError(
+                f"CSV node counts disagree with the graphs for "
+                f"{len(mismatches)}/{len(sample)} sampled files:\n{shown}\n"
+                "Batch planning would use these numbers, so refusing to "
+                "continue. Widen _UNTRUSTED_NODE_COUNT_MARKER or rebuild the "
+                "CSV stats."
+            )
+        print(
+            f"[cache] Audited {len(sample)} CSV node counts against disk: all match.",
+            flush=True,
+        )
+
+    def _build_manifest_from_csv(self) -> dict:
+        """Manifest for use_graph_cache=False: raw .pt paths, CSV node counts.
+
+        Nothing is written to a graph cache -- get() reads the raw file and
+        applies pe_transform itself. The only per-graph fact still needed is
+        num_nodes (for dynamic batch planning), and the CSV's abc stats give it
+        exactly for every graph except the `dch` step (see
+        _UNTRUSTED_NODE_COUNT_MARKER), which is read from disk.
+        """
+        unique_paths = sorted({sample.graph_path for sample in self.samples})
+        csv_sizes = {
+            s.graph_path: s.csv_num_nodes
+            for s in self.samples
+            if s.csv_num_nodes is not None
+        }
+
+        num_nodes_map = {
+            p: csv_sizes[p]
+            for p in unique_paths
+            if p in csv_sizes and _UNTRUSTED_NODE_COUNT_MARKER not in p
+        }
+        must_read = [p for p in unique_paths if p not in num_nodes_map]
+        print(
+            f"[cache] Sizing {len(unique_paths)} unique graphs: "
+            f"{len(num_nodes_map)} from CSV stats, {len(must_read)} read from disk.",
+            flush=True,
+        )
+
+        if must_read:
+            n_threads = self._io_thread_count()
+            completed = 0
+            with ThreadPoolExecutor(max_workers=n_threads) as executor:
+                for path, obj in zip(
+                    must_read,
+                    executor.map(self._torch_load_graph, must_read),
+                    strict=False,
+                ):
+                    num_nodes_map[path] = int(obj.x.shape[0])
+                    completed += 1
+                    if completed % 5000 == 0 or completed == len(must_read):
+                        print(
+                            f"[cache] {completed}/{len(must_read)} graphs read",
+                            flush=True,
+                        )
+
+        self._audit_csv_node_counts(num_nodes_map, skip=set(must_read))
+
+        processed_dir_path = Path(self.processed_dir)
+        processed_dir_path.mkdir(parents=True, exist_ok=True)
+        node_sizes_path = processed_dir_path / "node_sizes.json"
+        tmp_ns = node_sizes_path.with_suffix(f".tmp_{uuid.uuid4().hex[:8]}")
+        tmp_ns.write_text(
+            json.dumps(num_nodes_map, indent=2, sort_keys=True), encoding="utf-8"
+        )
+        os.replace(tmp_ns, node_sizes_path)
+
+        return {
+            "version": self._MANIFEST_VERSION,
+            "num_samples": len(self.samples),
+            "entries": [
+                {
+                    "graph_path": sample.graph_path,
+                    "cache_path": sample.graph_path,
+                    "num_nodes": num_nodes_map[sample.graph_path],
+                }
+                for sample in self.samples
+            ],
+        }
+
+    def _rebuild_graph_cache(self) -> dict:
+        unique_paths = sorted({sample.graph_path for sample in self.samples})
+
+        n_threads = self._io_thread_count()
         print(
             f"[cache] Building graph cache: {len(unique_paths)} unique graphs "
             f"using {n_threads} threads -> {self._cache_graph_dir}",
             flush=True,
         )
 
-        # Stored one file per unique cache-directory so that reruns skip
-        # torch.load for cached .pt files whose num_nodes is already known.
-        cache_roots = {
-            str(root): root
-            for root in (
-                self._cache_graph_dir,
-                self._tier0_cache_dir,
-                self._tier1_cache_dir,
-            )
-            if root is not None
-        }
+        # Stored one file per unique cache-directory so that reruns -- under
+        # ANY split/split_by/num_samples signature, not just this one -- skip
+        # both the raw-file stat() needed to name the cache file and the
+        # torch.load of the cached .pt file, for any graph already cached.
+        cache_roots = self._cache_roots()
         global_nn_paths = {
             cache_key: root / "_num_nodes_global.json"
             for cache_key, root in cache_roots.items()
         }
-        global_num_nodes = {cache_key: {} for cache_key in cache_roots}
-        for cache_key, gpath in global_nn_paths.items():
-            if gpath.is_file():
-                try:
-                    global_num_nodes[cache_key].update(
-                        json.loads(gpath.read_text(encoding="utf-8"))
-                    )
-                except (json.JSONDecodeError, OSError):
-                    pass
+        global_num_nodes = self._load_global_num_nodes_maps()
+        for cache_key in cache_roots:
+            global_num_nodes.setdefault(cache_key, {})
 
         path_map: dict[str, str] = {}
         num_nodes_map: dict[str, int] = {}
 
         def _process_one(graph_path: str) -> tuple[str, str, int]:
+            hit = self._global_cache_hit(graph_path, global_num_nodes)
+            if hit is not None:
+                return graph_path, hit[0], hit[1]
+            # No global-index hit -- either this graph has never been cached,
+            # or the index predates cache_path/index_tag tracking (a legacy
+            # bare-int entry) or was built under a different PE/content
+            # version. Fall back to the deterministic, raw-stat-based path;
+            # the write-back below upgrades the index entry afterwards.
             cache_key = str(self._cache_root_for_graph(graph_path))
             gmap = global_num_nodes[cache_key]
+            legacy_entry = gmap.get(graph_path)
             cache_path = self._cached_graph_path(graph_path)
-            if cache_path.is_file() and graph_path in gmap:
-                return graph_path, str(cache_path), gmap[graph_path]
+            if cache_path.is_file():
+                if isinstance(legacy_entry, int):
+                    return graph_path, str(cache_path), legacy_entry
+                obj = self._torch_load_graph(cache_path)
+                return graph_path, str(cache_path), int(obj.x.shape[0])
             cached_path, num_nodes = self._cache_single_graph(graph_path)
             return graph_path, cached_path, num_nodes
 
@@ -703,8 +1080,9 @@ class AIGGraphRegressionDataset(PyGDataset):
                     completed += 1
                     cache_key = str(self._cache_root_for_graph(graph_path))
                     gmap = global_num_nodes[cache_key]
-                    if graph_path not in gmap:
-                        gmap[graph_path] = num_nodes
+                    tagged_entry = [cached_path, num_nodes, self._cache_index_tag()]
+                    if gmap.get(graph_path) != tagged_entry:
+                        gmap[graph_path] = tagged_entry
                         dirty_cache_keys.add(cache_key)
                     if completed % 1000 == 0 or completed == total:
                         print(f"[cache] {completed}/{total} graphs cached", flush=True)
@@ -782,7 +1160,11 @@ class AIGGraphRegressionDataset(PyGDataset):
 
         manifest = self._load_manifest()
         if manifest is None:
-            manifest = self._rebuild_graph_cache()
+            manifest = (
+                self._rebuild_graph_cache()
+                if self.use_graph_cache
+                else self._build_manifest_from_csv()
+            )
             tmp = self._manifest_path.with_suffix(f".tmp_{uuid.uuid4().hex[:8]}")
             tmp.write_text(json.dumps(manifest, indent=2, sort_keys=True))
             tmp.replace(self._manifest_path)
