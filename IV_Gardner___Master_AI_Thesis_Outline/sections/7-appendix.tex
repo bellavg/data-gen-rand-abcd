@@ -5,14 +5,36 @@
 \chapter{First Appendix}
 \label{sec:apx:first_appendix}
 
-Put your appendices here. Remember that a work and thesis should be readable and understandable \emph{even without} reading the Appendix. Treat it as a ``if you want to know more, read this'' part.
+% Everything here is reference material the main text points at but does not need inline.
+% The thesis must remain readable without it.
 
-\section{Appendix section}
-        \subsection{Appendix subsection}
-                \subsubsection{Appendix subsubsection}
-                        \paragraph{Appendix paragraph} Lorem ipsum dolor sit amet, consectetur adipisicing elit, sed do eiusmod
-                        tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam,
-                        quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo
-                        consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse
-                        cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non
-                        proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
+\section{Synthesis Algorithm Configurations}
+\label{sec:apx:algorithms}
+% Referenced from \ref{sec:method:data:generation:algorithms}. Reproduce, per algorithm
+% (Orchestrate, Deepsyn, Syn4, C2RS): the exact abc command template, the parameters that
+% differ from abc's defaults, and the alias definitions -- C2RS in particular expands via
+% abc.rc into a long balance/resubstitute/rewrite chain that is worth showing in full.
+% Source: AIG_DATASET_README.md and abc.rc. Pin the abc version here too; the labels depend
+% on it and \ref{sec:discussion:limitations:reproducibility} flags that it is unrecorded.
+
+\section{Reduction Method Parameters}
+\label{sec:apx:params}
+% One table: every reduction method, its configured parameters, and whether each was
+% calibrated against measured retention or set to a plausible default. The distinction
+% matters for \ref{sec:results:rq4:gap} -- an uncalibrated knob is a confound in a
+% matched-compression comparison -- and putting it in one place keeps the methodology
+% chapter from having to caveat each method individually.
+
+\section{Baseline Hyperparameters}
+\label{sec:apx:baselines}
+% For SynthNet, HOGA and DeepGate4: which hyperparameters are the papers' published values
+% and which had to be assumed or adapted, with the reason for each deviation. The two
+% substantive ones (node-budget batching plus gradient accumulation) are argued in
+% \ref{sec:method:architecture:baselines}; this is where the full table belongs.
+% Source: src/train_baseline.py module docstring and src/baselines/*/regressor.py.
+
+\section{Extended Results}
+\label{sec:apx:results}
+% Per-configuration tables too detailed for Chapter \ref{sec:results}: full metric sets per
+% reduction method, per-tier error breakdowns, and the offline retention statistics per
+% method and shard.

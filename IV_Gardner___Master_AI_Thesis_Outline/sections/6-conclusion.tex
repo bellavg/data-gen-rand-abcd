@@ -9,6 +9,15 @@
 \label{sec:conclusion:answers}
 % One direct answer each -- a sentence or two, not a summary of the Results chapter.
 % Where a limitation qualifies the answer, say so in the same breath.
+%
+% BLOCKED on Chapter 4. When writing, pair each answer with the limitation that qualifies it,
+% rather than deferring all caveats to the Discussion:
+%   RQ1 -> \ref{sec:discussion:limitations:validity} (node reduction is an area proxy)
+%   RQ2 -> \ref{sec:discussion:limitations:scalability} (bounded graph scale)
+%   RQ3 -> \ref{sec:discussion:limitations:generalizability} (one algorithm, one encoder)
+%   RQ4 -> \ref{sec:discussion:limitations:reproducibility} (single seed; small gaps)
+%          and \ref{sec:results:rq4:adequacy} (weak heuristics bound the null result)
+%   RQ5 -> \ref{sec:discussion:limitations:methods} (which methods were actually run)
 
 \subsection{RQ1: Task Feasibility \& Baseline}
 \label{sec:conclusion:rq1}
@@ -46,7 +55,21 @@
 \subsection{Stronger Domain-Aware Reduction}
 \label{sec:conclusion:futurework:domain}
 % Especially if RQ4 came out null: what a genuinely strong AIG-aware method would
-% need to do differently.
+% need to do differently. Three concrete directions, in increasing ambition:
+%   1. SUPER-NODE CONTENT. Member statistics (size, level distribution, discarded internal
+%      edge count, structural rewrite-potential features such as MFFC size and reconvergence
+%      count) are already computed but not consumed by the encoder. The literature finds
+%      content matters critically \citep{generale2022scaling}; wiring it in is the cheapest
+%      untested improvement available and is an ablation, not a new method.
+%   2. FUNCTION-AWARE COARSENING. Annotating each merged cone with its NPN function class --
+%      the synthesis tool's own rewrite-library index -- would give super-nodes a semantic
+%      identity rather than a purely structural one, while stopping short of the functional
+%      merging that would leak the label. Designed but not built; it requires a model-schema
+%      change.
+%   3. LEARNED REDUCTION. Every method here is a fixed heuristic. A reduction trained to
+%      preserve the label is the obvious next step and the obvious risk: it reintroduces
+%      label dependence, which is one of the reasons condensation was excluded
+%      (\ref{sec:relwork:reduction:summarization}).
 
 \subsection{Scaling to Industrial AIGs}
 \label{sec:conclusion:futurework:scale}

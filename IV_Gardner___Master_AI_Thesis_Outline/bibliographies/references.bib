@@ -1,27 +1,349 @@
-@article{Gruber1995,
-    title = {{Toward principles for the design of ontologies used for knowledge sharing?}},
-    year = {1995},
-    journal = {International Journal of Human-Computer Studies},
-    author = {Gruber, Thomas R.},
-    number = {5-6},
-    pages = {907--928},
-    volume = {43},
-    url = {http://linkinghub.elsevier.com/retrieve/pii/S1071581985710816},
-    isbn = {10715819},
-    doi = {10.1006/ijhc.1995.1081},
-    issn = {10715819},
-    pmid = {15648861},
-    arxivId = {math/0701907v3},
-    keywords = {knowledge interchange format, knowledge sharing, measurement theory, ontological commitment, ontology, ontology design}
+% =====================================================================
+% VERIFICATION NOTICE -- READ BEFORE SUBMITTING
+%
+% The entries below were reconstructed from the working notes in
+% summarization_notes.md (sections "Key papers", "The research gap",
+% "Task grounding & baselines").  Authors, titles, years and venues come
+% from those notes; where a note did not record a field it is marked
+% "TODO: verify" rather than guessed.  Volume/issue/page numbers and DOIs
+% are deliberately omitted rather than invented.
+%
+% Every entry needs to be checked against the actual paper before
+% submission.  Entries marked TODO are the ones with a known missing or
+% uncertain field, but "no TODO" only means nothing was known to be
+% missing -- it is not a verification.
+% =====================================================================
+
+
+% ---------------------------------------------------------------------
+% Graph reduction: coarsening, summarization, sparsification
+% ---------------------------------------------------------------------
+
+@misc{bollen2023exact,
+  title     = {Learning Graph Neural Networks using Exact Compression},
+  author    = {Bollen, Jeroen and Steegmans, Jasper and Van den Bussche, Jan and Vansummeren, Stijn},
+  year      = {2023},
+  note      = {Collapses nodes in the same $d$-step colour-refinement class; provably identical GNN output. Graded variant $cr_c$ with $c=\infty$ (colour refinement) and $c=1$ (bisimulation)}
+}
+% TODO: verify venue (recorded in notes only as 2023)
+
+@misc{generale2022scaling,
+  title     = {Scaling R-GCN Training with Graph Summarization},
+  author    = {Generale, Alessandro and Blume, Till and Cochez, Michael},
+  year      = {2022},
+  note      = {Trains on a summary graph and transfers weights back through a node-to-super-node mapping; ablation finds retaining super-node content critical}
+}
+% TODO: verify venue (companion proceedings, recorded in notes only as 2022)
+
+@article{hashemi2024survey,
+  title   = {A Comprehensive Survey on Graph Reduction: Sparsification, Coarsening, and Condensation},
+  author  = {Hashemi, Mohammad and Gong, Shengbo and Ni, Juntong and Fan, Wenqi and Prakash, B. Aditya and Jin, Wei},
+  year    = {2024},
+  journal = {arXiv preprint}
+}
+% TODO: verify arXiv id and author list
+
+@misc{chen2022coarsening,
+  title   = {Graph Coarsening: From Scientific Computing to Machine Learning},
+  author  = {Chen, Jie and Saad, Yousef and Zhang, Zechen},
+  year    = {2022}
+}
+% TODO: verify venue and year
+
+@article{shabani2023summarization,
+  title   = {A Comprehensive Survey on Graph Summarization with Graph Neural Networks},
+  author  = {Shabani, Nasrin and Wu, Jia and Beheshti, Amin and Sheng, Quan Z. and Foo, Jin and Haghighi, Venus and Hanif, Ambreen and Shahabikargar, Maryam},
+  year    = {2023},
+  journal = {arXiv preprint}
+}
+% TODO: verify arXiv id and author list
+
+@inproceedings{dickens2024convmatch,
+  title     = {Convolution Matching for Efficient Graph Neural Network Training},
+  author    = {Dickens, Charles and Huang, Eddie and Reganti, Aishwarya and Zhu, Jiong and Subbian, Karthik and Getoor, Lise},
+  booktitle = {Proceedings of the ACM Web Conference (WWW)},
+  year      = {2024},
+  note      = {ConvMatch / A-ConvMatch. Reference implementation: \url{https://github.com/amazon-science/convolution-matching}}
+}
+% TODO: verify author list and exact title
+
+@misc{ugc2024,
+  title   = {Universal Graph Coarsening},
+  author  = {TODO},
+  year    = {2024},
+  note    = {LSH-based, linear-time coarsening. AH-UGC is the 2025 consistent-hashing follow-up}
+}
+% TODO: authors, venue, and the separate AH-UGC (2025) entry
+
+@article{loukas2019localvariation,
+  title     = {Graph Reduction with Spectral and Cut Guarantees},
+  author    = {Loukas, Andreas},
+  journal   = {Journal of Machine Learning Research},
+  year      = {2019},
+  note      = {Local Variation coarsening; restricted spectral approximation guarantee}
+}
+% TODO: verify -- entry type should probably be a journal article, not inproceedings.
+% (Do not write an "at" sign in a comment here: BibTeX scans for it even in comments
+% and will try to parse the following word as an entry type.)
+
+@misc{sugiyama2023kron,
+  title  = {Kron Reduction for Directed Graphs},
+  author = {Sugiyama, Mahito and Sato, Kazuki},
+  year   = {2023}
+}
+% TODO: verify title, venue
+
+@article{karypis1997metis,
+  title     = {A Fast and High Quality Multilevel Scheme for Partitioning Irregular Graphs},
+  author    = {Karypis, George and Kumar, Vipin},
+  journal   = {SIAM Journal on Scientific Computing},
+  year      = {1998},
+  note      = {METIS. The 1997 technical report is the version cited in most GNN work}
+}
+% TODO: pick the report or the journal version and fix the entry type
+
+@inproceedings{tian2008ksnap,
+  title     = {Efficient Aggregation for Graph Summarization},
+  author    = {Tian, Yuanyuan and Hankins, Richard A. and Patel, Jignesh M.},
+  booktitle = {Proceedings of the ACM SIGMOD International Conference on Management of Data},
+  year      = {2008},
+  note      = {k-SNAP. Subsumed here by graded colour refinement at $d=1$; cited, not run}
 }
 
-@article{viola1997alignment,
-  title={Alignment by maximization of mutual information},
-  author={Viola, Paul and Wells III, William M},
-  journal={International journal of computer vision},
-  volume={24},
-  number={2},
-  pages={137--154},
-  year={1997},
-  publisher={Springer}
+@misc{grohe2014colourrefinement,
+  title  = {Dimension Reduction via Colour Refinement},
+  author = {Grohe, Martin and Kersting, Kristian and Mladenov, Martin and Selman, Erkal},
+  year   = {2014},
+  note   = {Colour refinement computes the coarsest equitable partition -- the formal basis for losslessness under a permutation-equivariant GNN}
+}
+% TODO: verify venue (ESA?) and author list
+
+% ---------------------------------------------------------------------
+% Coarsening as preprocessing for GNN training
+% ---------------------------------------------------------------------
+
+@inproceedings{huang2021scal,
+  title  = {Scaling Up Graph Neural Networks Via Graph Coarsening},
+  author = {Huang, Zengfeng and Zhang, Shengzhong and Xi, Chong and Liu, Tang and Zhou, Min},
+  booktitle = {Proceedings of the ACM SIGKDD Conference on Knowledge Discovery and Data Mining},
+  year   = {2021},
+  note   = {SCAL. Trains on the coarsened graph and infers directly with the same weights -- the shared-weights precedent for RQ5}
+}
+
+@inproceedings{buffelli2022sizeshift,
+  title  = {SizeShiftReg: a Regularization Method for Improving Size-Generalization in Graph Neural Networks},
+  author = {Buffelli, Davide and Li{\'o}, Pietro and Vandin, Fabio},
+  booktitle = {Advances in Neural Information Processing Systems (NeurIPS)},
+  year   = {2022},
+  note   = {Trains so embeddings stay consistent across coarsening ratios; the size-shift framing behind RQ5}
+}
+
+@inproceedings{jin2022gcond,
+  title  = {Graph Condensation for Graph Neural Networks},
+  author = {Jin, Wei and Zhao, Lingxiao and Zhang, Shichang and Liu, Yozen and Tang, Jiliang and Shah, Neil},
+  booktitle = {International Conference on Learning Representations (ICLR)},
+  year   = {2022},
+  note   = {GCond. Excluded here: no node correspondence, label-dependent, architecture-tied}
+}
+
+@article{cts_bench2026,
+  title   = {Benchmarking Graph Coarsening Trade-offs for GNNs in Clock Tree Synthesis},
+  author  = {Khadka, TODO and Roxy, TODO and Ahmed, TODO},
+  year    = {2026},
+  journal = {arXiv preprint arXiv:2602.19330},
+  note    = {Nearest competitor. Post-placement gate-level netlists, clock-skew prediction; one bespoke spatial clustering heuristic. 17.2x memory / 3x speed at negative zero-shot $R^2$; calls for domain-aware coarsening}
+}
+% TODO: full author given names
+
+% ---------------------------------------------------------------------
+% Logic synthesis, AIGs, and ABC
+% ---------------------------------------------------------------------
+
+@misc{mishchenko2005fraig,
+  title  = {FRAIGs: A Unifying Representation for Logic Synthesis and Verification},
+  author = {Mishchenko, Alan and Chatterjee, Satrajit and Jiang, Roland and Brayton, Robert K.},
+  year   = {2005},
+  note   = {ERL Technical Report, UC Berkeley. Functionally-reduced AIGs via SAT sweeping -- the functional end of the equivalence spectrum, used here only as a leakage control}
+}
+% TODO: verify report number
+
+@inproceedings{mishchenko2006rewriting,
+  title     = {DAG-Aware AIG Rewriting: A Fresh Look at Combinational Logic Synthesis},
+  author    = {Mishchenko, Alan and Chatterjee, Satrajit and Brayton, Robert K.},
+  booktitle = {Proceedings of the Design Automation Conference (DAC)},
+  year      = {2006},
+  note      = {Defines the rewrite/refactor primitives and the MFFC as the unit refactoring operates on -- the basis for the S6 domain argument}
+}
+
+@misc{abc,
+  title  = {ABC: A System for Sequential Synthesis and Verification},
+  author = {{Berkeley Logic Synthesis and Verification Group}},
+  note   = {\url{https://github.com/berkeley-abc/abc}}
+}
+% TODO: pin the commit/version actually used for dataset generation
+
+% ---------------------------------------------------------------------
+% Machine learning for logic synthesis
+% ---------------------------------------------------------------------
+
+@article{chowdhury2021openabc,
+  title   = {OpenABC-D: A Large-Scale Dataset For Machine Learning Guided Integrated Circuit Synthesis},
+  author  = {Chowdhury, Animesh Basak and Tan, Benjamin and Karri, Ramesh and Garg, Siddharth},
+  year    = {2021},
+  journal = {arXiv preprint arXiv:2110.11292},
+  note    = {SynthNet. Graph-level labels including percentage of nodes optimized -- the closest published analogue of the optimizability label used here}
+}
+
+@inproceedings{deng2024hoga,
+  title     = {Less is More: Hop-Wise Graph Attention for Scalable and Generalizable Learning on Circuits},
+  author    = {Deng, Chenhui and Yue, Zichao and Yu, Cunxi and Sarar, Gokce and Carey, Ryan and Jain, Rajeev and Zhang, Zhiru},
+  booktitle = {Proceedings of the Design Automation Conference (DAC)},
+  year      = {2024},
+  note      = {HOGA. Hop-wise attention over precomputed features; no message passing at training time}
+}
+% TODO: verify author list
+
+@inproceedings{li2022deepgate,
+  title     = {DeepGate: Learning Neural Representations of Logic Gates},
+  author    = {Li, Min and Khan, Sadaf and Shi, Zhengyuan and Wang, Naixing and Yu, Huang and Xu, Qiang},
+  booktitle = {Proceedings of the Design Automation Conference (DAC)},
+  year      = {2022}
+}
+% TODO: verify year (notes say 2021) and author list
+
+@misc{shi2024deepgate3,
+  title  = {DeepGate3: Towards Scalable Circuit Representation Learning},
+  author = {Shi, Zhengyuan and TODO},
+  year   = {2024},
+  note   = {Pooling transformer over subcircuits. Scales the model, not the input}
+}
+% TODO: full author list and venue
+
+@misc{deepgate4_2025,
+  title   = {DeepGate4: Efficient and Effective Representation Learning for Circuit Design at Scale},
+  author  = {TODO},
+  year    = {2025},
+  note    = {Sparse GAT transformer, sub-linear memory, virtual edges over $k$-hop cones; -84\% inference time vs DeepGate3. Baseline model in this work}
+}
+% TODO: author list and venue
+
+@inproceedings{polargate2024,
+  title  = {PolarGate: Breaking the Functionality Representation Bottleneck of Logic Gate Networks},
+  author = {TODO},
+  booktitle = {Proceedings of the International Conference on Computer-Aided Design (ICCAD)},
+  year   = {2024},
+  note   = {Polarity/functionality bottleneck in AIG GNNs -- supports treating inverter polarity as a first-class relation}
+}
+% TODO: author list
+
+@misc{wu2022lostin,
+  title  = {LOSTIN: Logic Optimization via Spatio-Temporal Information with Hybrid Graph Models},
+  author = {Wu, Nan and Lee, Jiwon and Xie, Yuan and Hao, Cong},
+  year   = {2022},
+  note   = {Encodes the synthesis recipe as a super-node -- a temporal use of super-nodes, orthogonal to the structural super-nodes here}
+}
+% TODO: verify venue (ASAP?)
+
+@article{qor_transformer2022,
+  title   = {Rethinking Reinforcement Learning based Logic Synthesis},
+  author  = {TODO},
+  year    = {2022},
+  journal = {arXiv preprint arXiv:2207.11437},
+  note    = {Joint Transformer (recipe) + GraphSAGE (circuit) QoR prediction}
+}
+% TODO: verify title and authors -- the notes recorded only the arXiv id
+
+% ---------------------------------------------------------------------
+% Graph neural networks: architectures, expressivity, scaling
+% ---------------------------------------------------------------------
+
+@inproceedings{kipf2017gcn,
+  title     = {Semi-Supervised Classification with Graph Convolutional Networks},
+  author    = {Kipf, Thomas N. and Welling, Max},
+  booktitle = {International Conference on Learning Representations (ICLR)},
+  year      = {2017}
+}
+
+@inproceedings{hamilton2017graphsage,
+  title     = {Inductive Representation Learning on Large Graphs},
+  author    = {Hamilton, William L. and Ying, Rex and Leskovec, Jure},
+  booktitle = {Advances in Neural Information Processing Systems (NeurIPS)},
+  year      = {2017}
+}
+
+@inproceedings{xu2019gin,
+  title     = {How Powerful are Graph Neural Networks?},
+  author    = {Xu, Keyulu and Hu, Weihua and Leskovec, Jure and Jegelka, Stefanie},
+  booktitle = {International Conference on Learning Representations (ICLR)},
+  year      = {2019}
+}
+
+@inproceedings{xu2018jk,
+  title     = {Representation Learning on Graphs with Jumping Knowledge Networks},
+  author    = {Xu, Keyulu and Li, Chengtao and Tian, Yonglong and Sonobe, Tomohiro and Kawarabayashi, Ken-ichi and Jegelka, Stefanie},
+  booktitle = {Proceedings of the International Conference on Machine Learning (ICML)},
+  year      = {2018}
+}
+
+@misc{luo2024gnnplus,
+  title   = {What Are Good Positional Encodings for Directed Graphs?},
+  author  = {Luo, Yuankai and TODO},
+  year    = {2025},
+  note    = {GNN+ -- the encoder this work builds on. Implementation: \url{https://github.com/LUOyk1999/GNNPlus}}
+}
+% TODO: this is the wrong title -- find the actual GNN+ paper behind the repo,
+% which is what the architecture in Chapter 3 is based on
+
+@inproceedings{cai2021graphnorm,
+  title     = {GraphNorm: A Principled Approach to Accelerating Graph Neural Network Training},
+  author    = {Cai, Tianle and Luo, Shengjie and Xu, Keyulu and He, Di and Liu, Tie-Yan and Wang, Liwei},
+  booktitle = {Proceedings of the International Conference on Machine Learning (ICML)},
+  year      = {2021}
+}
+
+@inproceedings{alon2021oversquashing,
+  title     = {On the Bottleneck of Graph Neural Networks and its Practical Implications},
+  author    = {Alon, Uri and Yahav, Eran},
+  booktitle = {International Conference on Learning Representations (ICLR)},
+  year      = {2021},
+  note      = {Over-squashing. The mechanism behind the hypothesis that path-contracting coarsening can improve rather than degrade accuracy on deep graphs}
+}
+
+@inproceedings{dwivedi2022lrgb,
+  title     = {Long Range Graph Benchmark},
+  author    = {Dwivedi, Vijay Prakash and Ramp{\'a}{\v{s}}ek, Ladislav and Galkin, Mikhail and Parviz, Ali and Wolf, Guy and Luu, Anh Tuan and Beaini, Dominique},
+  booktitle = {Advances in Neural Information Processing Systems (NeurIPS) Datasets and Benchmarks Track},
+  year      = {2022}
+}
+
+@inproceedings{thost2021dagnn,
+  title     = {Directed Acyclic Graph Neural Networks},
+  author    = {Thost, Veronika and Chen, Jie},
+  booktitle = {International Conference on Learning Representations (ICLR)},
+  year      = {2021}
+}
+
+@inproceedings{zhang2019dvae,
+  title     = {D-VAE: A Variational Autoencoder for Directed Acyclic Graphs},
+  author    = {Zhang, Muhan and Jiang, Shali and Cui, Zhicheng and Garnett, Roman and Chen, Yixin},
+  booktitle = {Advances in Neural Information Processing Systems (NeurIPS)},
+  year      = {2019}
+}
+
+% ---------------------------------------------------------------------
+% Tooling
+% ---------------------------------------------------------------------
+
+@inproceedings{fey2019pyg,
+  title     = {Fast Graph Representation Learning with PyTorch Geometric},
+  author    = {Fey, Matthias and Lenssen, Jan E.},
+  booktitle = {ICLR Workshop on Representation Learning on Graphs and Manifolds},
+  year      = {2019}
+}
+
+@inproceedings{akiba2019optuna,
+  title     = {Optuna: A Next-generation Hyperparameter Optimization Framework},
+  author    = {Akiba, Takuya and Sano, Shotaro and Yanase, Toshihiko and Ohta, Takeru and Koyama, Masanori},
+  booktitle = {Proceedings of the ACM SIGKDD Conference on Knowledge Discovery and Data Mining},
+  year      = {2019}
 }

@@ -70,29 +70,99 @@
 
 \subsection{Reproducibility}
 \label{sec:discussion:limitations:reproducibility}
-% Seed count and run-to-run variance, cluster-specific timing measurements,
-% dependence on a specific abc version and tool chain.
+Every stochastic component is seeded, so an individual run repeats exactly. That is a
+weaker guarantee than it appears. Each configuration was trained once, so no run-to-run
+variance is available and every accuracy difference reported in Chapter~\ref{sec:results}
+is a point estimate. This bears hardest on RQ4, where the expected effect is small: a gap of
+a few percentage points between a domain-informed method and its control cannot be
+distinguished from seed noise on the evidence collected here. The efficiency comparisons are
+better placed, being paired per graph with confidence intervals and a signed-rank test, but
+accuracy has no equivalent treatment.
+
+Two further dependencies limit exact reproduction. Timing and memory measurements are
+specific to the cluster hardware and to the enabled compilation and mixed-precision
+settings, so they should be read as relative comparisons rather than as portable absolutes.
+And the labels themselves depend on the version of the synthesis tool used to generate them;
+a different version would produce a different corpus, and the version was not pinned.
 
 \subsection{Scalability}
 \label{sec:discussion:limitations:scalability}
-% The central honesty point: the motivation invokes industrial AIGs of millions to
-% billions of nodes, but evaluation runs on a bounded intermediate scale so the RQ1
-% baseline stays tractable. State plainly what does and does not extrapolate.
+This is the limitation closest to the motivation and it should be stated without hedging.
+The argument for this work rests on industrial circuits of millions to billions of nodes.
+The evaluation runs on a corpus bounded at roughly a third of a million nodes per graph,
+because RQ1 requires a full-graph baseline and a baseline that does not fit in memory cannot
+be measured. The design that makes the study interpretable is the same design that keeps it
+away from the scale it argues about.
+
+What does extrapolate: the relative ordering of reduction methods by offline cost, and the
+qualitative shape of the memory and throughput trade-offs, since these follow from
+properties of the algorithms and of message passing rather than from the corpus size. What
+does not: the absolute compression figures, since several methods' compression is a property
+of circuit structure rather than a parameter, and larger industrial circuits may have
+different redundancy profiles; and any claim that a method which retains accuracy here would
+retain it at a scale where the model sees a proportionally smaller fraction of each graph.
 
 \subsection{Generalizability}
 \label{sec:discussion:limitations:generalizability}
-% One synthesis algorithm, one encoder architecture, one target metric. How far do
-% the conclusions travel to Deepsyn/Syn4/C2RS, to other GNNs, to delay or area?
+Three axes are held fixed, each narrowing what the conclusions cover.
+
+\emph{One synthesis algorithm.} Results characterise optimizability under
+\texttt{Orchestrate}. Graphs optimized by the other three scripts exist and are unused. If
+the reduction rankings hold across all four, the finding is about AIG structure; if they do
+not, it is about \texttt{Orchestrate}, and nothing here can tell the two apart.
+
+\emph{One encoder.} A four-layer edge-aware GCN+ was used throughout. Depth is not
+incidental to these results: methods were coupled to it by design, with refinement depth set
+equal to the number of layers. A deeper model would merge less under colour refinement and
+would have a different receptive-field profile, so the ranking could shift.
+
+\emph{One target.} Node reduction is the only quantity modelled. Delay and power are the
+objectives synthesis actually trades against, and nothing here speaks to them.
 
 \subsection{Reliability and Validity}
 \label{sec:discussion:limitations:validity}
-% Construct validity: is node reduction a good proxy for "optimizability"?
-% Internal validity: does the design-level split fully prevent leakage?
+\emph{Construct validity.} Node reduction is a proxy for area, and area is one of three
+objectives. A circuit whose node count barely moves may still have been substantially
+improved in delay. The label measures what the tool removed, not how much better the result
+is, and ``optimizability'' should be read in that narrower sense throughout.
+
+\emph{Internal validity.} Splitting by design was chosen to prevent a base graph and its own
+optimized descendants from straddling the train/test boundary. Whether it fully succeeds is
+testable rather than assumed, and the test was not run: the gap between a design-level split
+and a random split measures directly how much of the score is design recognition rather than
+structural inference. Reporting that comparison once would settle the question; without it,
+the leakage argument is sound in principle but unverified in practice.
+
+\emph{Construct validity of the comparison itself.} Hyperparameters were tuned once on the
+full-graph configuration and held fixed. This protects the comparison from confounding
+retention with tuning effort, but it means reduced configurations run at settings chosen for
+a different input distribution --- which biases against them, and therefore bounds how
+strongly any negative result about reduction can be stated.
 
 \subsection{Limitations of the Reduction Methods Tested}
 \label{sec:discussion:limitations:methods}
-% The summarization family in particular -- which candidates were implemented and
-% which were left out, and what that omission means for the conclusions.
+The reduction methods are not a representative sample of their literatures, and the
+summarization family in particular was scoped down deliberately.
+
+Two implemented methods were not given training runs: spectral coarsening and LSH-based
+hashing. The reasoning is given in \ref{sec:method:summary:notrun} and holds, but the
+consequence should be stated --- the spectral family is the classical, guarantee-bearing
+branch of the coarsening literature, and this thesis reports no trained result for it.
+
+The domain-informed adaptations are simple. Edge-span weighting, level slicing, gate-role
+filtering and reconvergence-bounded merging are direct encodings of structural intuitions,
+not sophisticated methods. If they fail to beat their generic counterparts, that bounds
+these heuristics, not the idea of domain-aware reduction --- a distinction
+\ref{sec:results:rq4:adequacy} carries and which should not be quietly dropped when the
+conclusion is written.
+
+Finally, the boundary between structural compression and functional optimization is argued
+rather than measured. The claim that merging structurally equivalent nodes does not leak the
+label while merging functionally equivalent nodes would is well founded, but the negative
+control that would demonstrate it empirically was not run
+(\ref{sec:method:summary:fraig}). The super-node content ablation is in the same position:
+member statistics are computed but not yet consumed by the encoder, so the finding in the
+literature that super-node content matters is cited rather than tested here.
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -106,7 +176,32 @@
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \section{Ethical Considerations}
 \label{sec:discussion:ethics}
-% Required by the template. Plausible angles: energy and compute cost of the
-% dataset generation and training sweeps (which cuts both ways, since the point of
-% the work is to reduce compute); benchmark provenance and licensing; dual-use and
-% accessibility, i.e. whether cheaper training widens or narrows who can do EDA research.
+\paragraph{Compute and energy cost.}
+The work has a real environmental footprint: generating a corpus of several million AIGs
+required sustained CPU cluster time, and the training sweeps required substantial GPU time
+on top. The tension is worth stating rather than eliding --- a study whose purpose is to
+reduce the compute cost of training spent a large amount of compute establishing how. The
+defence is that the cost is incurred once and the artifacts are cached and reusable, so a
+result showing which reductions preserve the signal saves compute for every subsequent user;
+but that is a claim about future savings against a certain present cost.
+% TODO: quote the actual GPU-hours and node-hours consumed rather than describing them
+% qualitatively. The figures make this paragraph honest instead of gestural.
+
+\paragraph{Benchmark provenance and licensing.}
+The corpus is derived from published benchmark circuits. Their licences govern what may be
+redistributed, and this needs to be checked and stated explicitly before any dataset
+release, not assumed (\ref{sec:method:data:sources}).
+
+\paragraph{Accessibility, and who benefits.}
+Lowering the memory required to train circuit models cuts in two directions. It widens
+access, since research that currently requires multi-GPU clusters could run on modest
+hardware, which matters for groups without industrial compute budgets. It also lowers the
+cost of capability for those who already have that budget. The honest position is that this
+work makes an existing capability cheaper rather than creating a new one, and that the
+widening effect is the more likely of the two to matter at this scale.
+
+\paragraph{Dual use.}
+Logic synthesis tooling is general-purpose infrastructure. Improvements to it apply to
+whatever circuits are being designed, and this work does nothing specific to any application
+domain. No mitigations are proposed because none are specific enough to be meaningful; the
+consideration is recorded because omitting it would be a worse answer than naming it.
