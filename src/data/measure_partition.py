@@ -68,12 +68,22 @@ def process_single_graph(pt_path: Path):
 
     def _entry(assignment: torch.Tensor, elapsed: float) -> dict:
         cut = (assignment[src] != assignment[dst]).sum().item()
+        # avg_nodes_per_partition is n_nodes/k by construction, so on its own it
+        # says nothing about whether a method actually balances. The size spread
+        # does: METIS balances explicitly, while level slicing inherits whatever
+        # widths the AIG's topological levels happen to have. minlength=k so a
+        # method that leaves a partition empty still reports k buckets.
+        sizes = torch.bincount(assignment.to(torch.long), minlength=k)
         return {
             "graph_id": pt_path.name,
             "n_nodes": n_nodes,
             "n_edges": n_edges,
             "num_partitions": k,
+            "num_nonempty_partitions": int((sizes > 0).sum()),
             "avg_nodes_per_partition": n_nodes / k,
+            "max_nodes_per_partition": int(sizes.max()),
+            "min_nodes_per_partition": int(sizes.min()),
+            "std_nodes_per_partition": float(sizes.float().std()),
             "edge_cut_ratio": cut / n_edges,
             "time_s": elapsed,
         }
