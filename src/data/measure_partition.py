@@ -5,8 +5,8 @@ Measure the offline cost of the partitioning algorithms themselves.
 Mirrors measure_sparsity.py's structure and CLI, but partitioning never
 removes nodes or edges (only cuts cross-partition edges for message
 passing), so the numbers that matter are different: edge-cut ratio (not
-node/edge retention), the dynamic partition count k, and average partition
-size, alongside per-graph wall-clock time.
+node/edge retention), the dynamic partition count k, and how evenly the
+nodes actually land across the k parts, alongside per-graph wall-clock time.
 
 Run on the cluster (needs access to the graph cache):
     python src/data/measure_partition.py --graph-dirs /path/to/tier0 /path/to/tier1
@@ -68,12 +68,23 @@ def process_single_graph(pt_path: Path):
 
     def _entry(assignment: torch.Tensor, elapsed: float) -> dict:
         cut = (assignment[src] != assignment[dst]).sum().item()
+        # minlength=k so a partitioner that leaves a part empty still
+        # contributes its zero, rather than shortening the vector and
+        # flattering its own spread.
+        sizes = torch.bincount(assignment, minlength=k).to(torch.float64)
         return {
             "graph_id": pt_path.name,
             "n_nodes": n_nodes,
             "n_edges": n_edges,
             "num_partitions": k,
             "avg_nodes_per_partition": n_nodes / k,
+            # avg_nodes_per_partition is n_nodes / k, so it is identical for
+            # all four partitioners on a given graph and says nothing about
+            # how evenly any of them actually split it. These two do.
+            # Population std, not sample: the k partitions are the whole set,
+            # not a draw from a larger one.
+            "std_nodes_per_partition": float(sizes.std(unbiased=False)),
+            "max_nodes_per_partition": int(sizes.max()),
             "edge_cut_ratio": cut / n_edges,
             "time_s": elapsed,
         }
@@ -191,6 +202,8 @@ def print_stats(stats: dict):
         cut_ratios = [e["edge_cut_ratio"] for e in entries]
         k_vals = [e["num_partitions"] for e in entries]
         avg_part_sizes = [e["avg_nodes_per_partition"] for e in entries]
+        size_stds = [e["std_nodes_per_partition"] for e in entries]
+        max_part_sizes = [e["max_nodes_per_partition"] for e in entries]
         times = [e.get("time_s", 0) for e in entries]
         print(f"\n  {algo} ({len(entries)} graphs):")
         print(f"    Edge cut ratio: mean={np.mean(cut_ratios):.1%}  "
@@ -199,6 +212,8 @@ def print_stats(stats: dict):
         print(f"    Num partitions (k): mean={np.mean(k_vals):.1f}  "
               f"min={np.min(k_vals)}  max={np.max(k_vals)}")
         print(f"    Avg nodes/partition: mean={np.mean(avg_part_sizes):.1f}")
+        print(f"    Imbalance (sd nodes/partition): mean={np.mean(size_stds):.1f}  "
+              f"max part: mean={np.mean(max_part_sizes):.1f}")
         if sum(times) > 0:
             print(f"    Avg time per graph: {np.mean(times) * 1000:.2f} ms")
 
