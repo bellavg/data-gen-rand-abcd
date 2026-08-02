@@ -3,42 +3,52 @@
 
 \subsubsection{Reduction on Directed Acyclic Graphs}
 \label{sec:relwork:domain:dag}
-Direction changes more than notation. DAG-native architectures process nodes in
-topological order and read direction as causality \citep{thost2021dagnn,zhang2019dvae},
-and on the reduction side only isolated pieces exist, such as the directed extension of
-Kron reduction \citep{sugiyama2023kron}. Coarsening theory is otherwise stated for
-undirected graphs: its guarantees concern spectra of symmetric Laplacians, and none of
-them carry automatically to a quotient of a DAG, which need not even be acyclic
-(\ref{sec:prelim:aig:distinct}). That absence of transferable guarantees is one reason
-every method run here is compared against a random control at matched compression
-(\ref{sec:method:summary:random}) instead of being trusted on guarantees stated for a
-different object.
+Direction changes more than notation. DAG-native architectures process nodes in topological
+order and read direction as causality \citep{thost2021dagnn,zhang2019dvae}. On the reduction
+side only isolated pieces exist, such as the directed extension of Kron reduction
+\citep{sugiyama2023kron}. Coarsening theory is otherwise stated for undirected graphs: its
+guarantees concern spectra of symmetric Laplacians, and none of them carry to a quotient of
+a DAG, which need not even be acyclic (\ref{sec:prelim:aig:distinct}). No guarantee
+therefore transfers, and every method run here is compared against a random control at
+matched compression (\ref{sec:method:summary:random}) instead of being trusted on a
+guarantee stated for a different object.
 
 \subsubsection{Reduction in Circuit and Netlist Domains}
 \label{sec:relwork:domain:circuits}
-Two distinct bodies of work sit in this space, and they must not be conflated. The first
-is AIG-native reduction that predates and ignores the summarization literature.
-Structural hashing merges structurally identical gates on construction
-\citep{kuehlmann2002robust}, FRAIG merges functionally equivalent ones by simulation and
-SAT \citep{mishchenko2005fraig}, and MFFC decomposition is how refactoring already carves
-a network into mergeable cones \citep{mishchenko2006rewriting}. Read through the lens
-of~\ref{sec:prelim:reduction:summarization}, all three are equivalence-based coarsenings
-by another name, and connecting them to the exactness framework
-of~\ref{sec:prelim:gnn:expressivity} is part of this thesis's contribution.
+AIG-native reduction predates the summarization literature and ignores it. Structural
+hashing merges gates that agree on the fanin signature~\eqref{eq:prelim:strash} at the
+moment of construction \citep{kuehlmann2002robust}. FRAIG merges functionally equivalent
+gates, refuting candidates by simulation and proving the survivors by SAT
+\citep{mishchenko2005fraig}. Maximal fanout-free cone decomposition~\eqref{eq:prelim:mffc}
+is how refactoring already carves a network into mergeable cones
+\citep{mishchenko2006rewriting}. Contracting a chain of single-fanout gates is its
+chain-shaped special case, and the post-dominator of~\ref{sec:prelim:aig:properties}
+\citep{lengauer1979dominators} bounds a cone whose interior reconverges. Read through the
+lens of~\ref{sec:prelim:reduction:summarization}, all three are equivalence-based
+coarsenings under another name, and connecting them to the exactness framework
+of~\ref{sec:prelim:gnn:expressivity} is part of the contribution claimed here.
 
-The second is CTS-Bench \citep{cts_bench2026}, the nearest published competitor. It
-benchmarks coarsening trade-offs for GNNs on post-placement gate-level netlists for
-clock-skew prediction. Its coarsening is a single bespoke heuristic that consumes
-physical coordinates, so it cannot be applied to a pre-physical AIG at all
-(\ref{sec:prelim:synthesis:flow}), and it compares no second method. Its findings support
-the premise of this thesis rather than competing with it: up to $17.2\times$ memory
-reduction and $3\times$ training speedup, accuracy collapsing to negative $R^2$ under
-zero-shot cross-state evaluation, and an explicit call for domain-aware coarsening. Two
-of its numbers are carried forward. The negative zero-shot $R^2$ is the standing warning
-for RQ5, and the dissociation between its error metrics, MAE nearly unmoved at 0.16 to
-0.17 while $R^2$ fell below zero, is the citation behind reporting RMSE, $R^2$ and
-Spearman correlation together rather than any one alone
-(\ref{sec:method:experiment:metrics}).
+That connection carries a hazard the generic coarsening literature never meets. The label
+regressed here is the fraction of nodes synthesis removes, and the reductions just listed
+are themselves synthesis operations, so a coarsener drawn from that family performs part of
+the optimization it is supposed to predict and shrinks the quantity being measured. The
+hazard is graded rather than binary. Merging by functional
+equivalence~\eqref{eq:prelim:funceq} is what a synthesis pass does. Merging by cone
+structure is what a synthesis pass operates on. Merging by an invariant the encoder cannot
+see touches neither. No method run here occupies the first position, and the
+domain-specific candidate is the only one at the second, which is why it alone has to argue
+that intra-cone wiring is noise with respect to the label
+(\ref{sec:method:summary:domain},~\ref{sec:discussion:limitations:methods}).
 
-
-\todo{overlap with optimizaiton should be mentioned }
+CTS-Bench \citep{cts_bench2026} is the nearest published competitor. It benchmarks
+coarsening trade-offs for GNNs on post-placement gate-level netlists for clock-skew
+prediction, with a single bespoke heuristic that consumes physical coordinates, so it cannot
+reach a pre-physical AIG at all (\ref{sec:prelim:synthesis:flow}), and it compares no second
+method. Its findings support the premise of this thesis rather than competing with it: up to
+$17.2\times$ memory reduction and $3\times$ training speedup, accuracy collapsing to
+negative $R^2$ under zero-shot cross-state evaluation, and an explicit call for domain-aware
+coarsening. Two of its numbers are carried forward. The negative zero-shot $R^2$ is the
+standing warning against assuming that a model trained on reduced graphs will serve full
+ones, and the dissociation between its error metrics, MAE nearly unmoved at 0.16 to 0.17
+while $R^2$ fell below zero, is the citation behind reporting RMSE, $R^2$ and Spearman
+correlation together rather than any one alone (\ref{sec:method:experiment:metrics}).

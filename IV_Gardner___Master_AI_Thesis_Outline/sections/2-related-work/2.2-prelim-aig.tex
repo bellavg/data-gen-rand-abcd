@@ -10,6 +10,14 @@ carries an optional inversion, so conjunction is the only operation that costs a
 negation costs none. The basis is functionally complete, which is what allows an arbitrary
 Boolean network to be expressed in one uniform structure rather than in a gate library.
 
+Completeness does not buy uniqueness. One Boolean function admits many AIGs, and which one
+an optimizer is handed bounds what it can remove, a sensitivity known as structural bias
+\citep{gardner2025bias}. Optimizability is therefore a property of a graph rather than of
+the function it computes, which is what makes it predictable from structure at all.
+Structural bias also makes corpus construction consequential, since a corpus assembled by
+running synthesis scripts carries whatever structure those scripts favour
+(\ref{sec:method:data:statistics:source}).
+
 The vocabulary used throughout follows from the edge set. The fanin and fanout of a node are
 \begin{equation}
     \operatorname{fi}(v) = \{\, u \in \mathcal{V} : (u, v) \in \mathcal{E} \,\},
@@ -48,11 +56,12 @@ delivers to $v$ is
 so two edges agreeing in their endpoints and differing in $\mathrm{inv}$ carry complementary
 signals. The one-hot encodings of $\tau$ and $\mathrm{inv}$ are the four-valued node feature
 and two-valued edge feature of~\ref{sec:method:data:representation:features}, and are not
-restated there.
+restated there. A small AIG carrying both labellings is drawn in~\ref{fig:aig_example}.
+
+\input{media/aig.tex}
 
 \subsubsection{Structural Properties: Levels, Logic Cones, Fanout}
 \label{sec:prelim:aig:properties}
-\todo{fanin}
 The topological level of a node is its longest distance from the input frontier,
 \begin{equation}
     \ell(v) =
@@ -62,7 +71,8 @@ The topological level of a node is its longest distance from the input frontier,
     \end{cases}
     \label{eq:prelim:level}
 \end{equation}
-and the depth of the graph is $\ell(G) = \max_{v \in \mathcal{V}} \ell(v)$. Level is an
+and the depth of the graph is $\ell(G) = \max_{v \in \mathcal{V}} \ell(v)$. The drawn height
+of a gate in~\ref{fig:aig_example} is exactly $\ell$. Level is an
 absolute coordinate that an AIG has and a general graph does not, and four constructions in
 this thesis read it: the positional encoding of~\ref{sec:method:data:representation:pe}, the
 level slicing and span-weighted partitioners of~\ref{sec:method:reduction:partitioning}, and
@@ -92,18 +102,18 @@ of $u$ when two internally disjoint directed paths run from $u$ to $v$. AIGs are
 reconvergence, because structural hashing (\ref{sec:prelim:algorithms:primitives}) shares
 every duplicated subexpression instead of replicating it \citep{kuehlmann2002robust}.
 
-Two dominance relations are needed, and only one of them is informative on an AIG\@. Add a
-virtual source $s$ preceding every PI and a virtual sink $t$ succeeding every PO\@. A node
-$u$ dominates $v$ when every path $s \rightsquigarrow v$ passes through $u$, and
-post-dominates $v$ when every path $v \rightsquigarrow t$ passes through $u$; the immediate
-dominator $\operatorname{idom}(v)$ and immediate post-dominator
-$\operatorname{ipdom}(v)$ are the closest such nodes \citep{lengauer1979dominators}. A gate below the input frontier is
-reachable from $s$ along many independent paths, so $\operatorname{idom}(v)$ degenerates to
-$s$ for most AND gates and partitions nothing. The post-dominator does not degenerate the
-same way. Here $\operatorname{ipdom}(v)$ is the gate at which the fanout cone
-$\mathcal{F}(v)$ reconverges, or $t$ when that cone never reconverges, and grouping by it
-is what the cone candidate of~\ref{sec:method:summary:domain} uses.
-% TODO(measure): idom degeneracy asserted, not yet measured on this corpus.
+Where a fanout cone reconverges is a question of post-dominance
+\citep{lengauer1979dominators}. Append a virtual sink $t$ succeeding every PO, and extend
+$\prec$ to it. The immediate post-dominator of $v$ is the earliest gate every path from $v$
+to $t$ must cross,
+\begin{equation}
+    \operatorname{ipdom}(v) = \min_{\prec}
+        \{\, u \neq v : \text{every } v \rightsquigarrow t \text{ path meets } u \,\},
+    \label{eq:prelim:ipdom}
+\end{equation}
+which is the gate at which $\mathcal{F}(v)$ reconverges, or $t$ when that cone never
+reconverges. Grouping gates by $\operatorname{ipdom}$ is what the cone candidate
+of~\ref{sec:method:summary:domain} uses.
 
 The Maximal Fanout-Free Cone (MFFC) of a root gate $v$ collects the gates feeding $v$ and
 nothing else \citep{mishchenko2006rewriting},
@@ -121,7 +131,7 @@ about label leakage and the others do not.
 
 \subsubsection{Why AIGs Differ from General Graphs}
 \label{sec:prelim:aig:distinct}
-Four properties separate an AIG from the citation, social and knowledge graphs on which graph
+Five properties separate an AIG from the citation, social and knowledge graphs on which graph
 reduction was developed, and each costs a generic method something specific.
 
 (i) An AIG is directed and acyclic. Machinery built for undirected graphs does not transfer
@@ -129,12 +139,22 @@ unchanged, because a quotient of a DAG need not be acyclic, and a reduction comp
 undirected projection discards the orientation that carries the logic. The spanning forest
 of~\ref{sec:method:sparse:forest} is the concrete case.
 
-(ii) An AIG is deep relative to any practical encoder. Against an encoder of $L$
-message-passing layers, a node representation sees an $L$-hop prefix of a fanin cone whose
-length is $35$ levels at the corpus median and $24{,}802$ at its maximum
-(\ref{sec:method:data:sources}). Receptive-field starvation is therefore the normal condition
-on this data, and it is the starvation that hypothesis H1 (\ref{sec:intro:rq3}) proposes
-coarsening relieves.
+(ii) Depth, not width, is the binding dimension. The critical path is a longest directed
+path from a PI to a PO, and its length is the depth $\ell(G)$ of~\eqref{eq:prelim:level}:
+the quantity balancing exists to shorten (\ref{sec:prelim:algorithms:primitives}) and the
+quantity an encoder has to span. After $L$ message-passing layers a node representation
+depends on its $L$-hop neighbourhood and on nothing else (\ref{sec:prelim:gnn:mp}), so a
+gate reads the whole of the logic it depends on, $\mathcal{C}_L(v) = \mathcal{C}(v)$, only
+when
+\begin{equation}
+    L \ge \ell(v).
+    \label{eq:prelim:reach}
+\end{equation}
+Corpus depth is $35$ levels at the median and $24{,}802$ at the maximum
+(\ref{sec:method:data:sources}), against an encoder depth in single digits,
+so~\eqref{eq:prelim:reach} holds only near the input frontier. Receptive-field starvation is
+the normal condition on this data, and it is the starvation that hypothesis H1
+(\ref{sec:intro:rq3}) proposes coarsening relieves.
 
 (iii) Edges carry function. The inversion in~\eqref{eq:prelim:inversion} is part of what the
 graph represents, so a merge that averages or discards $\mathrm{inv}$ changes the Boolean function rather
@@ -146,6 +166,20 @@ itself.
 rest of the design, and merging them away changes what the graph is rather than coarsening
 it. The boundary is enforced uniformly in~\ref{sec:method:summary:mergemap}.
 
-A reduction operator can respect or ignore all four at no syntactic cost, since the graph it
-produces is well formed either way. Whether respecting them buys accuracy is the question RQ4
-(\ref{sec:intro:rq4}) measures.
+(v) Node count is at once the cost and the scale of the label. Fanin cardinality is fixed by
+the basis, so
+\begin{equation}
+    |\mathcal{E}| = 2 \left| \tau^{-1}(\mathrm{AND}) \right|
+        + \left| \tau^{-1}(\mathrm{PO}) \right| < 2 \left| \mathcal{V} \right|,
+    \label{eq:prelim:edges}
+\end{equation}
+and one message-passing layer therefore costs $\Theta(|\mathcal{V}|)$ at fixed width. An AIG
+carries no surplus density, so removing edges alone cannot take that cost below the same
+order at any retention ratio (\ref{sec:prelim:reduction:sparsification}). The same count is
+the denominator of the optimizability target~\eqref{eq:prelim:target}, so $y(G)$ is
+quantised in steps of $1/|\mathcal{V}(G)|$ and is coarsest on the smallest circuits, which
+is where the corpus piles up at exactly zero (\ref{sec:method:data:statistics:label}).
+
+A reduction operator can respect or ignore the first four at no syntactic cost, since the
+graph it produces is well formed either way. Whether respecting them buys accuracy is the
+question RQ4 (\ref{sec:intro:rq4}) measures.

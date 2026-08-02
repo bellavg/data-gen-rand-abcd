@@ -1,29 +1,26 @@
-\subsection{Generalization Across Graph Distributions}
+\subsection{Size Generalization and Cross-State Transfer}
 \label{sec:relwork:generalization}
-RQ5 trains on one structural distribution and evaluates on another, so its plausibility
-rests on what is known about GNNs under such shift.
 
 \subsubsection{Size and Distribution Shift in GNNs}
 \label{sec:relwork:generalization:shift}
 Message-passing weights are shared across nodes and layers, so a trained model accepts a
 graph of any size, a point the inductive line established in principle
-\citep{hamilton2017graphsage}. Accepting an input is not generalising to it:
-\citet{buffelli2022sizeshift} show accuracy degrading when test graphs are much larger
-than training graphs, and propose regularising toward size-invariant representations.
-Train-reduced, infer-full is therefore plausible rather than guaranteed, which is
-precisely the posture RQ5 takes.
+\citep{hamilton2017graphsage}. Accepting an input is not generalising to it.
+\citet{buffelli2022sizeshift} measure accuracy falling as test graphs grow past the sizes
+seen in training, and regularise toward size-invariant representations to recover part of
+the loss. A reduction moves size and structure together, so the shift it induces between
+training and inference is bounded below by the one they report.
 
 \subsubsection{Train-Test Structural Mismatch}
 \label{sec:relwork:generalization:mismatch}
-The direct evidence is one positive and one negative result. SCAL \citep{huang2021scal}
-trains on coarsened graphs and evaluates on the originals with usable accuracy on
-node-level benchmarks. CTS-Bench \citep{cts_bench2026} does the analogous cross-state
-evaluation on netlists and lands below $R^2 = 0$
-(\ref{sec:relwork:domain:circuits}). Together they make RQ5 an open question rather than
-a formality, and they are why the study carries a positive control, the provably lossless
-compression of~\ref{sec:method:architecture:exact}, without which a poor cross-state
-result could not be told apart from a broken evaluation path (\ref{sec:intro:rq5}).
-
-
-\todo{related work shoudl be much more subtly connected to RQ and scope. 
-also is this necessary? if so why and how much is needed. shoudl eb related work on this cross trainign i do like RGCN paper in Documents/ThesisPapers}
+The direct evidence is thin and it points both ways. SCAL trains on coarsened graphs and
+evaluates on the originals with usable node-level accuracy under a single set of weights
+\citep{huang2021scal}. \citet{generale2022scaling} reach the same conclusion on knowledge
+graphs, but only after mapping super-node representations back onto their members, a step no
+graph-level target provides. CTS-Bench runs the analogous evaluation on netlists and lands
+below $R^2 = 0$ (\ref{sec:relwork:domain:circuits}), the one published measurement on
+circuit data \citep{cts_bench2026}. One success on a different task, one success behind a
+transfer step, and one failure in the closest domain leave the question open on graph-level
+circuit regression. A study that asks it therefore needs a compression whose losslessness is
+established in advance (\ref{sec:method:architecture:exact}); without one, a poor result
+across structural states cannot be separated from a broken evaluation path.

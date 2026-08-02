@@ -83,12 +83,34 @@ redundancy survives structural hashing is measured in~\ref{sec:method:summary:wl
 
 \subsubsection{Training Cost, Memory, and Inference}
 \label{sec:prelim:gnn:cost}
-Training and inference differ in what must be held in memory. Backpropagation stores the
-activations of every layer for every node in the batch, so training memory grows with
-$L \cdot |\mathcal{V}|$ on top of parameters and optimizer state, and the largest graph in
-the corpus sets the peak. Forward-only inference stores none of this. The asymmetry is
-the mechanism RQ5 (\ref{sec:intro:rq5}) depends on: a model that must be trained on
-reduced graphs to fit in device memory may still be queried on full graphs afterwards.
+Training and inference differ in what must be held in memory. Backpropagation through $L$
+applications of~\eqref{eq:prelim:mp} retains the node states of every layer and the
+messages materialised on every edge, whereas forward-only inference keeps one layer
+resident and discards it. Above a graph-independent floor of parameters and optimizer
+state, the memory a graph itself costs is therefore
+\begin{equation}
+    \begin{aligned}
+        \Delta m_{\mathrm{train}} &= \Theta\!\left( L \left(
+            \left| \mathcal{V} \right| + \left| \mathcal{E} \right| \right) w \right), \\
+        \Delta m_{\mathrm{infer}} &= \Theta\!\left( \left(
+            \left| \mathcal{V} \right| + \left| \mathcal{E} \right| \right) w \right),
+    \end{aligned}
+    \label{eq:prelim:memory}
+\end{equation}
+and the factor $L$ between them is the whole asymmetry. The largest graph in the corpus
+sets the peak, since pooling forbids splitting a graph across steps
+(\ref{sec:prelim:gnn:readout}).
+
+The factor $L$ in~\eqref{eq:prelim:memory} is the mechanism RQ5 (\ref{sec:intro:rq5})
+depends on. Training on $R(G)$ and querying on $G$ stay inside one memory budget when
+\begin{equation}
+    \left| \mathcal{V}(G) \right| + \left| \mathcal{E}(G) \right|
+    \;\leq\; L \left( \left| \mathcal{V}(R(G)) \right|
+        + \left| \mathcal{E}(R(G)) \right| \right),
+    \label{eq:prelim:crossstate-budget}
+\end{equation}
+so any reduction retaining more than a $1/L$ share of $G$ admits full-graph inference on
+the hardware its own training required. Training is the binding constraint, not inference.
 
 Four techniques recur in Chapter 3 and are defined here once. Reported memory is
 \emph{allocated} memory, the tensors actually held, as opposed to the larger
@@ -109,6 +131,3 @@ Contracting paths shortens the distance signal must travel and is a recognised r
 \citep{dwivedi2022lrgb}. That contraction is the mechanism behind hypothesis H1
 (\ref{sec:intro:rq3}), which expects summarization to help where sparsification can only
 remove.
-
-
-\todo{do i need something maybe on trainign and inference and memory bottlenecks with gnns the formulas and math behind it}

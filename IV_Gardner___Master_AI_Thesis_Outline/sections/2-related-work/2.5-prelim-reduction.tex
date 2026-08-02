@@ -1,31 +1,47 @@
 \subsection{Graph Reduction: Definitions}
 \label{sec:prelim:reduction}
 A reduction operator $R$ maps a graph $G$ to a smaller graph $R(G)$ intended to stand in
-for it. The taxonomy used throughout follows the survey of \citet{hashemi2024survey},
-which divides the field into sparsification, coarsening and condensation, with one
-substitution: partitioning replaces condensation as the third family. Partitioning is
-what a distributed training setup forces on a graph that does not fit one device
-(\ref{sec:relwork:scaling:distributed}), whereas condensation is excluded from this study
-outright, for the reasons given in~\ref{sec:relwork:reduction:summarization}. The
-substitution is deliberate, not an error of transcription.
+for it. The taxonomy follows the survey of \citet{hashemi2024survey}, with one
+substitution: partitioning replaces condensation as the third family, because partitioning
+is what a distributed setup forces on a graph that does not fit one device
+(\ref{sec:relwork:scaling:distributed}) and condensation is excluded from this study
+outright (\ref{sec:relwork:reduction:summarization}).
+
+% A reduction operator $R$ maps a graph $G$ to a smaller graph $R(G)$ intended to stand in
+% for it. The taxonomy used throughout follows the survey of \citet{hashemi2024survey},
+% which divides the field into sparsification, coarsening and condensation, with one
+% substitution: partitioning replaces condensation as the third family. Partitioning is
+% what a distributed training setup forces on a graph that does not fit one device
+% (\ref{sec:relwork:scaling:distributed}), whereas condensation is excluded from this study
+% outright, for the reasons given in~\ref{sec:relwork:reduction:summarization}. The
+% substitution is deliberate, not an error of transcription.
 
 \subsubsection{Partitioning}
 \label{sec:prelim:reduction:partitioning}
 Partitioning splits $\mathcal{V}$ into $k$ disjoint blocks and deletes every edge whose
-endpoints fall in different blocks. It is the one family that keeps every node: only
-spanning edges are lost, so the node count of $R(G)$ always equals that of $G$ and any
-compression it achieves is compression of the edge set alone. What varies between
-partitioners is the objective by which blocks are chosen
-(\ref{sec:method:reduction:partitioning}).
+endpoints fall in different blocks. Every node survives, so whatever it compresses is the
+edge set alone.
+
+% Partitioning splits $\mathcal{V}$ into $k$ disjoint blocks and deletes every edge whose
+% endpoints fall in different blocks. It is the one family that keeps every node: only
+% spanning edges are lost, so the node count of $R(G)$ always equals that of $G$ and any
+% compression it achieves is compression of the edge set alone. What varies between
+% partitioners is the objective by which blocks are chosen
+% (\ref{sec:method:reduction:partitioning}).
 
 \subsubsection{Sparsification}
 \label{sec:prelim:reduction:sparsification}
-Sparsification removes edges, or nodes together with their incident edges, while
-preserving some structural property of the original, such as pairwise distances up to a
-stretch factor. The two variants are not interchangeable for measurement: an edge-removing
-method leaves $|\mathcal{V}|$ untouched while a node-removing method shrinks it, and the
-distinction is what forces the two-ratio convention
-of~\ref{sec:prelim:reduction:measuring}.
+Sparsification removes edges, or nodes together with their incident edges, while preserving
+some structural property of the original, such as pairwise distances up to a stretch factor.
+Edge-removing and node-removing variants differ in whether $|\mathcal{V}|$ moves at all,
+which is what forces the two-ratio convention of~\ref{sec:prelim:reduction:measuring}.
+
+% Sparsification removes edges, or nodes together with their incident edges, while
+% preserving some structural property of the original, such as pairwise distances up to a
+% stretch factor. The two variants are not interchangeable for measurement: an edge-removing
+% method leaves $|\mathcal{V}|$ untouched while a node-removing method shrinks it, and the
+% distinction is what forces the two-ratio convention
+% of~\ref{sec:prelim:reduction:measuring}.
 
 \subsubsection{Summarization and Coarsening}
 \label{sec:prelim:reduction:summarization}
@@ -38,14 +54,91 @@ connected. The number of member edges a super-edge stands for is its multiplicit
         \mu(u) = u',\ \mu(v) = v' \,\} \bigr|,
     \label{eq:prelim:multiplicity}
 \end{equation}
-and when super-edges differing in an attribute are kept parallel rather than collapsed,
-the quotient is a multigraph. Because $\mu$ is a function, its preimages partition
-$\mathcal{V}$: a coarsening \emph{is} a partition of the node set. A tolerance band such
-as ``within one level'' therefore cannot define one, since the relation it induces is not
-transitive, a fact the domain-specific candidate of~\ref{sec:method:summary:domain} has
-to work around.
+and a quotient that keeps attribute-distinct super-edges parallel is a multigraph. Because
+$\mu$ is a function, a coarsening \emph{is} a partition of $\mathcal{V}$, so a tolerance
+band such as ``within one level'' cannot define one: the relation it induces is not
+transitive (\ref{sec:method:summary:domain}).
 
-\todo{shoudl this be here in preliminaries or more in evaluatoin where i actually tlak abotu how i am takign measurements on my data?}
+% Summarization merges nodes into \emph{super-nodes}. A coarsening is specified by a merge
+% map, a surjection $\mu \colon \mathcal{V} \rightarrow \mathcal{V}'$ onto the cluster set,
+% and the resulting quotient graph connects two clusters whenever any of their members were
+% connected. The number of member edges a super-edge stands for is its multiplicity,
+% and when super-edges differing in an attribute are kept parallel rather than collapsed,
+% the quotient is a multigraph. Because $\mu$ is a function, its preimages partition
+% $\mathcal{V}$: a coarsening \emph{is} a partition of the node set. A tolerance band such
+% as ``within one level'' therefore cannot define one, since the relation it induces is not
+% transitive, a fact the domain-specific candidate of~\ref{sec:method:summary:domain} has
+% to work around.
+
+\subsubsection{Exact Summarization}
+\label{sec:prelim:reduction:exact}
+A coarsening is \emph{exact} for an encoder when the encoder cannot tell the quotient from
+the original. Writing $f_\theta$ for an $L$-layer instance of~\eqref{eq:prelim:mp} with a
+graph-level readout, and $R$ for the coarsening with merge map $\mu$, exactness is
+\begin{equation}
+    f_\theta \bigl( R(G) \bigr) = f_\theta(G)
+    \quad \text{for every } \theta .
+    \label{eq:prelim:exact}
+\end{equation}
+Quantifying over $\theta$ is what separates exactness from an approximation that happens to
+be accurate at the weights that were trained. The conditions under
+which~\eqref{eq:prelim:exact} holds \citep{bollen2023exact} constrain three separate
+objects, and a method meeting two of the three is not exact.
+
+\paragraph{(a) The quotient.}
+Merged nodes must be indistinguishable to $L$ rounds of colour refinement
+(\ref{sec:prelim:gnn:expressivity}),
+\begin{equation}
+    \mu(u) = \mu(v) \;\Longrightarrow\; c_u^{(L)} = c_v^{(L)} ,
+    \label{eq:prelim:exact-quotient}
+\end{equation}
+so the partition induced by $\mu$ refines the $L$-round colour partition, whose classes are
+the coarsest admissible merge. Two side conditions come with~\eqref{eq:prelim:exact-quotient}.
+The initial colouring $c^{(0)}$ must separate distinct feature rows, and~\eqref{eq:prelim:cr}
+must run over the same neighbourhood and the same edge attributes the encoder aggregates
+over: refining by fan-out while aggregating over fan-in merges nodes the encoder can still
+tell apart. The count cap must also match what the aggregation can count. Capping below
+that makes the colour a coarser invariant than the aggregate the encoder computes, which is
+why bisimulation is exact for a set-valued aggregation and lossy for a counting one.
+
+\paragraph{(b) The aggregation.}
+Collapsing $w_{u'v'}$ parallel edges into one super-edge replaces $w_{u'v'}$ identical
+messages by a single message, so $\bigoplus$ must read the multiplicity
+of~\eqref{eq:prelim:multiplicity} rather than the set of distinct neighbours. For the
+summing encoder used here that multiplicity enters as a coefficient on the message:
+\begin{equation}
+    \bigoplus_{u \in \mathcal{N}(v)} \psi \bigl( h_u, e_{uv} \bigr)
+    \;=\; \sum_{u' \in \mathcal{N}'(\mu(v))}
+        w_{u' \mu(v)} \, \psi \bigl( h_{u'}, e_{u' \mu(v)} \bigr) ,
+    \label{eq:prelim:exact-aggregation}
+\end{equation}
+where $\mathcal{N}'$ is the neighbourhood taken in the quotient. Where the multiplicity
+enters decides whether~\eqref{eq:prelim:exact-aggregation} holds. The message function
+$\psi$ is nonlinear, so $\psi(h, w_{u'v'} e) \neq w_{u'v'} \, \psi(h, e)$ and a
+multiplicity carried as an edge attribute breaks the equality that a coefficient outside
+$\psi$ preserves (\ref{sec:method:architecture:exact}).
+
+\paragraph{(c) The readout.}
+Conditions (a) and (b) give $h_{\mu(v)}^{l} = h_v^{l}$ at every layer, so each super-node
+carries the representation its members would have received. Pooling over $\mathcal{V}'$
+must then weight each super-node by its member count $m_{v'} = | \mu^{-1}(v') |$ to
+reproduce pooling over $\mathcal{V}$:
+\begin{equation}
+    \frac{1}{\left| \mathcal{V} \right|} \sum_{v \in \mathcal{V}} h_v^{L}
+    \;=\; \frac{\sum_{v' \in \mathcal{V}'} m_{v'} \, h_{v'}^{L}}
+               {\sum_{v' \in \mathcal{V}'} m_{v'}} .
+    \label{eq:prelim:exact-readout}
+\end{equation}
+An unweighted mean over super-nodes violates~\eqref{eq:prelim:exact-readout}, giving a
+super-node of fifty members the weight of one. The member counts already carried by a
+summarized feature schema are what make the weighting available.
+
+Colour refinement at unbounded count cap is the one reduction in this study that satisfies
+all three (\ref{sec:method:summary:wl}). Sparsification and partitioning produce no
+quotient and delete edges the encoder aggregates over, so~\eqref{eq:prelim:exact} fails for
+them by construction, and exactness is unavailable to those families rather than merely
+unachieved.
+
 \subsubsection{Measuring Reduction: Compression Ratio}
 \label{sec:prelim:reduction:measuring}
 Reduction is reported as retention, kept over original, separately per node and per edge:
@@ -59,11 +152,17 @@ Reduction is reported as retention, kept over original, separately per node and 
 \end{equation}
 with reduction $1 - \eta$. One number cannot carry both: partitioning and edge-removing
 sparsification hold $\eta_{\mathcal{V}} = 1$ while lowering $\eta_{\mathcal{E}}$, and
-node-removing methods move the two together. Both ratios are therefore reported
-everywhere, and never collapsed (\ref{sec:method:experiment:metrics:reduction}). Methods
-further differ in whether compression is a knob or an outcome: some accept a target
-ratio, while for others $\eta$ is a fixed property of the input graph. Comparing methods
-at matched compression is consequently a design problem rather than a reporting
-convention, and~\ref{sec:method:summary:random} is its solution.
+node-removing methods move the two together. How the ratios
+of~\eqref{eq:prelim:retention} are measured on this corpus, and how methods whose
+compression is an outcome rather than a parameter are brought to a matched ratio, is
+in~\ref{sec:method:experiment:metrics:reduction}.
 
-\todo{need to formalize exact sumamrization what is required for model and data and task}
+% Reduction is reported as retention, kept over original, separately per node and per edge:
+% with reduction $1 - \eta$. One number cannot carry both: partitioning and edge-removing
+% sparsification hold $\eta_{\mathcal{V}} = 1$ while lowering $\eta_{\mathcal{E}}$, and
+% node-removing methods move the two together. Both ratios are therefore reported
+% everywhere, and never collapsed (\ref{sec:method:experiment:metrics:reduction}). Methods
+% further differ in whether compression is a knob or an outcome: some accept a target
+% ratio, while for others $\eta$ is a fixed property of the input graph. Comparing methods
+% at matched compression is consequently a design problem rather than a reporting
+% convention, and~\ref{sec:method:summary:random} is its solution.

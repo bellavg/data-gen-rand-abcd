@@ -18,21 +18,9 @@ avoid. An encoder $f_\theta$, a GNN in the sense of~\ref{sec:prelim:gnn:mp} with
 graph-level readout, is trained to approximate $y$. A reduction operator $R$, drawn from
 the three families of~\ref{sec:prelim:reduction}, shrinks the encoder's input.
 
-Each research question of~\ref{sec:intro:rqs} is one statement about these four objects.
-RQ1 asks how closely $f_\theta(G)$ approximates $y(G)$ when training and evaluation both
-use unreduced graphs. RQ2 asks what $R$ buys and costs in itself: the retention
-ratios~\eqref{eq:prelim:retention}, the memory and time of training on $R(G)$, and the
-offline cost of computing $R$. RQ3 asks how much accuracy $f_\theta$ loses when trained
-and evaluated on $R(G)$ instead of $G$. RQ4 asks whether an $R$ built from AIG structure
-beats a generic $R$ at equal retention. RQ5 asks whether $f_\theta$ trained on $R(G)$
-still approximates $y(G)$ when queried on $G$ itself.
-
-RQ5 is well posed only under a compatibility requirement worth stating now: $R(G)$ and
+RQ5 (\ref{sec:intro:rq5}) is well posed only under a compatibility requirement: $R(G)$ and
 $G$ must occupy the same input space, so that one set of weights $\theta$ ingests both.
 Every summarization method here therefore produces features of which the full-graph
 features are the single-member special case (\ref{sec:method:summary:schema}). A
 reduction that changed the schema would make cross-state inference undefined rather than
 merely inaccurate.
-
-
-\todo{should not be here in prelim arguably sould be in problem RQ area?! if it adds anything not already said}
