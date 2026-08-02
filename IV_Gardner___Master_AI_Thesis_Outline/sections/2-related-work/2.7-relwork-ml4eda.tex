@@ -1,21 +1,13 @@
 \section{Related Work}
 \label{sec:relwork}
-\todo{this setnence is not subtle enough imo}
-The gap this chapter documents can be stated before the evidence: graph reduction is a
-developed literature with surveys of its own
-\citep{hashemi2024survey,shabani2023summarization}, circuit representation learning is a
-developed literature with a growing model family, and no published work applies the first
-to whole AIGs as input reduction for the second. The subsections below establish each
-half, then the two nearest attempts at a bridge, and~\ref{sec:relwork:gap} returns to the
-claim once the evidence for it is on the table.
+Two literatures bear on this thesis. Graph reduction is developed enough to have surveys
+of its own \citep{hashemi2024survey,shabani2023summarization}. Circuit representation
+learning is developed enough to support a growing model family. The subsections below
+take each in turn, then the two nearest attempts at a bridge between them,
+before~\ref{sec:relwork:gap} states what still separates them.
 
 \subsection{Machine Learning for Logic Synthesis}
 \label{sec:relwork:ml4eda}
-
-\todo{order of subsections seems odd here shoudl be
-tasks it is used in then maybe datset then maybe eval protocols and unseen design then baselines?
-also think about the tasks we elaborate on and if they are relevant we should list all tasks that ML 
-is used with but also instead of ML4EDA mayeb say ML4LS and specify AIG. but tasks missing are like AIG generation etc. }
 
 \subsubsection{Quality-of-Result and Optimizability Prediction}
 \label{sec:relwork:ml4eda:qor}
@@ -29,24 +21,6 @@ circuit and the synthesis sequence \citep{qor_transformer2022,wu2022lostin}. One
 terminological collision is worth heading off: LOSTIN \citep{wu2022lostin} attaches a
 super-node that encodes the synthesis \emph{sequence}, a temporal use of the same device
 this thesis uses structurally, and the two share nothing beyond the name.
-
-\subsubsection{Evaluation Protocols and the Unseen-Design Gap}
-\label{sec:relwork:ml4eda:protocols}
-``Unseen'' means three different things in this literature: an unseen recipe, an unseen
-design, or an unseen design-recipe pair whose parts were both seen, and the third is far
-easier than the second. Generalization to unseen designs is the stated motivation of much
-of the field, yet matched seen and unseen results are rare: of the papers surveyed for
-this thesis, 4 of 63 report both sides, OpenABC-D \citep{chowdhury2021openabc}, LOSTIN
-\citep{wu2022lostin}, LSOformer \citep{karimi2024lsoformer}, and the XGBoost AIG-timing
-predictor of \citet{jiang2025aigtiming}, while HOGA \citep{deng2024hoga} motivates on the
-gap without publishing a seen-design baseline, so its degradation cannot be computed.
-The canonical unseen-IP split trains on 16 small designs and tests on 8 large ones,
-confounding design novelty with size extrapolation. Reported error moves more with the
-benchmark than with the architecture, from a few percent on small homogeneous suites to
-above twenty percent on OpenABC-D, and within one test set the error concentrates in a
-few designs rather than spreading uniformly. Those three observations motivate RQ1a's
-matched three-protocol comparison and the per-design reporting used throughout
-(\ref{sec:intro:rq1}).
 
 \subsubsection{Learned Synthesis Script Generation}
 \label{sec:relwork:ml4eda:scripts}
@@ -74,23 +48,6 @@ subcircuits of tens to a few thousand gates. Extraction is a reduction, applied 
 construction and never named or evaluated as one, and that unexamined step is half of the
 gap this chapter closes in~\ref{sec:relwork:gap}.
 
-\subsubsection{Models Used as Baselines}
-\label{sec:relwork:ml4eda:baselines}
-\todo{make each baseline model its own subsubsubsection or paragraph explain why it is important and useful as a baseline without sayign this is why it was chosen as a basleine so be liek its SOTA or its foundational or its standard or its the best at this or claims to be etc. also include the math and what makes these models and apparoaches special}
-Three published models serve as tier-2 baselines,
-and~\ref{sec:method:baselines:published} states only how each was adapted, so what each
-one \emph{is} belongs here. SynthNet
-\citep{chowdhury2021openabc} is a recipe-conditioned graph convolutional QoR regressor,
-the closest published analogue of the label predicted here. HOGA \citep{deng2024hoga}
-applies hop-wise attention to multi-hop features precomputed per node, so its depth of
-field is fixed before training and its trunk never sees connectivity, a design aimed at
-scalable, distributable training. DeepGate4 \citep{deepgate4_2025} runs sparse attention
-over a distance-bounded virtual edge set and is the architecture-scaling counterpart to
-the input scaling studied here. Each comparison licenses a different conclusion: against
-SynthNet the claim is task accuracy, against HOGA it is whether connectivity at training
-time matters, and against DeepGate4 it is input against architecture scaling at matched
-memory.
-
 \subsubsection{Benchmarks and Datasets for ML in EDA}
 \label{sec:relwork:ml4eda:datasets}
 OpenABC-D \citep{chowdhury2021openabc} remains the largest published synthesis-prediction
@@ -103,3 +60,83 @@ starting point. OpenLS-DGF \citep{ni2025openlsdgf} takes a third axis again, gen
 designs adaptively rather than fixing a benchmark suite, and
 \citet{chowdhury2023imagenets} argue the position this dataset acts on: ML4EDA lacks the
 standard, prototypical datasets that drove progress in computer vision.
+
+\subsubsection{Evaluation Protocols and the Unseen-Design Gap}
+\label{sec:relwork:ml4eda:protocols}
+``Unseen'' means three different things in this literature: an unseen recipe, an unseen
+design, or an unseen design-recipe pair whose parts were both seen, and the third is far
+easier than the second. Generalization to unseen designs is the stated motivation of much
+of the field, yet matched seen and unseen results are rare: of the papers surveyed for
+this thesis, 4 of 63 report both sides, OpenABC-D \citep{chowdhury2021openabc}, LOSTIN
+\citep{wu2022lostin}, LSOformer \citep{karimi2024lsoformer}, and the XGBoost AIG-timing
+predictor of \citet{jiang2025aigtiming}, while HOGA \citep{deng2024hoga} motivates on the
+gap without publishing a seen-design baseline, so its degradation cannot be computed.
+The canonical unseen-IP split trains on 16 small designs and tests on 8 large ones,
+confounding design novelty with size extrapolation. Reported error moves more with the
+benchmark than with the architecture, from a few percent on small homogeneous suites to
+above twenty percent on OpenABC-D, and within one test set the error concentrates in a
+few designs rather than spreading uniformly. Those three observations motivate RQ1a's
+matched three-protocol comparison and the per-design reporting used throughout
+(\ref{sec:intro:rq1}).
+
+\subsubsection{Models Used as Baselines}
+\label{sec:relwork:ml4eda:baselines}
+Three published models are used for comparison here,
+and~\ref{sec:method:baselines:published} states only how each was adapted, so what each
+one \emph{is} belongs here.
+
+\paragraph{SynthNet.}
+SynthNet \citep{chowdhury2021openabc} is the reference architecture released with
+OpenABC-D, the dataset's own demonstration of a learnable, recipe-conditioned QoR
+predictor. A graph convolutional encoder produces node states $h_v$ as
+in~\eqref{eq:prelim:mp}, a second encoder $\rho$ reads the synthesis recipe $s$ as a
+sequence of transformation choices, and the two are concatenated ahead of a regression
+head:
+\begin{equation}
+    \hat{y}(G, s) = \mathrm{MLP}\Bigl(
+        \pi\bigl( \{h_v\}_{v \in \mathcal{V}(G)} \bigr) \,\Vert\, \rho(s)
+    \Bigr), \qquad
+    \pi(\cdot) = \bigl[\max(\cdot) \,\Vert\, \mathrm{mean}(\cdot)\bigr].
+    \label{eq:relwork:synthnet}
+\end{equation}
+Conditioning the prediction on $s$ is the distinctive move: one trained model answers a
+QoR query for any recipe in the search space instead of for one fixed script, turning QoR
+prediction into an oracle a script search can call cheaply and repeatedly.
+
+\paragraph{HOGA.}
+HOGA \citep{deng2024hoga} reports a large reduction in QoR estimation error over
+conventional GNNs and is motivated by generalization to unseen designs, the
+architecture-side answer to the scalability limit this thesis addresses from the input
+side. Hop-wise features are propagated once before training and combined by a gated
+self-attention module:
+\begin{equation}
+    \begin{aligned}
+        x_v^{(k)} &= \hat{A}^{k} x_v^{(0)}, & k &= 0, \dots, K, \\
+        h_v &= \sum_{k=0}^{K} \alpha_v^{(k)}\, x_v^{(k)}, &
+            \alpha_v^{(k)} &= \operatorname{softmax}_k\bigl( a^{\top} \tanh(W x_v^{(k)}) \bigr),
+    \end{aligned}
+    \label{eq:relwork:hoga}
+\end{equation}
+with $\hat A$ the normalized adjacency. Only the $K+1$ vectors $x_v^{(k)}$ reach the
+learned model, never $\mathcal{E}(G)$ itself, so training is attention over fixed-size
+vectors, decoupled from $|\mathcal{V}(G)|$ and from~\eqref{eq:prelim:mp}'s coupling
+between depth and receptive field. Because the propagation step runs once and is never
+revisited, nodes can be shuffled or split arbitrarily downstream of it, which is what
+makes training distributable across devices.
+
+\paragraph{DeepGate4.}
+DeepGate4 \citep{deepgate4_2025} is the largest model in the DeepGate line and reports the
+strongest circuit representation results in it, a graph transformer built to stay
+attention-based at sizes where dense attention no longer fits in memory. Full
+self-attention over $\mathcal{V}(G)$ costs $\Theta(|\mathcal{V}(G)|^2)$ per layer;
+DeepGate4 instead restricts every query to a distance-bounded virtual edge set,
+\begin{equation}
+    \bar{\mathcal{E}}_k = \bigl\{ (u, v) : \operatorname{dist}(u, v) \leq k \bigr\},
+    \label{eq:relwork:deepgate4}
+\end{equation}
+paired with an update rule the authors report as adaptable to any graph transformer,
+which keeps activation memory sub-linear in graph size at a fixed radius $k$. The
+restriction is sparse relative to full attention, not relative to the graph: DeepGate4
+answers the memory problem by growing the receptive field efficiently, where the
+reduction studied here shrinks $\mathcal{V}(G)$ before any attention or message passing
+runs.

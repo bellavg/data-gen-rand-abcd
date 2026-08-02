@@ -3,35 +3,28 @@
 
 \subsubsection{Sampling-Based Approaches}
 \label{sec:relwork:scaling:sampling}
-The oldest answer to a graph that does not fit is to train on samples of it: neighbour
-sampling caps the fanout of each aggregation \citep{hamilton2017graphsage}, and subgraph
-sampling trains on induced pieces. Sampling is a per-epoch stochastic operation built for
-node-level targets, and both properties disqualify it here. A graph-level regression
-needs every node of a graph in one forward pass (\ref{sec:prelim:gnn:readout}), and the
-reduction under study must be a deterministic, cacheable artifact computed once offline,
-so that its cost amortises across runs and its output can be inspected as a graph in its
-own right.
+The oldest answer to a graph that does not fit is to sample it: neighbour sampling caps
+the fanout of each aggregation \citep{hamilton2017graphsage}, and subgraph sampling
+trains on induced pieces. Both are per-epoch stochastic operations built for node-level
+targets, and neither survives the move to this task: graph-level regression needs every
+node in one forward pass (\ref{sec:prelim:gnn:readout}), and the reduction under study
+must be a deterministic, cacheable artifact computed once, not redrawn every epoch.
 
 \subsubsection{Partitioning and Distributed Training}
 \label{sec:relwork:scaling:distributed}
 The standard industrial answer is to partition the graph across devices and exchange
-messages at the boundaries, or forgo them there. This is the setting in which cutting
-edges is forced rather than chosen, and it is why partitioning is carried as a reduction
-family here (\ref{sec:prelim:reduction:partitioning}) despite removing no nodes: the
-accuracy cost of severed spanning edges is exactly what a distributed practitioner pays,
-measured on one device. DistDGL \citep{zheng2020distdgl} is representative of the
-practice at billion-node scale.
+messages at the boundaries, or drop them. Cutting edges is then forced rather than
+chosen, which is why partitioning is carried as a reduction family here
+(\ref{sec:prelim:reduction:partitioning}) despite removing no nodes: the accuracy cost of
+a severed spanning edge is exactly what a distributed practitioner pays, measured on one
+device. DistDGL \citep{zheng2020distdgl} represents the practice at billion-node scale.
 
 \subsubsection{Memory-Efficient Training Techniques}
 \label{sec:relwork:scaling:memory}
 Gradient checkpointing, mixed precision and gradient accumulation, defined
-in~\ref{sec:prelim:gnn:cost}, are used in this thesis rather than studied by it. They
-must still be named, because a reader will ask why input reduction is needed when
-checkpointing exists. The answer is composition: each of these techniques trades
-compute, precision or latency for memory at a fixed input size, reduction changes the
-input size itself, and the two stack. The baseline configurations depend on the first
-fact, DeepGate4 being runnable only under checkpointing
+in~\ref{sec:prelim:gnn:cost}, are used here rather than studied here, but a reader will
+still ask why reduction is needed when checkpointing exists. The answer is composition.
+Each technique trades compute, precision or latency for memory at a fixed input size;
+reduction changes the input size itself, and the two stack. The baseline configurations
+depend on the first fact, DeepGate4 being runnable only under checkpointing
 (\ref{sec:method:architecture:baselines}), and the contribution depends on the second.
-
-
-\todo{evaluatre if this is needed? }
