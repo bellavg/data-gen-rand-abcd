@@ -4,67 +4,146 @@
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \section{Comparison with Related Work}
 \label{sec:discussion:relatedwork}
-% Compares as precisely as the literature allows, and states where a direct numerical
-% comparison is impossible because no prior work reduces AIGs for this task.
 
 \subsection{Positioning Against Optimizability Prediction Work}
 \label{sec:discussion:relatedwork:prediction}
-% Protocol must be matched before numbers are compared: most published figures sit in
-% leakier protocol cells (\ref{sec:relwork:ml4eda:protocols}), and the RQ1a inflation
-% factor (\ref{sec:results:rq1:protocol}) is what translates between them. SynthNet's
-% collapse on this split is consistent with that audit rather than an implementation
-% artifact.
+Published optimizability figures cannot be placed beside the ones reported here until the
+protocols that produced them are matched. Most sit in the leakier cells of
+\ref{sec:relwork:ml4eda:protocols}, on random or recipe-disjoint splits, whereas every
+headline result in this thesis is design-disjoint. RQ1a is the translation between the two:
+the gap between the three protocols at one fixed configuration is the correction that would
+have to be applied before a published number and a number from this work could share a
+column (\ref{sec:results:rq1:protocol}). That measurement does not exist yet, so the
+comparison below stays qualitative.
+
+SynthNet's collapse to a constant prediction is the same observation seen from the model
+side (\ref{sec:results:rq1:baselinemodels}). A model developed and reported under a
+protocol that keeps source designs visible carries no obligation to survive one that
+removes them. The collapse is therefore what the protocol audit anticipates rather than
+evidence of a faulty port.
 
 \subsection{Positioning Against Graph Reduction Work}
 \label{sec:discussion:relatedwork:reduction}
+The exact-compression result this work depends on is not proved here.
+\citet{bollen2023exact} establish that coarsening by colour refinement to depth $d$ leaves
+the output of a $d$-layer message-passing network unchanged. What this thesis adds is the
+set of conditions under which that theorem applies to an AIG encoder, stated with the
+reduction families in~\ref{sec:prelim:reduction:summarization} and instantiated for the
+architecture in~\ref{sec:method:architecture:exact}. Those conditions constrain the model
+and the input schema. Establishing them is an argument, not a measurement, so it belongs
+where the encoder is defined rather than in the results.
+
+The empirical half is a positive control. If the conditions hold, the exact configuration
+must reproduce the full-graph baseline to within numerical tolerance, both under
+matched-state evaluation and when queried on unreduced graphs
+(\ref{sec:method:experiment:design}). A deviation is a defect to be located rather than a
+finding about coarsening, which is why the control is reported ahead of everything else it
+underwrites (\ref{sec:results:rq3:degradation},~\ref{sec:results:rq5:accuracy}).
+
+What the proof licenses stops at that one configuration. It says nothing about the
+approximate summarizers, whose merges are not refinement classes, and nothing about depths
+below the layer count, where refinement merges nodes the encoder can still tell apart.
+Every accuracy claim about the approximate track is consequently empirical. The proof marks
+how much compression is available for free; it does not extend that guarantee to the family
+around it.
 
 \subsection{Where Direct Comparison Is Not Possible}
 \label{sec:discussion:relatedwork:incomparable}
+No published work applies graph reduction to whole AIGs as input reduction for a learned
+synthesis predictor, which is the gap documented in~\ref{sec:relwork:gap}. There is
+therefore no matched number for RQ2 through RQ4 to be compared against. The reduction
+literature reports retention on citation and social graphs under node classification, a
+setting whose accuracy figures do not transfer to graph-level regression over deep directed
+acyclic graphs. Comparison is consequently structural rather than numerical: which family
+behaves as its own literature predicts, and which does not.
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \section{Interpretation of Findings}
 \label{sec:discussion:interpretation}
-% Explains the results rather than restating them, grouped by theme so that RQ2 and RQ3
-% can be discussed as the single trade-off they describe.
 
 \subsection{Feasibility of Optimizability Prediction}
 \label{sec:discussion:interpretation:feasibility}
-% What \ref{sec:intro:rq1} implies about whether structure alone carries the signal.
+A random split is expected to score higher than the design-disjoint protocol used
+throughout, for a mechanical reason rather than a substantive one. The corpus is built by
+transforming and repeatedly optimizing a small number of source designs, so assigning
+graphs independently places a base graph in training and its own optimized descendants in
+test (\ref{sec:method:experiment:splitting}). The model can then recover the label by
+recognising which design it is looking at. That route is closed at deployment, where the
+circuit is new, so a higher random-split score is leakage. It is not evidence that AIGs
+derived from one design are interchangeable.
+
+The stronger reading of the same outcome, that the graphs are simply similar enough for the
+split to make no difference, is harder to dismiss, and it cannot be settled by structural
+distance alone. Neither direction of the implication between structure and function holds
+for AIGs. Two AIGs computing the same Boolean function can differ arbitrarily in structure,
+which is exactly what a synthesis algorithm does to one, and two structurally close AIGs
+can compute different functions, since a single inverted edge changes the output. No
+structural metric therefore establishes that a test graph is or is not a training circuit
+in a weaker disguise, and ``similar enough'' has no structural definition to be proved
+against.
+
+Two measurements settle the question in the form it can be settled. The first is a
+collision rate between partitions: the fraction of test graphs whose structural hash, or
+whose colour-refinement signature at the encoder's depth, matches a training graph exactly.
+Near zero under the design-disjoint protocol and materially above zero under the random one
+would locate the inflation in identifiable duplicate structure rather than in diffuse
+similarity, which is a claim about specific graphs and is checkable. The second is the
+per-design breakdown already specified under RQ1a
+(\ref{sec:results:rq1:protocol}), which separates a uniform error across held-out designs
+from one carried by a few. Neither has been run.
 
 \subsection{What Reduction Buys and What It Costs}
 \label{sec:discussion:interpretation:tradeoff}
-% \ref{sec:intro:rq2} and \ref{sec:intro:rq3} together. Which point on the Pareto
-% front is actually worth taking, and is the offline reduction cost recovered?
+% Which point on the Pareto front is worth taking, and whether the offline cost is recovered.
 
 \subsection{Why Domain-Informed Adaptation Did or Did Not Help}
 \label{sec:discussion:interpretation:domain}
-% \ref{sec:intro:rq4}. If the AIG-aware heuristics do not win, what that says about
-% where the predictive signal lives, distinguishing ``domain knowledge does not help
-% here'' from ``these particular heuristics were weak''.
+% Where the predictive signal lives, and whether a null result bounds the heuristics or the idea.
 
-\subsection{Structural Generalization and Deployment}
+\subsection{Cross-State Transfer and Deployment}
 \label{sec:discussion:interpretation:generalization}
-% \ref{sec:intro:rq5}. Whether train-cheap/infer-full is a viable deployment story.
+% Whether train cheap, infer full survives the change of structural state.
 
 \subsection{Unexpected Results}
 \label{sec:discussion:interpretation:unexpected}
-% Anything that contradicted the hypotheses, including negative results. Better
-% surfaced deliberately here than left for a reader to notice.
+The widest effect in the results is not a difference between reduction methods. It is the
+spread across source designs. Per-design $R^2$ on the design-disjoint test set runs from
+positive to strongly negative (\ref{sec:results:rq1:erroranalysis}), and grouping the
+corpus by the script that produced each graph accounts for a quarter of the label variance
+on its own (\ref{sec:results:rq1}). Two things follow. Optimizability under a fixed script
+is heterogeneous enough across designs that a pooled score describes the mix of designs in
+the test set as much as it describes the model. Any comparison between configurations that
+reports one pooled number consequently hides most of the behaviour, which is why the
+per-design and per-source breakdowns are the primary reading here rather than a robustness
+check appended to it.
+
+That heterogeneity is also a partial explanation for why synthesis practice is empirical.
+If the response of a circuit to a fixed optimization script varies this much between
+designs, running the script is a rational way to find out what it does, and the value of a
+predictor lies in shortening that search rather than in replacing it.
+
+What the spread does not support is the claim that AIGs are inherently unpredictable. Each
+configuration was trained once (\ref{sec:method:experiment:metrics:stats}), so no
+run-to-run variance estimate exists, and genuine heterogeneity between designs cannot be
+separated from training noise on this evidence. Validation $R^2$ moves by several units
+between consecutive epochs on some configurations, which is the magnitude the between-design
+differences would have to be judged against. Seeds are what would turn the observation into
+a claim.
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \section{Practical Implications}
 \label{sec:discussion:implications}
-% Concrete recommendation: given a memory budget and an accuracy tolerance, which
-% reduction should a practitioner reach for? This is the payoff of the Pareto front.
+% The recommendation the Pareto front supports at a given memory budget and accuracy tolerance.
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \section{Limitations}
 \label{sec:discussion:limitations}
-% Limitations discovered or imposed, distinct from the scoping choices declared in
-% \ref{sec:intro:rqs:scope}.
+The limitations below were imposed by the design or discovered during the work. The choices
+made in advance are stated separately in~\ref{sec:intro:rqs:scope} and are not repeated
+here.
 
 \subsection{Reproducibility}
 \label{sec:discussion:limitations:reproducibility}
@@ -132,13 +211,14 @@ is, and ``optimizability'' should be read in that narrower sense throughout.
 
 \emph{Internal validity.} Splitting by design was chosen to prevent a base graph and its own
 optimized descendants from straddling the train/test boundary. Whether it fully succeeds is
-testable rather than assumed, and the test is run as RQ1a
-(\ref{sec:results:rq1:protocol}): the gap between a design-level split and a random split
-measures directly how much of the score is design recognition rather than structural
-inference.
-% TODO: once the RQ1a numbers land, replace the hedge above with the measured inflation
-% factor, and state whether per-design degradation was uniform or concentrated. If
-% concentrated, a second design fold is the mitigation, at one training run.
+testable rather than assumed, and RQ1a is that test: the gap between the design-disjoint
+protocol and a random split measures directly how much of the score is design recognition
+rather than structural inference. Only the design-disjoint run exists, so that gap is
+currently unmeasured and no inflation factor can be quoted anywhere in this thesis
+(\ref{sec:discussion:interpretation:feasibility}). Should the per-design degradation prove
+concentrated in a few designs rather than uniform, a second design fold separates design
+difficulty from model error, at the cost of one further training run.
+% TODO: quote the measured inflation factor once the RQ1a runs land.
 
 \emph{Construct validity of the comparison itself.} Hyperparameters were tuned once on the
 full-graph configuration and held fixed. This protects the comparison from confounding
@@ -174,8 +254,7 @@ literature that super-node content matters is cited rather than tested here.
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \section{Outlook}
 \label{sec:discussion:outlook}
-% A few sentences pointing forward; the full treatment is
-% \ref{sec:conclusion:futurework}.
+% A few sentences forward; the full treatment is the future work section.
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -189,8 +268,7 @@ reduce the compute cost of training spent a large amount of compute establishing
 defence is that the cost is incurred once and the artifacts are stored and reusable, so a
 result showing which reductions preserve the signal saves compute for every subsequent user;
 but that is a claim about future savings against a certain present cost.
-% TODO: quote the actual GPU-hours and node-hours consumed rather than describing them
-% qualitatively. The figures make this paragraph honest instead of gestural.
+% TODO: quote the GPU-hours and node-hours consumed.
 
 \paragraph{Benchmark provenance and licensing.}
 The corpus is derived from published benchmark circuits, and their licences govern what may

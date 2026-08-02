@@ -1,0 +1,105 @@
+\section{Cross-Structural Generalization (RQ5)}
+\label{sec:results:rq5}
+% Answers \ref{sec:intro:rq5}: train on reduced, infer on full.
+
+\subsection{Reduced-to-Full Inference Accuracy}
+\label{sec:results:rq5:accuracy}
+Smooth L1 Loss, RMSE, and $R^2$ metrics from testing a model (which was trained exclusively on reduced AIGs via partitioning, sparsification, or summarization) directly on normal, full-sized AIGs.
+
+% \input{\resultstables/cross_state_generalization}   % tab:cross_state_generalization
+% Positive control first: the exact colour-refinement configuration transfers losslessly
+% by construction. Schema asymmetry: standard-track methods need no conversion of a full
+% graph, the exact track does (\ref{sec:method:architecture:exact}).
+% Prior expectation: \citet{cts_bench2026} report negative $R^2$ zero-shot after generic
+% coarsening.
+
+\subsection{Zero-Shot Ranking}
+\label{sec:results:rq5:ranking}
+Spearman correlation.
+
+\subsection{Matched-State vs. Cross-State Drop-Off}
+\label{sec:results:rq5:dropoff}
+Comparison measuring the performance drop-off between matched-state testing (Reduced $\rightarrow$ Reduced) vs.\ cross-state testing (Reduced $\rightarrow$ Full).
+
+\subsection{Generalization by Reduction Family}
+\label{sec:results:rq5:byfamily}
+% Which family survives the structural shift best, node-preserving against node-removing
+% against partitioning.
+
+\subsection{Inference Cost}
+\label{sec:results:rq5:cost}
+% Inference stores no gradients or activations, so full-graph inference memory and
+% latency are reported, including on CPU.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\label{sec:results:gallery:rq5}
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{\resultsfigs/rq5_matched_vs_full}
+    \caption[Matched-state against full-graph evaluation]{The same weights
+    evaluated under the reduction they were trained with and on unreduced graphs.
+    For every method here a full graph needs no conversion, since it already is a
+    valid input, which is what makes this a direct test rather than a comparison
+    across two input formats (\ref{sec:method:summary:schema}).}
+    \label{fig:rq5_matched_vs_full}
+\end{figure*}
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{\resultsfigs/rq5_dropoff}
+    \caption[Cost of the structural shift]{Full-graph score minus matched-state
+    score, by method and family. A positive bar means the model scores
+    \emph{better} on graphs it never trained on, which would say the reduction was
+    hurting the model rather than the evaluation.}
+    \label{fig:rq5_dropoff}
+\end{figure*}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\columnwidth]{\resultsfigs/rq5_transfer_quadrant}
+    \caption[Transfer quadrant]{Matched-state against full-graph $R^2$. The
+    diagonal is perfect transfer; below it the structural shift cost accuracy,
+    above it the reduction was the thing doing damage.}
+    \label{fig:rq5_transfer_quadrant}
+\end{figure}
+\clearpage
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{\resultsfigs/rq5_inference_cost}
+    \caption[Inference cost by evaluation state]{Throughput and peak memory for a
+    query, under each evaluation state. Inference stores neither gradients nor
+    activations, so the memory argument that forced the reduction at training time
+    need not bind here at all, which is the practical claim
+    of~\ref{sec:intro:rq5}.}
+    \label{fig:rq5_inference_cost}
+\end{figure*}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\columnwidth]{\resultsfigs/rq5_cpu_inference}
+    \caption[GPU against CPU inference]{\textbf{MOSTLY FABRICATED.} The ``infer
+    full on modest hardware'' half of RQ5. Every surviving inference CSV records
+    \texttt{device=cuda}; the CPU bars are placeholders for a
+    \texttt{src/shell/test\_cpu.sh} pass that has not been run.}
+    \label{fig:rq5_cpu_inference}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\columnwidth]{\resultsfigs/rq5_positive_control}
+    \caption[RQ5 positive control]{\textbf{ENTIRELY FABRICATED.} Colour refinement
+    at count-cap $\infty$ merges only nodes the encoder provably cannot
+    distinguish, so a model trained on those graphs \emph{must} land on the dashed
+    baseline when queried on full graphs. Without this control a poor transfer
+    elsewhere cannot be told apart from a broken evaluation path, which is why the
+    slot is held open rather than dropped.}
+    \label{fig:rq5_positive_control}
+\end{figure}
+\clearpage
+
+\input{\resultsgen/rq5_cross_state}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%

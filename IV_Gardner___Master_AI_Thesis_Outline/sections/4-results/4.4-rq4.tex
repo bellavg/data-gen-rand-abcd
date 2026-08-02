@@ -1,0 +1,80 @@
+\section{Value of Domain-Informed Adaptation (RQ4)}
+\label{sec:results:rq4}
+% Answers \ref{sec:intro:rq4}: whether AIG-specific knowledge bought anything.
+
+\subsection{Matched-Compression Pairings}
+\label{sec:results:rq4:pairings}
+% Pairings are defined before they are reported, with the achieved compression of each
+% arm stated. Three kinds: matched by construction (the four partitioners, same $k$),
+% matched by calibration (AND-gate-only against PageRank at 0.8), and matched against a
+% random control at the method's own ratio (summarization, \ref{sec:method:summary:random}).
+% TODO: spanning forest against random edge dropout is not matched at a drop rate of 0.3
+% (69.7\% against 58.1\% edge retention); approximately 0.419 matches it.
+
+\subsection{Retention Gap at Matched Compression}
+\label{sec:results:rq4:gap}
+% Paired RMSE, $R^2$ and Spearman difference within each pairing.
+% Each configuration is trained once (\ref{sec:method:experiment:metrics:stats}), so
+% these gaps carry no variance estimate. Either seeds on the RQ4 pairs or point
+% estimates reported as such.
+
+\subsection{Structural Interpretation}
+\label{sec:results:rq4:interpretation}
+% If domain-informed methods do not win, the predictive signal is distributed rather
+% than concentrated in the cones and long paths the heuristics protect.
+
+\subsection{Adequacy of the Heuristics Tested}
+\label{sec:results:rq4:adequacy}
+% These are simple adaptations, so a null result bounds these heuristics rather than
+% domain-aware reduction in general.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\label{sec:results:gallery:rq4}
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{\resultsfigs/rq4_paired_gaps}
+    \caption[Paired domain-vs-generic gaps]{Domain-informed minus generic within
+    each pairing. The first two pairings are matched by construction (same $k$, all
+    nodes kept, only the cut rule differs); the third is matched by calibration;
+    the fourth is \emph{not} matched and is hatched accordingly. Read every bar
+    against~\ref{fig:rq4_pairing_compression}.}
+    \label{fig:rq4_paired_gaps}
+\end{figure*}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\columnwidth]{\resultsfigs/rq4_pairing_compression}
+    \caption[Pairing quality]{How closely matched each RQ4 pairing actually is. The
+    spanning-forest / random-edge-dropout pair is far apart because the configured
+    drop rate of 0.3 leaves 69.7\% of edges against spanning forest's 58.1\%;
+    raising the rate to approximately 0.419 would match them.}
+    \label{fig:rq4_pairing_compression}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\columnwidth]{\resultsfigs/rq4_seed_variance}
+    \caption[Gaps against run-to-run noise]{\textbf{ERROR BARS FABRICATED.} The
+    measured RQ4 gaps with an invented $\pm 0.05$ band. Every configuration in this
+    thesis is trained exactly once, so there is no run-to-run variance to judge
+    these gaps against. The figure exists to make that visible rather than to
+    report an interval (\ref{sec:results:rq4:gap}).}
+    \label{fig:rq4_seed_variance}
+\end{figure}
+\clearpage
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{\resultsfigs/rq4_domain_vs_generic}
+    \caption[Unpaired domain-vs-generic view]{Every domain-informed method against
+    every generic one on the same axes. Weaker evidence than the pairings, since
+    the two groups did not remove the same amount, but it answers the question a
+    reader asks first.}
+    \label{fig:rq4_domain_vs_generic}
+\end{figure*}
+
+\input{\resultsgen/rq4_pairings}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%

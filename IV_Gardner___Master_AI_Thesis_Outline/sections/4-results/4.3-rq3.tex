@@ -1,0 +1,230 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Predictive Retention and Performance Trade-offs (RQ3)}
+\label{sec:results:rq3}
+% Answers \ref{sec:intro:rq3}. The domain-informed comparison is \ref{sec:results:rq4}.
+
+\subsection{Accuracy Degradation}
+\label{sec:results:rq3:degradation}
+How much accuracy survives training and testing under the same reduction, against the RQ1
+full-graph baseline. RMSE, $R^2$ and Spearman correlation are reported together throughout,
+because a reduction can hold mean error steady while destroying explained variance
+(\ref{sec:method:experiment:metrics}).
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{\resultsfigs/rq3_accuracy}
+    \caption[Matched-state accuracy]{\textbf{PARTLY FABRICATED.} RMSE, $R^2$ and Spearman
+    correlation under the reduction each model was trained with, against the full-graph
+    baseline. The three metrics disagree about the ranking. The summarization rows are
+    invented, since no summarization configuration has been trained.}
+    \label{fig:rq3_accuracy}
+\end{figure*}
+
+\input{\resultsgen/rq3_retention}
+
+No reduction beats the full graph on explained variance. Random edge dropout retains the
+most, $R^2 = 0.215$ against the baseline's $0.343$, and the two METIS variants fall to
+$-3.062$ and $0.008$. Ranking behaves differently: PageRank pruning reaches a Spearman
+correlation of $0.367$ against the baseline's $0.185$, so five of the eight measured
+reductions order circuits \emph{better} than the unreduced model does while explaining less
+of their variance. That dissociation is the RQ3 result, and it is the reason the two metrics
+are never reported apart.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\columnwidth]{\resultsfigs/rq3_metric_divergence}
+    \caption[RMSE against explained variance]{RMSE against $R^2$, one point per
+    configuration. Several configurations hold RMSE close to the baseline while $R^2$ falls
+    below zero, which is the same dissociation \citet{cts_bench2026} report on a coarsened
+    EDA graph.}
+    \label{fig:rq3_metric_divergence}
+\end{figure}
+
+Holding error steady while losing all explanatory power is what a model does when it
+collapses onto the label's marginal distribution, and on a corpus that is 49\% exactly zero
+that collapse is cheap.
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{\resultsfigs/rq3_by_tier}
+    \caption[Matched-state accuracy by tier]{Every configuration split across the two stored
+    tiers. The full-graph baseline scores $R^2 = -0.038$ on tier-0 base graphs against
+    $+0.358$ on tier-1: its absolute error on tier~0 is smaller (RMSE 0.025 against 0.047),
+    but tier-0 labels have so much less spread that the model fails to beat their mean.}
+    \label{fig:rq3_by_tier}
+\end{figure*}
+
+PageRank pruning is the exception, scoring $R^2 = 0.204$ and $\rho = 0.521$ on tier~0,
+better than the unreduced baseline on that tier. A reduction outperforming the full graph on
+a subgroup is the first sign that the reduction is acting as a regulariser rather than as a
+loss of information.
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{\resultsfigs/rq3_by_source}
+    \caption[Matched-state accuracy by source script]{The same partition taken by the
+    synthesis script that produced each graph, which separates the corpus far more sharply
+    than the tier does (\ref{fig:rq1_variance_decomposition}). Every configuration degrades
+    from Syn4-derived graphs to C2RS-derived ones.}
+    \label{fig:rq3_by_source}
+\end{figure*}
+
+\input{\resultsgen/rq3_by_subgroup}
+
+The partitioners degrade catastrophically on the C2RS-derived subgroup, METIS reaching
+$R^2 = -736$, where the labels sit near zero and it predicts high optimizability regardless.
+A pooled score cannot show that, and the source script is the axis on which it hides.
+\clearpage
+
+\subsection{Ranking Preservation}
+\label{sec:results:rq3:ranking}
+Spearman correlation under reduction. Ranking can survive when absolute error degrades,
+which is the property the script-selection use case actually needs.
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{\resultsfigs/rq3_stratified_matched}
+    \caption[Matched-state ranking under label strata]{The matched-state result re-scored on
+    four subsets of the same test split, from the persisted per-graph predictions and with
+    no retraining. The strata answer different questions rather than being more or less
+    trustworthy: excluding the two fixed-point designs selects on a design property,
+    restricting to $y > 0$ selects on the outcome variable so its $R^2$ is not comparable to
+    the pooled column, and the Syn4 column is the easiest stratum.}
+    \label{fig:rq3_stratified_matched}
+\end{figure*}
+
+\input{\resultsgen/rq3_stratified}
+
+Two conclusions hold across all four strata: no reduction beats the full graph on $R^2$, and
+sparsification beats partitioning. Two do not. Random hashing's $R^2$ moves from $-0.98$ to
+$-0.06$ once the fixed-point designs are excluded, and METIS is worst overall yet best on
+Syn4-derived graphs, which is the signature of a model that collapsed onto predicting high
+optimizability rather than of a failure of partitioning.
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{\resultsfigs/rq3_stratified_cross}
+    \caption[Cross-state ranking under label strata]{The same stratified treatment applied to
+    the full-graph evaluation pass, in which each model is queried on unreduced graphs.
+    Ranking separates sharply from error: level slicing reaches a Spearman correlation of
+    0.601 on full graphs, above the full-graph baseline's 0.185, while AND-gate-only reaches
+    $-0.467$ and orders circuits backwards.}
+    \label{fig:rq3_stratified_cross}
+\end{figure*}
+
+Neither of those two is visible in $R^2$ alone, and both are large enough to change which
+method a practitioner would pick. RQ5 takes the cross-state result up as a question in its
+own right (\ref{sec:results:rq5:ranking}).
+\clearpage
+
+\subsection{Accuracy Loss Attributable to Reduction}
+\label{sec:results:rq3:attribution}
+What each method costs and what structural damage explains it. The comparison is made at
+matched compression, since otherwise ``which method is best'' confounds a genuinely better
+method with one that simply reduced less.
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{\resultsfigs/rq3_retention_vs_compression}
+    \caption[Accuracy against achieved compression]{Matched-state $R^2$ against edge and
+    node retention, one point per configuration. Without this plane a ranking of methods
+    confounds the quality of a heuristic with the amount it happened to remove.}
+    \label{fig:rq3_retention_vs_compression}
+\end{figure*}
+
+The plane is what makes the confound concrete: AND-gate-only keeps 73.3\% of edges against
+spanning forest's 58.1\%, so their raw accuracies are not comparable and the formal paired
+version of the comparison belongs to RQ4 (\ref{sec:results:rq4}).
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{\resultsfigs/rq3_accuracy_retained}
+    \caption[Accuracy retained under reduction]{Each metric as a fraction of the full-graph
+    baseline, one row per method, so that the figure lines up directly against the efficiency
+    ranking of~\ref{sec:results:rq2:ranking}.}
+    \label{fig:rq3_accuracy_retained}
+\end{figure*}
+
+Expressing accuracy as a retained fraction rather than an absolute puts it on the same
+footing as the memory and time savings of RQ2, which is what the Pareto analysis below
+needs.
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{\resultsfigs/rq3_by_target_bin}
+    \caption[All configurations by optimizability band]{Every configuration as a function of
+    how optimizable the circuit truly is. Level slicing predicts $0.0000$ in every band, a
+    fully collapsed model that the pooled metrics do not expose. METIS over-predicts
+    everywhere, which is why its pooled $R^2$ is $-3.06$, yet that same miscalibration makes
+    it the \emph{most} accurate configuration on the highly optimizable circuits: MAE
+    $0.046$ above $y = 0.20$ against the unreduced baseline's $0.180$.}
+    \label{fig:rq3_by_target_bin}
+\end{figure*}
+
+\input{\resultsgen/rq3_by_target_bin}
+
+If the use case is finding circuits worth optimizing rather than scoring all of them, the
+pooled ranking inverts and the worst method on $R^2$ becomes the best one. The banded view
+is the only place in the chapter where a fully collapsed model is distinguishable from a
+merely weak one.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\columnwidth]{\resultsfigs/h1_receptive_field}
+    \caption[Effective receptive field]{\textbf{ENTIRELY FABRICATED. NO SUMMARIZATION DATA
+    EXISTS.} Mean 4-hop fanin-cone size after reduction relative to before. The metric is
+    specified in~\ref{sec:method:experiment:metrics:reduction} and is not implemented.}
+    \label{fig:h1_receptive_field}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\columnwidth]{\resultsfigs/h1_path_contraction}
+    \caption[H1: receptive field against accuracy]{\textbf{ENTIRELY FABRICATED. NO
+    SUMMARIZATION DATA EXISTS.} The form the H1 test would take: if coarsening helps by
+    contracting paths, accuracy should rise with the receptive-field ratio. Both axes are
+    invented.}
+    \label{fig:h1_path_contraction}
+\end{figure}
+
+Hypothesis~H1 predicts that summarization retains more than sparsification at matched
+compression, because contracting a path shortens the distance a signal must travel while
+removing an edge can only impede it. Testing it needs both the receptive-field metric and at
+least one trained summarization configuration, and neither exists, so H1 is asserted rather
+than tested and must not be reported as evidenced.
+\clearpage
+
+\subsection{The Pareto Front (Trade-Off Analysis)}
+\label{sec:results:rq3:pareto}
+Accuracy against the memory and speed gains of RQ2, on one pair of axes, which is where RQ2
+and RQ3 are answered jointly rather than separately.
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{\resultsfigs/rq3_pareto}
+    \caption[Pareto front]{Accuracy against efficiency, with the dominance frontier drawn.
+    The full-graph baseline sits on the same axes at zero saving, so ``no reduction''
+    competes directly against every reduction rather than sitting outside the comparison.}
+    \label{fig:rq3_pareto}
+\end{figure*}
+
+\input{\resultsgen/rq3_pareto}
+
+The baseline being on the frontier is the outcome to read first: on this corpus, at this
+scale, no reduction is worth its accuracy cost if explained variance is the objective. The
+argument for reduction has to be made either on a subgroup, on ranking, or at a scale where
+the full graph does not fit at all.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\columnwidth]{\resultsfigs/rq3_val_test_gap}
+    \caption[Validation-to-test gap]{The same configurations scored on validation and on
+    test. Under a design-level split these are different circuits rather than two samples of
+    one population, so the size of this gap bounds how much of the validation-selected model
+    choice transfers.}
+    \label{fig:rq3_val_test_gap}
+\end{figure}
+
+Every configuration on the frontier above was selected on validation, so the gap is a direct
+bound on how much of that selection survives the move to held-out designs.
+\clearpage

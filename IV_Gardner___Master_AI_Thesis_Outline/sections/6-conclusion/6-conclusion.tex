@@ -4,62 +4,96 @@
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \section{Answers to the Research Questions}
 \label{sec:conclusion:answers}
-% One direct answer each, a sentence or two, paired with the limitation that qualifies
-% it: RQ1 with \ref{sec:discussion:limitations:validity}, RQ2 with
-% \ref{sec:discussion:limitations:scalability}, RQ3 with
-% \ref{sec:discussion:limitations:generalizability}, RQ4 with
-% \ref{sec:discussion:limitations:reproducibility} and \ref{sec:results:rq4:adequacy},
-% RQ5 with \ref{sec:discussion:limitations:methods}.
+Each answer below is stated with the limitation that bounds it, so that no claim travels
+further than the evidence behind it.
 
 \subsection{RQ1: Task Feasibility and Baseline}
 \label{sec:conclusion:rq1}
+\todo{state the measured baseline against the three baseline groups}
+Whatever accuracy the full-graph model reaches, it is accuracy on a proxy: node reduction
+stands in for area, and area is one of three objectives synthesis trades against
+(\ref{sec:discussion:limitations:validity}). The figure is also conditional on the
+evaluation protocol, and the correction that would place it beside published numbers has
+not been measured (\ref{sec:discussion:interpretation:feasibility}).
 
 \subsection{RQ2: Reduction Efficiency}
 \label{sec:conclusion:rq2}
+\todo{state the efficiency ranking and the amortisation thresholds}
+The ranking is established on a corpus bounded at an intermediate scale. Relative ordering
+and the qualitative shape of the memory and throughput trade-offs extrapolate to larger
+circuits. Absolute compression does not, because several methods compress by an amount the
+circuit structure dictates rather than by a configured parameter
+(\ref{sec:discussion:limitations:scalability}).
 
 \subsection{RQ3: Predictive Retention and Trade-offs}
 \label{sec:conclusion:rq3}
+\todo{state which methods hold accuracy, at what compression}
+The retention result holds for one encoder at one depth, one synthesis algorithm and one
+target. Depth is not incidental: refinement depth was tied to the layer count by design, so
+a deeper model would merge less and could reorder the comparison
+(\ref{sec:discussion:limitations:generalizability}).
 
 \subsection{RQ4: Value of Domain-Informed Adaptation}
 \label{sec:conclusion:rq4}
+\todo{state the paired gaps once the summarization pairings are trained}
+Each arm of each pairing is a single training run, so a gap of a few percentage points
+cannot be separated from seed noise
+(\ref{sec:discussion:limitations:reproducibility}). A null result bounds the four
+heuristics actually tested and not domain-aware reduction as an idea
+(\ref{sec:results:rq4:adequacy}).
 
-\subsection{RQ5: Reduced to Unreduced? Generalization}
+\subsection{RQ5: Cross-State Transfer}
 \label{sec:conclusion:rq5}
+\todo{state the cross-state drop-off by reduction family}
+The transfer claim covers the methods trained here, which are not a representative sample
+of their literatures: the guarantee-bearing spectral branch of coarsening is absent, and
+the exact track needs a conversion step before a full graph can be queried at all
+(\ref{sec:discussion:limitations:methods}).
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \section{Contributions Revisited}
 \label{sec:conclusion:contributions}
-% Closes the loop with \ref{sec:intro:contributions} and the gap of
-% \ref{sec:relwork:gap}: what was claimed against what the evidence supports.
+% What was claimed in the introduction against what the evidence supports.
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \section{Future Work}
 \label{sec:conclusion:futurework}
-% Picks up the threads hinted at in the Discussion.
 
 \subsection{Extending Beyond a Single Synthesis Algorithm}
 \label{sec:conclusion:futurework:algorithms}
-% The Deepsyn/Syn4/C2RS graphs already exist on disk; algorithm-ranking was the
-% original motivation and is the most natural next step.
+The corpus already holds graphs optimized by the three synthesis scripts left unused here
+(\ref{sec:intro:scope:algorithm}), so the extension costs training runs rather than another
+generation campaign. Two questions open at once. Whether the reduction ranking established
+under one script survives the other three decides whether the finding is about AIG
+structure or about that script, and nothing in this thesis can tell the two apart. Ranking
+\emph{algorithms} for a given circuit, rather than circuits under a fixed algorithm, is the
+task the motivation names, and a single-algorithm model cannot perform it.
 
 \subsection{Stronger Domain-Aware Reduction}
 \label{sec:conclusion:futurework:domain}
-% What a stronger AIG-aware method would need to do differently, in increasing
-% ambition: consume super-node content, which is already computed but unread by the
-% encoder and which the literature finds critical \citep{generale2022scaling}; annotate
-% merged cones with their NPN function class, giving super-nodes a semantic identity
-% while stopping short of the functional merging that would leak the label; and learn
-% the reduction itself, which reintroduces the label dependence that excluded
-% condensation (\ref{sec:relwork:reduction:summarization}).
+Three routes to a stronger AIG-aware method are open, in increasing order of ambition. The
+first is to consume super-node content. Member statistics are computed and never read by
+the encoder, and \citet{generale2022scaling} find that what a super-node contains is what
+makes coarsening work at all. The second is to give super-nodes a semantic identity by
+annotating each merged cone with its Negation-Permutation-Negation (NPN) equivalence class,
+which carries functional information about a cone without merging functionally equivalent
+nodes, and so stops short of the step that would leak the label. The third is to learn the
+reduction rather than specify it, which reintroduces precisely the label dependence that
+excluded condensation from this study (\ref{sec:relwork:reduction:summarization}).
 
 \subsection{Scaling to Industrial AIGs}
 \label{sec:conclusion:futurework:scale}
-% Removing the bounded-scale constraint, which is the limitation closest to the
-% original motivation.
+The bound on graph size exists because RQ1 needs a full-graph baseline, and a baseline that
+does not fit in memory cannot be measured (\ref{sec:intro:scope:scale}). Lifting the bound
+means giving up that reference point, so a successor study compares reductions against each
+other and needs a substitute control, such as a subcircuit small enough to admit an
+unreduced baseline of its own.
 
 \subsection{From Prediction to Script Generation}
 \label{sec:conclusion:futurework:generation}
-% Closing the loop the motivation opens with: using predicted optimizability to
-% drive data-driven script construction.
+Cheap optimizability estimates are the input a script-selection agent consumes, not the
+selector itself (\ref{sec:intro:scope:prediction}). Closing that loop requires ranking
+algorithms for one circuit, so it depends on the multi-algorithm extension above rather
+than standing independently of it.

@@ -1,0 +1,200 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Efficiency Profile of Graph Reduction Techniques (RQ2)}
+\label{sec:results:rq2}
+% Answers \ref{sec:intro:rq2}: shrinkage, memory, and speed across all reduction methods.
+
+\subsection{Graph Reduction Offline Profile}
+\label{sec:results:rq2:offline}
+How much each method removes, and what it costs to remove it. Node and edge retention are
+reported separately, because several methods preserve node counts exactly and a single
+compression figure would hide that (\ref{sec:prelim:reduction:measuring}).
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{\resultsfigs/rq2_retention}
+    \caption[Node and edge retention]{\textbf{PARTLY FABRICATED.} Offline compression per
+    method, reported separately for nodes and edges. The four partitioners keep every node
+    by construction, as do two of the four sparsifiers. The summarization rows are invented,
+    since no summarization configuration has been trained or measured.}
+    \label{fig:rq2_retention}
+\end{figure*}
+
+Retention is the axis every later result is read against, and the spread across it is what
+makes a raw ranking of methods meaningless on its own: METIS keeps 93.7\% of edges while
+random hashing keeps 40.2\%, so their accuracies in RQ3 are not comparable as-is.
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{\resultsfigs/rq2_retention_distribution}
+    \caption[Retention distributions]{Per-graph retention over 10{,}000 graphs. Compression
+    is a distribution rather than a ratio: for the parameter-free methods it is a property
+    of each circuit, and PageRank pruning's node retention is nearly a point mass at its
+    configured 0.8 while AND-gate-only's is not.}
+    \label{fig:rq2_retention_distribution}
+\end{figure*}
+
+The width of these distributions is what makes the RQ4 pairing between AND-gate-only and
+PageRank pruning approximate rather than exact
+(\ref{sec:results:rq4:pairings}). A method whose compression varies with the
+circuit cannot be matched to a fixed ratio, only calibrated to one on average.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\columnwidth]{\resultsfigs/rq2_offline_cost}
+    \caption[Offline cost per method]{\textbf{PARTLY FABRICATED.} Wall-clock cost of
+    computing each reduction, per graph. The measured methods span two orders of magnitude,
+    from 0.004\,s for random hashing to 3.7\,s for span-weighted METIS. The summarization
+    entries are invented, since no summarization configuration has been run.}
+    \label{fig:rq2_offline_cost}
+\end{figure}
+
+Offline cost is paid once per graph and reused by every epoch that reads the cached
+artifact, which is why it is reported as an amortisation threshold rather than as a raw
+number of seconds.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\columnwidth]{\resultsfigs/rq2_amortisation}
+    \caption[Amortisation threshold]{How many epochs over the corpus a cached reduction must
+    serve before its offline cost is repaid by the training time it saves. This is the form
+    in which~\ref{sec:method:experiment:metrics:reduction} asks offline cost to be
+    reported.}
+    \label{fig:rq2_amortisation}
+\end{figure}
+
+A reduction pays for itself once the epochs served exceed $c_R / s$, the offline cost
+divided by the per-epoch saving. Spanning forest has no such threshold at all: its measured
+time saving is $-0.1\%$, so no number of epochs repays its 3.3\,s per graph.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\columnwidth]{\resultsfigs/rq2_partition_balance}
+    \caption[Partitioner trade-off]{Edge cut against partition imbalance for the four
+    partitioners at the same $k$. Since all four keep every node and differ only in which
+    edges they cut, this plane is their entire comparison.}
+    \label{fig:rq2_partition_balance}
+\end{figure}
+
+\input{\resultsgen/rq2_partition_balance}
+
+Edge cut and imbalance are the two quantities a partitioner trades against each other, and
+holding $k$ fixed across all four reduces the comparison to that single plane. The pairs it
+defines are the cleanest domain-informed against generic comparisons in the thesis, and RQ4
+uses them as such (\ref{sec:results:rq4:pairings}).
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\columnwidth]{\resultsfigs/summ_wl_depth_probe}
+    \caption[Residual redundancy after strashing]{\textbf{ENTIRELY FABRICATED. NO
+    SUMMARIZATION DATA EXISTS.} Node retention under colour refinement at depths
+    $d = 1 \dots 4$. Every corpus graph is structurally hashed, so depth~1 should find
+    almost nothing; how much survives beyond one hop bounds what the exact summarization
+    track can compress and is a reportable statistic about AIGs in its own right.}
+    \label{fig:summ_wl_depth_probe}
+\end{figure}
+
+The probe is the cheapest of the outstanding summarization measurements, since it needs no
+training run, only an offline pass. Until it exists there is no upper bound on what exact
+coarsening could remove from this corpus.
+\clearpage
+
+\subsection{Training Memory Dynamics and Compute Efficiency}
+\label{sec:results:rq2:memory}
+Memory is reported as peak allocated device memory per configuration, in absolute terms and
+as a fraction of device capacity. Compute efficiency is reported as device utilisation
+alongside memory-bandwidth activity, which together distinguish a configuration that is
+compute-bound from one that is waiting on memory.
+% Host-side memory is logged; report only if it constrains a configuration.
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{\resultsfigs/rq2_vram}
+    \caption[Peak training memory]{Peak allocated device memory per configuration at three
+    order statistics. The mean, p95 and maximum disagree by an order of magnitude: a graph
+    larger than the batch budget forms a batch of its own, so the maximum is floored by the
+    largest circuit in the corpus no matter what the reduction did to the average one.}
+    \label{fig:rq2_vram}
+\end{figure*}
+
+Peak memory tracks \emph{node} retention, not edge retention. Activation memory in message
+passing scales with the number of nodes times the number of layers times the hidden width,
+whereas removing an edge only shortens the gather and scatter that feed those activations,
+which is transient work rather than stored state. The measured savings follow that exactly.
+Random edge dropout and spanning forest hold
+$|\mathcal{V}(R(G))| / |\mathcal{V}(G)| = 1$ and save 1.5\% and 2.1\% of mean peak memory
+while discarding 30.3\% and 41.9\% of edges respectively, and the four partitioners, which
+also keep every node, save between 0.3\% and 3.1\%. The two methods that actually remove
+nodes are the only ones with a double-digit saving: PageRank pruning at 0.800 node retention
+saves 14.5\%, and AND-gate-only at 0.821 saves 11.3\%. Reading the maximum instead of the
+mean flattens even that difference, because the largest circuit forms its own batch and
+floors every configuration alike. Sparsification, in short, is not a memory intervention on
+this encoder; it is a bandwidth intervention that happens to leave the memory bill intact.
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{\resultsfigs/rq2_cost_vs_size}
+    \caption[Cost profile against graph size]{Peak memory and step time as a function of
+    graph size. In absolute terms every method traces the same memory curve, because memory
+    tracks the graph rather than the reduction, so the two ratio panels are where any
+    difference between methods is visible at all.}
+    \label{fig:rq2_cost_vs_size}
+\end{figure*}
+
+Reporting a single peak per configuration would conflate the reduction's effect with which
+graphs happened to land in the peak batch, which is why the cost profile is given against
+size rather than as a scalar.
+\clearpage
+
+\subsection{Throughput and Training Speedup}
+\label{sec:results:rq2:throughput}
+Step time and epoch time against the full-graph baseline, and inference throughput in graphs
+per second over the same reference.
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{\resultsfigs/rq2_throughput}
+    \caption[Training throughput]{Mean step time and speedup against the full-graph
+    baseline. Speedup under-delivers relative to compression, because the kernels are
+    latency-bound on message-passing gather and scatter
+    (\ref{sec:method:experiment:hardware}), so removing work does not translate
+    proportionally into wall-clock time.}
+    \label{fig:rq2_throughput}
+\end{figure*}
+
+The mismatch is large enough to invert the ranking. Spanning forest removes 41.9\% of edges
+and returns no time at all, while METIS removes 6.3\% and returns 24.3\%, because the
+partitioners cut the batch into pieces the kernels schedule better rather than simply giving
+them less to do.
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{\resultsfigs/rq2_paired_savings}
+    \caption[Paired per-graph savings]{Per-graph peak-memory and step-time savings against
+    the baseline, paired by graph id, with 95\% percentile bootstrap intervals. A red
+    $p$-value marks a Wilcoxon signed-rank test that fails to separate the saving from
+    noise.}
+    \label{fig:rq2_paired_savings}
+\end{figure*}
+
+\input{\resultsgen/rq2_paired_savings}
+
+Savings are not normally distributed, so bare means would be misleading and the paired
+bootstrap is reported instead. Spanning forest's step-time saving sits inside the noise
+despite removing 42\% of edges, which is the clearest single statement of the gap between
+compression and speed.
+\clearpage
+
+\subsection{Efficiency Ranking Across Methods}
+\label{sec:results:rq2:ranking}
+The same measurements as above, cut the other way: one row per method, ranked on what it
+buys. Generic against domain-informed is a column rather than the organising axis, because
+it is one attribute of a method.
+
+\input{\resultsgen/rq2_efficiency}
+
+Read down the columns and no method wins on all of them. AND-gate-only returns the largest
+time saving at 28.9\% and the second-largest memory saving at 11.3\% for 0.099\,s of offline
+work per graph, which makes it the best-value reduction measured here on efficiency alone;
+RQ3 then asks what it costs in accuracy. The summarization rows are invented and carry no
+efficiency measurement at all, so the ranking covers partitioning and sparsification only.
+\clearpage

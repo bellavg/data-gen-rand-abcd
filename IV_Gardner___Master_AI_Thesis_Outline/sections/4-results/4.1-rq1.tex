@@ -1,0 +1,282 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Baseline Predictive Performance on Full AIGs (RQ1)}
+\label{sec:results:rq1}
+% Answers \ref{sec:intro:rq1}. Reference point for every reduction result downstream.
+
+\subsection{Comparison Against Naive Baselines}
+\label{sec:results:rq1:baselines}
+``Accurately'' needs a referent. Two groups supply one
+(\ref{sec:method:architecture:baselines}): trivial predictors, which fix what a given $R^2$
+is worth on this label, and published circuit models ported to this task.
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{\resultsfigs/rq1_baseline_tiers}
+    \caption[Baseline group comparison]{\textbf{PARTLY FABRICATED.} Every RQ1 baseline on
+    the design-disjoint test split, by RMSE, $R^2$ and Spearman correlation. The trivial
+    predictors, fitted on validation and scored on test, and the edge-aware GCN+ are
+    measured; the published circuit models are invented placeholders. The size-only
+    regressor outranks the encoder on Spearman correlation.}
+    \label{fig:rq1_baseline_tiers}
+\end{figure*}
+
+The grouped comparison in~\ref{fig:rq1_baseline_tiers} is the reference point for the whole
+chapter: it fixes what the encoder is worth against predictors that read nothing but the
+label distribution or the node and edge counts. The size-only ordinary least squares fit
+already ranks circuits better than the encoder does, so a claim that the encoder reads
+circuit \emph{structure} rather than circuit \emph{scale} has to clear that row before any
+reduction result means anything.
+\clearpage
+
+\subsection{Predictive Accuracy Metrics}
+\label{sec:results:rq1:accuracy}
+Smooth L1 loss, RMSE and $R^2$ for the edge-aware GCN+ predicting Orchestrate
+optimizability on a test set of full AIGs, reported together
+(\ref{sec:method:experiment:metrics}).
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\columnwidth]{\resultsfigs/rq1_parity}
+    \caption[Full-graph parity plot]{Predicted against true optimizability for the
+    full-graph baseline on the design-disjoint test split, one point per circuit. The
+    diagonal is perfect prediction: points below it are under-predictions, points above it
+    over-predictions.}
+    \label{fig:rq1_parity}
+\end{figure}
+
+A parity plot is the standard first look at a regression fit, and it is here because two
+failures that no single error number exposes are visible in it directly. A model that has
+compressed toward the label mean shows as a cloud flattened onto a horizontal band instead
+of following the diagonal, however healthy its RMSE looks. A model with heteroscedastic
+error shows as a spread about the diagonal that widens with the target, which says the
+reported error is an average over regimes that behave differently rather than a property of
+the model as a whole. Both matter for a label that is 49\% exactly zero.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\columnwidth]{\resultsfigs/rq1_calibration}
+    \caption[Baseline calibration]{Binned reliability of the full-graph baseline: mean
+    prediction against mean truth within bins of predicted optimizability. A model that has
+    collapsed toward the label mean shows here as a flat curve regardless of how healthy its
+    RMSE looks.}
+    \label{fig:rq1_calibration}
+\end{figure}
+
+Calibration takes the same question as~\ref{fig:rq1_parity} and answers it by bin rather
+than by point, which is the readable form when most of the mass sits at one end of the
+range.
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{\resultsfigs/rq1_error_by_target_bin}
+    \caption[Baseline performance by optimizability band]{The full-graph baseline as a
+    function of how much the circuit actually needs optimizing. The model tracks the truth
+    on the two lowest bands, which hold 80\% of the corpus, and then flattens: at a true
+    optimizability above 0.20 it predicts 0.046 against a true mean of 0.226, an absolute
+    error of 0.180. It has largely learned the label's marginal distribution rather than the
+    task.}
+    \label{fig:rq1_error_by_target_bin}
+\end{figure*}
+
+The banded view in~\ref{fig:rq1_error_by_target_bin} is where the flattening
+of~\ref{fig:rq1_calibration} becomes a number. The circuits the motivating use case cares
+about most, the ones with the most to remove, are exactly the ones the baseline predicts
+worst.
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{\resultsfigs/rq1_variance_decomposition}
+    \caption[Variance decomposition of the baseline score]{How much of the full-graph
+    baseline's $R^2 = 0.343$ is reachable without learning anything about an individual
+    circuit. Grouping by dataset tier carries only 1.1\% of the label variance, so the tier
+    is not a confound. Grouping by \emph{source script} carries 25.0\%: a predictor that
+    outputs nothing but each group's mean scores $R^2 = 0.250$, roughly three-quarters of
+    the model's reported figure. Held against within-group variance the model retains
+    $R^2 = 0.124$.}
+    \label{fig:rq1_variance_decomposition}
+\end{figure*}
+
+The decomposition in~\ref{fig:rq1_variance_decomposition} separates the headline score into
+the part any group-mean predictor would get for free and the part attributable to reading
+circuit structure. The residual $R^2 = 0.124$ is the quantity this section defends, and it
+is the figure every reduction in RQ3 should be compared against rather than the pooled
+0.343.
+\clearpage
+
+\subsection{Ranking Efficacy}
+\label{sec:results:rq1:ranking}
+Spearman correlation between predicted and true optimizability, which is the metric the
+script-selection use case in~\ref{sec:intro:motivation} actually depends on.
+
+\begin{figure}[htbp]
+    \centering
+    \fbox{\parbox[c][0.24\textheight][c]{0.86\columnwidth}{\centering\footnotesize
+    Reserved slot. No plot generated.}}
+    \caption[Ranking efficacy of the full-graph baseline]{\textbf{FABRICATED.} Reserved slot
+    for the ranking view of the RQ1 comparison: Spearman correlation between predicted and
+    true optimizability for each baseline on the design-disjoint test split, with a
+    bootstrap interval per bar. Nothing is plotted and no data stands behind this float. The
+    numbers it would draw are the Spearman column of~\ref{tab:rq1_baselines}.}
+    \label{fig:rq1_ranking}
+\end{figure}
+
+Ranking is reported separately from error throughout because the two can move in opposite
+directions, and~\ref{fig:rq1_baseline_tiers} already shows them doing so: the encoder wins
+on RMSE and $R^2$ and loses on Spearman correlation to a two-parameter fit on graph size.
+\clearpage
+
+\subsection{Baseline Model Outcomes}
+\label{sec:results:rq1:baselinemodels}
+The published circuit models were adapted rather than reused, and the adaptations are stated
+in~\ref{sec:method:architecture:baselines}. What each comparison licenses depends on them.
+
+\input{\resultsgen/rq1_baselines}
+
+The table collects all of RQ1 in one place, and its footnote records which rows are invented
+and which measured. Two cautions attach to it. SynthNet is the only published baseline that
+has produced a number at all, and it collapsed to a constant prediction on this split, so
+its RMSE looks strong while its $R^2$ is negative. Its published $R^2$ is not the same
+quantity as the one reported here, because the upstream work z-scores its targets per
+design and so removes between-design variance from the denominator; only the sign transfers.
+\clearpage
+
+\subsection{Error Analysis}
+\label{sec:results:rq1:erroranalysis}
+Residuals broken down by graph size, by tier and by source design, which sets the
+expectation for which reduction methods should be expected to hurt most.
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{\resultsfigs/rq1_residuals_by_size}
+    \caption[Residuals by circuit scale]{Absolute error of the full-graph baseline against
+    graph size (median and interquartile band), with the number of graphs per size bin
+    alongside so that a wide band on a thin bin is not read as a trend.}
+    \label{fig:rq1_residuals_by_size}
+\end{figure*}
+
+Whether error grows with scale is the precondition for the reduction chapters: a method that
+acts hardest on large graphs starts from whatever position~\ref{fig:rq1_residuals_by_size}
+shows, not from the pooled error.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\columnwidth]{\resultsfigs/rq1_error_by_tier}
+    \caption[Error by optimization tier]{Absolute error of the full-graph baseline by
+    dataset tier. Tiers differ by construction, since a graph already optimized once has
+    less left to remove.}
+    \label{fig:rq1_error_by_tier}
+\end{figure}
+
+A difference across tiers is expected, and its absence would itself be a finding about the
+generation pipeline rather than about the model. Against
+\ref{fig:rq1_variance_decomposition}, which puts only 1.1\% of the label variance on the
+tier, the tier is not the axis that structures this corpus.
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{\resultsfigs/rq1_error_by_design}
+    \caption[Per-design error on unseen designs]{Per-design RMSE and $R^2$ for the
+    full-graph baseline on the design-disjoint test set. The spread across designs is very
+    wide and $R^2$ is strongly negative on some of them.}
+    \label{fig:rq1_error_by_design}
+\end{figure*}
+
+\input{\resultsgen/rq1_per_design}
+
+The figure and the table give the same result in two forms, and it is the most consequential
+result in RQ1: a pooled score over a design-level split is an average over a handful of
+whole circuits, not over a random sample, so the pooled number describes the mix of designs
+at least as much as it describes the model. That is the observation RQ1a
+(\ref{sec:results:rq1:protocol}) turns into a measurement.
+\clearpage
+
+\subsection{Protocol Sensitivity: How Much of the Score Is Design Recognition? (RQ1a)}
+\label{sec:results:rq1:protocol}
+Three train and test protocols under otherwise identical conditions: a plain random split, a
+recipe-disjoint split, and the design-disjoint split used for every reported result
+(\ref{sec:method:experiment:splitting}).
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{\resultsfigs/rq1a_split_protocol}
+    \caption[Split protocol sensitivity]{\textbf{MOSTLY FABRICATED.} How much of the
+    measured score is design recognition rather than structural inference. Only the
+    design-disjoint row is measured; the random and recipe-disjoint rows are placeholders
+    for two training runs that have not completed.}
+    \label{fig:rq1a_split_protocol}
+\end{figure*}
+
+\input{\resultsgen/rq1a_protocol}
+
+The gap between the three rows is a direct measurement of how much apparent accuracy a
+permissive protocol buys, and until the two outstanding runs land, the comparison against
+published numbers obtained under leakier protocols cannot be made quantitative. The
+placeholder rows are set to plausible values only so that the figure has a shape; no
+conclusion may be drawn from their size.
+\clearpage
+
+\subsection{Cost of the Full-Graph Baseline}
+\label{sec:results:rq1:hardware}
+Three quantities characterise the cost of training on unreduced graphs, and together they
+form the reference against which every reduction in RQ2 is read: time per optimisation step
+and per epoch, peak allocated device memory, and inference throughput in graphs per second.
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{\resultsfigs/rq1_training_curves}
+    \caption[Training trajectories]{Validation loss and $R^2$ per epoch for every
+    Orchestrate training run, coloured by reduction family. Validation $R^2$ swings by
+    several units between consecutive epochs on some configurations.}
+    \label{fig:rq1_training_curves}
+\end{figure*}
+
+The swing bounds how much weight any single-seed comparison can carry
+(\ref{sec:method:experiment:metrics:stats}). Every configuration in this thesis is trained
+exactly once, so a gap of a few percent between two configurations cannot be separated from
+the epoch-to-epoch movement visible here.
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{\resultsfigs/rq1_training_cost}
+    \caption[Training budget consumed]{Wall-clock time and epochs actually consumed per
+    configuration, against epochs to best validation loss. Two runs of the same nominal
+    budget are not the same amount of compute if one stopped at epoch 4 and the other at
+    10.}
+    \label{fig:rq1_training_cost}
+\end{figure*}
+
+Consumed budget rather than allotted budget is what the RQ2 speedups are normalised
+against, since early stopping makes the two diverge.
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{\resultsfigs/rq1_hp_sweep}
+    \caption[Hyperparameter sweep]{\textbf{APPENDIX.} The hyperparameter sweep that fixed
+    the architecture: progress per worker, objective by encoder, and trial outcomes. A large
+    share of trials were pruned on memory exhaustion rather than on their objective.
+    Reconstructed from the worker logs, because the study databases were lost with the
+    scratch workspaces.}
+    \label{fig:rq1_hp_sweep}
+\end{figure*}
+
+Memory pressure being the dominant failure mode of the search is the hyperparameter-search
+face of the bottleneck this thesis is about, which is the one reason the sweep is reported
+in the body at all.
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{\resultsfigs/rq1_hp_parameters}
+    \caption[Hyperparameter sensitivity]{\textbf{APPENDIX.} Objective against each searched
+    hyperparameter over the 52 completed trials. A coarse sensitivity read rather than an
+    importance analysis: sampling concentrates on promising regions and the sampler state
+    was lost with the scratch workspaces.}
+    \label{fig:rq1_hp_parameters}
+\end{figure*}
+
+\input{\resultsgen/rq1_hyperparameters}
+
+The sensitivity view supports ``which settings never produced a good trial'' and not ``which
+parameter matters most''. The table records the final configuration as logged, marking the
+fields the run did not log rather than omitting them; it moves to the appendix with the two
+figures above.
+\clearpage
