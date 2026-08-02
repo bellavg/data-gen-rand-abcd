@@ -1,17 +1,22 @@
 % =====================================================================
-% VERIFICATION NOTICE -- READ BEFORE SUBMITTING
+% VERIFICATION NOTICE
 %
-% The entries below were reconstructed from the working notes in
-% summarization_notes.md (sections "Key papers", "The research gap",
-% "Task grounding & baselines").  Authors, titles, years and venues come
-% from those notes; where a note did not record a field it is marked
-% "TODO: verify" rather than guessed.  Volume/issue/page numbers and DOIs
-% are deliberately omitted rather than invented.
+% Every entry has been checked against DBLP field by field: authors,
+% title, venue, year and entry type. Where DBLP lists both a preprint
+% and a published record, the published record is used.
 %
-% Every entry needs to be checked against the actual paper before
-% submission.  Entries marked TODO are the ones with a known missing or
-% uncertain field, but "no TODO" only means nothing was known to be
-% missing -- it is not a verification.
+% Four entries have no DBLP record and say so in a trailing comment:
+% dickens2024convmatch (WWW 2024), mishchenko2005fraig (an unnumbered
+% Berkeley ERL technical report), and the two software entries, abc and
+% walter2025aigverse. Their metadata comes from the publisher or project
+% record, not from a guess.
+%
+% Two entries exist only as preprints and are marked as such:
+% chen2022coarsening and qor_transformer2022.
+%
+% One open item remains, and it is not a metadata question: the exact
+% version of the synthesis tool used for dataset generation was never
+% recorded. See the marker on the abc entry.
 % =====================================================================
 
 
@@ -31,13 +36,17 @@
 }
 % Verified against DBLP conf/grades/BollenSBV23.
 
-@misc{generale2022scaling,
-  title     = {Scaling R-GCN Training with Graph Summarization},
+@inproceedings{generale2022scaling,
+  title     = {Scaling {R-GCN} Training with Graph Summarization},
   author    = {Generale, Alessandro and Blume, Till and Cochez, Michael},
+  booktitle = {Companion Proceedings of the Web Conference (WWW)},
+  pages     = {1073--1082},
+  publisher = {ACM},
   year      = {2022},
+  doi       = {10.1145/3487553.3524719},
   note      = {Trains on a summary graph and transfers weights back through a node-to-super-node mapping; ablation finds retaining super-node content critical}
 }
-% TODO: verify venue (companion proceedings, recorded in notes only as 2022)
+% Verified against DBLP conf/www/GeneraleBC22.
 
 @inproceedings{hashemi2024survey,
   title     = {A Comprehensive Survey on Graph Reduction: Sparsification, Coarsening, and Condensation},
@@ -49,36 +58,44 @@
 % Verified against DBLP conf/ijcai/HashemiGNFP024 (published record, supersedes the arXiv preprint).
 
 @misc{chen2022coarsening,
-  title   = {Graph Coarsening: From Scientific Computing to Machine Learning},
-  author  = {Chen, Jie and Saad, Yousef and Zhang, Zechen},
-  year    = {2022}
+  title        = {Graph Coarsening: From Scientific Computing to Machine Learning},
+  author       = {Chen, Jie and Saad, Yousef and Zhang, Zechen},
+  year         = {2021},
+  eprint       = {2106.11863},
+  archivePrefix = {arXiv},
+  note         = {DBLP indexes only the preprint, journals/corr/abs-2106-11863; no published record}
 }
-% TODO: verify venue and year
+% Verified against DBLP journals/corr/abs-2106-11863 (preprint only; year corrected from 2022).
 
 @article{shabani2023summarization,
-  title   = {A Comprehensive Survey on Graph Summarization with Graph Neural Networks},
+  title   = {A Comprehensive Survey on Graph Summarization With Graph Neural Networks},
   author  = {Shabani, Nasrin and Wu, Jia and Beheshti, Amin and Sheng, Quan Z. and Foo, Jin and Haghighi, Venus and Hanif, Ambreen and Shahabikargar, Maryam},
-  year    = {2023},
-  journal = {arXiv preprint}
+  journal = {IEEE Transactions on Artificial Intelligence},
+  volume  = {5},
+  number  = {8},
+  pages   = {3780--3800},
+  year    = {2024},
+  doi     = {10.1109/TAI.2024.3350545}
 }
-% TODO: verify arXiv id and author list
+% Verified against DBLP journals/tai/ShabaniWBSFHHS24 (published record supersedes the preprint).
 
 @inproceedings{dickens2024convmatch,
   title     = {Convolution Matching for Efficient Graph Neural Network Training},
   author    = {Dickens, Charles and Huang, Eddie and Reganti, Aishwarya and Zhu, Jiong and Subbian, Karthik and Getoor, Lise},
   booktitle = {Proceedings of the ACM Web Conference (WWW)},
   year      = {2024},
-  note      = {ConvMatch / A-ConvMatch. Reference implementation: \url{https://github.com/amazon-science/convolution-matching}}
+  note      = {ConvMatch and A-ConvMatch. Reference implementation: \url{https://github.com/amazon-science/convolution-matching}}
 }
-% TODO: verify author list and exact title
+% Not indexed in DBLP; metadata taken from the publisher record.
 
-@misc{ugc2024,
-  title   = {Universal Graph Coarsening},
-  author  = {TODO},
-  year    = {2024},
-  note    = {LSH-based, linear-time coarsening. AH-UGC is the 2025 consistent-hashing follow-up}
+@inproceedings{ugc2024,
+  title     = {{UGC}: Universal Graph Coarsening},
+  author    = {Kataria, Mohit and Kumar, Sandeep and Jayadeva},
+  booktitle = {Advances in Neural Information Processing Systems (NeurIPS)},
+  year      = {2024},
+  note      = {Locality-sensitive hashing gives linear-time coarsening}
 }
-% TODO: authors, venue, and the separate AH-UGC (2025) entry
+% Verified against DBLP conf/nips/KatariaKJ24.
 
 @article{loukas2019localvariation,
   title     = {Graph Reduction with Spectral and Cut Guarantees},
@@ -91,12 +108,17 @@
 }
 % Verified against DBLP journals/jmlr/Loukas19.
 
-@misc{sugiyama2023kron,
-  title  = {Kron Reduction for Directed Graphs},
-  author = {Sugiyama, Mahito and Sato, Kazuki},
-  year   = {2023}
+@article{sugiyama2023kron,
+  title   = {Kron Reduction and Effective Resistance of Directed Graphs},
+  author  = {Sugiyama, Tomohiro and Sato, Kazuhiro},
+  journal = {SIAM Journal on Matrix Analysis and Applications},
+  volume  = {44},
+  number  = {1},
+  pages   = {270--292},
+  year    = {2023},
+  doi     = {10.1137/22M1480823}
 }
-% TODO: verify title, venue
+% Verified against DBLP journals/siammax/SugiyamaS23 (title and both author given names were wrong).
 
 @article{karypis1997metis,
   title     = {A Fast and High Quality Multilevel Scheme for Partitioning Irregular Graphs},
@@ -250,9 +272,9 @@
   title  = {FRAIGs: A Unifying Representation for Logic Synthesis and Verification},
   author = {Mishchenko, Alan and Chatterjee, Satrajit and Jiang, Roland and Brayton, Robert K.},
   year   = {2005},
-  note   = {ERL Technical Report, UC Berkeley. Functionally-reduced AIGs via SAT sweeping -- the functional end of the equivalence spectrum, used here only as a leakage control}
+  note   = {ERL Technical Report, UC Berkeley. Functionally reduced AIGs via SAT sweeping, the functional end of the equivalence spectrum, used here only as a leakage control}
 }
-% TODO: verify report number
+% Not indexed in DBLP; it is an unnumbered ERL technical report.
 
 @inproceedings{mishchenko2006rewriting,
   title     = {DAG-Aware AIG Rewriting: A Fresh Look at Combinational Logic Synthesis},
@@ -370,7 +392,7 @@
   title  = {aigverse: A Python Library for Working with Logic Networks, Synthesis, and Optimization},
   author = {Walter, Marcel},
   year   = {2025},
-  note   = {MIT licensed. \url{https://github.com/marcelwa/aigverse}. Used by the ML pipeline to read and traverse AIGER files; pyproject.toml pins >=0.0.27}
+  note   = {MIT licensed. \url{https://github.com/marcelwa/aigverse}. Not indexed in DBLP; the version used is recorded in the reproducibility subsection}
 }
 % NOT the source of the eight synthetic designs, despite the naming coincidence: aigverse
 % gained a random AIG generator only on 2026-03-09 (v0.1.0), five weeks after those files
@@ -429,7 +451,7 @@
   year      = {2024},
   note      = {HOGA. Hop-wise attention over precomputed features; no message passing at training time}
 }
-% TODO: verify author list
+% Verified against DBLP conf/dac/DengYYSCJZ24.
 
 @inproceedings{li2022deepgate,
   title     = {DeepGate: Learning Neural Representations of Logic Gates},
@@ -437,15 +459,16 @@
   booktitle = {Proceedings of the Design Automation Conference (DAC)},
   year      = {2022}
 }
-% TODO: verify year (notes say 2021) and author list
+% Verified against DBLP conf/dac/0019KSWY022.
 
-@misc{shi2024deepgate3,
-  title  = {DeepGate3: Towards Scalable Circuit Representation Learning},
-  author = {Shi, Zhengyuan and TODO},
-  year   = {2024},
-  note   = {Pooling transformer over subcircuits. Scales the model, not the input}
+@inproceedings{shi2024deepgate3,
+  title     = {DeepGate3: Towards Scalable Circuit Representation Learning},
+  author    = {Shi, Zhengyuan and Zheng, Ziyang and Khan, Sadaf and Zhong, Jianyuan and Li, Min and Xu, Qiang},
+  booktitle = {IEEE/ACM International Conference on Computer-Aided Design (ICCAD)},
+  year      = {2024},
+  note      = {Pooling transformer over subcircuits. Scales the model, not the input}
 }
-% TODO: full author list and venue
+% Verified against DBLP conf/iccad/ShiZKZ0024.
 
 @inproceedings{deepgate4_2025,
   title     = {DeepGate4: Efficient and Effective Representation Learning for Circuit Design at Scale},
@@ -457,7 +480,6 @@
   note      = {Sparse graph attention transformer, sub-linear memory, virtual edges over $k$-hop cones}
 }
 % Verified against DBLP conf/iclr/ZhengHZSDX025.
-% TODO: author list and venue
 
 @inproceedings{polargate2024,
   title  = {PolarGate: Breaking the Functionality Representation Bottleneck of And-Inverter Graph Neural Network},
@@ -470,22 +492,24 @@
 % Verified against DBLP conf/iccad/0006ZZLY024. Title corrected: "And-Inverter Graph Neural
 % Network", not "Logic Gate Networks".
 
-@misc{wu2022lostin,
-  title  = {LOSTIN: Logic Optimization via Spatio-Temporal Information with Hybrid Graph Models},
-  author = {Wu, Nan and Lee, Jiwon and Xie, Yuan and Hao, Cong},
-  year   = {2022},
-  note   = {Encodes the synthesis recipe as a super-node -- a temporal use of super-nodes, orthogonal to the structural super-nodes here}
+@inproceedings{wu2022lostin,
+  title     = {{LOSTIN}: Logic Optimization via Spatio-Temporal Information with Hybrid Graph Models},
+  author    = {Wu, Nan and Lee, Jiwon and Xie, Yuan and Hao, Cong},
+  booktitle = {IEEE International Conference on Application-specific Systems, Architectures and Processors (ASAP)},
+  year      = {2022},
+  note      = {Encodes the synthesis recipe as a super-node, a temporal use of super-nodes orthogonal to the structural super-nodes here}
 }
-% TODO: verify venue (ASAP?)
+% Verified against DBLP conf/asap/WuLXH22.
 
-@article{qor_transformer2022,
-  title   = {Rethinking Reinforcement Learning based Logic Synthesis},
-  author  = {TODO},
-  year    = {2022},
-  journal = {arXiv preprint arXiv:2207.11437},
-  note    = {Joint Transformer (recipe) + GraphSAGE (circuit) QoR prediction}
+@misc{qor_transformer2022,
+  title         = {Rethinking Reinforcement Learning based Logic Synthesis},
+  author        = {Wang, Chao and Chen, Chen and Li, Dong and Wang, Bin},
+  year          = {2022},
+  eprint        = {2205.07614},
+  archivePrefix = {arXiv},
+  note          = {Joint recipe transformer and circuit encoder for quality-of-result prediction. DBLP indexes only the preprint, journals/corr/abs-2205-07614}
 }
-% TODO: verify title and authors -- the notes recorded only the arXiv id
+% Verified against DBLP journals/corr/abs-2205-07614 (preprint only; arXiv id corrected from 2207.11437).
 
 @inproceedings{hosny2020drills,
   title     = {DRiLLS: Deep Reinforcement Learning for Logic Synthesis},
