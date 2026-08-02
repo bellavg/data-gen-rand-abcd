@@ -102,7 +102,7 @@ def retention_bars(offline: pd.DataFrame, out: Path) -> None:
         bbox_to_anchor=(1.01, 1.0),
     )
     fig.suptitle("Offline compression: node and edge retention are separate quantities", y=1.04)
-    mark_fake(fig, note="summarization rows only — " + TODO_SUMMARIZATION, watermark=False)
+    mark_fake(fig, note="summarization rows only: " + TODO_SUMMARIZATION, watermark=False)
     savefig(fig, out, "rq2_retention")
 
 
@@ -250,9 +250,21 @@ def vram_bars(bench: pd.DataFrame, out: Path) -> None:
         ax.axhline(base[col], color=INK_SECONDARY, lw=0.8, ls=":" if i else "--")
 
     ax.set_yscale("log")
+    # Headroom above the tallest bar for a direct order-statistic label, drawn
+    # on the first (full-graph) cluster only: the bar order is identical in
+    # every cluster, so this doubles as an in-plot key and the shading is
+    # never left to carry the distinction on its own.
+    ylo, yhi = ax.get_ylim()
+    ax.set_ylim(ylo, yhi * 2.5)
+    label_y = df["peak_vram_allocated_max_mb"].iloc[0] * 1.6
+    for i, name in enumerate(["mean", "p95", "max"]):
+        ax.text(
+            x[0] + (i - 1) * width, label_y, name,
+            ha="center", va="bottom", fontsize=6, color=INK_SECONDARY, rotation=90,
+        )
     ax.set_xticks(x)
     ax.set_xticklabels([label_for(m, short=True) for m in methods], fontsize=6.5, rotation=20)
-    ax.set_ylabel("Peak allocated VRAM (MB, log)")
+    ax.set_ylabel("Peak allocated memory (MB, log)")
     ax.set_title(
         "Peak training memory: the maximum is set by the largest circuit, not by the mean"
     )
@@ -297,7 +309,11 @@ def throughput_bars(bench: pd.DataFrame, out: Path) -> None:
     ax.set_title("Speedup under-delivers relative to compression")
     style_axes(ax)
 
-    fig.suptitle("Training throughput across reduction methods", y=1.04)
+    fig.suptitle(
+        "Training throughput across reduction methods "
+        "(error bars: $\\pm$1 s.d. of step time over graphs)",
+        y=1.04,
+    )
     savefig(fig, out, "rq2_throughput")
 
 
@@ -358,9 +374,9 @@ def cost_vs_size(per_graph: pd.DataFrame, out: Path) -> None:
         handles.append(Line2D([], [], **kw, label=label_for(method)))
 
     axes[0].set_yscale("log")
-    axes[0].set_ylabel("Peak allocated VRAM (MB, log)")
+    axes[0].set_ylabel("Peak allocated memory (MB, log)")
     axes[0].set_title("Absolute memory:\nevery method traces one curve")
-    axes[1].set_ylabel("Peak VRAM $\\div$ baseline")
+    axes[1].set_ylabel("Peak memory $\\div$ baseline")
     axes[1].set_title("Memory relative\nto the full graph")
     axes[2].set_ylabel("Step time $\\div$ baseline")
     axes[2].set_title("Step time relative\nto the full graph")
@@ -405,7 +421,7 @@ def paired_savings(savings: pd.DataFrame, out: Path) -> None:
 
     for ax, mean_col, lo_col, hi_col, p_col, name in [
         (axes[0], "mean_vram_saving_pct", "vram_saving_ci_low_pct",
-         "vram_saving_ci_high_pct", "vram_saving_wilcoxon_p", "Peak VRAM saving"),
+         "vram_saving_ci_high_pct", "vram_saving_wilcoxon_p", "Peak memory saving"),
         (axes[1], "mean_time_saving_pct", "time_saving_ci_low_pct",
          "time_saving_ci_high_pct", "time_saving_wilcoxon_p", "Step-time saving"),
     ]:

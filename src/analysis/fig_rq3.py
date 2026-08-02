@@ -94,7 +94,7 @@ def accuracy_bars(matched: pd.DataFrame, out: Path) -> None:
         title = f"{name}\n({direction})"
         if col == "r2":
             for i, value in clip_bar_axis(ax, df[col].tolist(), -1.0):
-                ax.text(-1.0, i, f"  actually {value:.2f}", fontsize=6, color="white",
+                ax.text(-1.0, i, f"  {value:.2f} <", fontsize=6, color="white",
                         va="center", ha="left", fontweight="bold", zorder=5)
             title += "\naxis clipped at $-1$"
         ax.set_title(title)
@@ -111,7 +111,7 @@ def accuracy_bars(matched: pd.DataFrame, out: Path) -> None:
         "Error and explained variance disagree.",
         y=1.05,
     )
-    mark_fake(fig, note="summarization rows only — " + TODO_SUMMARIZATION, watermark=False)
+    mark_fake(fig, note="summarization rows only: " + TODO_SUMMARIZATION, watermark=False)
     savefig(fig, out, "rq3_accuracy")
 
 
@@ -242,7 +242,7 @@ def pareto(matched: pd.DataFrame, savings: pd.DataFrame, out: Path) -> None:
     floor = -1.0  # METIS reaches -3.06 and would flatten every other point
     fig, axes = plt.subplots(1, 2, figsize=WIDE)
     for ax, xcol, xname in [
-        (axes[0], "mean_vram_saving_pct", "Peak VRAM saving (%)"),
+        (axes[0], "mean_vram_saving_pct", "Peak memory saving (%)"),
         (axes[1], "mean_time_saving_pct", "Step-time saving (%)"),
     ]:
         sub = df.dropna(subset=[xcol]).sort_values(xcol)
@@ -297,34 +297,40 @@ def pareto(matched: pd.DataFrame, savings: pd.DataFrame, out: Path) -> None:
 
 def accuracy_retained(matched: pd.DataFrame, out: Path) -> None:
     """Accuracy retained as a fraction of the baseline, so that each reduction
-    method lines up directly against the efficiency ranking of RQ2."""
+    method lines up directly against the efficiency ranking of RQ2.
+
+    RMSE, $R^2$ and Spearman are three different quantities that happen to
+    share a "fraction of baseline" unit; one shared axis invites reading them
+    as if they moved together, so each gets its own axes here instead.
+    """
     df = matched.copy()
     base = df[df["reduction_method"] == "none"].iloc[0]
     df = df[df["reduction_method"] != "none"]
     methods = df["reduction_method"].tolist()
 
-    fig, ax = plt.subplots(figsize=WIDE)
+    fig, axes = plt.subplots(1, 3, figsize=(6.9, 2.9))
     x = np.arange(len(df))
-    width = 0.27
-    for i, (col, name) in enumerate(
-        [("rmse", "RMSE ratio (baseline $\\div$ method)"),
+    for ax, (col, name) in zip(
+        axes,
+        [("rmse", "RMSE ratio\n(baseline $\\div$ method)"),
          ("r2", "$R^2$ retained"),
-         ("spearman", "Spearman retained")]
+         ("spearman", "Spearman retained")],
     ):
-        if col == "rmse":
-            values = base[col] / df[col]
-        else:
-            values = df[col] / base[col]
-        bars = ax.bar(x + (i - 1) * width, values, width=width * 0.9, alpha=1.0 - 0.22 * i, label=name)
+        values = base[col] / df[col] if col == "rmse" else df[col] / base[col]
+        bars = ax.bar(x, values, width=0.6)
         _paint(bars, methods)
-    ax.axhline(1.0, color=INK_SECONDARY, lw=1.1, ls="--")
-    ax.axhline(0.0, color=INK_SECONDARY, lw=0.7)
-    ax.set_xticks(x)
-    ax.set_xticklabels([label_for(m, short=True) for m in methods], fontsize=6.5, rotation=20)
-    ax.set_ylabel("Fraction of the full-graph baseline")
-    ax.set_title("Accuracy retained under reduction (1.0 = no loss; below 0 = worse than the mean)")
-    ax.legend(loc="lower left", ncols=3, fontsize=6.5)
-    style_axes(ax)
+        ax.axhline(1.0, color=INK_SECONDARY, lw=1.1, ls="--")
+        ax.axhline(0.0, color=INK_SECONDARY, lw=0.7)
+        ax.set_xticks(x)
+        ax.set_xticklabels([label_for(m, short=True) for m in methods], fontsize=6.5,
+                           rotation=40, ha="right")
+        ax.set_title(name, fontsize=7.5)
+        style_axes(ax)
+    axes[0].set_ylabel("Fraction of the full-graph baseline")
+    fig.suptitle(
+        "Accuracy retained under reduction (1.0 = no loss; below 0 = worse than the mean)",
+        y=1.05,
+    )
     savefig(fig, out, "rq3_accuracy_retained")
 
 
@@ -476,7 +482,7 @@ def by_subgroup(grouped: pd.DataFrame, by: str, order: list[str], out: Path,
             if floor is not None:
                 for yi, v in enumerate(values):
                     if v == v and v < floor:
-                        ax.text(floor, yi + offset, f"  {v:.2f}", fontsize=5.5,
+                        ax.text(floor, yi + offset, f"  {v:.2f} <", fontsize=5.5,
                                 color="white", va="center", fontweight="bold", zorder=5)
         ax.axvline(0, color=INK_SECONDARY, lw=0.9)
         if floor is not None:

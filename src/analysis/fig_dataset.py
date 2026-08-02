@@ -16,9 +16,14 @@ import pandas as pd
 
 from analysis.style import (
     COL,
+    CORPUS_SAMPLE_COLOR,
+    DATASET_FLAG_COLOR,
     FAMILY_COLORS,
     INK_MUTED,
     INK_SECONDARY,
+    SOURCE_COLORS,
+    SPLIT_COLORS,
+    TIER_COLORS,
     WIDE,
     savefig,
     style_axes,
@@ -28,7 +33,6 @@ import matplotlib.pyplot as plt
 
 # Two stored tiers. The labelling runs on tier-1 graphs are not retained as a
 # third tier, so "tier2" never appears in a graph path.
-TIER_COLORS = {"tier0": "#2a78d6", "tier1": "#eb6834"}
 
 
 def label_distribution(preds: pd.DataFrame, out: Path) -> None:
@@ -45,7 +49,7 @@ def label_distribution(preds: pd.DataFrame, out: Path) -> None:
     # linear axis every other bin disappears into the baseline.
     ax.hist(preds["target"], bins=60, color=FAMILY_COLORS["baseline"], edgecolor="none")
     ax.set_yscale("log")
-    ax.axvline(preds["target"].mean(), color="#e34948", lw=1.4, ls="--")
+    ax.axvline(preds["target"].mean(), color=DATASET_FLAG_COLOR, lw=1.4, ls="--")
     near_zero = float((preds["target"] < 0.005).mean())
     ax.text(
         0.97,
@@ -176,7 +180,7 @@ def label_by_source_algorithm(preds: pd.DataFrame, out: Path) -> None:
     """
     order = ["tier0 base", "Syn4", "Deepsyn", "C2RS"]
     present = [s for s in order if s in set(preds["source_algorithm"])]
-    colors = ["#52514e", "#eb6834", "#2a78d6", "#1baf7a"]
+    colors = [SOURCE_COLORS[s] for s in present]
 
     fig, axes = plt.subplots(1, 2, figsize=WIDE)
 
@@ -234,7 +238,8 @@ def zero_inflation(preds: pd.DataFrame, out: Path) -> None:
     ).sort_values("frac_zero")
     y = np.arange(len(by_design))
     colors = [
-        "#e34948" if mx <= 0.001 else FAMILY_COLORS["baseline"] for mx in by_design["max_y"]
+        DATASET_FLAG_COLOR if mx <= 0.001 else FAMILY_COLORS["baseline"]
+        for mx in by_design["max_y"]
     ]
     ax.barh(y, by_design["frac_zero"], color=colors, height=0.68)
     ax.set_yticks(y)
@@ -295,7 +300,7 @@ def structural_statistics(preds: pd.DataFrame, measurements_dir: Path, out: Path
     ax = axes[0]
     keep = ago["node_retention"].to_numpy()
     ax.hist(keep, bins=40, color=FAMILY_COLORS["baseline"], edgecolor="none")
-    ax.axvline(keep.mean(), color="#e34948", lw=1.4, ls="--")
+    ax.axvline(keep.mean(), color=DATASET_FLAG_COLOR, lw=1.4, ls="--")
     ax.text(0.03, 0.95,
             f"AND + const: {keep.mean():.1%}\ninterface (PI/PO): {1 - keep.mean():.1%}",
             transform=ax.transAxes, fontsize=6.5, va="top", color=INK_SECONDARY)
@@ -316,7 +321,7 @@ def structural_statistics(preds: pd.DataFrame, measurements_dir: Path, out: Path
     for values, color, name in [
         (np.sort(preds["num_nodes"].to_numpy()), FAMILY_COLORS["baseline"],
          f"evaluation splits (n={len(preds):,})"),
-        (np.sort(ago["n_nodes"].to_numpy()), "#eb6834",
+        (np.sort(ago["n_nodes"].to_numpy()), CORPUS_SAMPLE_COLOR,
          f"corpus sample (n={len(ago):,})"),
     ]:
         ax.plot(values, np.linspace(0, 1, len(values)), color=color, label=name)
@@ -340,7 +345,7 @@ def split_comparison(test: pd.DataFrame, val: pd.DataFrame, out: Path) -> None:
     \\ref{sec:results:rq3}.
     """
     fig, axes = plt.subplots(1, 2, figsize=WIDE)
-    pairs = [("val", val, "#2a78d6"), ("test", test, "#eb6834")]
+    pairs = [("val", val, SPLIT_COLORS["val"]), ("test", test, SPLIT_COLORS["test"])]
 
     ax = axes[0]
     for name, d, color in pairs:

@@ -102,6 +102,10 @@ def dropoff_by_family(cross: pd.DataFrame, out: Path) -> None:
     partitioner) change the graph in a different way from node-removing ones
     (PageRank, AND-gate-only), so the family is the first place to look for a
     pattern in who survives the shift.
+
+    $\\Delta R^2$ and $\\Delta$ Spearman get separate axes rather than one
+    shared scale, since a bar chart of both on the same axis invites reading
+    them as though they were the same quantity.
     """
     df = cross[cross["reduction_method"] != "none"].copy()
     df["delta_r2"] = df["full_graph_r2"] - df["matched_reduction_r2"]
@@ -109,28 +113,28 @@ def dropoff_by_family(cross: pd.DataFrame, out: Path) -> None:
     df = df.sort_values("delta_r2")
     methods = df["reduction_method"].tolist()
 
-    fig, ax = plt.subplots(figsize=WIDE)
+    fig, axes = plt.subplots(1, 2, figsize=WIDE)
     x = np.arange(len(df))
-    width = 0.38
-    for i, (col, name) in enumerate([("delta_r2", "$\\Delta R^2$"),
-                                     ("delta_spearman", "$\\Delta$ Spearman")]):
-        bars = ax.bar(x + (i - 0.5) * width, df[col], width=width * 0.9,
-                      alpha=1.0 - 0.3 * i, label=name)
+    for ax, (col, name) in zip(
+        axes, [("delta_r2", "$\\Delta R^2$"), ("delta_spearman", "$\\Delta$ Spearman")]
+    ):
+        bars = ax.bar(x, df[col], width=0.55)
         for bar, method in zip(bars, methods):
             bar.set_facecolor(color_for(method))
             hatch = hatch_for(method)
             if hatch:
                 bar.set_hatch(hatch)
                 bar.set_edgecolor("white")
-    ax.axhline(0, color=INK_SECONDARY, lw=1.0)
-    ax.set_xticks(x)
-    ax.set_xticklabels([label_for(m, short=True) for m in methods], fontsize=6.5, rotation=20)
-    ax.set_ylabel("Full-graph score $-$ matched-state score")
-    ax.set_title(
-        "Cost of the structural shift (positive = the model does BETTER on full graphs)"
+        ax.axhline(0, color=INK_SECONDARY, lw=1.0)
+        ax.set_xticks(x)
+        ax.set_xticklabels([label_for(m, short=True) for m in methods], fontsize=6.5, rotation=20)
+        ax.set_title(name)
+        style_axes(ax)
+    axes[0].set_ylabel("Full-graph score $-$ matched-state score")
+    fig.suptitle(
+        "Cost of the structural shift (positive = the model does BETTER on full graphs)",
+        y=1.04,
     )
-    ax.legend(loc="upper left", ncols=2)
-    style_axes(ax)
     savefig(fig, out, "rq5_dropoff")
 
 
@@ -187,7 +191,7 @@ def inference_cost(cross: pd.DataFrame, out: Path) -> None:
     for ax, stem, ylabel, title in [
         (axes[0], "throughput_graphs_per_s", "Graphs per second",
          "Inference throughput"),
-        (axes[1], "peak_vram_mb", "Peak VRAM (MB)", "Inference peak memory"),
+        (axes[1], "peak_vram_mb", "Peak memory (MB)", "Inference peak memory"),
     ]:
         for i, (mode, name) in enumerate(
             [("matched_reduction", "on reduced graphs"), ("full_graph", "on full graphs")]
@@ -219,6 +223,9 @@ def cpu_inference(out: Path) -> None:
     the practical claim rests on does not exist yet.
     """
     df = CPU_INFERENCE.copy()
+    # The raw device column names an implementation (cuda); the figure names
+    # the device class instead, matching the abstraction used everywhere else.
+    device_label = {"cuda": "accelerator", "cpu": "CPU"}
     fig, ax = plt.subplots(figsize=COL)
     x = np.arange(len(df))
     colors = [
@@ -233,13 +240,14 @@ def cpu_inference(out: Path) -> None:
     ax.set_xticks(x)
     ax.set_xticklabels(
         [
-            f"{label_for(m, short=True)}\n{d}" + ("" if real else "\n[FAKE]")
+            f"{label_for(m, short=True)}\n{device_label.get(d, d)}"
+            + ("" if real else "\n[FAKE]")
             for m, d, real in zip(df["reduction_method"], df["device"], df["measured"])
         ],
         fontsize=6,
     )
     ax.set_ylabel("Graphs per second")
-    ax.set_title("Full-graph inference throughput, GPU vs. CPU")
+    ax.set_title("Full-graph inference throughput, accelerator vs. CPU")
     style_axes(ax)
     # Five of the six bars are invented, so this gets the full watermark
     # rather than the per-row marking used on mostly-measured figures.
