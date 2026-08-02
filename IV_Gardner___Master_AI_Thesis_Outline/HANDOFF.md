@@ -24,58 +24,87 @@ sections/4-results/{4-results, 4.1-rq1 ... 4.6-summary}
 sections/5-discussion/, sections/6-conclusion/, sections/7-appendix/
 ```
 
-Live prose per chapter: introduction 1,907, related work 6,604, methodology 14,729,
-results 6,652, discussion 2,596, conclusion 666. Total 33,154, roughly 66 two-column pages
-against a 35-page limit. **The goal at this stage is showing the supervisor what content
-will be in the thesis, not hitting the page limit.** Length matters later.
+Live prose per chapter: frontmatter 225, introduction 1,901, related work 5,844,
+methodology 9,360, results 4,091, discussion 2,595, conclusion 666, appendix 533.
+Total 25,215, down from 33,154. **The goal at this stage is showing the supervisor what
+content will be in the thesis, not hitting the page limit.** She confirmed this directly:
+the condensed text is the deliverable, he has little time, and he is not reviewing prose
+style or flow. Length is not the constraint; content completeness is.
 
-## Two tasks were still running at handoff
+A further 13,000-odd words sit in `%` comments across chapters 2 and 3. **That is
+deliberate and must stay.** Cut prose is preserved in place so she can use the full text in
+the real thesis. Never sweep those blocks.
 
-Both are methodology condensation, both in git worktrees, both committed to their own branch
-without pushing. Merge each into `thesis-outline` and run `check-build.sh` after each:
+## The two tasks running at the last handoff: resolved
 
-```bash
-git branch --list 'worktree-agent-*'
-git merge --no-edit <branch>
-```
+Both died before committing. Their work was recovered from their worktrees and is in
+`bbd4109`. One had finished `3.6-data` only; the other `3.1-architecture` and
+`3.2-baselines` only. All three files were byte-identical between the agents' base and
+HEAD, so recovery was a file copy, not a merge.
 
-- one owns `3.6-data`, `3.7-experiment-setup`, `3.8-experiment-metrics` (8,357 words, target ~3,700)
-- one owns `3.1-architecture`, `3.2-baselines`, `3.3`/`3.4`/`3.5-reduction-*` (6,253 words, target ~3,200)
+**The recovered work was not safe.** An adversarial review of it found eleven defects,
+including three numerals that survived condensation while the population they describe
+changed, two of which were false as written:
 
-If either died before committing, its work is still in its worktree, uncommitted. Recover it
-with `git -C .claude/worktrees/agent-<id> status --porcelain` and copy the changed files
-across. This happened repeatedly during the batch and nothing was lost that way.
+- `4.8%` was the size of the step-21 subset (200 of 4,201 graphs per design), not the share
+  of the corpus carrying the wrong denominator, which is 43 of 4,201, near `1%`.
+- `37-39%` primary outputs is of the **gate count**, not of nodes. Against all nodes it is
+  33-34%.
+- median depth 31 levels holds over the 47 designs outside the **EPFL suite**; the condensed
+  wording read as the 37 non-classical designs, whose median is 29.
 
-After merging, verify nothing was dropped:
+Fixed in `bbd4109`, each verified against `media/tables/corpus_designs.tex`. The remaining
+eight defects are fixed in `7aecd3d`. **Lesson for any future condensation pass on this
+document: check every sentence containing a number against the population it described
+before, not just that the numeral survived.**
 
-```bash
-# per file, compare against the pre-merge revision
-git show HEAD~1:<path> | grep -oE '\\cite[tp]?\{[^}]+\}' | sort -u > /tmp/a
-grep -oE '\\cite[tp]?\{[^}]+\}' <path> | sort -u > /tmp/b
-diff /tmp/a /tmp/b
-```
+The other worktree-agent branches are stale. They predate the numbered-folder
+reorganisation (139 files, ~5,349 deletions each) and merging any of them would delete the
+current layout.
 
 ## What is left
 
-1. **Chapter 2 length, if wanted.** Prose compression is finished. Two independent passes
-   stopped at 20 to 28 percent and both gave the same reason: what remains is definitions,
-   not padding. Further reduction is a content decision. Three levers, in order:
-   - move the Deepsyn, Syn4 and C2RS detail in `2.3-prelim-algorithms.tex` to the appendix
-     (532 words on algorithms that are not trained on);
-   - merge `2.5-prelim-reduction.tex` and `2.9-relwork-reduction.tex`, which tell one story
-     split across preliminaries and related work;
-   - drop citations. Her call only.
-2. **Results, introduction, discussion and conclusion condensation**, if length matters:
-   results 6,652 words and the other three 5,169 between them. Not started.
-3. **Scope and Delimitations final trim.** `scope-section-exemplars.md` recommends 15 to 20
-   lines and four to five items, down from the current seven, keeping the bold lead-in format
-   rather than switching to bullets, and merging two pairs of items that each split one
-   exclusion in two. Currently at 47 lines.
-4. **Define "state" on first use.** RQ5 was renamed to Cross-State Inference and the term is
-   used on roughly thirty lines, but never given a one-line definition.
-5. **Two-panel figure titles collide.** Pre-existing layout bug in several `figsize=WIDE`
-   figures, confirmed in `dataset_zero_inflation.pdf` and `rq2_throughput.pdf`.
-6. **Final build plus `bash make-latexdiff.sh`** for a marked-up PDF against `main`.
+**Chapter 2 length: closed.** She declined all three levers. Its condensation is also
+verified faithful: a mechanical check found zero quantities that appear only in comments, and
+a claim-by-claim audit of `2.1`, `2.2` and `2.3` found nothing missing. Do not reopen it.
+
+**Results, introduction, discussion and conclusion condensation: closed.** She reframed the
+goal to content completeness rather than length, so these stay at full density.
+
+**Scope and Delimitations: done**, 47 lines to 37, seven items to four, all seven exclusions
+still stated. It did not reach the 15 to 20 lines `scope-section-exemplars.md` recommends and
+**that target is not reachable** with the content intact: 14 of the 37 lines are structural
+and the 9 forward references are unbreakable markup, putting the floor near 35. Getting to 20
+requires dropping the forward references or an exclusion.
+
+**"State": done, and it was two terms, not one.** *Structural state* (the form a graph
+reaches the encoder in, reduced or unreduced) is defined at RQ5. *Optimization state*
+(whether a target synthesis algorithm has already been applied) is glossed in the
+contributions list. Both were previously undefined and are easy to confuse.
+
+**Two-panel figure titles: done**, and the cause was not the `WIDE` height. `apply_style()`
+set no layout engine at all, so `savefig`'s `bbox_inches="tight"` cropped whitespace without
+repositioning titles, and every `suptitle` compensated with a hand-tuned `y=` offset.
+`figure.constrained_layout.use` in the shared rcParams fixed all 20 two-panel figures at
+once; four now-dead `subplots_adjust` calls were removed and two over-long title pairs
+wrapped.
+
+## Still open
+
+1. **`3.6-data.tex` needs a content read, not another cut.** It has had a rework and a
+   condensation pass, is the longest section in the chapter, and carries the largest block of
+   commented prose (about 3,500 words). Seven of the eleven adversarial-review defects were
+   in this file. A dozen lower-severity drops in it were deliberately deferred and still need
+   her judgement, the sharpest being a `33.8%` to `87.8%` range whose unit ("of a design's
+   edges") is no longer stated.
+2. **Final build plus `bash make-latexdiff.sh`** for a marked-up PDF against `main`.
+3. **`rq3_pareto`**: the "edge-drop" point label overlaps the "full" star label inside the
+   left panel. Pre-existing, unrelated to the title bug, not fixed.
+4. **`thesis-overview.tex`** is a stale standalone document, not wired into the build. Its
+   research questions were reconciled with the thesis, but its prose still predates several
+   of the register rules and it embeds the supervisor's own earlier feedback in comments,
+   initialled "M:", which is worth reading: he asked for higher-level motivation and for
+   results to be teased there.
 
 ## Deliberately not done
 
