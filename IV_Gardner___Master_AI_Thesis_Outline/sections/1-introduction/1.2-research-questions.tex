@@ -68,6 +68,10 @@ heuristics protect (\ref{sec:results:rq4:adequacy}).
 Can a model trained exclusively on reduced AIGs, whether partitioned, sparsified or
 summarized, be queried on full ones at inference time without losing predictive accuracy?
 
+A \emph{structural state} is the form in which a graph reaches the encoder, the reduced
+$R(G)$ or the unreduced $G$ of~\ref{sec:prelim:formalization}, and cross-state inference
+evaluates weights trained in one state on inputs in the other.
+
 Inference is the regime where this pays off. Training stores activations and gradients for
 every node in a batch, whereas forward-only inference stores neither. A model that had to be
 trained on reduced graphs to fit in memory may therefore still serve full graphs on
@@ -82,48 +86,38 @@ path.
 
 \subsection{Scope and Delimitations}
 \label{sec:intro:rqs:scope}
-Optimizability prediction is the instrument, not the objective: it is the task the
-reductions are compared on, chosen for a label that is expensive to obtain and sensitive to
-structure. The delimitations below were fixed in advance. Limitations found during the work
-are separated out into~\ref{sec:discussion:limitations}.
+Optimizability prediction is the instrument, not the objective: it is the task the reductions
+are compared on. The delimitations below were fixed in advance, whereas limitations found
+during the work are separated out into~\ref{sec:discussion:limitations}.
 
 \paragraph{Target synthesis algorithm.}
 \label{sec:intro:scope:algorithm}
-Training and evaluation target \texttt{Orchestrate} alone. The \texttt{Deepsyn},
-\texttt{Syn4} and \texttt{C2RS} graphs sharing the corpus are unused, since cross-algorithm
-variance would not isolate what a reduction costs
-(\ref{sec:conclusion:futurework:algorithms}).
+Training and evaluation target \texttt{Orchestrate} alone, since cross-algorithm variance
+would not isolate what a reduction costs, leaving the \texttt{Deepsyn}, \texttt{Syn4} and
+\texttt{C2RS} graphs of the same corpus unused (\ref{sec:conclusion:futurework:algorithms}).
 
-\paragraph{Definition of optimizability.}
-\label{sec:intro:scope:target}
-Optimizability is relative \emph{node} reduction only. Area, delay and power, the objectives
-synthesis actually optimizes for, are not modelled, and node count stands in for area
-(\ref{sec:discussion:limitations:validity}).
+\paragraph{What the target captures.}
+\label{sec:intro:scope:target}\label{sec:intro:scope:prediction}
+Optimizability is relative \emph{node} reduction alone, an area proxy silent on delay and
+power (\ref{sec:discussion:limitations:validity}). That label is predicted, not a synthesis
+script: Spearman correlation ranks \emph{circuits} under one fixed script, whereas script
+selection would require ranking \emph{algorithms} for one circuit
+(\ref{sec:conclusion:futurework:generation}).
 
 \paragraph{Graph scale.}
 \label{sec:intro:scope:scale}
-The corpus is bounded at an intermediate rather than industrial scale
-(\ref{sec:method:experiment:scale}). RQ1 needs a full-graph baseline, and a baseline that
-does not fit in memory cannot be measured. The AIGs of millions to billions of nodes invoked
-in the motivation are out of reach here (\ref{sec:discussion:limitations:scalability}).
+The corpus is bounded at an intermediate rather than industrial scale: RQ1's full-graph
+baseline has to fit in memory (\ref{sec:method:experiment:scale}), so the million- to
+billion-node AIGs the motivation invokes are out of reach here
+(\ref{sec:discussion:limitations:scalability}).
 
-\paragraph{Reduction families.}
-\label{sec:intro:scope:reductions}
+\paragraph{What is held fixed.}
+\label{sec:intro:scope:reductions}\label{sec:intro:scope:architecture}
 Partitioning, sparsification and summarization/coarsening are covered, the taxonomy of
-\citet{hashemi2024survey} with partitioning substituted for condensation. Condensation is
-excluded because it establishes no node correspondence, leaving RQ5 undefined
-(\ref{sec:relwork:reduction:summarization}).
-
-\paragraph{Model architecture.}
-\label{sec:intro:scope:architecture}
-One encoder, an edge-aware GCN+ (\ref{sec:method:architecture}), held fixed so that outcome
-differences are attributable to the reduction. Published circuit models enter only as RQ1
-baselines (\ref{sec:method:architecture:baselines}), so whether the ranking of reductions
-transfers is untested.
-
-\paragraph{Prediction rather than script generation.}
-\label{sec:intro:scope:prediction}
-Optimizability is predicted, not synthesis scripts. Spearman correlation ranks
-\emph{circuits} under one fixed script, whereas selecting a script would require ranking
-\emph{algorithms} for one circuit, which a single-algorithm model cannot do
-(\ref{sec:conclusion:futurework:generation}).
+\citet{hashemi2024survey} with partitioning substituted for the excluded condensation, which
+establishes no node correspondence and so leaves RQ5 undefined
+(\ref{sec:relwork:reduction:summarization}). One encoder is held fixed, an edge-aware GCN+
+(\ref{sec:method:architecture}), so outcome differences are attributable to the reduction,
+with published circuit models entering only as RQ1 baselines
+(\ref{sec:method:architecture:baselines}), leaving untested whether the reduction ranking
+holds for another encoder.
