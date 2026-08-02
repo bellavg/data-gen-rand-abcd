@@ -295,7 +295,6 @@ def structural_statistics(preds: pd.DataFrame, measurements_dir: Path, out: Path
         return
 
     fig, axes = plt.subplots(1, 3, figsize=(6.9, 2.6))
-    fig.subplots_adjust(wspace=0.38)
 
     ax = axes[0]
     keep = ago["node_retention"].to_numpy()

@@ -110,6 +110,7 @@ def apply_style() -> None:
             "hatch.linewidth": 0.6,
             "figure.titlesize": 10,
             "figure.titleweight": "bold",
+            "figure.constrained_layout.use": True,
         }
     )
 
