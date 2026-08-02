@@ -2,8 +2,7 @@
 \label{sec:method:architecture:baselines}
 RQ1 is a comparative claim and needs a reference. Two groups supply one: trivial predictors,
 which fix what a given $R^2$ is worth on this label, and three published circuit models
-ported to this task. A third group of standard graph-level encoders (GCN, GraphSAGE, GIN)
-was considered and may be added if time permits.
+ported to this task.
 
 \subsubsection{Trivial Predictors}
 \label{sec:method:baselines:trivial}
@@ -23,15 +22,25 @@ and the third is an ordinary least squares fit on graph size alone,
         + \beta_2 \log_{10} \left| \mathcal{E}(G_i) \right| \right).
     \label{eq:method:baseline-size}
 \end{equation}
-Equation~\eqref{eq:method:baseline-constant} fixes the zero point
-of~\eqref{eq:method:r2}. The test-set mean is the least-squares optimal constant, so any
-other constant scores $R^2 \leq 0$, with equality only at
-$\bar{y}_{\text{val}} = \bar{y}_{\text{test}}$. Equation~\eqref{eq:method:baseline-size} is
+Equation~\eqref{eq:method:baseline-constant} fixes the zero point of~\eqref{eq:method:r2}:
+the test-set mean is the least-squares optimal constant, so any other constant scores
+$R^2 \leq 0$, with equality only at $\bar{y}_{\text{val}} = \bar{y}_{\text{test}}$. The
+median is the corresponding optimal constant under absolute error, so the pair together
+lower-bounds both error metrics reported below. Equation~\eqref{eq:method:baseline-size} is
 the weakest non-trivial hypothesis about the task, that optimizability is a function of size
 alone, and any claim that the encoder reads circuit \emph{structure} has to clear it.
 
-\todo{evaluate which of these i will actulaly do shoudl be the base scores the means and all that for comparatability and compared to random and CIs}
-\todo{is ranodmly intialized GNN a baseline? i think so but i need to check the literature}
+\paragraph{Random-encoder control.}
+A fourth reference point is architectural rather than statistical: the edge-aware encoder of
+\ref{sec:method:architecture} with its message-passing weights left at initialisation and
+only the regression head of~\eqref{eq:method:readout} trained. Randomly initialised graph
+convolutions of this kind are known to encode usable structure without training the
+convolution itself \citep{gallicchio2020fastdeep}. Comparing a trained encoder against this
+frozen control isolates how much of a score is owed to architectural inductive bias rather
+than to learning.
+
+Every score reported for these baselines carries the $95\%$ bootstrap interval
+of~\ref{sec:method:experiment:metrics:stats}.
 
 \subsubsection{Adapting Published Circuit Models}
 \label{sec:method:baselines:published}
@@ -97,29 +106,13 @@ port normalises over keys, following Eq.~5 of the paper. Its optional reverse-pr
 branch applies the forward adjacency to the reverse features, which duplicates the forward
 branch rather than reversing it, and the port applies the reverse adjacency. A third
 difference is a convention, not an error: OpenABC-D orients edges toward the primary
-inputs and this corpus orients them the
-other way, so each node summarises its fanout cone under one convention and its fanin cone
-under the other. Both orientations are run and the pair reported.
-\todo{i will provavly not report both just the proper one the correct one that was originally used in paper
-}
+inputs and this corpus orients them the other way, so a node's aggregated neighbourhood is
+its fanout cone under one convention and its fanin cone under the other. The port keeps
+OpenABC-D's orientation, the one the published model was fit under, and reports that score
+alone.
+
 \paragraph{Comparability.}
 Only the data pipeline is shared, since a different split would make the comparison
 meaningless. Hyperparameters, optimizer, loss and schedule take each paper's published
 values. Settings a paper leaves unpublished are recorded as assumptions
 in~\ref{sec:apx:baselines}.
-
-Scores printed in those papers are a different matter and cannot be placed beside the ones
-here. OpenABC-D standardises its targets within each design $d$, so its reference spread is
-the within-design sum of squares where the denominator of~\eqref{eq:method:r2} is the total,
-\begin{equation}
-    \underbrace{\sum_{i} \left( y_i - \bar{y} \right)^{2}}_{\text{here}}
-    = \underbrace{\sum_{i} \left( y_i - \bar{y}_{d(i)} \right)^{2}}_{\text{upstream}}
-    + \sum_{d} n_d \left( \bar{y}_{d} - \bar{y} \right)^{2}.
-    \label{eq:method:r2-decomposition}
-\end{equation}
-The two differ by the between-design term, which on a design-disjoint split
-(\ref{sec:method:experiment:splitting}) is the variation the task is about. Only the sign
-of the score transfers (\ref{sec:results:rq1:baselinemodels}). \todo{do  i need this?}
-
-\todo{this shoudl really be mostly on how i adapted my baselines ot the task.
- so recipe was not inputted i cut off that branch}

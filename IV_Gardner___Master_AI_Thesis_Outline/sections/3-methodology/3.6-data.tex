@@ -1,9 +1,11 @@
 \section{Data}
 \label{sec:method:data}
 
-%TODO intro sentence
+The corpus turns a small set of circuits into many labelled training examples. Each source
+design is expanded by randomized synthesis into thousands of intermediate optimization
+states, and every stored graph carries the optimizability label $y(G)$ of~\eqref{eq:prelim:target}
+under a fixed synthesis algorithm.
 
-\todo{lets }
 \subsection{Source Circuits}
 \label{sec:method:data:sources}
 The corpus is built from 55 source circuits, drawn from three collections and summarised
@@ -46,42 +48,64 @@ deepest circuits in the corpus therefore all enter through this collection, and 
 bound on the precomputed depth encoding
 of~\ref{sec:method:data:representation:pe}.
 
-The remaining eight are synthetic circuits, named \texttt{128}, \texttt{256}, \texttt{512},
-\texttt{1024}, \texttt{2048}, \texttt{4096}, \texttt{8192} and \texttt{16384} after their
-\emph{primary input count} rather than their size: \texttt{16384} has 16{,}384 inputs but
-131{,}072 AND gates, so the name understates the circuit by an order of magnitude. They are
-randomly sampled AIGs, produced by the random AIG generator of \texttt{mockturtle}, part of
-the EPFL logic synthesis libraries \citep{soeken2018epfl}. The generator takes a number of
-primary inputs, a number of AND gates and a seed, and grows the network one gate at a time.
-It draws two operands uniformly at random from the signals built so far, namely the
-constant, the primary inputs and every gate already created, inverts each with probability
-one half, and adds the resulting AND gate to the pool. Draws that structurally hash to an existing node or
-collapse to a trivial case do not count towards the gate budget and are redrawn, so every
-gate is distinct. Once the budget is met, every node still without a fanout is made a
-primary output. The gate budget is eight times the input count in every one of the eight,
-from 128 inputs / 1{,}024 gates up to 16{,}384 inputs / 131{,}072 gates, doubling at each
-step. The number of primary outputs is not a parameter but a consequence of
-the sampling and lands between 37\% and 39\% of the gate count (398 for the smallest,
-49{,}307 for the largest): it is the share of nodes never drawn as an operand.
+The remaining eight are synthetic circuits, named \texttt{128} through \texttt{16384} after
+their \emph{primary input count} rather than their size (\texttt{16384} has $16{,}384$ inputs
+but $131{,}072$ AND gates). They are randomly sampled AIGs from the random AIG generator of
+\texttt{mockturtle}, part of the EPFL logic synthesis libraries \citep{soeken2018epfl}. Each
+new gate draws two operands uniformly at random from the signals built so far, the constant,
+the primary inputs and every prior gate, and inverts each independently with probability
+$1/2$. A draw that structurally hashes to an existing node or collapses to a trivial case is
+discarded and redrawn, so every gate in the result is distinct. The gate budget is eight
+times the input count throughout, doubling at each step from $128$ inputs / $1{,}024$ gates
+to $16{,}384$ inputs / $131{,}072$ gates, and every node without a fanout at the end becomes a
+primary output, between $37\%$ and $39\%$ of the gate count.
 
-The generation script itself was not kept, so this account is reconstructed from the eight
-AIGs rather than from a recipe, and they determine it tightly. Across all eight there is not
-one duplicated or trivial AND gate, the gate count is exactly eight times the input count,
-and the primary outputs are exactly the fanout-free nodes together with the unused constant,
-which the generator emits as the first output, a detail of that implementation and of no
-other. What is \emph{not} recoverable is the seed. The consequences of that are taken up
-in~\ref{sec:method:experiment:reproducibility}.
+The generation script itself was not kept. This account is reconstructed from the eight
+AIGs, which fix it exactly except for one parameter: the seed is not recoverable, so the
+eight circuits cannot be regenerated independently
+(\ref{sec:method:experiment:reproducibility}). The construction also explains their
+behaviour under optimization, because fanins drawn uniformly at random with duplicates
+rejected arrive already structurally hashed, with almost none of the repeated local
+subfunctions that \texttt{rewrite}, \texttt{refactor} and \texttt{resub} exist to collapse.
+Their near-zero optimizability (\ref{sec:method:data:label:distribution}) is therefore a
+property of the sampling, not a measurement failure, sharpest in the largest circuits, where
+the pool is widest and collisions rarest.
 
-That construction is worth stating precisely, because it explains how these eight behave
-later. A network whose fanins are drawn uniformly at random from the whole pool, with
-duplicates rejected as they are created, arrives already structurally hashed and with almost
-none of the repeated local subfunctions that \texttt{rewrite}, \texttt{refactor} and
-\texttt{resub} exist to collapse. Their near-zero optimizability
-(\ref{sec:method:data:label:distribution}) is therefore a property of how they were sampled
-rather than a measurement failure, and it is the largest circuits, where the pool is widest
-and collisions rarest, that sit closest to an exact fixed point.
-
-\todo{if in table text could mayeb be reduced? comment out the original text and rewrite more concise outline style}
+% Original, condensed above:
+% The remaining eight are synthetic circuits, named \texttt{128}, \texttt{256}, \texttt{512},
+% \texttt{1024}, \texttt{2048}, \texttt{4096}, \texttt{8192} and \texttt{16384} after their
+% \emph{primary input count} rather than their size: \texttt{16384} has 16{,}384 inputs but
+% 131{,}072 AND gates, so the name understates the circuit by an order of magnitude. They are
+% randomly sampled AIGs, produced by the random AIG generator of \texttt{mockturtle}, part of
+% the EPFL logic synthesis libraries \citep{soeken2018epfl}. The generator takes a number of
+% primary inputs, a number of AND gates and a seed, and grows the network one gate at a time.
+% It draws two operands uniformly at random from the signals built so far, namely the
+% constant, the primary inputs and every gate already created, inverts each with probability
+% one half, and adds the resulting AND gate to the pool. Draws that structurally hash to an existing node or
+% collapse to a trivial case do not count towards the gate budget and are redrawn, so every
+% gate is distinct. Once the budget is met, every node still without a fanout is made a
+% primary output. The gate budget is eight times the input count in every one of the eight,
+% from 128 inputs / 1{,}024 gates up to 16{,}384 inputs / 131{,}072 gates, doubling at each
+% step. The number of primary outputs is not a parameter but a consequence of
+% the sampling and lands between 37\% and 39\% of the gate count (398 for the smallest,
+% 49{,}307 for the largest): it is the share of nodes never drawn as an operand.
+%
+% The generation script itself was not kept, so this account is reconstructed from the eight
+% AIGs rather than from a recipe, and they determine it tightly. Across all eight there is not
+% one duplicated or trivial AND gate, the gate count is exactly eight times the input count,
+% and the primary outputs are exactly the fanout-free nodes together with the unused constant,
+% which the generator emits as the first output, a detail of that implementation and of no
+% other. What is \emph{not} recoverable is the seed. The consequences of that are taken up
+% in~\ref{sec:method:experiment:reproducibility}.
+%
+% That construction is worth stating precisely, because it explains how these eight behave
+% later. A network whose fanins are drawn uniformly at random from the whole pool, with
+% duplicates rejected as they are created, arrives already structurally hashed and with almost
+% none of the repeated local subfunctions that \texttt{rewrite}, \texttt{refactor} and
+% \texttt{resub} exist to collapse. Their near-zero optimizability
+% (\ref{sec:method:data:label:distribution}) is therefore a property of how they were sampled
+% rather than a measurement failure, and it is the largest circuits, where the pool is widest
+% and collisions rarest, that sit closest to an exact fixed point.
 
 \begin{table}[htbp]
 \centering
@@ -143,8 +167,15 @@ still, at 366{,}040 AND nodes and a depth of 24{,}972.
 % TODO: seed unrecovered: search Snellius home and scratch for the original generation script.
 
 
-\subsubsection{Stats}
-\todo{mention all the depths, nodes distributions and etc. for the chosen starting circuits. rename this to something more formal}
+\subsubsection{Structural Characteristics of the Source Designs}
+\label{sec:method:data:sources:stats}
+The remaining columns of~\ref{tab:corpus_designs} show the same spread. PI and PO counts
+range from 24 (\texttt{sin}) to $37{,}603$ (\texttt{idft}) and from 11 (\texttt{bc0}) to
+$49{,}307$ (\texttt{16384}), at medians of 494 and 398. Edge count tracks node count
+directly, since every AND node contributes two edges and every output one, from 896
+(\texttt{ss\_pcm}) to $527{,}509$ (\texttt{dft}) at a median of $25{,}065$. The inverted-edge
+share that fixes the edge feature of~\ref{sec:method:data:representation:features} varies
+from $33.8\%$ to $87.8\%$ of a design's edges, at a median of $57.2\%$.
 
 \subsection{Dataset Generation}
 \label{sec:method:data:generation}
@@ -189,8 +220,23 @@ of a design the model had already seen rather than generalization. Splitting on 
 partitions the corpus along the one boundary this construction never crosses.
 
 
-\todo{TODO: step-21 choice networks are not plain AIGs; the node count understates them in 43 of 200 cases. 
-this was a mistake i dont want to retrain can this be added in limitation insteead do imention this here? i will just pul lit from inference values at least}
+The step-21 output of every recipe is not a plain AIG. It follows a structural-choice pass
+that retains multiple structurally distinct but functionally equivalent implementations of a
+signal side by side, a \emph{choice network}, rather than collapsing to one representative.
+The synthesis tool's own node count describes only the chosen representative and is smaller
+than $|\mathcal{V}(G)|$, the graph's true node count, whenever the pass finds such an
+equivalence. Checked against the stored graphs, that undercount is confirmed in 43 of the
+200 recipes at step 21. Step 21 is one of the 21 stored outputs per recipe, so it alone
+accounts for 200 of the $4{,}201$ graphs generated per design, close to $4.8\%$ of the total.
+
+The recorded optimizability for these graphs substitutes that smaller, tool-reported count
+for $|\mathcal{V}(G)|$ in~\eqref{eq:prelim:target}, so $y(G)$ is computed against the wrong
+denominator wherever the two disagree. The mismatch was found after training. The affected
+labels were not recomputed, and the model was not retrained: the graphs remain in the
+corpus and in every reported split, and no result in~\ref{sec:results} currently excludes
+them. This is recorded here as a limitation of the reported accuracy rather than as a
+resolved issue.
+% TODO: exclude step-21 graphs from every reported accuracy figure.
 
 \subsubsection{Optimization}
 \label{sec:method:data:generation:algorithms}
@@ -516,8 +562,8 @@ assumed to transfer.
 
 \subsection{Held-Out Hyperparameter Tuning Subset}
 \label{sec:method:data:hpsubset}
-A smaller subset of 50,000 graphs, balanced between the two stored tiers, was used
-exclusively for the initial hyperparameter tuning and then excluded from the rest.
-
-
-\todo{make much more concise. keep full text commented out.}
+$50{,}000$ graphs, balanced across both tiers, were held out for hyperparameter tuning alone
+and excluded from every later split.
+% Original, condensed above:
+% A smaller subset of 50,000 graphs, balanced between the two stored tiers, was used
+% exclusively for the initial hyperparameter tuning and then excluded from the rest.

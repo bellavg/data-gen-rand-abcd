@@ -1,13 +1,17 @@
 \section{Architecture}
 \label{sec:method:architecture}
 
-\todo{make more concise also to evaluate what to put in the appendix and what to keep here write that as a permanent note so my thesis supervisor can see so not a ocmment}
+\todo{Appendix candidate: the departure-by-departure comparison against GNN+'s own equation
+numbers within~\ref{sec:method:architecture:equations}, the itemised configuration list and
+the paper-vs-reference-implementation asides in the normalisation and positional-encoding
+paragraphs. Kept here: every equation the exactness and summarization claims
+of~\ref{sec:method:architecture:summarization} and~\ref{sec:method:architecture:exact} cite
+directly, since those claims cannot be checked against a bulleted configuration.}
 The encoder follows GNN+ \citep{luo2024gnnplus}; hyperparameters come from the literature
 and from the tuning sweep of~\ref{sec:method:experiment:hp}. One architecture is used for
-unreduced, sparsified, partitioned and summarized graphs alike, with two exceptions stated
-below: partitioning changes the pooling path (\ref{sec:method:architecture:partitioning}),
-and the exact-compression track changes the input schema
-(\ref{sec:method:architecture:exact}).
+unreduced, sparsified, partitioned and summarized graphs alike, with two exceptions:
+partitioning changes the pooling path (\ref{sec:method:architecture:partitioning}), and the
+exact-compression track changes the input schema (\ref{sec:method:architecture:exact}).
 
 The encoder is an edge-aware graph convolutional network over AIGs. A node carries a one-hot
 type indicator over $[\text{constant}, \text{PI}, \text{AND}, \text{PO}]$, so an AND gate is
@@ -55,13 +59,11 @@ Regression head & $128 \rightarrow 64 \rightarrow 1$ with a terminal sigmoid \\
 
 \subsection{Encoder Formulation}
 \label{sec:method:architecture:equations}
-Nothing in this subsection is a contribution of this thesis. The departures below are
-GNN+'s \citep{luo2024gnnplus}, each cited to the equation of that paper it comes from;
-they are written out because the reduction claims
+Nothing in this subsection is a contribution of this thesis: the formulation is GNN+'s
+\citep{luo2024gnnplus}, written out in full because the exactness and summarization claims
 of~\ref{sec:method:architecture:summarization} and~\ref{sec:method:architecture:exact} are
-claims about \emph{this} forward pass, and cannot be checked against a bulleted
-configuration. The settings specific to this work are collected at the end of the
-subsection. The classic GCN layer \citep{kipf2017gcn} that GNN+ modifies is
+claims about \emph{this} forward pass and cannot be checked against a bulleted
+configuration. The classic GCN layer it modifies \citep{kipf2017gcn} is
 \begin{equation}
     h_v^{l} = \sigma\!\left( \sum_{u \in \mathcal{N}(v) \cup \{v\}}
     \frac{1}{\sqrt{\hat{d}_u \hat{d}_v}}\, h_u^{l-1} W^{l} \right).
@@ -79,16 +81,15 @@ representation, so the message a node receives depends on the wire it arrived on
     c_{uv} \, \sigma\!\left( h_u^{l-1} W^{l} + e_{uv} W_e^{l} \right).
     \label{eq:method:message}
 \end{equation}
-Placing $\sigma$ on each message rather than on the aggregate follows the GNN+ reference
-implementation; its Eq.~6 writes the activation outside the sum. The per-edge coefficient $c_{uv}$ is the one place~\eqref{eq:method:message} is
+The per-edge coefficient $c_{uv}$ is the one place~\eqref{eq:method:message} is
 configurable rather than fixed. With symmetric degree normalisation enabled it is the
 GCN coefficient $1 / \sqrt{\hat{d}_u \hat{d}_v}$ of~\eqref{eq:method:gcn}, computed once
-per edge when graphs are cached rather than at every forward pass; disabled, it is $1$
-and no edge-weight tensor is carried at all. It is disabled here. The same
-edge-weight channel is what the exact-compression track
-of~\ref{sec:method:architecture:exact} reuses: setting $c_{uv}$ to the edge multiplicity
-$w_{uv}$ scales the message \emph{outside} $\sigma$, which is what makes one merged
-message equal the sum of the messages it replaces.
+per edge when graphs are cached rather than at every forward pass; disabled, as it is
+here, it is $1$ and no edge-weight tensor is carried at all. The same edge-weight
+channel is what the exact-compression track of~\ref{sec:method:architecture:exact}
+reuses: setting $c_{uv}$ to the edge multiplicity $w_{uv}$ scales the message
+\emph{outside} $\sigma$, which is what makes one merged message equal the sum of the
+messages it replaces.
 
 \paragraph{Normalisation, dropout, residual and feed-forward block.}
 GNN+ adds four of its six techniques inside the layer block:
@@ -104,14 +105,11 @@ GNN+ adds four of its six techniques inside the layer block:
         \operatorname{Drop}\!\left( \sigma(h W_1^{l}) \right) W_2^{l} \right),
     \label{eq:method:ffn}
 \end{align}
-with $W_1^{l} \colon 128 \rightarrow 256$ and $W_2^{l} \colon 256 \rightarrow 128$. The
-published layer carries one normalisation that~\eqref{eq:method:residual} does not. Its
-Eqs.~7--9 normalise the aggregated message \emph{before} the activation and before the
-residual is added, and its Eq.~10 closes the FFN by normalising that block's own residual
-sum; the GNN+ reference implementation keeps both and inserts a third ahead of the FFN,
-the bracketing arrangement of GraphGPS \citep{rampasek2022graphgps}. Only the message
-normalisation is dropped here. The two dropouts of~\eqref{eq:method:ffn} likewise follow
-the reference implementation, which Eq.~10 does not show.
+with $W_1^{l} \colon 128 \rightarrow 256$ and $W_2^{l} \colon 256 \rightarrow 128$. GNN+
+additionally normalises the aggregated message before the activation and the residual; that
+step is dropped here, leaving only the pre- and post-FFN bracketing of GraphGPS
+\citep{rampasek2022graphgps}. The two dropouts of~\eqref{eq:method:ffn} follow the GNN+
+reference implementation.
 
 \paragraph{Positional encoding.}
 A per-node structural scalar, here the log-compressed logic level $\ell_v$, is
@@ -122,11 +120,9 @@ projected and concatenated to the node features rather than summed into them:
     \label{eq:method:input}
 \end{equation}
 with $x_v \in \mathbb{R}^{4}$, $W_{\text{in}} \colon 4 \rightarrow 128$ and
-$W_{\text{PE}} \colon 1 \rightarrow 32$, so $h_v^{0} \in \mathbb{R}^{160}$. GNN+ holds its
-concatenation at the model width, projecting the joined vector back down in Eq.~12 and
-narrowing the node projection beforehand in its implementation. Keeping all 160
-dimensions here means the
-first layer maps $160 \rightarrow 128$ and is therefore the one layer whose residual
+$W_{\text{PE}} \colon 1 \rightarrow 32$, so $h_v^{0} \in \mathbb{R}^{160}$. GNN+ instead
+projects the joined vector back down to the model width. Keeping all $160$ dimensions
+here means the first layer maps $160 \rightarrow 128$ and is the one layer whose residual
 in~\eqref{eq:method:residual} is skipped, its input and output widths being unequal.
 
 \paragraph{Configuration specific to this work.}
@@ -134,16 +130,11 @@ The encoder is GNN+; the following are this project's configuration of it, and n
 them change the technique:
 \begin{itemize}
     \item \textbf{Degree normalisation off.} $c_{uv} = 1$ in~\eqref{eq:method:message},
-    where GCN+ carries the $1 / \sqrt{\hat{d}_u \hat{d}_v}$ of~\eqref{eq:method:gcn} into
-    its own layer. Fan-in in an AIG is fixed by node type, so the coefficient, taken over
-    fan-in and without the self-loop, is constant within each type pair and is zero on
-    every edge leaving a primary input. GNN+ supplies no evidence either way: its
-    ablations \citep[Tables~5--6]{luo2024gnnplus} cover the six techniques it adds and not
-    the GCN coefficient it inherits, and its own edge-aware layer disables both that
-    coefficient and the self-loop, so this setting agrees with the reference
-    implementation where the implementation departs from Eq.~6. The normalised variant is
-    implemented and reachable through the model
-    configuration, not exposed as a training flag.
+    rather than the $1 / \sqrt{\hat{d}_u \hat{d}_v}$ of~\eqref{eq:method:gcn}. Fan-in in an
+    AIG is fixed by node type, so that coefficient is constant within each type pair and
+    adds nothing the type indicator does not already carry. GNN+'s own edge-aware layer
+    disables it too, and its ablations do not cover the choice either way. The normalised
+    variant remains reachable through the model configuration.
     \item \textbf{No self-loop.} Aggregation in~\eqref{eq:method:message} runs over
     $\mathcal{N}(v)$ without the $\cup \{v\}$ of~\eqref{eq:method:gcn}; a node's own
     state re-enters through the residual of~\eqref{eq:method:residual} only.
@@ -209,8 +200,8 @@ Summarized graphs are also fed to the unmodified encoder, which is possible only
 the merge preserves the input schema as a superset: node and edge features become member
 counts rather than one-hot indicators, and a super-node containing a single node reproduces
 its original feature row exactly (\ref{sec:method:summary:schema}). Positional encodings are
-pooled by member minimum, so a super-node enters the circuit at the level of its earliest
-member.
+pooled by member minimum, so a super-node's level is that of its earliest member. This
+adaptation has not yet been tested.
 % TODO: unrun, confirm before defending positinal encoding adaptation
 
 A full graph is consequently a valid input to a summary-trained model without preprocessing,
@@ -239,5 +230,10 @@ accuracy by construction, and the positive control for RQ5
 full graph must be converted before this encoder can be queried on it, whereas the other
 methods support cross-state inference with no such step.
 
-
-\todo{go over this when comparins to exact sumamrizaiotn related work}
+Exactness (\ref{sec:prelim:reduction:exact}) needs two properties from the encoder: a
+permutation-invariant sum over the neighbour multiset (\eqref{eq:prelim:exact-aggregation}),
+and count-based node features. The former is the multiplicity coefficient $c_{uv} = w_{uv}$
+established above. The latter is the summarized schema
+of~\ref{sec:method:architecture:summarization}: it keeps the initial colouring able to
+separate what the merge already separated, and supplies the member count the weighted
+readout needs (\eqref{eq:prelim:exact-readout}).
