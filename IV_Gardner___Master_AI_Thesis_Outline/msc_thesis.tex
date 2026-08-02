@@ -36,7 +36,7 @@
 
 \author{Isabella V. \textsc{Gardner}}
 \studentnumber{314159265}  % TODO
-\period{2026/01/05 -- 2026/08/31}  % TODO: start date
+\period{2026/01/05--2026/08/31}  % TODO: start date
 \credits{36 ECTS}
 \examiner{Pascal \textsc{Mettes}}
 \dailysupervisor{Michael \textsc{Cochez}}
@@ -76,7 +76,7 @@
 
 
 \twocolumn
-\mainmatter
+\mainmatter{}
         \include{sections/1-introduction}
         \include{sections/2-related-work}
         \include{sections/3-methodology}
@@ -84,7 +84,9 @@
         \include{sections/5-discussion}
         \include{sections/6-conclusion}
 
-\bibliographystyle{ACM-Reference-Format}
+% ACM-Reference-Format needs the acmart package (not in BasicTeX).
+% To go back: sudo tlmgr install acmart, then restore the line below.
+\bibliographystyle{plainnat}
 \bibliography{bibliographies/references}
 
 % \newpage

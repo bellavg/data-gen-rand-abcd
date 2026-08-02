@@ -1,0 +1,77 @@
+\subsection{Synthesis Algorithms}
+\label{sec:prelim:algorithms}
+
+\subsubsection{Rewriting, Refactoring, and Balancing}
+\label{sec:prelim:algorithms:primitives}
+Every script in this thesis is assembled from a small set of function-preserving local
+transformations \citep{mishchenko2006rewriting}. A cut of a gate $v$ is a node set through
+which every PI-to-$v$ path passes, and it is $K$-feasible when it has at most $K$ members,
+so the logic between the cut and $v$ computes a Boolean function of at most $K$ variables.
+Rewriting enumerates $K$-feasible cuts at each AND gate and replaces the enclosed logic
+with the smallest precomputed equivalent, accepting a replacement only when sharing with
+the rest of the network makes it a net gain
+\citep{bjesse2004compression,mishchenko2006rewriting}. Refactoring makes the same exchange
+with the MFFC of~\eqref{eq:prelim:mffc} as the unit, collapsing one cone at a time and
+re-expressing it \citep{mishchenko2006scalable}. Balancing restructures AND trees under
+associativity to reduce the depth $\ell(G)$ of~\eqref{eq:prelim:level} at an unchanged
+function. Resubstitution re-expresses a gate in terms of gates already present in the
+network, its divisors, and removes the MFFC made redundant when a valid re-expression is
+found \citep{mishchenko2006scalable}.
+
+Two constructions fixed here are read repeatedly later. The first is structural hashing
+\citep{kuehlmann2002robust}. Writing
+\begin{equation}
+    \kappa(v) = \bigl\{\, (u, \mathrm{inv}(u, v)) : u \in \operatorname{fi}(v) \,\bigr\}
+    \label{eq:prelim:strash}
+\end{equation}
+for the signature of an AND gate, hashing maintains on construction the invariant that
+$\kappa(u) \neq \kappa(v)$ for all distinct AND gates $u$ and $v$. One-hop structural
+redundancy, two gates over the same fanins with the same inversions, is therefore already
+gone before any summarization runs (\ref{sec:method:summary:wl}).
+
+The second is the line between structural and functional equivalence. Two nodes are
+functionally equivalent when they agree under every assignment to the PIs,
+\begin{equation}
+    u \equiv v \iff b_u = b_v \text{ under every PI assignment},
+    \label{eq:prelim:funceq}
+\end{equation}
+with $b_u$ as in~\eqref{eq:prelim:inversion}, and functionally complementary when
+$b_u = \neg b_v$ throughout. A Functionally Reduced AIG (FRAIG) merges every such pair,
+using simulation to refute candidates cheaply and SAT to prove the survivors
+\citep{mishchenko2005fraig}. Structural hashing decides~\eqref{eq:prelim:funceq} only in
+the special case $\kappa(u) = \kappa(v)$; the general case is a semantic property that no
+local inspection reveals. Every summarization method in this thesis stays on the
+structural side of that line, because a merge by~\eqref{eq:prelim:funceq} performs part of
+the optimization the model is trained to predict
+(\ref{sec:discussion:limitations:methods}).
+
+\subsubsection{The Orchestrate Script}
+\label{sec:prelim:algorithms:orchestrate}
+The target algorithm, Orchestrate, is an orchestrated flow in the sense
+of~\citet{li2024orchestration}. A conventional script commits to one ordering of
+whole-graph passes. Orchestration moves the choice into the graph: at each AND gate,
+rewriting, refactoring and resubstitution are attempted and the transformation with the
+best local area-delay score is committed, and the sweep repeats for a bounded number of
+passes. Two properties make it the target: (i) it subsumes the orderings of the fixed
+scripts built from the same primitives, so the label measures optimization potential
+rather than the accident of one command sequence, and (ii) it is deterministic, so $S(G)$
+is a single graph rather than a distribution over runs and ``optimizability under
+Orchestrate'' is well defined as the $y(G)$ of~\ref{sec:method:data:label:definition}. The
+exact invocation is recorded in~\ref{sec:apx:algorithms}.
+% TODO: confirm the per-pass visit order against the implementation.
+
+\subsubsection{The Non-Target Scripts: Deepsyn, Syn4, and C2RS}
+\label{sec:prelim:algorithms:others}
+Three further scripts of the synthesis system were applied during dataset generation
+\citep{brayton2010abc}, and every tier-1 graph that enters training is the output of one of
+them (\ref{sec:method:data:tier1}). \texttt{Deepsyn} searches: randomized restructuring passes
+are applied repeatedly under a wall-clock budget and the best network encountered is
+returned. Its seed was drawn afresh for every graph and never recorded, so the
+\texttt{Deepsyn} portion of the corpus cannot be regenerated
+(\ref{sec:discussion:limitations:reproducibility}). \texttt{Syn4} applies a fixed,
+deterministic restructuring flow built from the primitives
+of~\ref{sec:prelim:algorithms:primitives}, invoked with no arguments, so its behaviour is
+entirely that of the tool's built-in script. \texttt{C2RS} expands to a chain of balancing,
+refactoring, rewriting and resubstitution steps \citep{mishchenko2006scalable} whose
+resubstitution cut size widens from $K = 6$ to $K = 12$, so successive steps reason over
+progressively larger windows. The invocations are recorded in~\ref{sec:apx:algorithms}.

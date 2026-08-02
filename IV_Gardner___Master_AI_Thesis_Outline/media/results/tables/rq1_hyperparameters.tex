@@ -1,0 +1,27 @@
+\begin{table}[htbp]
+\centering
+\caption{Final configuration, as recorded in the W\&B run config of the headline run. Fields the run did not log are marked rather than omitted.}
+\label{tab:rq1_hyperparameters}
+\small
+\begin{tabular}{ll}
+\toprule
+\textbf{Hyperparameter} & \textbf{Value} \\
+\midrule
+Encoder & gcn \\
+Hidden dim & 128.0 \\
+Layers (message passing) & 4 (from config.py) \\
+Positional encoding & level \\
+PE dim & 32.0 \\
+Pooling & mean \\
+Head dropout & 0.3 \\
+Learning rate & 0.0003 \\
+Min learning rate & 1e-06 \\
+Weight decay & 0.00396 \\
+Warmup steps & 10000.0 \\
+Scheduler patience & 2.0 \\
+Node input dim & 4.0 \\
+Edge attr dim & 2.0 \\
+Seed & not recorded \\
+\bottomrule
+\end{tabular}
+\end{table}

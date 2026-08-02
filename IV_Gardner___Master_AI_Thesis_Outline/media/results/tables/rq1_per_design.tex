@@ -1,0 +1,18 @@
+\begin{table*}[htbp]
+\centering
+\caption{Per-design metrics on the design-disjoint test set. A pooled score over a design-level split is an average over this handful of whole circuits, not over a random sample.}
+\label{tab:rq1_per_design}
+\small
+\begin{tabular}{lrrrrrr}
+\toprule
+\textbf{Design} & \textbf{Graphs} & \textbf{Mean $y$} & \textbf{RMSE} & \textbf{MAE} & \textbf{$R^2$} & \textbf{Spearman} \\
+\midrule
+256 & 16040 & 0.001 & 0.001 & 0.001 & -0.548 & 0.493 \\
+16384 & 16080 & 0.000 & 0.001 & 0.001 & -747.953 & 0.043 \\
+picosoc & 16045 & 0.007 & 0.010 & 0.006 & -0.657 & 0.265 \\
+c1355 & 16102 & 0.006 & 0.026 & 0.006 & -0.014 & 0.331 \\
+c6288 & 16052 & 0.044 & 0.055 & 0.038 & 0.347 & 0.539 \\
+square & 16111 & 0.062 & 0.085 & 0.049 & 0.091 & 0.884 \\
+\bottomrule
+\end{tabular}
+\end{table*}

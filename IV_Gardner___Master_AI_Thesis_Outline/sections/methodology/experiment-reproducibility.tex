@@ -1,0 +1,23 @@
+\subsection{Reproducibility}
+\label{sec:method:experiment:reproducibility}
+Split assignment, the randomised reduction methods, and model initialisation are each
+seeded at a fixed value; the deterministic reduction methods produce identical output by
+construction. Seed values and the full experimental configuration are listed
+in~\ref{sec:apx:config}.
+
+Seeding makes a single run repeatable, not robust. Each configuration is trained once, so
+differences between configurations are point estimates carrying no run-to-run variance, a
+limitation treated in~\ref{sec:method:experiment:metrics:stats}.
+
+Reduction is precomputed offline, and the artifacts behind every reported experiment are
+released as masks over the original graphs
+(\ref{sec:method:reproducibility:availability}). Reproducing a result therefore does not
+require re-running the reduction stage.
+
+\subsubsection{Numerical Determinism}
+\label{sec:method:reproducibility:determinism}
+% TODO: order-dependent scatter aggregation and mixed precision perturb the last digits, not the ranking.
+
+\subsubsection{Code and Data Availability}
+\label{sec:method:reproducibility:availability}
+% TODO: hosting, license, what ships alongside the code, source-circuit redistribution terms.

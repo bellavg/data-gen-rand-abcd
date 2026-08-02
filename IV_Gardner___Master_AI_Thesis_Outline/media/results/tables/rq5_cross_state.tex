@@ -1,0 +1,23 @@
+\begin{table*}[htbp]
+\centering
+\caption{RQ5: the same weights evaluated under the reduction they were trained with and on unreduced graphs. For every method here a full graph needs no conversion -- it already is a valid input. The exact colour-refinement track is the exception and has not been run.}
+\label{tab:rq5_cross_state}
+\small
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{llrrrrrr}
+\toprule
+\textbf{Method} & \textbf{Family} & \textbf{$R^2$ matched} & \textbf{$R^2$ full} & \textbf{$\Delta R^2$} & \textbf{$\rho$ matched} & \textbf{$\rho$ full} & \textbf{Throughput full (g/s)} \\
+\midrule
+Full graph & Baseline & -- & 0.343 & -- & -- & 0.185 & 74.650 \\
+Random hashing & Partition & -0.981 & -0.071 & 0.910 & -0.183 & 0.145 & 74.669 \\
+METIS & Partition & -3.062 & -2.663 & 0.399 & 0.237 & 0.225 & 74.668 \\
+Level slicing & Partition & -0.142 & -0.142 & 0.000 & 0.119 & 0.601 & 74.690 \\
+Span-weighted METIS & Partition & 0.008 & -0.352 & -0.360 & 0.263 & -0.132 & 74.690 \\
+Random edge dropout & Sparsification & 0.215 & 0.247 & 0.032 & 0.194 & 0.326 & 74.658 \\
+Spanning forest & Sparsification & 0.138 & 0.038 & -0.100 & 0.282 & 0.411 & 74.721 \\
+PageRank pruning & Sparsification & -0.018 & -0.114 & -0.097 & 0.367 & 0.004 & 74.721 \\
+AND-gate only & Sparsification & -0.064 & -0.144 & -0.080 & -0.025 & -0.467 & 74.684 \\
+\bottomrule
+\end{tabular}
+}
+\end{table*}

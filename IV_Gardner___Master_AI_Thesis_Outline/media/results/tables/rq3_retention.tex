@@ -1,0 +1,29 @@
+\begin{table*}[htbp]
+\centering
+\caption{RQ3 matched-state accuracy: models trained and tested under the same reduction. RMSE, $R^2$ and Spearman are reported together throughout -- a reduction can hold mean error steady while destroying explained variance.}
+\label{tab:rq3_retention}
+\small
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{lllrrrrr}
+\toprule
+\textbf{Method} & \textbf{Family} & \textbf{Kind} & \textbf{Smooth L1} & \textbf{RMSE} & \textbf{$R^2$} & \textbf{Spearman} & \textbf{$R^2$ retained} \\
+\midrule
+Full graph & Baseline & Generic & 0.014 & 0.043 & 0.343 & 0.185 & 1.000 \\
+Random hashing & Partition & Generic & 0.038 & 0.075 & -0.981 & -0.183 & -2.861 \\
+METIS & Partition & Generic & 0.055 & 0.107 & -3.062 & 0.237 & -8.932 \\
+Level slicing & Partition & Domain & 0.018 & 0.057 & -0.142 & 0.119 & -0.414 \\
+Span-weighted METIS & Partition & Domain & 0.034 & 0.053 & 0.008 & 0.263 & 0.024 \\
+Random edge dropout & Sparsification & Generic & 0.016 & 0.047 & 0.215 & 0.194 & 0.627 \\
+Spanning forest & Sparsification & Generic & 0.016 & 0.049 & 0.138 & 0.282 & 0.404 \\
+PageRank pruning & Sparsification & Generic & 0.019 & 0.053 & -0.018 & 0.367 & -0.051 \\
+AND-gate only & Sparsification & Domain & 0.018 & 0.055 & -0.064 & -0.025 & -0.188 \\
+{[TODO/FAKE] Random within-type} & Summarization & Generic & -- & 0.060 & 0.100 & 0.100 & 0.292 \\
+{[TODO/FAKE] ConvMatch} & Summarization & Generic & -- & 0.050 & 0.200 & 0.200 & 0.583 \\
+{[TODO/FAKE] Cone coarsening} & Summarization & Domain & -- & 0.045 & 0.300 & 0.300 & 0.875 \\
+{[TODO/FAKE] MFFC coarsening} & Summarization & Domain & -- & 0.040 & 0.350 & 0.350 & 1.021 \\
+{[TODO/FAKE] Colour refinement (exact)} & Summarization & Domain & -- & 0.043 & 0.343 & 0.185 & 1.000 \\
+\bottomrule
+\end{tabular}
+}
+\\[4pt]\begin{minipage}{\linewidth}\footnotesize\emph{Rows marked [TODO/FAKE] are invented. No summarization configuration has been trained or measured. Needs: sbatch src/shell/precompute\_summarization.sh for the offline pass, then one training run and one src/test.py pass per method. Random within-type merging is not implemented at all.}\end{minipage}
+\end{table*}

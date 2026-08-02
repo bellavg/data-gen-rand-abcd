@@ -1,0 +1,95 @@
+\section{Related Work}
+\label{sec:relwork}
+The gap this chapter documents can be stated before the evidence: graph reduction is a
+developed literature with surveys of its own
+\citep{hashemi2024survey,shabani2023summarization}, circuit representation learning is a
+developed literature with a growing model family, and no published work applies the first
+to whole AIGs as input reduction for the second. The subsections below establish each
+half, then the two nearest attempts at a bridge, and~\ref{sec:relwork:gap} returns to the
+claim once the evidence for it is on the table.
+
+\subsection{Machine Learning for Logic Synthesis}
+\label{sec:relwork:ml4eda}
+
+\subsubsection{Quality-of-Result and Optimizability Prediction}
+\label{sec:relwork:ml4eda:qor}
+The direct precedents predict synthesis Quality of Result (QoR) from a circuit before
+running the tool. OpenABC-D \citep{chowdhury2021openabc} is the reference dataset for the
+task and publishes, among its graph-level labels, the percentage of nodes a recipe
+optimizes away, essentially the target~\eqref{eq:prelim:target}; that overlap is what
+makes its accompanying SynthNet a fair baseline here rather than a repurposed model
+(\ref{sec:relwork:ml4eda:baselines}). Recipe-conditioned models jointly encode the
+circuit and the synthesis sequence \citep{qor_transformer2022,wu2022lostin}. One
+terminological collision is worth heading off: LOSTIN \citep{wu2022lostin} attaches a
+super-node that encodes the synthesis \emph{sequence}, a temporal use of the same device
+this thesis uses structurally, and the two share nothing beyond the name.
+
+\subsubsection{Evaluation Protocols and the Unseen-Design Gap}
+\label{sec:relwork:ml4eda:protocols}
+``Unseen'' means three different things in this literature: an unseen recipe, an unseen
+design, or an unseen design-recipe pair whose parts were both seen, and the third is far
+easier than the second. Generalization to unseen designs is the stated motivation of much
+of the field, yet matched seen and unseen results are rare: of the papers surveyed for
+this thesis, 4 of 63 report both sides, among them OpenABC-D \citep{chowdhury2021openabc}
+and LOSTIN \citep{wu2022lostin}, while HOGA \citep{deng2024hoga} motivates on the gap
+without publishing a seen-design baseline, so its degradation cannot be computed.
+% TODO(citation): LSOformer and Jiang et al. are the other two; add keys before naming them.
+The canonical unseen-IP split trains on 16 small designs and tests on 8 large ones,
+confounding design novelty with size extrapolation. Reported error moves more with the
+benchmark than with the architecture, from a few percent on small homogeneous suites to
+above twenty percent on OpenABC-D, and within one test set the error concentrates in a
+few designs rather than spreading uniformly. Those three observations motivate RQ1a's
+matched three-protocol comparison and the per-design reporting used throughout
+(\ref{sec:intro:rq1}).
+
+\subsubsection{Learned Synthesis Script Generation}
+\label{sec:relwork:ml4eda:scripts}
+A separate line learns to construct or select synthesis scripts, by reinforcement
+learning or sequence prediction over the same primitive transformations. It is the
+downstream application the motivation invokes, and it is out of scope here
+(\ref{sec:intro:scope:prediction}): script generation consumes exactly the kind of cheap
+optimizability estimate this thesis builds, which is why the prediction task is worth
+solving on its own.
+% TODO(citation): add one representative script-generation reference.
+
+\subsubsection{Circuit Representation Learning}
+\label{sec:relwork:ml4eda:representation}
+The DeepGate line \citep{li2022deepgate,shi2024deepgate3,deepgate4_2025} learns
+general-purpose gate embeddings on AIGs, and PolarGate \citep{polargate2024} identifies
+the handling of inverted connections as the representational bottleneck of AIG encoders,
+external support for treating inversion as a relation summarization must preserve rather
+than average away (\ref{sec:method:summary:wl}). Two facts from this line shape the
+present study. First, DeepGate3 and DeepGate4 answer scale by growing the \emph{model},
+with sparse attention and larger training corpora, where this thesis shrinks the
+\emph{input}. DeepGate4 doubles as a baseline (\ref{sec:relwork:ml4eda:baselines}), so
+the contrast is measured rather than rhetorical. Second, these models train on extracted
+subcircuits of tens to a few thousand gates. Extraction is a reduction, applied at corpus
+construction and never named or evaluated as one, and that unexamined step is half of the
+gap this chapter closes in~\ref{sec:relwork:gap}.
+
+\subsubsection{Models Used as Baselines}
+\label{sec:relwork:ml4eda:baselines}
+Three published models serve as tier-2 baselines,
+and~\ref{sec:method:baselines:published} states only how each was adapted, so what each
+one \emph{is} belongs here. SynthNet
+\citep{chowdhury2021openabc} is a recipe-conditioned graph convolutional QoR regressor,
+the closest published analogue of the label predicted here. HOGA \citep{deng2024hoga}
+applies hop-wise attention to multi-hop features precomputed per node, so its depth of
+field is fixed before training and its trunk never sees connectivity, a design aimed at
+scalable, distributable training. DeepGate4 \citep{deepgate4_2025} runs sparse attention
+over a distance-bounded virtual edge set and is the architecture-scaling counterpart to
+the input scaling studied here. Each comparison licenses a different conclusion: against
+SynthNet the claim is task accuracy, against HOGA it is whether connectivity at training
+time matters, and against DeepGate4 it is input against architecture scaling at matched
+memory.
+
+\subsubsection{Benchmarks and Datasets for ML in EDA}
+\label{sec:relwork:ml4eda:datasets}
+OpenABC-D \citep{chowdhury2021openabc} remains the largest published synthesis-prediction
+corpus: 29 designs, 1500 recipes each, labels per design-recipe pair. The dataset built
+for this thesis (\ref{sec:method:data}) differs in axis rather than only in size: it is
+tiered by optimization state, pairing each base graph with already-optimized variants of
+itself (\ref{sec:method:data:tiers}), because the reduction questions RQ3 and RQ5 need
+graphs at several points along the optimization trajectory, not several recipes on one
+starting point.
+% TODO(citation): OpenLS-DGF and the ML4EDA benchmark position paper; add or drop.

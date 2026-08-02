@@ -1,0 +1,219 @@
+\section{Experiments}
+\label{sec:method:experiment}
+
+\subsection{Research Design}
+\label{sec:method:experiment:design}
+This is a controlled comparison against a fixed reference point. The manipulated variable is
+the reduction method applied to the training data; the encoder, dataset, splits, label,
+optimizer and evaluation protocol are held constant, so that differences in outcome are
+attributable to the reduction. The reference point is the full-graph model of RQ1, and every
+reduced configuration is reported relative to it rather than in isolation.
+
+Two hypotheses are stated in advance (\ref{sec:intro:rq3},~\ref{sec:intro:rq4}): H1, that
+path-contracting summarization retains more than edge-removing sparsification at matched
+compression, because contraction shortens propagation paths where deletion only lengthens
+them; and H2, that the domain-informed adaptations tested here are too simple to win
+outright, in which case the informative outcome is what the null result says about where the
+predictive signal lives.
+
+\paragraph{Positive control.}
+The design includes one configuration whose outcome is known in advance. Colour refinement at
+count-cap $\infty$ on the exact-compression track is provably lossless for this encoder
+(\ref{sec:method:architecture:exact}), so a model trained on those coarsened graphs must
+score essentially identically to the full-graph baseline, both on reduced graphs and when
+queried on full ones. This is what makes a poor cross-state result interpretable: without it,
+RQ5 cannot distinguish ``models trained on reduced graphs do not generalize'' from ``the
+evaluation path is wrong''. Any deviation of this configuration from the baseline is a defect
+to be found, not a finding to be reported.
+
+\paragraph{The experiments.}
+\label{sec:method:experiment:phases}
+Four experiments implement the design, and they do not map one-to-one onto the five research
+questions (\ref{tab:experiment_phases}). RQ4 is a re-analysis of the Phase~3 runs under a
+paired comparison rather than a separate experiment, which is why it costs no additional
+training; RQ5 reuses the Phase~3 checkpoints and adds only an evaluation pass. The ordering
+is a dependency chain rather than a preference: Phase~3 cannot start until Phase~2 has
+produced the cached reduction artifacts, and Phase~4 needs Phase~3's checkpoints.
+
+\begin{table}[htbp]
+\centering
+\caption{The four experimental phases, what each answers, and what each costs. Only
+Phases~1 and~3 consume training compute.}
+\label{tab:experiment_phases}
+\small
+\begin{tabular}{llll}
+\toprule
+\textbf{Phase} & \textbf{Answers} & \textbf{What is run} & \textbf{Training cost} \\
+\midrule
+1 & RQ1      & Full-graph model and baselines        & one run per model \\
+2 & RQ2      & Offline reduction precompute, profiled & none \\
+3 & RQ3, RQ4 & One model per reduced configuration    & one run per configuration \\
+4 & RQ5      & Phase~3 checkpoints on full graphs     & none (evaluation only) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Phase~1 establishes both the predictive reference point and the baseline hardware cost
+(peak memory, epoch time) that every reduced configuration is measured against. Phase~2
+requires no training and determines which methods are viable at corpus scale at all.
+Phase~3 places the reduced configurations against the Phase~1 reference on a Pareto front
+of predictive degradation versus memory and speed. Phase~4 queries models trained
+exclusively on reduced graphs with unreduced ones, testing structural generalization.
+
+\paragraph{Limits of the design.}
+The comparison is within one encoder family, one synthesis algorithm and one bounded graph
+scale. It can rank reduction methods against each other under those conditions; it cannot
+establish that the ranking transfers to another architecture, another target algorithm, or
+industrial-scale circuits. Section~\ref{sec:discussion:limitations} treats each in turn.
+
+\subsection{Setup}
+\label{sec:method:experiment:setup}
+
+\subsubsection{Data Splitting}
+\label{sec:method:experiment:splitting}
+An 80/10/10 split by volume, partitioned \emph{by design}: all graphs derived from a given
+source circuit fall in the same split. This is the strong choice and it is deliberate.
+Because the corpus is built by transforming and then repeatedly optimizing a small number of
+source designs, a random split would place a base graph in training and its own optimized
+descendant in test: structurally near-identical circuits in different optimization states.
+The model could then score well by recognising the design rather than by reading its
+structure. Splitting by design removes that path entirely, at the cost of making the task
+harder: the test set contains circuits the model has never seen in any state.
+
+Two alternative strategies are implemented and available (split by optimization recipe, and
+a plain random split). They are not used for the reported results; they are run once, at the
+primary configuration, as the protocol-sensitivity experiment RQ1a
+(\ref{sec:results:rq1:protocol}).
+The three protocols differ in what they hold out, and each corresponds to an evaluation
+setting already established in the literature (Table~\ref{tab:split_protocols}).
+
+\begin{table}[htbp]
+\centering
+\caption{The three train/test protocols implemented in this work, ordered from leakiest to
+strictest. Only the design-disjoint protocol is used for the reported results; the other two
+are run once each at the same configuration to quantify how much of a reported score is
+design recognition rather than structural reading.}
+\label{tab:split_protocols}
+\small
+\begin{tabular}{@{}p{0.15\linewidth}p{0.30\linewidth}p{0.27\linewidth}p{0.12\linewidth}@{}}
+\toprule
+\textbf{Protocol} & \textbf{Held out} & \textbf{Established as} & \textbf{Role here} \\
+\midrule
+Random (per-row)
+& Nothing. Individual graphs are assigned independently, so a base graph and its own
+  optimized descendant may straddle the split.
+& The common default in circuit representation-learning evaluations.
+& Ablation \\[4pt]
+Recipe-disjoint
+& Whole synthesis recipes: every tier-0 step of a held-out recipe, plus its tier-1 and
+  tier-2 descendants, across all designs. Circuits stay seen; the recipe does not.
+& OpenABC-D Variant~1 \citep{chowdhury2021openabc}; LOSTIN transductive
+  \citep{wu2022lostin}.
+& RQ1a \\[4pt]
+Design-disjoint
+& Whole source circuits: every graph derived from a held-out design, in any optimization
+  state, is confined to one split.
+& OpenABC-D Variant~2 \citep{chowdhury2021openabc}; LOSTIN inductive
+  \citep{wu2022lostin}.
+& \textbf{Headline} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% TODO: the random-split and recipe-split rows are placeholders until those runs land.
+
+\subsubsection{Graph Scale Bounds}
+\label{sec:method:experiment:scale}
+The corpus is bounded at 366,040 nodes per AIG\@. This intermediate scale is what makes RQ1
+possible: a single unreduced graph fits in accelerator memory, so the full-graph baseline
+every other result is measured against can actually be trained. Larger circuits would remove
+the reference point and leave only reduced configurations to compare with each other.
+
+The bound is a scoping decision with a cost, and it is the limitation closest to the
+motivation: the argument for this work invokes circuits of millions to billions of nodes, and
+the evaluation does not reach them
+(\ref{sec:discussion:limitations:scalability}).
+
+\subsubsection{Dynamic Batching}
+\label{sec:method:experiment:batching}
+Graphs in this corpus vary in size by orders of magnitude, so a fixed batch size in graphs
+gives wildly varying memory use and eventually fails on the largest circuits. Batches are
+instead assembled to a maximum \emph{node} budget by greedy bin-packing, which bounds
+activation memory regardless of which graphs are drawn. The batch plan is computed once and
+cached, since replanning over a corpus this size is expensive.
+
+Two budgets are used and they are deliberately distinct. Training uses the smaller of the
+two; evaluation, which stores no activations or gradients, uses a substantially larger one.
+Keeping them separate rather than raising a single shared value avoids invalidating the batch
+plan the trained checkpoints were produced under.
+
+\paragraph{Constraint on efficiency measurements.}
+The evaluation budget must be identical across all configurations, because peak memory and
+throughput both depend on it. Any change requires re-running every configuration; a mixed set
+of budgets makes the RQ2 comparison meaningless rather than merely noisy. This is stated here
+because it constrains how the results in~\ref{sec:results:rq2} may be read and combined.
+
+One irreducible peak remains that no budget can lower: a graph larger than the budget still
+forms a batch of its own, since a graph-level target cannot be split across batches. The
+largest circuit in the corpus therefore sets a floor on peak memory for every configuration
+that does not reduce node counts.
+
+\subsubsection{Model Configuration}
+\label{sec:method:experiment:model}
+An Edge-Aware Graph Convolutional Network (GCN+) is trained to predict the optimizability of
+a circuit when subjected to the \texttt{Orchestrate} synthesis script. The architecture is
+described in~\ref{sec:method:architecture} and is held fixed across all reduction
+configurations; the baselines it is compared against are described
+in~\ref{sec:method:architecture:baselines}.
+
+\subsubsection{Hyperparameter Tuning}
+\label{sec:method:experiment:hp}
+Hyperparameters were selected by an Optuna \citep{akiba2019optuna} sweep on the held-out
+balanced subset of~\ref{sec:method:data:hpsubset}, which is then excluded from all
+subsequent training and evaluation. Tuning on a subset that later appeared in training or
+test would let the reported scores absorb information from the tuning process; excluding it
+entirely costs 50,000 graphs and removes the question.
+
+Tuning was performed once, on the full-graph configuration, and the resulting values are held
+fixed for every reduced configuration. This is the conservative choice for the comparison
+being made: re-tuning per reduction method would confound ``this reduction retains more
+signal'' with ``this reduction received more tuning effort''. It does mean reduced
+configurations are evaluated at hyperparameters chosen for a different input distribution,
+which if anything biases against them. That is worth stating explicitly, since it bounds the
+strength of any negative result about reduction.
+% TODO: record the search space and the number of trials from src/shell/big_hp_tuning.sh.
+
+\subsubsection{Training Configuration}
+\label{sec:method:experiment:training}
+Smooth L1 loss with $\beta = 0.01$, chosen well below the default because the target occupies
+a narrow band within $[0,1]$ and the default threshold would place nearly every residual in
+the quadratic regime, making the loss effectively squared error. Optimization uses AdamW with
+learning rate $3 \times 10^{-4}$ and weight decay $3.96 \times 10^{-3}$, a linear warmup over
+the first 10,000 steps, and \texttt{ReduceLROnPlateau} thereafter (factor 0.5, patience 2,
+floor $10^{-6}$). Training stops early on validation loss with patience 3. Gradients are
+clipped at 1.0.
+
+Two settings affect the measurements rather than the model and must therefore be disclosed
+with them: \texttt{torch.compile} is enabled, which changes every timing figure, and mixed
+precision is used on GPU, which changes every memory figure. Neither is varied across
+configurations, so comparisons remain valid; absolute numbers are only meaningful together
+with these settings.
+
+\subsubsection{Hardware and Software Environment}
+\label{sec:method:experiment:hardware}
+All experiments ran on the Snellius national supercomputer: H100 80\,GB GPU nodes for
+training and evaluation, and CPU-only nodes for the offline reduction precompute, which is
+embarrassingly parallel over graphs and does not benefit from a GPU\@.
+
+Two measured characteristics of the workload are worth recording, because they explain the
+shape of the RQ2 results rather than merely describing the setup. First, memory scales close
+to linearly with nodes and edges per batch, the encoder's own parameters being negligible at
+this width and depth, which is why a node budget bounds memory effectively at all. Second,
+message passing is latency-bound on gather and scatter operations rather than
+compute-bound: at full device occupancy the floating-point pipelines and memory bandwidth
+both sit far below saturation. The consequence for RQ2 is that a larger
+batch amortises per-batch overhead but does not deliver a proportional speedup, and that
+reductions which remove \emph{edges} should help throughput more than their node compression
+alone would suggest.
+
+% TODO: library versions, the synthesis tool version, and the total wall-clock budget.

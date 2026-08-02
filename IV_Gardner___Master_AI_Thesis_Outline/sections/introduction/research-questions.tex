@@ -1,0 +1,141 @@
+\section{Research Questions}
+\label{sec:intro:rqs}
+Throughout, \emph{optimizability} is the fraction of AIG nodes a given synthesis algorithm
+removes from a circuit (formalised in~\ref{sec:prelim:formalization}
+and~\ref{sec:method:data:label:definition}), and \emph{compression ratio} is the node or edge
+retention of a reduced graph relative to its source
+(\ref{sec:prelim:reduction:measuring}). The distinction between node and edge retention is
+not cosmetic: some reduction methods preserve node counts exactly and only remove edges, so
+a single ``compression'' figure is ambiguous and RQ4 depends on the definition being pinned
+down first.
+
+\subsection{RQ1: Task Feasibility and Baseline}
+\label{sec:intro:rq1}
+How well can a Graph Neural Network predict the optimizability of a circuit directly from
+its full, unreduced AIG representation, relative to trivial predictors, standard graph-level
+GNN encoders, and published circuit-representation models?
+
+\paragraph{RQ1a (protocol sensitivity).}
+How much of the measured score is a property of the evaluation protocol rather than of the
+model? Three train/test protocols are run under otherwise identical conditions: a plain
+random split, a recipe-disjoint split, and the design-disjoint split used for every reported
+result (\ref{sec:method:experiment:splitting}). The gap between them is a direct
+measurement of how much of the apparent accuracy under the more permissive protocols is
+design recognition rather than structural inference. The per-design breakdown of the
+design-disjoint test set then shows whether the remaining error is uniform across held-out
+designs or concentrated in a few (\ref{sec:results:rq1:protocol}).
+
+\subsection{RQ2: Reduction Efficiency}
+\label{sec:intro:rq2}
+How do graph reduction techniques, spanning partitioning, sparsification, and
+summarization/coarsening, differ in graph shrinkage rate, peak memory usage,
+training and inference speed, and the offline cost of applying the reduction itself?
+
+\subsection{RQ3: Predictive Retention and Trade-offs}
+\label{sec:intro:rq3}
+To what extent do models trained on reduced AIGs retain predictive accuracy (measured via
+Smooth L1 Loss, RMSE, and $R^2$) and circuit-ranking ability (Spearman correlation)
+relative to the full-graph baseline established in RQ1, and which techniques offer the
+best accuracy-to-efficiency trade-off?
+
+\paragraph{Hypothesis H1 (path contraction).}
+Sparsification \emph{removes edges} and can only impede message propagation, whereas
+summarization \emph{contracts paths} and shortens the distance a signal must travel. AIGs
+are very deep relative to the encoder's four message-passing layers, so the model is
+receptive-field starved and subject to over-squashing \citep{alon2021oversquashing}.
+Coarsening therefore has a mechanism by which it could \emph{raise} accuracy rather than
+trade it away, and is expected to retain more than sparsification at matched compression.
+% TODO: the receptive-field metric is specified in
+% \ref{sec:method:experiment:metrics:reduction} but not implemented, so H1 is
+% currently asserted rather than tested.
+
+\subsection{RQ4: Value of Domain-Informed Adaptation}
+\label{sec:intro:rq4}
+Do AIG-specific reduction heuristics, which exploit topological level, reconvergence
+structure, and gate roles, retain more predictive accuracy than generic techniques at
+equivalent compression? Where no generic method compresses to the same degree, the
+comparison is made against a compression-matched random control. If domain knowledge does
+not pay, what does that indicate about which structural features the model actually relies
+on?
+
+\paragraph{Hypothesis H2 (weak heuristics).}
+The domain-informed adaptations tested here are relatively simple (edge-span weighting,
+level slicing, gate-role filtering, reconvergence-bounded merging) and are not expected to
+win outright. A negative result is still a result: it would indicate that the predictive
+signal is distributed across the AIG rather than concentrated in the causal cones and long
+paths these heuristics were built to protect. Section~\ref{sec:results:rq4:adequacy} bounds what
+such a result would and would not license.
+
+\subsection{RQ5: Reduced to Unreduced? Generalization}
+\label{sec:intro:rq5}
+Can a model trained exclusively on reduced AIGs (partitioned, sparsified, or summarized) be
+queried on normal, full-sized AIGs at inference time, and does it retain predictive accuracy
+across this change of structural state?
+
+Inference is the regime where this pays off. Training stores activations and gradients for
+every node in a batch, whereas forward-only inference stores neither. A model that had to be
+trained on reduced graphs to fit in memory may therefore still serve full graphs on
+substantially more modest hardware. The practical claim under test is \emph{train cheap,
+infer full}.
+
+% Positive control: colour refinement at unbounded count cap is provably lossless for
+% this encoder (\ref{sec:method:architecture:exact}), so without it a poor cross-state
+% result cannot be told apart from a broken evaluation path.
+
+\subsection{Scope and Delimitations}
+\label{sec:intro:rqs:scope}
+Each item below states what is included and what is deliberately excluded. These are
+choices made in advance; limitations discovered during the work are separated out
+into~\ref{sec:discussion:limitations}.
+
+\subsubsection{Target Synthesis Algorithm}
+\label{sec:intro:scope:algorithm}
+Training and evaluation target a single synthesis script, \texttt{Orchestrate}. The dataset
+also contains graphs optimized by \texttt{Deepsyn}, \texttt{Syn4} and \texttt{C2RS}, and
+those are left unused here. Focusing on one algorithm removes cross-algorithm variance as a
+confound: the question is how much a \emph{reduction} costs, and comparing reductions across
+several target algorithms at once would not isolate that. Extending to the remaining three
+is the most direct piece of future work (\ref{sec:conclusion:futurework:algorithms}).
+
+\subsubsection{Definition of Optimizability}
+\label{sec:intro:scope:target}
+Optimizability is defined as relative \emph{node} reduction only. Area, delay and power,
+the objectives synthesis actually optimizes for, are not modelled, and node count is used
+as a proxy for area. Whether that proxy is adequate is a construct-validity question taken
+up in~\ref{sec:discussion:limitations:validity}.
+
+\subsubsection{Graph Scale and Dataset Boundaries}
+\label{sec:intro:scope:scale}
+The corpus is bounded at an intermediate scale (see~\ref{sec:method:experiment:scale}), not
+at industrial scale. This is a deliberate consequence of the design: RQ1 requires a
+full-graph baseline, and a baseline that does not fit in memory cannot be measured. The
+motivation invokes AIGs of millions to billions of nodes; the evaluation does not reach
+them, and~\ref{sec:discussion:limitations:scalability} states plainly what does and does
+not extrapolate.
+
+\subsubsection{Reduction Families Considered}
+\label{sec:intro:scope:reductions}
+Three families are covered: partitioning, sparsification, and summarization/coarsening.
+Graph \emph{condensation} (synthesising a small graph by gradient or distribution matching)
+is excluded, for reasons given in~\ref{sec:relwork:reduction:summarization}: it produces no
+correspondence between synthetic and real nodes, it is label-dependent by construction, and
+it is tied to a specific architecture, so it cannot answer RQ5, which requires the same
+weights to ingest both reduced and full graphs.
+
+\subsubsection{Model Architecture}
+\label{sec:intro:scope:architecture}
+One encoder family is used throughout (an edge-aware GCN+,~\ref{sec:method:architecture}),
+held fixed so that differences in outcome are attributable to the reduction rather than to
+the model. Published circuit models are used as \emph{baselines} for RQ1
+(\ref{sec:method:architecture:baselines}) but are not themselves trained on reduced graphs.
+Whether the reduction rankings transfer to other encoders is untested.
+
+\subsubsection{Prediction Rather Than Script Generation}
+\label{sec:intro:scope:prediction}
+This work predicts optimizability; it does not generate synthesis scripts. The gap between
+the two is worth stating precisely, because the motivation is script selection and the
+metrics are not. Spearman correlation here ranks \emph{circuits} by how optimizable they
+are under one fixed script. Selecting a script would require ranking \emph{algorithms} for
+one circuit, which a single-algorithm model cannot do. Closing that loop is future work
+(\ref{sec:conclusion:futurework:generation}); the contribution claimed here is the
+representation and reduction machinery it would need, not the selector itself.

@@ -1,0 +1,66 @@
+\subsection{Graph Reduction: Definitions}
+\label{sec:prelim:reduction}
+A reduction operator $R$ maps a graph $G$ to a smaller graph $R(G)$ intended to stand in
+for it. The taxonomy used throughout follows the survey of \citet{hashemi2024survey},
+which divides the field into sparsification, coarsening and condensation, with one
+substitution: partitioning replaces condensation as the third family. Partitioning is
+what a distributed training setup forces on a graph that does not fit one device
+(\ref{sec:relwork:scaling:distributed}), whereas condensation is excluded from this study
+outright, for the reasons given in~\ref{sec:relwork:reduction:summarization}. The
+substitution is deliberate, not an error of transcription.
+
+\subsubsection{Partitioning}
+\label{sec:prelim:reduction:partitioning}
+Partitioning splits $\mathcal{V}$ into $k$ disjoint blocks and deletes every edge whose
+endpoints fall in different blocks. It is the one family that keeps every node: only
+spanning edges are lost, so the node count of $R(G)$ always equals that of $G$ and any
+compression it achieves is compression of the edge set alone. What varies between
+partitioners is the objective by which blocks are chosen
+(\ref{sec:method:reduction:partitioning}).
+
+\subsubsection{Sparsification}
+\label{sec:prelim:reduction:sparsification}
+Sparsification removes edges, or nodes together with their incident edges, while
+preserving some structural property of the original, such as pairwise distances up to a
+stretch factor. The two variants are not interchangeable for measurement: an edge-removing
+method leaves $|\mathcal{V}|$ untouched while a node-removing method shrinks it, and the
+distinction is what forces the two-ratio convention
+of~\ref{sec:prelim:reduction:measuring}.
+
+\subsubsection{Summarization and Coarsening}
+\label{sec:prelim:reduction:summarization}
+Summarization merges nodes into \emph{super-nodes}. A coarsening is specified by a merge
+map, a surjection $\mu \colon \mathcal{V} \rightarrow \mathcal{V}'$ onto the cluster set,
+and the resulting quotient graph connects two clusters whenever any of their members were
+connected. The number of member edges a super-edge stands for is its multiplicity,
+\begin{equation}
+    w_{u'v'} = \bigl| \{\, (u, v) \in \mathcal{E} :
+        \mu(u) = u',\ \mu(v) = v' \,\} \bigr|,
+    \label{eq:prelim:multiplicity}
+\end{equation}
+and when super-edges differing in an attribute are kept parallel rather than collapsed,
+the quotient is a multigraph. Because $\mu$ is a function, its preimages partition
+$\mathcal{V}$: a coarsening \emph{is} a partition of the node set. A tolerance band such
+as ``within one level'' therefore cannot define one, since the relation it induces is not
+transitive, a fact the domain-specific candidate of~\ref{sec:method:summary:domain} has
+to work around.
+
+\subsubsection{Measuring Reduction: Compression Ratio}
+\label{sec:prelim:reduction:measuring}
+Reduction is reported as retention, kept over original, separately per node and per edge:
+\begin{equation}
+    \eta_{\mathcal{V}}(G) =
+        \frac{\left| \mathcal{V}(R(G)) \right|}{\left| \mathcal{V}(G) \right|},
+    \qquad
+    \eta_{\mathcal{E}}(G) =
+        \frac{\left| \mathcal{E}(R(G)) \right|}{\left| \mathcal{E}(G) \right|},
+    \label{eq:prelim:retention}
+\end{equation}
+with reduction $1 - \eta$. One number cannot carry both: partitioning and edge-removing
+sparsification hold $\eta_{\mathcal{V}} = 1$ while lowering $\eta_{\mathcal{E}}$, and
+node-removing methods move the two together. Both ratios are therefore reported
+everywhere, and never collapsed (\ref{sec:method:experiment:metrics:reduction}). Methods
+further differ in whether compression is a knob or an outcome: some accept a target
+ratio, while for others $\eta$ is a fixed property of the input graph. Comparing methods
+at matched compression is consequently a design problem rather than a reporting
+convention, and~\ref{sec:method:summary:random} is its solution.

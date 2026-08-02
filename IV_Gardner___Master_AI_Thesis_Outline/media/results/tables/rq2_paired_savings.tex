@@ -1,0 +1,22 @@
+\begin{table*}[htbp]
+\centering
+\caption{Per-graph savings against the full-graph baseline, paired by graph id, with percentile bootstrap intervals and a Wilcoxon signed-rank test on the paired deltas. Savings are not normally distributed, so bare means would be misleading.}
+\label{tab:rq2_paired_savings}
+\small
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{lrrrrrrrr}
+\toprule
+\textbf{Method} & \textbf{Paired graphs} & \textbf{VRAM saving (\%)} & \textbf{95\% CI low} & \textbf{95\% CI high} & \textbf{Time saving (\%)} & \textbf{95\% CI low } & \textbf{95\% CI high } & \textbf{Wilcoxon $p$ (time)} \\
+\midrule
+PageRank pruning & 1000 & 14.492 & 14.121 & 14.842 & 19.145 & 18.081 & 20.203 & 0.000 \\
+AND-gate only & 1000 & 11.257 & 10.702 & 11.794 & 28.893 & 27.627 & 30.054 & 0.000 \\
+Random hashing & 1000 & 3.100 & 2.984 & 3.216 & 20.996 & 19.785 & 22.157 & 0.000 \\
+Spanning forest & 1000 & 2.142 & 2.080 & 2.202 & -0.101 & -1.031 & 0.826 & 0.549 \\
+Random edge dropout & 1000 & 1.489 & 1.451 & 1.526 & 0.229 & -0.574 & 1.012 & 0.001 \\
+Level slicing & 1000 & 1.487 & 1.383 & 1.596 & 18.291 & 17.322 & 19.300 & 0.000 \\
+Span-weighted METIS & 1000 & 0.357 & 0.336 & 0.378 & 22.412 & 21.396 & 23.435 & 0.000 \\
+METIS & 1000 & 0.279 & 0.262 & 0.297 & 24.284 & 23.237 & 25.303 & 0.000 \\
+\bottomrule
+\end{tabular}
+}
+\end{table*}

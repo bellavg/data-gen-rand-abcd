@@ -1,0 +1,150 @@
+\subsection{And-Inverter Graphs}
+\label{sec:prelim:aig}
+
+\subsubsection{Definition and Structure}
+\label{sec:prelim:aig:definition}
+An And-Inverter Graph (AIG) is a Directed Acyclic Graph (DAG) $G = (\mathcal{V}, \mathcal{E})$
+representing a Boolean network over the basis $\{\wedge, \neg\}$
+\citep{mishchenko2006rewriting}. Every internal node is a two-input AND gate, and every edge
+carries an optional inversion, so conjunction is the only operation that costs a node and
+negation costs none. The basis is functionally complete, which is what allows an arbitrary
+Boolean network to be expressed in one uniform structure rather than in a gate library.
+
+The vocabulary used throughout follows from the edge set. The fanin and fanout of a node are
+\begin{equation}
+    \operatorname{fi}(v) = \{\, u \in \mathcal{V} : (u, v) \in \mathcal{E} \,\},
+    \qquad
+    \operatorname{fo}(v) = \{\, w \in \mathcal{V} : (v, w) \in \mathcal{E} \,\},
+    \label{eq:prelim:fanin}
+\end{equation}
+with $|\operatorname{fi}(v)| = 2$ at every AND gate, $\operatorname{fi}(v) = \emptyset$ at
+every Primary Input (PI) and at the constant, and $|\operatorname{fi}(v)| = 1$ at every
+Primary Output (PO). Acyclicity yields a topological order $\prec$ on $\mathcal{V}$
+with $u \prec v$ for every $(u, v) \in \mathcal{E}$, so signals flow from the PIs to the
+POs and never return.
+
+The POs are materialised as nodes here, rather than as pointers into the AND network as is
+also common. That choice is why the node role defined below takes four values instead of
+three, and it puts the circuit interface inside $|\mathcal{V}|$, the quantity the target
+of~\ref{sec:method:data:label:definition} is measured on.
+
+\subsubsection{Node Types and Inverted Edges}
+\label{sec:prelim:aig:nodes}
+Two labellings are carried on every graph. A node role
+\begin{equation}
+    \tau \colon \mathcal{V} \rightarrow
+    \{\, \mathrm{const},\ \mathrm{PI},\ \mathrm{AND},\ \mathrm{PO} \,\}
+    \label{eq:prelim:role}
+\end{equation}
+separates the constant, the PIs, the internal AND gates and the POs,
+and an inversion flag $\mathrm{inv} \colon \mathcal{E} \rightarrow \{0, 1\}$ marks each edge
+as a regular connection or an inverted one. Inversion is semantic rather than decorative.
+Writing $b_u \in \{0,1\}$ for the value produced at $u$, the value an edge $e = (u, v)$
+delivers to $v$ is
+\begin{equation}
+    b_u \oplus \mathrm{inv}(e),
+    \label{eq:prelim:inversion}
+\end{equation}
+so two edges agreeing in their endpoints and differing in $\mathrm{inv}$ carry complementary
+signals. The one-hot encodings of $\tau$ and $\mathrm{inv}$ are the four-valued node feature
+and two-valued edge feature of~\ref{sec:method:data:representation:features}, and are not
+restated there.
+
+\subsubsection{Structural Properties: Levels, Logic Cones, Fanout}
+\label{sec:prelim:aig:properties}
+The topological level of a node is its longest distance from the input frontier,
+\begin{equation}
+    \ell(v) =
+    \begin{cases}
+        0 & \text{if } \operatorname{fi}(v) = \emptyset, \\[2pt]
+        1 + \max_{u \in \operatorname{fi}(v)} \ell(u) & \text{otherwise,}
+    \end{cases}
+    \label{eq:prelim:level}
+\end{equation}
+and the depth of the graph is $\ell(G) = \max_{v \in \mathcal{V}} \ell(v)$. Level is an
+absolute coordinate that an AIG has and a general graph does not, and four constructions in
+this thesis read it: the positional encoding of~\ref{sec:method:data:representation:pe}, the
+level slicing and span-weighted partitioners of~\ref{sec:method:reduction:partitioning}, and
+the level bands of the cone candidate in~\ref{sec:method:summary:domain}.
+
+Writing $u \rightsquigarrow v$ for the existence of a directed path, of length zero when
+$u = v$, the fanin cone (equivalently the logic or causal cone) and the fanout cone of $v$
+are
+\begin{equation}
+    \mathcal{C}(v) = \{\, u \in \mathcal{V} : u \rightsquigarrow v \,\},
+    \qquad
+    \mathcal{F}(v) = \{\, w \in \mathcal{V} : v \rightsquigarrow w \,\}.
+    \label{eq:prelim:cone}
+\end{equation}
+Both cones contain $v$ itself. The fanin cone is the set of gates on which $v$ functionally
+depends, and~\eqref{eq:prelim:level} measures the longest path through it. The claim of~\ref{sec:intro:motivation:reduction}, that
+generic reduction severs causal structure, is a claim about $\mathcal{C}$: deleting one edge
+on a long path removes gates from the cones of everything downstream of it, whether or not the
+result resembles the original under an undirected measure. The depth-bounded form
+$\mathcal{C}_k$ of~\eqref{eq:method:cone} is what makes the effect measurable.
+
+Fanout degree $|\operatorname{fo}(v)|$ separates gates whose output is consumed once from
+gates whose output is shared. Chains of single-fanout gates carry no sharing information;
+multi-fanout gates are the points at which logic is reused, and they are what constrains
+rewriting. Reconvergence is the same property seen from below: $v$ is a reconvergence point
+of $u$ when two internally disjoint directed paths run from $u$ to $v$. AIGs are dense in
+reconvergence, because structural hashing (\ref{sec:prelim:algorithms:primitives}) shares
+every duplicated subexpression instead of replicating it \citep{kuehlmann2002robust}.
+
+Two dominance relations are needed, and only one of them is informative on an AIG\@. Add a
+virtual source $s$ preceding every PI and a virtual sink $t$ succeeding every PO\@. A node
+$u$ dominates $v$ when every path $s \rightsquigarrow v$ passes through $u$, and
+post-dominates $v$ when every path $v \rightsquigarrow t$ passes through $u$; the immediate
+dominator $\operatorname{idom}(v)$ and immediate post-dominator
+$\operatorname{ipdom}(v)$ are the closest such nodes \citep{lengauer1979dominators}. A gate below the input frontier is
+reachable from $s$ along many independent paths, so $\operatorname{idom}(v)$ degenerates to
+$s$ for most AND gates and partitions nothing. The post-dominator does not degenerate the
+same way. Here $\operatorname{ipdom}(v)$ is the gate at which the fanout cone
+$\mathcal{F}(v)$ reconverges, or $t$ when that cone never reconverges, and grouping by it
+is what the cone candidate of~\ref{sec:method:summary:domain} uses.
+% TODO(measure): idom degeneracy asserted, not yet measured on this corpus.
+
+The Maximal Fanout-Free Cone (MFFC) of a root gate $v$ collects the gates feeding $v$ and
+nothing else \citep{mishchenko2006rewriting},
+\begin{equation}
+    \operatorname{MFFC}(v) = \{\, u \in \mathcal{C}(v) :
+        \text{every path } u \rightsquigarrow t \text{ passes through } v \,\},
+    \label{eq:prelim:mffc}
+\end{equation}
+so removing $v$ from the network removes exactly $\operatorname{MFFC}(v)$ and nothing more.
+That property makes the MFFC the natural unit of local restructuring, and refactoring
+collapses and re-expresses one MFFC at a time
+(\ref{sec:prelim:algorithms:primitives}). It is also the unit merged by the second domain
+candidate of~\ref{sec:method:summary:domain}, which is why that candidate carries an argument
+about label leakage and the others do not.
+
+\subsubsection{Why AIGs Differ from General Graphs}
+\label{sec:prelim:aig:distinct}
+Four properties separate an AIG from the citation, social and knowledge graphs on which graph
+reduction was developed, and each costs a generic method something specific.
+
+(i) An AIG is directed and acyclic. Machinery built for undirected graphs does not transfer
+unchanged, because a quotient of a DAG need not be acyclic, and a reduction computed on the
+undirected projection discards the orientation that carries the logic. The spanning forest
+of~\ref{sec:method:sparse:forest} is the concrete case.
+
+(ii) An AIG is deep relative to any practical encoder. Against an encoder of $L$
+message-passing layers, a node representation sees an $L$-hop prefix of a fanin cone whose
+length is $35$ levels at the corpus median and $24{,}802$ at its maximum
+(\ref{sec:method:data:sources}). Receptive-field starvation is therefore the normal condition
+on this data, and it is the starvation that hypothesis H1 (\ref{sec:intro:rq3}) proposes
+coarsening relieves.
+
+(iii) Edges carry function. The inversion in~\eqref{eq:prelim:inversion} is part of what the
+graph represents, so a merge that averages or discards $\mathrm{inv}$ changes the Boolean function rather
+than approximating it. Every summarization method here is therefore constrained to keep
+normal and inverted connections distinguishable, a constraint no general method imposes on
+itself.
+
+(iv) The interface is fixed. The PIs and POs are the circuit's contract with the
+rest of the design, and merging them away changes what the graph is rather than coarsening
+it. The boundary is enforced uniformly in~\ref{sec:method:summary:mergemap}.
+
+A reduction operator can respect or ignore all four at no syntactic cost, since the graph it
+produces is well formed either way. Whether respecting them buys accuracy is the question RQ4
+(\ref{sec:intro:rq4}) measures.

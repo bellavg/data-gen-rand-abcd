@@ -1,0 +1,27 @@
+\subsection{Research Gap}
+\label{sec:relwork:gap}
+The two halves surveyed above do not meet. Circuit representation learning scales its
+models and quietly reduces its inputs by training on extracted subcircuits, without ever
+naming or measuring the reduction (\ref{sec:relwork:ml4eda:representation}). Graph
+reduction offers a taxonomy of measured methods, none of which has been evaluated on
+AIGs, on a logic-synthesis target, or under the directed, inversion-carrying constraints
+of~\ref{sec:prelim:aig:distinct}. The one published bridge, CTS-Bench
+\citep{cts_bench2026}, sits one design stage later, runs one spatial heuristic that
+cannot reach a pre-physical AIG, and reports a cross-state failure it attributes to the
+absence of exactly the domain-aware coarsening studied here.
+
+After CTS-Bench, being first to coarsen in EDA cannot be claimed unqualified, and the
+claim made here is narrower. This thesis is the first to (i) benchmark multiple
+coarsening families, exact refinement-based, GNN-aware, and domain-specific, against a
+compression-matched random control for GNN training in EDA, (ii) do so on AIGs and
+optimizability regression, (iii) bring provably lossless compression into an EDA GNN
+setting, (iv) connect AIG-native equivalence reduction, structural hashing, FRAIG and
+MFFC decomposition, to the generic summarization framework, and (v) run a controlled
+three-protocol split comparison with per-design error distributions on this task, where
+the surveyed literature reports one protocol at a time
+(\ref{sec:relwork:ml4eda:protocols}). Spectral and hashing-based coarsening are surveyed
+in~\ref{sec:relwork:reduction:summarization} but not run, and are no part of the claim.
+The eventual results are compared against SynthNet \citep{chowdhury2021openabc}, HOGA
+\citep{deng2024hoga} and DeepGate4 \citep{deepgate4_2025} on the prediction task, and
+against CTS-Bench \citep{cts_bench2026} on the shape of the memory, speed and accuracy
+trade-off.

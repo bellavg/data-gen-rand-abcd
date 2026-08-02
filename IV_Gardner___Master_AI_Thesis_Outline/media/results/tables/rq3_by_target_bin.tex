@@ -1,0 +1,24 @@
+\begin{table*}[htbp]
+\centering
+\caption{Mean prediction and mean absolute error within bands of the true optimizability. $R^2$ is not reported: inside a narrow band there is almost no label variance to divide by. Compare each method's predicted mean against the true mean in the first row. A row that stays flat across the bands is a model that has collapsed to a constant.}
+\label{tab:rq3_by_target_bin}
+\small
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{lrrrrrrrrrrrr}
+\toprule
+\textbf{Method} & \textbf{pred $y = 0$} & \textbf{pred (0, .01]} & \textbf{pred (.01, .05]} & \textbf{pred (.05, .10]} & \textbf{pred (.10, .20]} & \textbf{pred $> .20$} & \textbf{MAE $y = 0$} & \textbf{MAE (0, .01]} & \textbf{MAE (.01, .05]} & \textbf{MAE (.05, .10]} & \textbf{MAE (.10, .20]} & \textbf{MAE $> .20$} \\
+\midrule
+(true mean in band) & 0.000 & 0.002 & 0.021 & 0.065 & 0.161 & 0.226 & -- & -- & -- & -- & -- & -- \\
+Full graph & 0.004 & 0.003 & 0.005 & 0.006 & 0.052 & 0.046 & 0.004 & 0.003 & 0.016 & 0.059 & 0.109 & 0.180 \\
+Random hashing & 0.042 & 0.007 & 0.002 & 0.003 & 0.008 & 0.012 & 0.042 & 0.007 & 0.019 & 0.062 & 0.153 & 0.214 \\
+METIS & 0.047 & 0.075 & 0.100 & 0.109 & 0.171 & 0.180 & 0.047 & 0.073 & 0.093 & 0.083 & 0.020 & 0.046 \\
+Level slicing & 0.000 & 0.000 & 0.000 & 0.000 & 0.000 & 0.000 & 0.000 & 0.002 & 0.021 & 0.065 & 0.161 & 0.226 \\
+Span-weighted METIS & 0.030 & 0.032 & 0.036 & 0.016 & 0.056 & 0.052 & 0.030 & 0.029 & 0.027 & 0.049 & 0.105 & 0.174 \\
+Random edge dropout & 0.004 & 0.005 & 0.006 & 0.006 & 0.023 & 0.047 & 0.004 & 0.004 & 0.015 & 0.059 & 0.138 & 0.179 \\
+Spanning forest & 0.002 & 0.002 & 0.004 & 0.003 & 0.024 & 0.029 & 0.002 & 0.003 & 0.017 & 0.062 & 0.137 & 0.197 \\
+PageRank pruning & 0.007 & 0.008 & 0.008 & 0.020 & 0.010 & 0.013 & 0.007 & 0.007 & 0.013 & 0.045 & 0.151 & 0.213 \\
+AND-gate only & 0.002 & 0.001 & 0.000 & 0.000 & 0.006 & 0.009 & 0.002 & 0.002 & 0.021 & 0.065 & 0.155 & 0.217 \\
+\bottomrule
+\end{tabular}
+}
+\end{table*}

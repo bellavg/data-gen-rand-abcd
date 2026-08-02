@@ -1,19 +1,19 @@
 \chapter{Discussion}
 \label{sec:discussion}
-% Compare your results with the state-of-the-art and reflect upon the results and limitations of the study. You can already hint at future work to which you come back in the conclusion section.
-% Template guidance: start by comparing to other studies as precisely as possible.
-% Reflect on limitations in terms of reproducibility, scalability, generalizability,
-% reliability and validity. Ethical concerns must be mentioned.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \section{Comparison with Related Work}
 \label{sec:discussion:relatedwork}
-% Goes first per template guidance. Compare as precisely as the literature allows,
-% and say so explicitly where a direct numerical comparison is not possible because
-% no prior work reduces AIGs for this task.
+% Compares as precisely as the literature allows, and states where a direct numerical
+% comparison is impossible because no prior work reduces AIGs for this task.
 
 \subsection{Positioning Against Optimizability Prediction Work}
 \label{sec:discussion:relatedwork:prediction}
+% Protocol must be matched before numbers are compared: most published figures sit in
+% leakier protocol cells (\ref{sec:relwork:ml4eda:protocols}), and the RQ1a inflation
+% factor (\ref{sec:results:rq1:protocol}) is what translates between them. SynthNet's
+% collapse on this split is consistent with that audit rather than an implementation
+% artifact.
 
 \subsection{Positioning Against Graph Reduction Work}
 \label{sec:discussion:relatedwork:reduction}
@@ -25,9 +25,8 @@
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \section{Interpretation of Findings}
 \label{sec:discussion:interpretation}
-% Explain the results rather than restating them -- Results reports what happened,
-% this section argues why. Grouped by theme rather than strictly per-RQ so RQ2 and
-% RQ3 can be discussed as the single trade-off they describe.
+% Explains the results rather than restating them, grouped by theme so that RQ2 and RQ3
+% can be discussed as the single trade-off they describe.
 
 \subsection{Feasibility of Optimizability Prediction}
 \label{sec:discussion:interpretation:feasibility}
@@ -40,10 +39,9 @@
 
 \subsection{Why Domain-Informed Adaptation Did or Did Not Help}
 \label{sec:discussion:interpretation:domain}
-% \ref{sec:intro:rq4}. If the AIG-aware heuristics do not win, argue what that says
-% about where the predictive signal lives -- distributed across the graph rather
-% than concentrated in causal cones and long paths. Distinguish clearly between
-% "domain knowledge does not help here" and "these particular heuristics were weak".
+% \ref{sec:intro:rq4}. If the AIG-aware heuristics do not win, what that says about
+% where the predictive signal lives, distinguishing ``domain knowledge does not help
+% here'' from ``these particular heuristics were weak''.
 
 \subsection{Structural Generalization and Deployment}
 \label{sec:discussion:interpretation:generalization}
@@ -65,13 +63,13 @@
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \section{Limitations}
 \label{sec:discussion:limitations}
-% These are limitations discovered or imposed -- distinct from the deliberate
-% scoping choices declared in \ref{sec:intro:rqs:scope}. Do not simply repeat those.
+% Limitations discovered or imposed, distinct from the scoping choices declared in
+% \ref{sec:intro:rqs:scope}.
 
 \subsection{Reproducibility}
 \label{sec:discussion:limitations:reproducibility}
-Every stochastic component is seeded, so an individual run repeats exactly. That is a
-weaker guarantee than it appears. Each configuration was trained once, so no run-to-run
+Every stochastic component of training is seeded, so an individual run repeats exactly. That
+is a weaker guarantee than it appears. Each configuration was trained once, so no run-to-run
 variance is available and every accuracy difference reported in Chapter~\ref{sec:results}
 is a point estimate. This bears hardest on RQ4, where the expected effect is small: a gap of
 a few percentage points between a domain-informed method and its control cannot be
@@ -79,11 +77,17 @@ distinguished from seed noise on the evidence collected here. The efficiency com
 better placed, being paired per graph with confidence intervals and a signed-rank test, but
 accuracy has no equivalent treatment.
 
-Two further dependencies limit exact reproduction. Timing and memory measurements are
+Three further dependencies limit exact reproduction. Timing and memory measurements are
 specific to the cluster hardware and to the enabled compilation and mixed-precision
 settings, so they should be read as relative comparisons rather than as portable absolutes.
-And the labels themselves depend on the version of the synthesis tool used to generate them;
-a different version would produce a different corpus, and the version was not pinned.
+The labels themselves depend on the version of the synthesis tool used to generate them; a
+different version would produce a different corpus, and the version was not pinned. The
+corpus is also not uniformly regenerable. One of the four generation scripts is stochastic,
+and its seed was drawn per graph and never recorded
+(\ref{sec:apx:algorithms}), so the quarter of the tier-1 set it produced could be
+reconstructed only in distribution, not exactly. Those graphs are training inputs rather
+than label sources, so the targets this thesis reports are unaffected, but the corpus itself
+is reproducible only in part.
 
 \subsection{Scalability}
 \label{sec:discussion:limitations:scalability}
@@ -128,39 +132,41 @@ is, and ``optimizability'' should be read in that narrower sense throughout.
 
 \emph{Internal validity.} Splitting by design was chosen to prevent a base graph and its own
 optimized descendants from straddling the train/test boundary. Whether it fully succeeds is
-testable rather than assumed, and the test was not run: the gap between a design-level split
-and a random split measures directly how much of the score is design recognition rather than
-structural inference. Reporting that comparison once would settle the question; without it,
-the leakage argument is sound in principle but unverified in practice.
+testable rather than assumed, and the test is run as RQ1a
+(\ref{sec:results:rq1:protocol}): the gap between a design-level split and a random split
+measures directly how much of the score is design recognition rather than structural
+inference.
+% TODO: once the RQ1a numbers land, replace the hedge above with the measured inflation
+% factor, and state whether per-design degradation was uniform or concentrated. If
+% concentrated, a second design fold is the mitigation, at one training run.
 
 \emph{Construct validity of the comparison itself.} Hyperparameters were tuned once on the
 full-graph configuration and held fixed. This protects the comparison from confounding
 retention with tuning effort, but it means reduced configurations run at settings chosen for
-a different input distribution --- which biases against them, and therefore bounds how
+a different input distribution. That biases against them, and therefore bounds how
 strongly any negative result about reduction can be stated.
 
 \subsection{Limitations of the Reduction Methods Tested}
 \label{sec:discussion:limitations:methods}
 The reduction methods are not a representative sample of their literatures, and the
-summarization family in particular was scoped down deliberately.
-
-Two implemented methods were not given training runs: spectral coarsening and LSH-based
-hashing. The reasoning is given in \ref{sec:method:summary:notrun} and holds, but the
-consequence should be stated --- the spectral family is the classical, guarantee-bearing
-branch of the coarsening literature, and this thesis reports no trained result for it.
+summarization family in particular was scoped down deliberately: it runs one domain-specific
+method, one general GNN-aware method and one exact method, against a random control. The
+classical, guarantee-bearing spectral branch of the coarsening literature is not among them,
+so this thesis reports no trained result for it.
 
 The domain-informed adaptations are simple. Edge-span weighting, level slicing, gate-role
 filtering and reconvergence-bounded merging are direct encodings of structural intuitions,
 not sophisticated methods. If they fail to beat their generic counterparts, that bounds
-these heuristics, not the idea of domain-aware reduction --- a distinction
-\ref{sec:results:rq4:adequacy} carries and which should not be quietly dropped when the
-conclusion is written.
+these heuristics, not the idea of domain-aware reduction. That is a
+distinction~\ref{sec:results:rq4:adequacy} carries, and it should not be quietly dropped
+when the conclusion is written.
 
 Finally, the boundary between structural compression and functional optimization is argued
 rather than measured. The claim that merging structurally equivalent nodes does not leak the
 label while merging functionally equivalent nodes would is well founded, but the negative
-control that would demonstrate it empirically was not run
-(\ref{sec:method:summary:fraig}). The super-node content ablation is in the same position:
+control that would demonstrate it empirically, running FRAIG-style functional reduction
+\citep{mishchenko2005fraig} as a summarizer and observing the label leak, was not run. The
+super-node content ablation is in the same position:
 member statistics are computed but not yet consumed by the encoder, so the finding in the
 literature that super-node content matters is cited rather than tested here.
 
@@ -168,9 +174,8 @@ literature that super-node content matters is cited rather than tested here.
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \section{Outlook}
 \label{sec:discussion:outlook}
-% Short. Per the template, the Discussion hints at future directions and the
-% Conclusion develops them -- so a few sentences pointing forward, not a second
-% Future Work section. Full treatment lives in \ref{sec:conclusion:futurework}.
+% A few sentences pointing forward; the full treatment is
+% \ref{sec:conclusion:futurework}.
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -179,22 +184,26 @@ literature that super-node content matters is cited rather than tested here.
 \paragraph{Compute and energy cost.}
 The work has a real environmental footprint: generating a corpus of several million AIGs
 required sustained CPU cluster time, and the training sweeps required substantial GPU time
-on top. The tension is worth stating rather than eliding --- a study whose purpose is to
+on top. The tension is worth stating rather than eliding: a study whose purpose is to
 reduce the compute cost of training spent a large amount of compute establishing how. The
-defence is that the cost is incurred once and the artifacts are cached and reusable, so a
+defence is that the cost is incurred once and the artifacts are stored and reusable, so a
 result showing which reductions preserve the signal saves compute for every subsequent user;
 but that is a claim about future savings against a certain present cost.
 % TODO: quote the actual GPU-hours and node-hours consumed rather than describing them
 % qualitatively. The figures make this paragraph honest instead of gestural.
 
 \paragraph{Benchmark provenance and licensing.}
-The corpus is derived from published benchmark circuits. Their licences govern what may be
-redistributed, and this needs to be checked and stated explicitly before any dataset
-release, not assumed (\ref{sec:method:data:sources}).
+The corpus is derived from published benchmark circuits, and their licences govern what may
+be redistributed. Every non-synthetic netlist was received through the OpenABC-D
+distribution, so the copies used are governed by its BSD 3-Clause terms, with the EPFL
+suite's MIT license applying in addition (\ref{sec:method:data:sources}). A dataset release
+must therefore carry both attribution notices. The ISCAS-85 and MCNC circuits attach no
+formal terms; their inclusion rests on the same decades-long redistribution practice that
+OpenABC-D itself relies on.
 
 \paragraph{Accessibility, and who benefits.}
 Lowering the memory required to train circuit models cuts in two directions. It widens
-access, since research that currently requires multi-GPU clusters could run on modest
+access, since research that currently requires large multi-device clusters could run on modest
 hardware, which matters for groups without industrial compute budgets. It also lowers the
 cost of capability for those who already have that budget. The honest position is that this
 work makes an existing capability cheaper rather than creating a new one, and that the

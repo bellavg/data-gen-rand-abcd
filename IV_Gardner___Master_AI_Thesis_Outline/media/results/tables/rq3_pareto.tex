@@ -1,0 +1,21 @@
+\begin{table}[htbp]
+\centering
+\caption{Accuracy against efficiency, ranked by matched-state $R^2$.}
+\label{tab:rq3_pareto}
+\small
+\begin{tabular}{lrrrr}
+\toprule
+\textbf{Method} & \textbf{$R^2$} & \textbf{Spearman} & \textbf{VRAM saving (\%)} & \textbf{Time saving (\%)} \\
+\midrule
+Full graph & 0.343 & 0.185 & 0.000 & 0.000 \\
+Random edge dropout & 0.215 & 0.194 & 1.489 & 0.229 \\
+Spanning forest & 0.138 & 0.282 & 2.142 & -0.101 \\
+Span-weighted METIS & 0.008 & 0.263 & 0.357 & 22.412 \\
+PageRank pruning & -0.018 & 0.367 & 14.492 & 19.145 \\
+AND-gate only & -0.064 & -0.025 & 11.257 & 28.893 \\
+Level slicing & -0.142 & 0.119 & 1.487 & 18.291 \\
+Random hashing & -0.981 & -0.183 & 3.100 & 20.996 \\
+METIS & -3.062 & 0.237 & 0.279 & 24.284 \\
+\bottomrule
+\end{tabular}
+\end{table}

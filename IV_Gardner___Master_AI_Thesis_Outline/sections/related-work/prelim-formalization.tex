@@ -1,0 +1,33 @@
+\subsection{Problem Formalization}
+\label{sec:prelim:formalization}
+The objects fixed above assemble into one problem statement. Let $G$ be an AIG with the
+node roles of~\eqref{eq:prelim:role} and edge inversions of~\eqref{eq:prelim:inversion} as
+its features, and let $S$ be a deterministic synthesis algorithm
+(\ref{sec:prelim:algorithms:orchestrate}) mapping $G$ to the function-equivalent,
+optimized $S(G)$. The prediction target is the \emph{optimizability} of $G$ under $S$,
+the fraction of nodes the algorithm removes,
+\begin{equation}
+    y(G) = 1 - \frac{\left| \mathcal{V}(S(G)) \right|}{\left| \mathcal{V}(G) \right|}
+    \;\in\; [0, 1].
+    \label{eq:prelim:target}
+\end{equation}
+Obtaining $y(G)$ means running $S$, which is the expensive step prediction is meant to
+avoid. An encoder $f_\theta$, a GNN in the sense of~\ref{sec:prelim:gnn:mp} with a
+graph-level readout, is trained to approximate $y$. A reduction operator $R$, drawn from
+the three families of~\ref{sec:prelim:reduction}, shrinks the encoder's input.
+
+Each research question of~\ref{sec:intro:rqs} is one statement about these four objects.
+RQ1 asks how closely $f_\theta(G)$ approximates $y(G)$ when training and evaluation both
+use unreduced graphs. RQ2 asks what $R$ buys and costs in itself: the retention
+ratios~\eqref{eq:prelim:retention}, the memory and time of training on $R(G)$, and the
+offline cost of computing $R$. RQ3 asks how much accuracy $f_\theta$ loses when trained
+and evaluated on $R(G)$ instead of $G$. RQ4 asks whether an $R$ built from AIG structure
+beats a generic $R$ at equal retention. RQ5 asks whether $f_\theta$ trained on $R(G)$
+still approximates $y(G)$ when queried on $G$ itself.
+
+RQ5 is well posed only under a compatibility requirement worth stating now: $R(G)$ and
+$G$ must occupy the same input space, so that one set of weights $\theta$ ingests both.
+Every summarization method here therefore produces features of which the full-graph
+features are the single-member special case (\ref{sec:method:summary:schema}). A
+reduction that changed the schema would make cross-state inference undefined rather than
+merely inaccurate.

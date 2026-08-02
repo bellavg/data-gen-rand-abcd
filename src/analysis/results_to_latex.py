@@ -30,11 +30,31 @@ def _format_cell(value) -> str:
             return "--"
         return f"{value:.3f}"
     if isinstance(value, str):
-        return _escape_latex(value)
+        escaped = _escape_latex(value)
+        # A cell opening with "[" directly after a row's "\\" is parsed as the
+        # optional vertical-space argument of \\ and kills the build. Bracing it
+        # is the standard fix.
+        return "{" + escaped + "}" if escaped.startswith("[") else escaped
     return str(value)
 
 
-def write_booktabs_table(df: pd.DataFrame, path: Path, caption: str, label: str) -> None:
+def write_booktabs_table(
+    df: pd.DataFrame,
+    path: Path,
+    caption: str,
+    label: str,
+    *,
+    wide: bool = False,
+    small: bool = True,
+    note: str | None = None,
+) -> None:
+    """Write ``df`` as a booktabs table.
+
+    ``wide`` selects the starred ``table*`` float, which is what a table with
+    more than about four columns needs in the two-column thesis layout; ``note``
+    adds an italic line under the rule, used to carry the TODO on any table
+    holding placeholder rows.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     if df.empty:
         print(f"[results_to_latex] Skipping {path.name} — no rows to write.")
@@ -44,12 +64,23 @@ def write_booktabs_table(df: pd.DataFrame, path: Path, caption: str, label: str)
         "l" if not pd.api.types.is_numeric_dtype(df[c]) else "r" for c in df.columns
     )
     header = " & ".join(f"\\textbf{{{_escape_latex(c)}}}" for c in df.columns) + " \\\\"
+    env = "table*" if wide else "table"
+    # A wide table still overflows \textwidth once it carries ten or more
+    # columns, so the tabular is scaled to fit rather than left to run into the
+    # margin.
+    resize = len(df.columns) >= 8
 
     lines = [
-        "\\begin{table}[h]",
+        f"\\begin{{{env}}}[htbp]",
         "\\centering",
         f"\\caption{{{caption}}}",
         f"\\label{{{label}}}",
+    ]
+    if small:
+        lines.append("\\small")
+    if resize:
+        lines.append("\\resizebox{\\textwidth}{!}{%")
+    lines += [
         f"\\begin{{tabular}}{{{col_spec}}}",
         "\\toprule",
         header,
@@ -57,7 +88,17 @@ def write_booktabs_table(df: pd.DataFrame, path: Path, caption: str, label: str)
     ]
     for _, row in df.iterrows():
         lines.append(" & ".join(_format_cell(v) for v in row) + " \\\\")
-    lines += ["\\bottomrule", "\\end{tabular}", "\\end{table}", ""]
+    lines += ["\\bottomrule", "\\end{tabular}"]
+    if resize:
+        lines.append("}")
+    if note:
+        # Notes are plain prose, so they are escaped: an unescaped underscore
+        # from a filename or a flag name is a fatal error outside math mode.
+        lines.append(
+            f"\\\\[4pt]\\begin{{minipage}}{{\\linewidth}}\\footnotesize\\emph{{"
+            f"{_escape_latex(note)}}}\\end{{minipage}}"
+        )
+    lines += [f"\\end{{{env}}}", ""]
 
     path.write_text("\n".join(lines), encoding="utf-8")
     print(f"[results_to_latex] Wrote {path}")

@@ -1,0 +1,15 @@
+\begin{table}[htbp]
+\centering
+\caption{Structural corpus statistics. The AND-gate share is recovered from the AND-gate-only node masks over 10,000 graphs: that method drops exactly the primary inputs and outputs, so its node retention is the AND-and-constant share. This is what fixes that method's compression, rather than a parameter that could be dialled.}
+\label{tab:dataset_structure}
+\small
+\begin{tabular}{lrrrr}
+\toprule
+\textbf{Statistic} & \textbf{Mean} & \textbf{SD} & \textbf{Min} & \textbf{Max} \\
+\midrule
+AND gates and constants (share of nodes) & 0.821 & 0.114 & 0.633 & 0.999 \\
+Primary inputs and outputs (share of nodes) & 0.179 & 0.114 & 0.001 & 0.367 \\
+Edges per node & 1.752 & 0.166 & 1.577 & 1.992 \\
+\bottomrule
+\end{tabular}
+\end{table}

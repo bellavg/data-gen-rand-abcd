@@ -1,0 +1,41 @@
+\subsection{Structure-Preserving and Domain-Aware Reduction}
+\label{sec:relwork:domain}
+
+\subsubsection{Reduction on Directed Acyclic Graphs}
+\label{sec:relwork:domain:dag}
+Direction changes more than notation. DAG-native architectures process nodes in
+topological order and read direction as causality \citep{thost2021dagnn,zhang2019dvae},
+and on the reduction side only isolated pieces exist, such as the directed extension of
+Kron reduction \citep{sugiyama2023kron}. Coarsening theory is otherwise stated for
+undirected graphs: its guarantees concern spectra of symmetric Laplacians, and none of
+them carry automatically to a quotient of a DAG, which need not even be acyclic
+(\ref{sec:prelim:aig:distinct}). That absence of transferable guarantees is one reason
+every method run here is compared against a random control at matched compression
+(\ref{sec:method:summary:random}) instead of being trusted on guarantees stated for a
+different object.
+
+\subsubsection{Reduction in Circuit and Netlist Domains}
+\label{sec:relwork:domain:circuits}
+Two distinct bodies of work sit in this space, and they must not be conflated. The first
+is AIG-native reduction that predates and ignores the summarization literature.
+Structural hashing merges structurally identical gates on construction
+\citep{kuehlmann2002robust}, FRAIG merges functionally equivalent ones by simulation and
+SAT \citep{mishchenko2005fraig}, and MFFC decomposition is how refactoring already carves
+a network into mergeable cones \citep{mishchenko2006rewriting}. Read through the lens
+of~\ref{sec:prelim:reduction:summarization}, all three are equivalence-based coarsenings
+by another name, and connecting them to the exactness framework
+of~\ref{sec:prelim:gnn:expressivity} is part of this thesis's contribution.
+
+The second is CTS-Bench \citep{cts_bench2026}, the nearest published competitor. It
+benchmarks coarsening trade-offs for GNNs on post-placement gate-level netlists for
+clock-skew prediction. Its coarsening is a single bespoke heuristic that consumes
+physical coordinates, so it cannot be applied to a pre-physical AIG at all
+(\ref{sec:prelim:synthesis:flow}), and it compares no second method. Its findings support
+the premise of this thesis rather than competing with it: up to $17.2\times$ memory
+reduction and $3\times$ training speedup, accuracy collapsing to negative $R^2$ under
+zero-shot cross-state evaluation, and an explicit call for domain-aware coarsening. Two
+of its numbers are carried forward. The negative zero-shot $R^2$ is the standing warning
+for RQ5, and the dissociation between its error metrics, MAE nearly unmoved at 0.16 to
+0.17 while $R^2$ fell below zero, is the citation behind reporting RMSE, $R^2$ and
+Spearman correlation together rather than any one alone
+(\ref{sec:method:experiment:metrics}).

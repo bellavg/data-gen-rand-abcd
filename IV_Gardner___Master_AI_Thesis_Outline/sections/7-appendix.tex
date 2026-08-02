@@ -1,40 +1,90 @@
-% You can choose whether you prefer a single or double column appendix.
-% Whatever you choose, you will need to stick to it throughout the appendix.
 % \onecolumn
 
 \chapter{First Appendix}
 \label{sec:apx:first_appendix}
 
-% Everything here is reference material the main text points at but does not need inline.
-% The thesis must remain readable without it.
+% Reference material the main text points at; the thesis stays readable without it.
 
 \section{Synthesis Algorithm Configurations}
 \label{sec:apx:algorithms}
-% Referenced from \ref{sec:method:data:generation:algorithms}. Reproduce, per algorithm
-% (Orchestrate, Deepsyn, Syn4, C2RS): the exact abc command template, the parameters that
-% differ from abc's defaults, and the alias definitions -- C2RS in particular expands via
-% abc.rc into a long balance/resubstitute/rewrite chain that is worth showing in full.
-% Source: AIG_DATASET_README.md and abc.rc. Pin the abc version here too; the labels depend
-% on it and \ref{sec:discussion:limitations:reproducibility} flags that it is unrecorded.
+This section records the concrete invocations
+behind~\ref{sec:method:data:generation} and~\ref{sec:prelim:algorithms}. Every entry below is
+transcribed from the generation pipeline itself rather than from its documentation; where
+the two disagree, the pipeline is authoritative and the disagreement is noted.
+
+\subsection*{Transformation recipes}
+Each recipe is $20$ commands drawn independently and uniformly from
+\texttt{balance}, \texttt{rewrite}, \texttt{rewrite -z}, \texttt{refactor},
+\texttt{refactor -z}, \texttt{resub} and \texttt{resub -z}, where \texttt{-z} enables
+zero-cost replacements. The $200$ recipes used are the first $200$ of the $1{,}500$
+released with OpenABC-D \citep{chowdhury2021openabc} and are applied unmodified. The
+generator strips the input, output and hashing commands from each released recipe and
+appends a \texttt{write\_aiger} after every surviving command, which is what makes each
+recipe prefix a stored graph.
+
+Each released recipe continues past the $20$ transformations into \texttt{dch} and then a
+technology-mapping tail, \texttt{map -B 0.9}, \texttt{topo}, \texttt{stime -c},
+\texttt{buffer -c}, \texttt{upsize -c} and \texttt{dnsize -c}. The stripping rule does not
+remove that tail, so $27$ write commands are emitted per recipe, but no standard-cell
+library is loaded and the mapped network cannot be written as an AIG, so only the $21$
+graphs up to and including \texttt{dch} are produced. The count assertion in the generation
+job, exactly $4{,}201$ AIGs per design, is what establishes that the remaining six writes
+produced nothing.
+
+\subsection*{Optimization invocations}
+Each algorithm is applied through the template in Table~\ref{tab:apx:algorithms}, with the
+tool configuration file sourced first in every case.
+
+\begin{table}[htbp]
+\centering
+\caption{Optimization invocations, one per algorithm, as issued by the generation pipeline.}
+\label{tab:apx:algorithms}
+\footnotesize
+\begin{tabular}{ll}
+\toprule
+\textbf{Algorithm} & \textbf{Command} \\
+\midrule
+\texttt{Orchestrate} & \texttt{strash; orchestrate} \\
+\texttt{Deepsyn}     & \texttt{strash; \&get; \&deepsyn -S <seed> -T 20; \&put} \\
+\texttt{Syn4}        & \texttt{strash; \&get; \&syn4; \&put} \\
+\texttt{C2RS}        & \texttt{strash; c2rs} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Three of the four are invoked with no parameters at all, so their behaviour is the tool's
+own default in each case. The pass budgets and scoring metrics named in the dataset
+documentation are not passed on the command line and were not set by this work.
+\texttt{C2RS} is an alias expanding to
+\texttt{b -l; rs -K 6 -l; rw -l; rs -K 6 -N 2 -l; rf -l; rs -K 8 -l; b -l;
+rs -K 8 -N 2 -l; rw -l; rs -K 10 -l; rwz -l; rs -K 10 -N 2 -l; b -l; rs -K 12 -l;
+rfz -l; rs -K 12 -N 2 -l; rwz -l; b -l}, which is the source of the widening cut size
+reported in~\ref{sec:prelim:algorithms:others}.
+
+\texttt{Deepsyn} is the one stochastic algorithm. Its seed is drawn from the shell random
+number generator once per input graph, is interpolated into the command, and is written
+neither to the run log nor to the metadata tables, so those graphs cannot be regenerated
+(\ref{sec:discussion:limitations:reproducibility}).
+% TODO: pin the abc version here; the labels depend on it and it is unrecorded.
 
 \section{Reduction Method Parameters}
 \label{sec:apx:params}
 % One table: every reduction method, its configured parameters, and whether each was
-% calibrated against measured retention or set to a plausible default. The distinction
-% matters for \ref{sec:results:rq4:gap} -- an uncalibrated knob is a confound in a
-% matched-compression comparison -- and putting it in one place keeps the methodology
-% chapter from having to caveat each method individually.
+% calibrated against measured retention or left at a default. An uncalibrated knob is a
+% confound in a matched-compression comparison (\ref{sec:results:rq4:gap}).
 
 \section{Baseline Hyperparameters}
 \label{sec:apx:baselines}
-% For SynthNet, HOGA and DeepGate4: which hyperparameters are the papers' published values
-% and which had to be assumed or adapted, with the reason for each deviation. The two
-% substantive ones (node-budget batching plus gradient accumulation) are argued in
-% \ref{sec:method:architecture:baselines}; this is where the full table belongs.
-% Source: src/train_baseline.py module docstring and src/baselines/*/regressor.py.
+% For SynthNet, HOGA and DeepGate4: which hyperparameters are the papers' published
+% values and which were assumed, with the reason for each deviation. Source:
+% src/train_baseline.py and src/baselines/*/regressor.py.
+
+\section{Experimental Configuration}
+\label{sec:apx:config}
+% Full run configuration in one table: seeds, split settings, batch budget, optimizer
+% settings and precision, as configuration values rather than source listings.
 
 \section{Extended Results}
 \label{sec:apx:results}
-% Per-configuration tables too detailed for Chapter \ref{sec:results}: full metric sets per
-% reduction method, per-tier error breakdowns, and the offline retention statistics per
-% method and shard.
+% Per-configuration tables too detailed for \ref{sec:results}: full metric sets per
+% method, per-tier error breakdowns, and offline retention per method and shard.

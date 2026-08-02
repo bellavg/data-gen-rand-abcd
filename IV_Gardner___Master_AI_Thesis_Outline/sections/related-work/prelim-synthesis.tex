@@ -1,0 +1,42 @@
+\section{Preliminaries}
+\label{sec:prelim}
+% Definitions and notation only, no argumentation.
+% TODO: 20 subsubsections against a budget of about 4 pages. The ones marked as merge
+% candidates fold into a neighbour first.
+
+\subsection{Logic Synthesis and the EDA Flow}
+\label{sec:prelim:synthesis}
+
+\subsubsection{Position of Logic Synthesis in the Design Flow}
+\label{sec:prelim:synthesis:flow}
+Electronic Design Automation (EDA) organises the design of a digital circuit as a flow of
+successive refinements \citep{demicheli1994synthesis}. A Register-Transfer-Level (RTL)
+description is compiled into a network of Boolean gates, Logic Synthesis (LS) restructures
+that network against cost objectives, technology mapping binds the result to the cells of
+a target library, and placement and routing assign physical positions and wires. LS is
+pre-physical: the network it operates on has no coordinates, no wire lengths and no
+layout-extracted timing, which is what makes the spatial coarsening methods
+of~\ref{sec:relwork:domain:circuits} inapplicable to it.
+
+\subsubsection{Optimization Objectives: Area, Power, Delay}
+\label{sec:prelim:synthesis:objectives}
+Synthesis quality is measured against three costs: the silicon area a circuit occupies,
+the power it draws, and the delay of its longest combinational path. None of the three is
+physical before technology mapping, so synthesis tracks each through a structural proxy,
+gate count for area and logic depth for delay, both formalized on the AIG representation
+in~\ref{sec:prelim:aig}. This work uses node count as its area proxy and models nothing
+else (\ref{sec:intro:scope:target}). The validity cost of that restriction is assessed
+in~\ref{sec:discussion:limitations:validity}.
+
+\subsubsection{Synthesis Scripts and Pipelines}
+\label{sec:prelim:synthesis:scripts}
+A synthesis script is an ordered sequence of function-preserving transformations applied
+as a composition,
+\begin{equation}
+    S = t_m \circ t_{m-1} \circ \cdots \circ t_1,
+    \label{eq:prelim:script}
+\end{equation}
+and order matters: the $t_i$ do not commute, and the gain of each depends on the structure
+its predecessors produced, so the same script yields different gains on different designs.
+Script choice can therefore not be fixed once and reused across designs. The scripts used
+in this work are the subject of~\ref{sec:prelim:algorithms}.

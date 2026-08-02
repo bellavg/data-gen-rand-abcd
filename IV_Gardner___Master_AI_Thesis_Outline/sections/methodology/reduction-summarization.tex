@@ -1,0 +1,180 @@
+\subsection{Summarization and Coarsening}
+\label{sec:method:reduction:summarization}
+These methods compress the graph by merging nodes into super-nodes. Unlike the other two
+families, which only delete, summarization must decide what a merged node \emph{is}, so
+the shared rewrite that turns a clustering into a graph is described first
+(\ref{sec:method:summary:mergemap}), and each method below then reduces to the single
+question of which nodes it groups together.
+
+Three methods are run, spanning domain-specific, general state of the art, and exact, so
+that RQ4 has something to compare. A fourth, random merging, is a control rather than a
+contender; it is what makes matched-compression comparison possible.
+Table~\ref{tab:summarization_methods} lists the set.
+
+\begin{table}[htbp]
+\centering
+\caption{Summarization methods.}
+\label{tab:summarization_methods}
+\small
+\begin{tabular}{lll}
+\toprule
+\textbf{Method} & \textbf{Role} & \textbf{Compression} \\
+\midrule
+Domain-specific coarsening (TBD) & domain-specific        & method-dependent \\
+Colour refinement                & adapted, exact         & fixed \\
+ConvMatch                        & GNN-aware SOTA         & target ratio \\
+Random within-type               & control / matching     & exact \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsubsection{Merge Map and Super-Node Schema}
+\label{sec:method:summary:mergemap}
+Every method produces only a \emph{clustering}: an assignment of each node to a group. One
+shared rewrite turns that clustering into a graph, so that methods differ in what they merge
+and in nothing else. Given a clustering, the rewrite:
+
+\begin{itemize}
+    \item sets each super-node's features to the \emph{member type counts}
+    $[\#\mathrm{const}, \#\mathrm{PI}, \#\mathrm{AND}, \#\mathrm{PO}]$;
+    \item remaps every edge to its endpoints' clusters, discards the resulting self-loops,
+    and sums the inversion counts of parallel super-edges so that a super-edge records how
+    many normal and how many inverted connections it stands for;
+    \item pools the positional encoding by member \emph{minimum}, so a super-node sits at
+    the level of its earliest member;
+    \item records the number of discarded intra-cluster edges, and the preserved primary
+    input and output counts, as graph attributes.
+\end{itemize}
+
+\paragraph{Schema compatibility.}
+\label{sec:method:summary:schema}
+The count representation is a strict superset of the one-hot representation: a super-node
+with one member reproduces its original feature row exactly. An unreduced AIG is therefore
+already a valid input in the summarized schema, without conversion. This is the property
+that makes RQ5 testable with a single set of weights, and it is a design constraint on every
+method rather than a convenience: a merge that produced features outside this space would
+put summary and full graphs in different input spaces and make cross-state inference
+undefined.
+
+\paragraph{Boundary preservation.}
+No method merges a primary input or primary output into a super-node with a different role.
+The PI/PO boundary is the circuit's fixed interface, and dissolving it changes what the graph
+represents rather than merely coarsening it.
+
+% TODO: super-node content is not yet exploited; do not write as though it is.
+
+\subsubsection{Domain-Specific Coarsening}
+\label{sec:method:summary:domain}
+The AIG-native slot. Two candidates are implemented; which one is run is not yet decided,
+and the decision waits on measured compression and retention on the real corpus.
+
+\begin{itemize}
+    \item \textbf{Cone coarsening.} Merges along two independent axes: chains of
+    single-fanout gates contract into one super-node, up to a capped chain length, reducing
+    circuit \emph{depth}; and gates within a bounded band of topological levels that share
+    a common immediate \emph{post}-dominator merge together, compressing parallel width
+    while leaving critical-path depth untouched, so the level-based positional encoding
+    stays exact. The band width and the chain cap are the only compression controls any
+    domain-specific candidate offers.
+    \item \textbf{MFFC skeleton coarsening.} Contracts each \emph{maximal fanout-free cone}
+    into one super-node: every AND gate whose fanout lies entirely inside one cluster joins
+    that cluster, iterated to a fixed point. What survives is the multi-fanout sharing
+    skeleton plus the fixed PI/PO interface. It is parameter-free, so its compression is a
+    property of the circuit and cannot be dialled.
+\end{itemize}
+
+The two are related rather than rival: chain contraction is the capped, chain-shaped special
+case of MFFC absorption, which additionally captures cones whose interior reconverges.
+
+MFFC coarsening invites an obvious objection, and the answer is the thesis claim in
+miniature. MFFCs are prime targets for synthesis rewriting, since refactoring collapses
+and re-expresses one MFFC at a time, so merging them might be expected to destroy exactly
+the signal the model must read. The claim here is the opposite, and it is falsifiable:
+intra-cone wiring is what local rewriting is \emph{free to change}, so it is noise with
+respect to the label, whereas the sharing structure that \emph{constrains} what rewriting can
+achieve is what survives the merge.
+
+Both candidates preserve acyclicity by the same argument: a cluster is absorbed only into the
+single cluster receiving all of its outgoing edges, which cannot close a cycle in a DAG\@. For
+cone coarsening this holds at band width zero, where the width axis merges only within a
+level; wider bands give up both the guarantee and the exactness of the level encoding.
+
+% TODO: report that the width axis must use post-dominators, if this method is written up.
+% TODO: neither cone nor MFFC compression is measured on the corpus.
+
+\subsubsection{Graded Colour Refinement}
+\label{sec:method:summary:wl}
+The exact anchor of the study. Nodes are merged when they agree under $d$ rounds of colour
+refinement, with $d$ set equal to the encoder's message-passing depth so that merged nodes
+are exactly those the network cannot distinguish. A count-cap $c$ interpolates between two
+named endpoints \citep{bollen2023exact}: at $c = \infty$ refinement distinguishes nodes by
+the full multiset of neighbour colours and the merge is \emph{lossless} for a summing GNN\@;
+at $c = 1$ it sees only the set of neighbour colours, which is bisimulation: coarser,
+cheaper, and lossy for a counting model.
+
+Two AIG adaptations are required. Node colours are initialised from the four-way type and
+the level encoding rather than uniformly, so nodes at different depths never share a class
+and the pooled positional encoding of a super-node is exact. \textbf{Edge inversion is
+treated as a distinct relation} so that a normal and an inverted connection never
+contribute to the same colour class. Without this, logically distinct subgraphs merge. Refinement runs backward from the primary outputs
+by default; direction is a parameter, and it changes both how much compresses and which structure
+survives.
+
+At $c = \infty$ this method is orthogonal to the optimization being predicted by
+construction: it removes only what the model provably cannot see, so it cannot erase the
+label. That is what makes it the positive control for RQ5 rather than merely another
+contender, and realising the guarantee end to end requires the schema
+of~\ref{sec:method:architecture:exact}.
+
+The obvious risk is that structural hashing has already removed the easy equivalences
+(\ref{sec:prelim:algorithms:primitives}), since every corpus graph is strashed. What this
+method finds is therefore \emph{residual} redundancy beyond one hop, and how much of it
+exists is itself a reportable statistic about AIGs.
+
+% TODO: run the residual-redundancy probe over depths 1 to 4; depth 1 subsumes k-SNAP \citep{tian2008ksnap}.
+
+\subsubsection{Convolution Matching}
+\label{sec:method:summary:convmatch}
+The strongest general-purpose competitor: ConvMatch \citep{dickens2024convmatch} merges nodes
+that are equivalent with respect to the \emph{graph convolution operation} itself rather than
+with respect to a graph property. As for every other method, merges never cross node types.
+The restriction is imposed on the candidate set, so the convolution objective itself is
+unmodified.
+
+It is the bar the domain-specific method must clear, and it is the right bar precisely
+because it is GNN-aware but domain-blind: if an AIG-specific method beats it, the domain
+claim is earned against a method optimising the same objective, not against a strawman.
+
+Its behaviour on a deep DAG with inverted edges is untested in the literature, and one
+property found here explains why it may differ from the published setting. Its merge cost is
+an unweighted sum over the convolution output, so merging two low-degree nodes scores better
+than merging two genuine convolution twins of higher degree, regardless of similarity.
+Convolution equivalence therefore decides \emph{between} pairs of comparable degree, not
+across them, which on a graph with the degree profile of an AIG biases merging toward the
+input frontier.
+
+% TODO: measure the per-graph cost of probe sampling before quoting it.
+
+\subsubsection{Random Within-Type Merging}
+\label{sec:method:summary:random}
+Uniformly random nodes of the same type are merged until the node count reaches a target.
+Merges are restricted to one node type so that the comparison isolates \emph{which} nodes are
+merged rather than confounding it with whether the interface survives, matching the boundary
+guarantee of every other method.
+
+This serves two purposes, and the second is the important one.
+
+As a \textbf{naive floor}, it answers the question a reader will ask first: if a
+sophisticated method does not beat random merging at the same compression, its sophistication
+bought nothing. It is also the exact counterpart of random edge dropout in the sparsification
+family, so both halves of the study have a floor constructed the same way.
+
+As a \textbf{matching instrument}, it is what makes RQ4 answerable at all. Compression is a
+free parameter for only some methods: ConvMatch takes a target ratio directly, cone
+coarsening offers only coarse integer knobs, and MFFC coarsening and colour refinement have
+no compression parameter whatsoever. There is therefore no general way to make two \emph{real}
+methods meet at the same ratio. Random merging reaches any target exactly by construction, so
+each method is instead compared against a random control run at that method's own achieved
+compression. The paired design replaces a matching problem that has no solution.
+
+% TODO: not built. The cost is the training runs, one per matched point, not the code.

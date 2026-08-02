@@ -1,14 +1,14 @@
 
 
 # Thesis Project Data — Summary
-This project combines two AIG sources into a unified dataset for downstream ML experiments and algorithm comparison.
+This project combines AIGs from two ingestion paths (synthetic random AIGs, and designs converted from BENCH netlists) into a unified dataset for downstream ML experiments and algorithm comparison. By provenance the corpus spans four benchmark collections plus the synthetic designs: 29 OpenABC-D IP designs, 8 EPFL arithmetic circuits, 4 ISCAS-85 circuits, and 6 MCNC/LGSynth circuits (all 47 obtained as BENCH netlists from the OpenABC-D distribution), plus 8 synthetic random AIGs.
 
 # Random AIG dataset: 8 synthetic random start designs (sizes 128–16384) — 33,608 AIGs (per design: 4,201 AIGs — 1 original + 200 × 21 = 4,200 synthesized; total 4,201)
-# Converted OpenABC-D: 47 real IP designs converted from BENCH to AIG — 197,447 AIGs (per design: 4,201 AIGs — 1 original + 200 × 21 = 4,200 synthesized; total 4,201)
+# Converted from BENCH: 47 real designs converted from BENCH to AIG — 197,447 AIGs (per design: 4,201 AIGs — 1 original + 200 × 21 = 4,200 synthesized; total 4,201). Only 29 of the 47 are OpenABC-D's own IP designs; the other 18 are classical benchmarks redistributed in OpenABC-D's bench directory (8 EPFL, 4 ISCAS-85, 6 MCNC/LGSynth).
 
 Total base AIGs (exact): 231,055 (≈0.23M)
 
-Note: The Random and Converted OpenABC-D datasets are the two source datasets. The "Full Dataset" described in this repository is the combined (union) dataset created by merging those two sources and is the primary dataset for this project.
+Note: The random AIGs and the BENCH-converted designs are the two ingestion paths. The "Full Dataset" described in this repository is the combined (union) dataset created by merging them and is the primary dataset for this project.
 
 Planned experiment pipeline (high level):
 

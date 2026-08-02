@@ -1,0 +1,111 @@
+\subsection{Graph Neural Networks}
+\label{sec:prelim:gnn}
+
+\subsubsection{Message Passing Framework}
+\label{sec:prelim:gnn:mp}
+A Graph Neural Network (GNN) computes a representation $h_v^{l} \in \mathbb{R}^{w}$ for
+every node $v$ by repeated neighbourhood aggregation
+\citep{kipf2017gcn,hamilton2017graphsage}. Writing $\mathcal{N}(v)$ for the neighbours of
+$v$ and $e_{uv}$ for the attribute of edge $(u, v)$, one layer computes
+\begin{equation}
+    h_v^{l} = \phi^{l}\!\left( h_v^{l-1},
+        \bigoplus_{u \in \mathcal{N}(v)} \psi^{l}\!\left( h_u^{l-1}, e_{uv} \right)
+    \right),
+    \label{eq:prelim:mp}
+\end{equation}
+where $\psi^{l}$ builds a message per edge, $\bigoplus$ is a permutation-invariant
+aggregation such as a sum, and $\phi^{l}$ updates the node state. The encoder of this
+thesis is one instantiation of~\eqref{eq:prelim:mp}, written out
+in~\ref{sec:method:architecture:equations}.
+
+After $L$ layers, $h_v^{L}$ is a function of exactly the $L$-hop neighbourhood of $v$ and
+of nothing outside it. On an AIG that neighbourhood is a depth-$L$ prefix of the cones
+of~\eqref{eq:prelim:cone}, so an encoder of depth $L$ reads $L$ levels of logic around each
+gate. Every depth-coupling argument in this thesis rests on this one fact: the refinement
+depth of~\ref{sec:method:summary:wl} is set to $L$, the receptive-field metric
+of~\ref{sec:method:experiment:metrics:reduction} counts the gates inside $L$ hops, and
+hypothesis H1 (\ref{sec:intro:rq3}) is a claim about what path contraction does to those
+$L$ hops.
+
+\subsubsection{Graph-Level Readout and Pooling}
+\label{sec:prelim:gnn:readout}
+A graph-level prediction pools the node representations into one vector, here by a mean
+over nodes, optionally after summing the per-layer outputs so that shallow and deep
+features both reach the readout (jumping knowledge, \citealp{xu2018jk}). Pooling imposes
+the constraint that shapes the whole experimental setup: every node of a graph must be
+present in the same forward pass, so a graph is the indivisible unit of batching and
+cannot be split across steps. Batches are therefore assembled under a node budget rather
+than as a fixed graph count (\ref{sec:method:experiment:batching}), and the memory cost
+of one step is set by the largest graphs, which is exactly the cost reduction is meant to
+lower.
+
+\subsubsection{Positional and Structural Encodings}
+\label{sec:prelim:gnn:pe}
+Message passing sees only relative structure: two nodes whose $L$-hop neighbourhoods are
+isomorphic receive identical representations wherever they sit in the graph. A Positional
+Encoding (PE) breaks that indifference by attaching a coordinate to each node. On an
+undirected graph no canonical coordinate exists and encodings are built from random walks
+or spectra; on a DAG the topological level $\ell(v)$ of~\eqref{eq:prelim:level} is an
+absolute coordinate that the graph carries for free. The level-based encoding used here
+(\ref{sec:method:data:representation:pe}) is therefore a DAG-native choice rather than a
+generic one.
+
+\subsubsection{Expressivity and the Weisfeiler-Leman Hierarchy}
+\label{sec:prelim:gnn:expressivity}
+Colour refinement, equivalently the one-dimensional Weisfeiler-Leman algorithm (1-WL),
+iteratively refines a node colouring by the multiset of neighbour colours,
+\begin{equation}
+    c_v^{(t)} = \operatorname{hash}\!\left( c_v^{(t-1)},\
+        \bigl\{\!\!\bigl\{\, c_u^{(t-1)} : u \in \mathcal{N}(v) \,\bigr\}\!\!\bigr\}
+    \right),
+    \label{eq:prelim:cr}
+\end{equation}
+starting from initial labels $c_v^{(0)}$. A partition of $\mathcal{V}$ is
+\emph{equitable} when every node of a class has the same number of neighbours in every
+class; run to a fixed point,~\eqref{eq:prelim:cr} computes the coarsest equitable
+partition refining the initial colouring \citep{grohe2014colourrefinement}. The
+connection to~\eqref{eq:prelim:mp} is an upper bound: a message-passing network is at
+most as discriminative as 1-WL, so two nodes sharing a colour after $L$ rounds receive
+identical representations from every $L$-layer encoder \citep{xu2019gin}.
+
+Replacing the multiset in~\eqref{eq:prelim:cr} by a set yields bisimulation, which ignores
+how many neighbours of a colour exist and asks only whether one does. A count cap $c$
+interpolates between the two, truncating each multiplicity at $c$: the cap $c = 1$ is
+bisimulation and $c = \infty$ is colour refinement \citep{bollen2023exact}. The bound
+above is what makes quotienting by such a partition lossless rather than approximate:
+merging nodes the network provably cannot distinguish removes no information the network
+could have used, and the automorphism orbits of a graph form an equitable partition, so
+genuinely symmetric structure is always compressible this way. AIGs have such structure
+in quantity. The two fanins of an AND gate are interchangeable, datapath logic replicates
+one bit slice across the word width, and standard sub-circuits recur throughout a design,
+each of which creates orbits that a random graph does not have. How much of this
+redundancy survives structural hashing is measured in~\ref{sec:method:summary:wl}.
+
+\subsubsection{Training Cost, Memory, and Inference}
+\label{sec:prelim:gnn:cost}
+Training and inference differ in what must be held in memory. Backpropagation stores the
+activations of every layer for every node in the batch, so training memory grows with
+$L \cdot |\mathcal{V}|$ on top of parameters and optimizer state, and the largest graph in
+the corpus sets the peak. Forward-only inference stores none of this. The asymmetry is
+the mechanism RQ5 (\ref{sec:intro:rq5}) depends on: a model that must be trained on
+reduced graphs to fit in device memory may still be queried on full graphs afterwards.
+
+Four techniques recur in Chapter 3 and are defined here once. Reported memory is
+\emph{allocated} memory, the tensors actually held, as opposed to the larger
+\emph{reserved} pool the allocator keeps (\ref{sec:method:experiment:metrics:efficiency}).
+Mixed precision stores activations in half-width floating point and roughly halves their
+cost. Gradient checkpointing discards intermediate activations and recomputes them during
+the backward pass, trading compute for memory, and is what makes the largest baseline
+runnable at all (\ref{sec:method:architecture:baselines}). Gradient accumulation sums
+gradients over several small steps before updating, so the effective batch size exceeds
+what fits in one step. All four trade something for memory at a \emph{fixed} input size,
+which is what separates them from the input reduction this thesis studies
+(\ref{sec:relwork:scaling:memory}).
+
+Depth has a cost of its own. A fixed-width representation cannot carry the information of
+a receptive field that grows exponentially with depth, so signal from distant nodes is
+compressed away, a failure known as over-squashing \citep{alon2021oversquashing}.
+Contracting paths shortens the distance signal must travel and is a recognised remedy
+\citep{dwivedi2022lrgb}. That contraction is the mechanism behind hypothesis H1
+(\ref{sec:intro:rq3}), which expects summarization to help where sparsification can only
+remove.

@@ -18,7 +18,7 @@ X - [node features (types), edge indices, edge features(types)]
 Y - [node optimizability, depth optimizability]
 
 ## Thesis Project - Data Summary
-This project combines two AIG sources into a unified dataset for downstream ML experiments and algorithm comparison.
+This project combines AIGs from two ingestion paths (synthetic random AIGs, and designs converted from BENCH netlists) into a unified dataset for downstream ML experiments and algorithm comparison. By provenance the corpus spans four benchmark collections plus the synthetic designs: 29 OpenABC-D IP designs, 8 EPFL arithmetic circuits, 4 ISCAS-85 circuits, and 6 MCNC/LGSynth circuits (all 47 obtained as BENCH netlists from the OpenABC-D distribution), plus 8 synthetic random AIGs.
 
 
 

@@ -1,0 +1,18 @@
+\begin{table*}[htbp]
+\centering
+\caption{The four partitioners keep every node and differ only in which edges they cut, at the same $k$. That makes them the cleanest domain-informed / generic pairs in the thesis.}
+\label{tab:rq2_partition_balance}
+\small
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{llrrrrrr}
+\toprule
+\textbf{Partitioner} & \textbf{Kind} & \textbf{Mean $k$} & \textbf{Edge cut} & \textbf{Edge cut sd} & \textbf{Imbalance (sd nodes)} & \textbf{Max part. nodes} & \textbf{Offline (s)} \\
+\midrule
+Random hashing & Generic & 4.662 & 0.598 & 0.162 & 37.891 & 6382 & 0.004 \\
+METIS & Generic & 4.662 & 0.063 & 0.053 & 30.433 & 6370 & 3.196 \\
+Level slicing & Domain & 4.662 & 0.295 & 0.236 & 0.378 & 6334 & 1.151 \\
+Span-weighted METIS & Domain & 4.662 & 0.077 & 0.060 & 30.616 & 6371 & 3.701 \\
+\bottomrule
+\end{tabular}
+}
+\end{table*}

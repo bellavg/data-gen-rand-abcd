@@ -1,0 +1,47 @@
+\section{Motivation}
+\label{sec:intro:motivation}
+
+\subsection{Logic Synthesis and Optimization Script Design}
+\label{sec:intro:motivation:synthesis}
+Logic synthesis is a critical phase in the Electronic Design Automation (EDA) flow, relying heavily on structural representations like And-Inverter Graphs (AIGs), a special form of Directed Acyclic Graph (DAG), to optimize circuits for area, power, and delay. However, crafting an optimal sequence of synthesis algorithms (a ``script'' or ``pipeline'') for a given circuit is a highly expensive, heuristic-driven trial-and-error process.
+
+\subsection{Machine Learning for Optimizability Prediction}
+\label{sec:intro:motivation:ml}
+Structural representations such as AIGs provide a foundation for applying ML to address a multitude of complex challenges in logic synthesis. With ML, one could predict a circuit's ``optimizability'' if subjected to certain optimization algorithms, therefore circumventing the trial-and-error phase by facilitating data-driven script generation. However, industrial-sized AIGs scale to millions or billions of nodes. Training advanced GNNs directly on these massive structures exceeds the memory available on a single device and drives training times beyond what is practical, preventing the field from exploring these applications and from scaling to more capable models.
+
+\subsection{The Scale Bottleneck}
+\label{sec:intro:motivation:scale}
+Consequently, to remain within available memory and keep execution tractable, researchers must restrict model size and capacity, accepting weaker architectures, or else rely on large multi-device clusters and distributed training. Even then, individual AIGs can exceed the memory of a single device, which forces the graph itself to be partitioned.
+
+\subsection{Limitations of Generic Graph Reduction}
+\label{sec:intro:motivation:reduction}
+While generic graph reduction techniques (partitioning, sparsification, and summarization) are widely used on other graphs, standard methods could potentially degrade predictive (ML) performance on logic graphs because they blindly sever strict causal cones, obscure logical depth, and break the longest paths, therefore altering the underlying logic function and destroying the structural features necessary for accurate prediction. This necessitates the development of domain-aware reduction techniques.
+
+\subsection{Problem Statement and Research Gap}
+\label{sec:intro:gap}
+The field scales GNNs on AIGs in two ways today. The first is to extract small
+subcircuits (tens to a few thousand gates) and train on those, which is a crude form of
+sampling that discards global structure; this is the de-facto reduction in most
+circuit-GNN work, including the DeepGate line \citep{li2022deepgate}. The second is to
+scale the \emph{architecture}: DeepGate3 \citep{shi2024deepgate3} pools over subcircuits
+with a transformer, and DeepGate4 \citep{deepgate4_2025} uses sparse attention for
+sub-linear memory. Both change the model, not the input.
+
+Graph reduction (partitioning, sparsification, and summarization/coarsening) is the
+standard way to shrink the \emph{input} instead, and it is well studied on citation,
+social and knowledge graphs \citep{hashemi2024survey}. It has never been systematically
+applied to whole AIGs as a preprocessing step for GNN training, and no work measures which
+reduction preserves a downstream synthesis label. The two literatures do not meet: generic
+summarization work \citep{bollen2023exact,generale2022scaling,loukas2019localvariation}
+does not know about structural hashing or AIG semantics, and EDA work
+\citep{mishchenko2005fraig,li2022deepgate} does not frame its reductions as GNN-input
+summarization.
+
+The gap this thesis addresses is therefore twofold: (i) there is no systematic evaluation
+of graph reduction for AIGs, and (ii) there is no evidence on whether AIG-specific
+adaptation of those reductions is worth its cost. Section~\ref{sec:relwork:gap} returns to
+this once the literature has been laid out.
+
+% Scope note: the claim is confined to logic synthesis, AIGs and optimizability.
+% CTS-Bench \citep{cts_bench2026} coarsens one EDA stage later with a spatial
+% heuristic, so only the unqualified phrasing is unavailable (\ref{sec:relwork:gap}).

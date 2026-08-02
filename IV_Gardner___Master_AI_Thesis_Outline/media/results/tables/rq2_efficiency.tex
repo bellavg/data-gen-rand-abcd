@@ -1,0 +1,28 @@
+\begin{table*}[htbp]
+\centering
+\caption{RQ2 efficiency profile. Node and edge retention are reported separately because several methods preserve node counts exactly. Savings are per-graph means paired against the full-graph baseline.}
+\label{tab:rq2_efficiency}
+\small
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{lllrrrrrrr}
+\toprule
+\textbf{Method} & \textbf{Family} & \textbf{Kind} & \textbf{Node ret.} & \textbf{Edge ret.} & \textbf{Offline (s/graph)} & \textbf{Step time (s)} & \textbf{VRAM mean (MB)} & \textbf{VRAM saving (\%)} & \textbf{Time saving (\%)} \\
+\midrule
+Random hashing & Partition & Generic & 1.000 & 0.402 & 0.004 & 0.026 & 1002.217 & 3.100 & 20.996 \\
+METIS & Partition & Generic & 1.000 & 0.937 & 3.196 & 0.027 & 1056.507 & 0.279 & 24.284 \\
+Level slicing & Partition & Domain & 1.000 & 0.705 & 1.151 & 0.029 & 1019.120 & 1.487 & 18.291 \\
+Span-weighted METIS & Partition & Domain & 1.000 & 0.923 & 3.701 & 0.027 & 1055.088 & 0.357 & 22.412 \\
+Random edge dropout & Sparsification & Generic & 1.000 & 0.697 & 0.064 & 0.040 & 1040.969 & 1.489 & 0.229 \\
+Spanning forest & Sparsification & Generic & 1.000 & 0.581 & 3.309 & 0.041 & 1031.674 & 2.142 & -0.101 \\
+PageRank pruning & Sparsification & Generic & 0.800 & 0.627 & 1.739 & 0.029 & 850.969 & 14.492 & 19.145 \\
+AND-gate only & Sparsification & Domain & 0.821 & 0.733 & 0.099 & 0.026 & 892.163 & 11.257 & 28.893 \\
+{[TODO/FAKE] Random within-type} & Summarization & Generic & 0.700 & 0.700 & 0.500 & 0.030 & 800.000 & -- & -- \\
+{[TODO/FAKE] ConvMatch} & Summarization & Generic & 0.500 & 0.600 & 20.000 & 0.028 & 700.000 & -- & -- \\
+{[TODO/FAKE] Cone coarsening} & Summarization & Domain & 0.600 & 0.650 & 2.000 & 0.026 & 750.000 & -- & -- \\
+{[TODO/FAKE] MFFC coarsening} & Summarization & Domain & 0.400 & 0.500 & 3.000 & 0.024 & 600.000 & -- & -- \\
+{[TODO/FAKE] Colour refinement (exact)} & Summarization & Domain & 0.800 & 0.850 & 5.000 & 0.032 & 900.000 & -- & -- \\
+\bottomrule
+\end{tabular}
+}
+\\[4pt]\begin{minipage}{\linewidth}\footnotesize\emph{Rows marked [TODO/FAKE] are invented. No summarization configuration has been trained or measured. Needs: sbatch src/shell/precompute\_summarization.sh for the offline pass, then one training run and one src/test.py pass per method. Random within-type merging is not implemented at all.}\end{minipage}
+\end{table*}

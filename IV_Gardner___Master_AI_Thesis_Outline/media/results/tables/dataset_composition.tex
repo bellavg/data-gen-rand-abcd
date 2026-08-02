@@ -1,0 +1,16 @@
+\begin{table*}[htbp]
+\centering
+\caption{Composition of the evaluation corpus over the two stored tiers. Validation and test differ substantially in label and size distribution, which is expected under a design-level split and is the direct explanation for the validation-to-test gap.}
+\label{tab:dataset_composition}
+\small
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{lrrrrrrrr}
+\toprule
+\textbf{Split} & \textbf{Designs} & \textbf{Graphs} & \textbf{tier0} & \textbf{tier1} & \textbf{Median nodes} & \textbf{Mean $y$} & \textbf{$y = 0$} & \textbf{Max $y$} \\
+\midrule
+val & 5 & 80525 & 20108 & 60417 & 29399 & 0.008 & 0.262 & 0.114 \\
+test & 6 & 96430 & 24067 & 72363 & 15977 & 0.020 & 0.488 & 0.274 \\
+\bottomrule
+\end{tabular}
+}
+\end{table*}

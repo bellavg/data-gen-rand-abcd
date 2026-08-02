@@ -1,0 +1,118 @@
+\subsection{Baselines for Optimizability Prediction}
+\label{sec:method:architecture:baselines}
+RQ1 is a comparative claim and needs a reference. Two groups supply one: trivial predictors,
+which fix what a given $R^2$ is worth on this label, and three published circuit models
+ported to this task. A third group of standard graph-level encoders (GCN, GraphSAGE, GIN)
+was considered and may be added if time permits.
+
+\subsubsection{Trivial Predictors}
+\label{sec:method:baselines:trivial}
+Three predictors, each fitted on the validation split and scored on test, so that every
+baseline is scored on data it has not seen. Two are constant,
+\begin{equation}
+    \hat{y}^{\text{mean}}_i = \bar{y}_{\text{val}},
+    \qquad
+    \hat{y}^{\text{med}}_i = \operatorname{med}\!\left( y_{\text{val}} \right),
+    \label{eq:method:baseline-constant}
+\end{equation}
+and the third is an ordinary least squares fit on graph size alone,
+\begin{equation}
+    \hat{y}^{\text{size}}_i = \operatorname{clip}_{[0,1]}\!\left(
+        \beta_0
+        + \beta_1 \log_{10} \left| \mathcal{V}(G_i) \right|
+        + \beta_2 \log_{10} \left| \mathcal{E}(G_i) \right| \right).
+    \label{eq:method:baseline-size}
+\end{equation}
+Equation~\eqref{eq:method:baseline-constant} fixes the zero point
+of~\eqref{eq:method:r2}. The test-set mean is the least-squares optimal constant, so any
+other constant scores $R^2 \leq 0$, with equality only at
+$\bar{y}_{\text{val}} = \bar{y}_{\text{test}}$. Equation~\eqref{eq:method:baseline-size} is
+the weakest non-trivial hypothesis about the task, that optimizability is a function of size
+alone, and any claim that the encoder reads circuit \emph{structure} has to clear it.
+
+\subsubsection{Adapting Published Circuit Models}
+\label{sec:method:baselines:published}
+SynthNet \citep{chowdhury2021openabc}, HOGA \citep{deng2024hoga} and DeepGate4
+\citep{deepgate4_2025} are introduced in~\ref{sec:relwork:ml4eda:baselines}. None was
+published for this task, so each had to be adapted, and what follows states those
+adaptations rather than the models.
+
+\paragraph{Shared porting procedure.}
+Each paper supplies an encoder $g_\phi$ carrying an AIG to node states
+$\{ h_v \}_{v \in \mathcal{V}(G)}$, together with a head supervising that paper's own
+target. The encoder is reused unmodified and the head is replaced, so every port has the
+form
+\begin{equation}
+    \hat{y}(G) = \operatorname{Sigmoid}\!\left(
+        \operatorname{MLP}\!\left(
+            \pi\!\left( \{ h_v \}_{v \in \mathcal{V}(G)} \right)
+        \right) \right),
+    \label{eq:method:baseline-port}
+\end{equation}
+with $\pi$ a permutation-invariant readout and the terminal sigmoid matching the $[0,1]$
+range of the target of~\ref{sec:prelim:formalization}. Only $\pi$, the head and the input
+adapter differ across the three, and the trunk of~\eqref{eq:method:baseline-port} is in
+every case the published one.
+
+Whether $\pi$ is inherited or chosen differs by model, and the distinction bears on what
+each comparison licenses. SynthNet already predicts a graph-level quantity, so $\pi$ is its
+own concatenated maximum and mean pooling. HOGA classifies nodes and DeepGate4 pools over
+cones; neither defines a whole-circuit readout, so for both $\pi$ is mean pooling and is
+this work's choice, not the paper's.
+
+\paragraph{Adaptations required by a graph-level target.}
+Three, each a consequence of the target being one scalar per circuit under one fixed script:
+
+\begin{itemize}
+    \item \textbf{The recipe branch is removed.} SynthNet predicts $\hat{y}(G, s)$,
+    conditioning on a synthesis recipe $s$ through a separate encoder. Training here fixes
+    the script, so $s$ is constant across the corpus and that branch emits one vector for
+    every sample, contributing a bias to the head and nothing else. It is dropped rather
+    than left to learn that constant.
+    \item \textbf{Batches are bounded by nodes, not graphs.} A graph-level readout requires
+    all of $\mathcal{V}(G)$ in one forward pass, so a graph cannot be split across batches,
+    and neither published batch size transfers: HOGA minibatches nodes drawn from one
+    graph, DeepGate4 minibatches cones. Batches are assembled to a node budget $B$ and
+    paired with an accumulation count $a$, and it is the product that matters. One graph
+    contributes one label regardless of its size, so the number of losses averaged per
+    update is $a \cdot \mathbb{E}[\,B / |\mathcal{V}(G)|\,]$, held near the primary
+    model's value.
+    Budget and accumulation are tuned and reported as a pair.
+    \item \textbf{Activations are recomputed rather than retained.} DeepGate4 attends over a
+    virtual edge set $\bar{\mathcal{E}}_k = \{(u,v) : \operatorname{dist}(u,v) \leq k\}$,
+    which at the published radius $k = 8$ measures roughly $180$ edges per circuit node
+    against an AIG fanin of at most two. Each of its attention layers materialises a message
+    tensor over $\bar{\mathcal{E}}_k$, so recomputing them during the backward pass, which
+    leaves outputs and gradients unchanged, is what makes the baseline runnable at all.
+\end{itemize}
+
+\paragraph{Corrections to the released implementations.}
+Two departures are corrections rather than adaptations, and are stated because they change
+published behaviour. HOGA's released attention normalises its scores over the head axis
+rather than the key axis, so the weights never form a distribution over hop neighbours; the
+port normalises over keys, following Eq.~5 of the paper. Its optional reverse-propagation
+branch applies the forward adjacency to the reverse features, which duplicates the forward
+branch rather than reversing it, and the port applies the reverse adjacency. A third
+difference is a convention, not an error: OpenABC-D orients edges toward the primary
+inputs and this corpus orients them the
+other way, so each node summarises its fanout cone under one convention and its fanin cone
+under the other. Both orientations are run and the pair reported.
+
+\paragraph{Comparability.}
+Only the data pipeline is shared, since a different split would make the comparison
+meaningless. Hyperparameters, optimizer, loss and schedule take each paper's published
+values. Settings a paper leaves unpublished are recorded as assumptions
+in~\ref{sec:apx:baselines} rather than silently absorbed.
+
+Scores printed in those papers are a different matter and cannot be placed beside the ones
+here. OpenABC-D standardises its targets within each design $d$, so its reference spread is
+the within-design sum of squares where the denominator of~\eqref{eq:method:r2} is the total,
+\begin{equation}
+    \underbrace{\sum_{i} \left( y_i - \bar{y} \right)^{2}}_{\text{here}}
+    = \underbrace{\sum_{i} \left( y_i - \bar{y}_{d(i)} \right)^{2}}_{\text{upstream}}
+    + \sum_{d} n_d \left( \bar{y}_{d} - \bar{y} \right)^{2}.
+    \label{eq:method:r2-decomposition}
+\end{equation}
+The two differ by the between-design term, which on a design-disjoint split
+(\ref{sec:method:experiment:splitting}) is the variation the task is about. Only the sign
+of the score transfers (\ref{sec:results:rq1:baselinemodels}).

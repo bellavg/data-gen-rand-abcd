@@ -1,48 +1,21 @@
 \chapter{Results}
 \label{sec:results}
-% Give the outcomes for each research question in the form of a table or graphic (with caption).
-% Sometimes, especially if you have quite different experiments or research questions, it makes sense to interleave the experimental setup and the results sections, so the reader does not get lost. It is then helpful to structure clearly in (sub)subsections.
 
-% TABLE SOURCES -- read before editing any table in this chapter.
-% Every numbered table below is GENERATED, not hand-written. src/results_to_latex.py reads
-% the inference and benchmark CSVs and writes booktabs tables into results/tables/. Copy
-% that directory next to msc_thesis.tex (\resultstables points at it) and the \input lines
-% below pick them up. Do not paste numbers in by hand: they will drift from the run that
-% produced them.
-%
-% Generated so far:            baseline_accuracy, reduction_efficiency,
-%                              predictive_retention, cross_state_generalization,
-%                              vram_scaling, and pareto_front.csv (plotted, not tabulated).
-% NOT generated yet, needed:   (a) the summarization rows -- the generator loads
-%                              sparsification and partition offline stats only;
-%                              (b) the baseline-model rows for RQ1 tier 2/3;
-%                              (c) the consolidated summary table of \ref{sec:results:summary}.
-%
-% NOTE: the generator's caption for cross_state_generalization still says "(RQ4)". Cross-state
-% generalization is RQ5 in this document; RQ4 is the domain-informed comparison. Fix the
-% caption in src/results_to_latex.py, EVALUATION.md, and thesis-overview.tex together.
+% Tables here are generated into media/results/tables by the analysis pipeline;
+% numbers are not typed in by hand.
+% TODO: generator still lacks the summarization rows, the RQ1 published-model and standard-encoder baseline rows,
+% and the consolidated summary table of \ref{sec:results:summary}. Its cross-state
+% caption is labelled RQ4 and should read RQ5.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \section{Baseline Predictive Performance on Full AIGs (RQ1)}
 \label{sec:results:rq1}
-% Answers \ref{sec:intro:rq1}: how well does a GNN predict optimizability from the full,
-% unreduced AIG, relative to trivial predictors, standard encoders and published circuit
-% models? Everything downstream is measured against this.
+% Answers \ref{sec:intro:rq1}. Reference point for every reduction result downstream.
 
 \subsection{Comparison Against Naive Baselines}
 \label{sec:results:rq1:baselines}
-% The three-tier comparison defined in \ref{sec:method:architecture:baselines}. Report all
-% three in one table so "accurately" has a referent:
-%   Tier 1 -- mean, median, graph-size-only regressor. Establishes what R^2 = 0 looks like.
-%   Tier 2 -- GCN, GraphSAGE, GIN under identical pooling/head/training. Isolates the
-%             contribution of the edge-aware, positionally-encoded architecture.
-%   Tier 3 -- SynthNet, HOGA, DeepGate4. Positions the result against published work.
-%
-% Read the tiers in order when writing the prose: beating tier 1 shows the task is learnable
-% at all; beating tier 2 shows the architecture earns its complexity; beating tier 3 is the
-% claim that matters externally, and is the weakest of the three because the published models
-% were tuned for other tasks (see the comparability caveats in
-% \ref{sec:method:architecture:baselines}).
+% Three-group comparison of \ref{sec:method:architecture:baselines} in one table:
+% trivial predictors, standard encoders, published circuit models.
 
 \subsection{Predictive Accuracy Metrics}
 \label{sec:results:rq1:accuracy}
@@ -57,29 +30,26 @@ Spearman correlation coefficients.
 
 \subsection{Baseline Model Outcomes}
 \label{sec:results:rq1:baselinemodels}
-% Where the published baselines are reported and, where they fail, diagnosed. SynthNet
-% collapsed to a constant prediction on this split; \ref{sec:method:architecture:baselines}
-% gives the mechanism and the reason it is not simply a porting error (OpenABC-D reports
-% negative R^2 on the same split variant).
-%
-% CRITICAL, do not get this wrong in the table: upstream z-scores its targets per design,
-% which removes between-design variance from the R^2 denominator. Their R^2 and ours are not
-% the same quantity and must NOT appear in the same column. Report ours, and cite theirs in
-% prose with the normalization stated. Only the sign transfers.
+% SynthNet collapsed to a constant prediction on this split; mechanism in
+% \ref{sec:method:architecture:baselines}. Upstream z-scores per design, so its $R^2$
+% and the one reported here are different quantities and cannot share a column.
 
 \subsection{Error Analysis}
 \label{sec:results:rq1:erroranalysis}
-% Where the baseline model fails: residuals broken down by graph size, by tier
-% (0/1/2), and by source design. Feeds the Discussion and sets up which reduction
-% methods are expected to hurt most.
+% Residuals by graph size, tier and source design.
 
-\subsection{Hardware Baselines and Training Bottlenecks}
+\subsection{Protocol Sensitivity: How Much of the Score Is Design Recognition? (RQ1a)}
+\label{sec:results:rq1:protocol}
+% Answers RQ1a under \ref{sec:intro:rq1}. Three rows, one per split protocol
+% (\ref{sec:method:experiment:splitting}), plus an inflation column against the
+% design-disjoint row, and per-design metrics from the persisted predictions.
+% TODO: needs the random-split and recipe-split runs; only the design-split run exists.
+
+\subsection{Cost of the Full-Graph Baseline}
 \label{sec:results:rq1:hardware}
-\begin{itemize}
-    \item Base training times tracked via W\&B (\texttt{train\_step\_time\_s\_step} and \texttt{train\_step\_time\_s\_epoch}).
-    \item Peak VRAM allocation (\texttt{GPU Memory Allocated}).
-    \item \textbf{Throughput:} Baseline inference speed measured in graphs processed per second.
-\end{itemize}
+Three quantities characterise the cost of training on unreduced graphs, and together they
+form the reference against which every reduction in RQ2 is read: time per optimisation step
+and per epoch, peak allocated device memory, and inference throughput in graphs per second.
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -98,75 +68,25 @@ Spearman correlation coefficients.
     artifact must serve before the reduction pays for itself.
 \end{itemize}
 
-% Two method-level findings belong in this section rather than in the trade-off analysis,
-% because they are properties of the reduction itself and hold regardless of any training run:
-%   - The hashing method's compression is bounded at both ends by the number of distinct node
-%     descriptors, not by its bin-width knob, and the upper bound binds on every AIG measured
-%     -- so it cannot be dialled to a target ratio. Report it on its own compression/retention
-%     curve and exclude it from the matched table (\ref{sec:method:summary:notrun}).
-%   - The distinct-descriptor fraction (~37\% of nodes) is a dataset statistic in its own
-%     right and is the most direct evidence for the structural redundancy the whole
-%     summarization argument depends on. Report it here or in
-%     \ref{sec:method:data:statistics}, and reference it from both.
-%
-% Also report here: the spectral method's node cap and how many graphs took the heavy-edge
-% fallback. If most of the corpus exceeds the cap, the method must be described as
-% "heavy-edge matching with a spectral rule on small graphs" wherever it appears.
+% Whether each summarization method has a compression knob at all belongs here: it is a
+% property of the reduction and is what forces the matched-random design
+% (\ref{sec:method:summary:random}).
 
 % \input{\resultstables/reduction_efficiency}   % tab:reduction_efficiency
 
-% Measured sparsification retention statistics (already collected offline). Superseded by
-% the generated reduction_efficiency table above once that includes all three families;
-% kept meanwhile because these numbers exist and the generated table does not yet cover
-% summarization.
-% \begin{table}[htbp]
-% \centering
-% \caption{Sparsification Retention Statistics over 10,000 Graphs}
-% \label{tab:sparsification_stats}
-% \small
-% \begin{tabular}{llccccr}
-% \toprule
-% \textbf{Method} & \textbf{Metric} & \textbf{Mean (\%)} & \textbf{Std (\%)} & \textbf{Min (\%)} & \textbf{Max (\%)} & \textbf{Avg Time (ms)} \\
-% \midrule
-% and\_gate\_only & Edge Retention & 73.3 & 13.0 & 48.9 & 99.1 & 91.85 \\
-%                 & Node Retention & 82.1 & 11.4 & 63.3 & 99.9 & \\
-%                 & Edge Reduction & 26.7 & --   & --   & --   & \\
-% \midrule
-% pagerank        & Edge Retention & 62.7 & 6.3  & 41.5 & 76.8 & 1,832.14 \\
-%                 & Node Retention & 80.0 & 0.0  & 79.8 & 80.0 & \\
-%                 & Edge Reduction & 37.3 & --   & --   & --   & \\
-% \midrule
-% random\_edge\_dropout & Edge Retention & 69.7 & 0.6  & 66.7 & 70.3 & 26.44 \\
-%                       & Node Retention & 100.0& 0.0  & 100.0& 100.0& \\
-%                       & Edge Reduction & 30.3 & --   & --   & --   & \\
-% \midrule
-% spanning\_forest       & Edge Retention & 58.1 & 5.3  & 50.0 & 70.0 & 3,519.05 \\
-%                       & Node Retention & 100.0& 0.0  & 100.0& 100.0& \\
-%                       & Edge Reduction & 41.9 & --   & --   & --   & \\
-% \bottomrule
-% \end{tabular}
-% \end{table}
 
 \subsection{Training Memory Dynamics and Compute Efficiency}
 \label{sec:results:rq2:memory}
-\begin{itemize}
-    \item \textbf{VRAM Footprint:} Bar charts comparing peak \texttt{GPU Memory Allocated (Bytes)} and \texttt{GPU Memory Allocated (\%)}.
-    \item \textbf{Host Memory Bottlenecks:} \texttt{Process Memory In Use (MB)} and \texttt{System Memory Utilization (\%)} (MAYBE).
-    \item \textbf{Compute Efficiency:} \texttt{GPU Utilization (\%)} and \texttt{GPU DRAM Active (\%)}.
-\end{itemize}
+Memory is reported as peak allocated device memory per configuration, in absolute terms and
+as a fraction of device capacity. Compute efficiency is reported as device utilisation
+alongside memory-bandwidth activity, which together distinguish a configuration that is
+compute-bound from one that is waiting on memory.
+% Host-side memory is logged; report only if it constrains a configuration.
 
-% Report peak memory as a function of graph size, not only as a per-configuration scalar:
-% memory scales close to linearly with nodes and edges per batch, so a single peak figure
-% conflates the reduction's effect with which graphs happened to land in the peak batch.
+% Peak memory against graph size, not only as a per-configuration scalar.
 % \input{\resultstables/vram_scaling}   % tab:vram_scaling
-%
-% One result to state explicitly because it bounds every memory claim in this chapter: a
-% graph larger than the batch budget forms a batch of its own, so peak memory for any method
-% that does not reduce NODE counts is floored by the largest circuit in the corpus. That
-% predicts the edge-only methods (random edge dropout, spanning forest, and all four
-% partitioners) show smaller peak-memory gains than their edge compression suggests -- check
-% whether the measurements bear it out, because if they do it is the cleanest illustration in
-% the thesis of why node and edge compression must be reported separately.
+% A graph larger than the batch budget forms a batch of its own, so peak memory for any
+% method that leaves node counts intact is floored by the largest circuit in the corpus.
 
 \subsection{Throughput and Training Speedup}
 \label{sec:results:rq2:throughput}
@@ -175,68 +95,41 @@ Spearman correlation coefficients.
     \item Inference throughput improvements (graphs processed per second) over the baseline.
 \end{itemize}
 
-% Per-graph savings are paired against the baseline by construction, so report bootstrap
-% confidence intervals and the Wilcoxon signed-rank test that src/results_to_latex.py already
-% computes -- not bare means. Say so in the text; an unqualified speedup figure invites the
-% question of whether it is within noise.
-%
-% Expect speedups to under-deliver relative to compression, and explain why rather than
-% treating it as a disappointment: the kernels are latency-bound on message-passing
-% gather/scatter (\ref{sec:method:experiment:hardware}), so removing work does not translate
-% proportionally into wall-clock. Edge-removing methods should do relatively better here than
-% their node compression predicts, which is the mirror image of the memory result above.
+% Report the bootstrap intervals and Wilcoxon test rather than bare means.
+% Speedups under-deliver relative to compression because the kernels are latency-bound
+% on gather/scatter (\ref{sec:method:experiment:hardware}).
 
 \subsection{Efficiency Ranking Across Methods}
 \label{sec:results:rq2:ranking}
-% The subsections above are organised by metric; this one cuts the same data the
-% other way -- one row per reduction method, ranked on what it buys you.
-% How much smaller, how much faster, at what offline cost.
-% Tag each method as generic or domain-informed in a column rather than splitting
-% the section by it: it is one attribute of a method, not the organising axis.
+% Same data as the subsections above, one row per method, ranked. Generic versus
+% domain-informed is a column, not the organising axis.
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \section{Predictive Retention and Performance Trade-offs (RQ3)}
 \label{sec:results:rq3}
-% Answers \ref{sec:intro:rq3}: how much accuracy survives reduction, and which
-% methods sit on the best accuracy-to-efficiency trade-off.
-% The domain-informed comparison is its own question -- see \ref{sec:results:rq4}.
+% Answers \ref{sec:intro:rq3}. The domain-informed comparison is \ref{sec:results:rq4}.
 
 \subsection{Accuracy Degradation}
 \label{sec:results:rq3:degradation}
 Grouped bar charts comparing the RMSE and $R^2$ of models trained and tested on reduced graphs against the RQ1 full-graph baseline.
 
 % \input{\resultstables/predictive_retention}   % tab:predictive_retention
-%
-% Report RMSE, R^2 AND Spearman together throughout, per
-% \ref{sec:method:experiment:metrics}: a reduction can hold mean error steady while
-% destroying explained variance, which is exactly what \citet{cts_bench2026} observed. A
-% table showing only RMSE would miss the failure this chapter exists to detect.
-%
-% VALIDITY CHECK, report first and separately: the exact colour-refinement configuration must
-% land on the full-graph baseline to within numerical tolerance
-% (\ref{sec:method:experiment:design}). It is the positive control, not a result. If it does
-% not match, everything else in this chapter is suspect and the deviation must be resolved
-% before the rest is interpreted -- say so in the text rather than reporting it as one row
-% among many.
+% RMSE, $R^2$ and Spearman together throughout (\ref{sec:method:experiment:metrics}).
+% Positive control, reported first and separately: the exact colour-refinement
+% configuration must land on the full-graph baseline within tolerance
+% (\ref{sec:method:experiment:design}). A deviation invalidates the rest of the chapter.
 
 \subsection{Ranking Preservation}
 \label{sec:results:rq3:ranking}
-% Spearman under reduction. Ranking can survive even when absolute error degrades,
-% which matters for the script-selection use case in the motivation.
+% Spearman under reduction; ranking can survive when absolute error degrades.
 
 \subsection{Accuracy Loss Attributable to Reduction}
 \label{sec:results:rq3:attribution}
-% How much accuracy each method costs, and what structural damage explains it
-% (severed causal cones, lost depth, broken longest paths).
-% IMPORTANT: compare at matched compression ratio, or "which method is best"
-% confounds a genuinely better method with one that simply reduced less.
-% The measured retention spread makes this concrete -- and\_gate\_only keeps 73.3\%
-% of edges while spanning\_forest keeps 58.1\%, so their raw accuracies are not
-% comparable as-is. The formal paired version of this lives in \ref{sec:results:rq4}.
-% Present this as one row per reduction method (accuracy retained vs the RQ1
-% baseline) so it lines up directly against the efficiency ranking in
-% \ref{sec:results:rq2:ranking}. The two tables together feed the Pareto front below.
+% Accuracy cost per method and the structural damage that explains it, compared at
+% matched compression: AND-gate-only keeps 73.3\% of edges against spanning forest's
+% 58.1\%, so raw accuracies are not comparable. One row per method, aligned with
+% \ref{sec:results:rq2:ranking}.
 
 \subsection{The Pareto Front (Trade-Off Analysis)}
 \label{sec:results:rq3:pareto}
@@ -246,67 +139,33 @@ Scatter plots visualizing Accuracy (y-axis) vs. Memory/Speed Gains (x-axis) to i
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \section{Value of Domain-Informed Adaptation (RQ4)}
 \label{sec:results:rq4}
-% Answers \ref{sec:intro:rq4}. RQ2 and RQ3 rank every method on efficiency and on
-% accuracy; this section asks the narrower question of whether AIG-specific
-% knowledge bought anything at all.
+% Answers \ref{sec:intro:rq4}: whether AIG-specific knowledge bought anything.
 
 \subsection{Matched-Compression Pairings}
 \label{sec:results:rq4:pairings}
-% Define the comparisons BEFORE reporting them, and state how close each pairing actually is
-% -- an unstated mismatch is what turns "method A is better" into "method A reduced less".
-%
-% Compression is a free parameter for only some methods, which is why RQ4 is phrased as
-% "at equivalent compression" with a random control rather than "at matched compression
-% ratios" (\ref{sec:intro:rq4}). Three kinds of pairing result:
-%
-% 1. MATCHED BY CONSTRUCTION -- partitioning. All four partitioners keep every node and
-%    differ only in which edges they cut, and k is set by the same size heuristic for all
-%    four. So span-weighted METIS vs plain METIS, and level slicing vs random hashing, are
-%    matched without any tuning. These are the cleanest pairs in the thesis.
-%
-% 2. MATCHED BY CALIBRATION -- sparsification.
-%    - and_gate_only (82.1\% node retention, parameter-free) vs PageRank at keep_ratio 0.8
-%      (80.0\%). Close enough to compare directly; say so explicitly rather than leaving the
-%      match to look accidental.
-%    - spanning_forest (58.1\% edge retention, parameter-free) vs random_edge_dropout. NOT
-%      currently matched: the configured drop rate of 0.3 gives 69.7\% retention. Raising the
-%      rate to ~0.419 matches it. Until that run exists, do not report this pair as matched.
-%
-% 3. MATCHED AGAINST A RANDOM CONTROL -- summarization. No two real summarization methods can
-%    be made to meet at the same ratio (MFFC coarsening, colour refinement and hashing have
-%    no compression knob at all). Each method is therefore paired against random within-type
-%    merging run at that method's own achieved compression
-%    (\ref{sec:method:summary:random}). State the achieved ratio for each arm.
-%
-% Report cone coarsening vs MFFC coarsening as an ABLATION, not as a domain-vs-generic pair:
-% they are two settings of one family, and the question is whether the capped, level-banded
-% version loses anything against the exact decomposition
-% (\ref{sec:method:summary:mffc}).
+% Pairings are defined before they are reported, with the achieved compression of each
+% arm stated. Three kinds: matched by construction (the four partitioners, same $k$),
+% matched by calibration (AND-gate-only against PageRank at 0.8), and matched against a
+% random control at the method's own ratio (summarization, \ref{sec:method:summary:random}).
+% TODO: spanning forest against random edge dropout is not matched at a drop rate of 0.3
+% (69.7\% against 58.1\% edge retention); approximately 0.419 matches it.
 
 \subsection{Retention Gap at Matched Compression}
 \label{sec:results:rq4:gap}
-% The paired result: RMSE / R^2 / Spearman difference within each pairing.
-%
-% HONESTY REQUIREMENT. Each configuration is trained once
-% (\ref{sec:method:experiment:metrics:stats}), so there is no run-to-run variance to judge
-% these gaps against, and RQ4's expected effect is small. Either re-run the pairings above
-% across several seeds -- the cheapest useful version of this is seeds on the RQ4 pairs only,
-% not on every configuration -- or report the differences as point estimates and say plainly
-% that a small gap cannot be distinguished from noise. Do not report a gap of a few percent
-% as a finding without one or the other.
+% Paired RMSE, $R^2$ and Spearman difference within each pairing.
+% Each configuration is trained once (\ref{sec:method:experiment:metrics:stats}), so
+% these gaps carry no variance estimate. Either seeds on the RQ4 pairs or point
+% estimates reported as such.
 
 \subsection{Structural Interpretation}
 \label{sec:results:rq4:interpretation}
-% What the outcome implies either way. If domain-informed methods do not win, the
-% predictive signal is likely distributed rather than concentrated in the causal
-% cones and long paths the heuristics were built to protect -- which is a finding
-% about AIG representation learning, not just about these four heuristics.
+% If domain-informed methods do not win, the predictive signal is distributed rather
+% than concentrated in the cones and long paths the heuristics protect.
 
 \subsection{Adequacy of the Heuristics Tested}
 \label{sec:results:rq4:adequacy}
-% Honest scoping: these are relatively simple adaptations (edge span weighting,
-% level slicing, gate-role filtering). A null result bounds these heuristics, not
-% the idea of domain-aware reduction in general. Carry this into the Discussion.
+% These are simple adaptations, so a null result bounds these heuristics rather than
+% domain-aware reduction in general.
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -319,21 +178,11 @@ Scatter plots visualizing Accuracy (y-axis) vs. Memory/Speed Gains (x-axis) to i
 Smooth L1 Loss, RMSE, and $R^2$ metrics from testing a model (which was trained exclusively on reduced AIGs via partitioning, sparsification, or summarization) directly on normal, full-sized AIGs.
 
 % \input{\resultstables/cross_state_generalization}   % tab:cross_state_generalization
-%
-% Two caveats that belong in the text next to this table:
-%   1. POSITIVE CONTROL FIRST. The exact colour-refinement configuration must transfer
-%      essentially perfectly -- it is lossless by construction. Report it before the others
-%      so that a poor transfer elsewhere reads as a finding rather than as a possible bug in
-%      the evaluation path (\ref{sec:method:experiment:design}).
-%   2. SCHEMA ASYMMETRY. For the standard-track methods a full graph needs no conversion: it
-%      already is a valid graph of size-1 super-nodes. The exact track is the exception -- it
-%      uses a different input schema, so full graphs must be converted before an exact-track
-%      model can be queried on them (\ref{sec:method:architecture:exact}). State this;
-%      otherwise the two tracks look like the same experiment and they are not.
-%
-% Prior expectation to set before reporting: \citet{cts_bench2026} found negative R^2 under
-% zero-shot evaluation after generic coarsening. If transfer works here at all, that is the
-% result -- and there is now a citation showing the generic case fails.
+% Positive control first: the exact colour-refinement configuration transfers losslessly
+% by construction. Schema asymmetry: standard-track methods need no conversion of a full
+% graph, the exact track does (\ref{sec:method:architecture:exact}).
+% Prior expectation: \citet{cts_bench2026} report negative $R^2$ zero-shot after generic
+% coarsening.
 
 \subsection{Zero-Shot Ranking}
 \label{sec:results:rq5:ranking}
@@ -341,60 +190,638 @@ Spearman correlation.
 
 \subsection{Matched-State vs. Cross-State Drop-Off}
 \label{sec:results:rq5:dropoff}
-Comparison measuring the performance drop-off between matched-state testing (Reduced $\rightarrow$ Reduced) vs. cross-state testing (Reduced $\rightarrow$ Full).
+Comparison measuring the performance drop-off between matched-state testing (Reduced $\rightarrow$ Reduced) vs.\ cross-state testing (Reduced $\rightarrow$ Full).
 
 \subsection{Generalization by Reduction Family}
 \label{sec:results:rq5:byfamily}
-% Which family survives the structural shift best? Node-count-preserving methods
-% (edge dropout, spanning forest) may transfer differently to node-removing ones
-% (PageRank, and-gate-only) or to partitioning, which changes the pooling path.
+% Which family survives the structural shift best, node-preserving against node-removing
+% against partitioning.
 
 \subsection{Inference Cost}
 \label{sec:results:rq5:cost}
-% The practical pay-off: inference needs no gradients or activations, so a model
-% trained cheaply on reduced graphs may serve full graphs on modest hardware.
-% Report full-graph inference memory and latency, CPU included.
+% Inference stores no gradients or activations, so full-graph inference memory and
+% latency are reported, including on CPU.
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \section{Summary of Findings}
 \label{sec:results:summary}
-% One consolidated table: every reduction method as a row, with columns for
-%   family (partition / sparsify / summarize), generic or domain-informed,
-%   node retention, edge retention, offline cost,
-%   peak VRAM vs baseline, speedup vs baseline,
-%   matched-state accuracy (RMSE, R^2, Spearman),
-%   cross-state accuracy.
-% Tag generic vs domain-informed as a COLUMN, not by splitting the table -- it is one
-% attribute of a method, not the organising axis.
-%
-% This is the single artifact the Discussion and Conclusion refer back to, so it is worth
-% the page it costs. src/results_to_latex.py does NOT build it today; it writes five
-% per-RQ tables and a Pareto CSV. Either add a builder that joins them on method name, or
-% drop this section rather than leaving a promise the chapter does not keep.
+% One consolidated table, one row per method: family, generic or domain-informed, node
+% and edge retention, offline cost, memory and speed against baseline, matched-state and
+% cross-state accuracy. Generated by the analysis pipeline.
 
 
-% Template examples for tables and figures, kept for reference.
-% \section{Table and Figures}
-%         \begin{table}[h] % h for Here, t for Top, b for Bottom
-%                 \centering
-%                 \caption{By convention, Table caption goes on top.}
-%                 \begin{tabular}{lcr}
-%                         \textbf{Left} & \textbf{center} & \textbf{right} \\
-%                         \hline
-%                         111 & 222 & 333 \\
-%                         444 & 555 & 666
-%                 \end{tabular}
-%         \end{table}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Holding pen: every float below is generated and none is referenced from the prose yet.
+% Each one is to be filed into its section, moved to the appendix, or deleted.
+% Rebuild with: PYTHONPATH=src python -m analysis.make_all
 %
-%         \begin{figure}[h]
-%                 \centering
-%                 \includegraphics[width=0.5\linewidth]{example-image}
-%                 \caption[Example figure]{Example figure. Notice that the caption goes below and that there is a way to have a shorter caption for the list of Figures.}
-%         \end{figure}
-%
-%         \begin{figure*}[b]
-%                 \centering
-%                 \includegraphics[width=0.8\linewidth, height=.2\textheight]{example-image}
-%                 \caption{Example figure spanning the two columns.}
-%         \end{figure*}
+% Floats marked FABRICATED in their captions are placeholders for runs that do not exist
+% (grep TODO_ src/analysis/fake_data.py). Outstanding: the whole summarization family,
+% the RQ1 published-model and standard-encoder baselines, RQ1a protocol sensitivity, the H1 receptive-field metric,
+% RQ4 seed variance, and CPU inference.
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\providecommand{\resultsfigs}{media/results/figures}
+\providecommand{\resultsgen}{media/results/tables}
+
+\clearpage
+\section{Figure and Table Gallery (unsorted, to be filed)}
+\label{sec:results:gallery}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{RQ1: Baseline Predictive Performance}
+\label{sec:results:gallery:rq1}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\columnwidth]{\resultsfigs/rq1_parity}
+    \caption[Full-graph parity plot]{Predicted against true optimizability for the
+    full-graph baseline on the test split.}
+    \label{fig:rq1_parity}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\columnwidth]{\resultsfigs/rq1_calibration}
+    \caption[Baseline calibration]{Binned reliability of the full-graph baseline. A
+    model that has collapsed toward the label mean shows here as a flat curve
+    regardless of how healthy its RMSE looks.}
+    \label{fig:rq1_calibration}
+\end{figure}
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{\resultsfigs/rq1_residuals_by_size}
+    \caption[Residuals by circuit scale]{Absolute error against graph size (median
+    and interquartile band), with the number of graphs per size bin alongside. Sets
+    the expectation for the reduction chapters: a reduction acting hardest on large
+    graphs starts from whatever position this plot shows.}
+    \label{fig:rq1_residuals_by_size}
+\end{figure*}
+\clearpage
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\columnwidth]{\resultsfigs/rq1_error_by_tier}
+    \caption[Error by optimization tier]{Absolute error by tier. Tiers differ by
+    construction, since a graph already optimized once has less left to remove, so
+    a difference here is expected and its absence would itself be a finding about
+    the generation pipeline.}
+    \label{fig:rq1_error_by_tier}
+\end{figure}
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{\resultsfigs/rq1_error_by_design}
+    \caption[Per-design error on unseen designs]{Per-design RMSE and $R^2$ on the
+    design-disjoint test set. The spread across designs is very wide and $R^2$ is
+    strongly negative on some of them, which means the pooled score describes the
+    mix of designs at least as much as it describes the model.
+    Feeds~\ref{sec:results:rq1:erroranalysis} and~\ref{sec:results:rq1:protocol}.}
+    \label{fig:rq1_error_by_design}
+\end{figure*}
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{\resultsfigs/rq1_baseline_tiers}
+    \caption[Baseline group comparison]{\textbf{PARTLY FABRICATED.} The RQ1
+    baseline comparison. The trivial predictors (fitted on validation and
+    scored on test) and the encoder are measured. The standard encoders under
+    identical training and the DeepGate4/HOGA rows are invented placeholders; see \texttt{src/analysis/fake\_data.py}. Note that the size-only regressor
+    outranks the encoder on Spearman correlation.}
+    \label{fig:rq1_baseline_tiers}
+\end{figure*}
+\clearpage
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{\resultsfigs/rq1_training_curves}
+    \caption[Training trajectories]{Validation loss and $R^2$ per epoch for every
+    Orchestrate training run, coloured by reduction family. Validation $R^2$ swings
+    by several units between consecutive epochs on some configurations, which
+    bounds how much weight any single-seed comparison can carry
+    (\ref{sec:method:experiment:metrics:stats}).}
+    \label{fig:rq1_training_curves}
+\end{figure*}
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{\resultsfigs/rq1_training_cost}
+    \caption[Training budget consumed]{Wall-clock and epochs actually consumed per
+    configuration, against epochs to best validation loss. Two runs of the same
+    nominal budget are not the same amount of compute if one stopped at epoch 4 and
+    the other at 10.}
+    \label{fig:rq1_training_cost}
+\end{figure*}
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{\resultsfigs/rq1_hp_sweep}
+    \caption[Hyperparameter sweep]{The hyperparameter sweep that fixed the architecture:
+    progress per worker, objective by encoder, and trial outcomes. Memory pressure
+    is the dominant failure mode: a large share of trials were pruned on
+    memory exhaustion rather than on their objective, which is the
+    hyperparameter-search face of the bottleneck this thesis is about.
+    Reconstructed from the worker logs; the study databases were lost with the
+    scratch workspaces.}
+    \label{fig:rq1_hp_sweep}
+\end{figure*}
+\clearpage
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{\resultsfigs/rq1_variance_decomposition}
+    \caption[Variance decomposition of the baseline score]{How much of the
+    full-graph baseline's $R^2 = 0.343$ is reachable without learning anything
+    about an individual circuit. Grouping by dataset tier carries only 1.1\% of
+    the label variance, so the tier is not a confound. Grouping by \emph{source
+    script} carries 25.0\%: a predictor that outputs nothing but each group's mean
+    scores $R^2 = 0.250$, i.e. roughly three-quarters of the model's reported
+    figure. Held against within-group variance the model retains $R^2 = 0.124$.
+    That residual is the part attributable to reading circuit structure, and it is
+    the number \ref{sec:results:rq1} should defend.}
+    \label{fig:rq1_variance_decomposition}
+\end{figure*}
+\clearpage
+
+\input{\resultsgen/rq1_baselines}
+\input{\resultsgen/rq1_per_design}
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{\resultsfigs/rq1_hp_parameters}
+    \caption[Hyperparameter sensitivity]{Objective against each searched
+    hyperparameter over the 52 completed trials. This is a coarse sensitivity read
+    rather than an importance analysis: Optuna concentrates sampling on promising
+    regions and the sampler state was lost with the scratch workspaces, so it
+    supports ``which settings never produced a good trial'' and not ``which
+    parameter matters most''.}
+    \label{fig:rq1_hp_parameters}
+\end{figure*}
+\clearpage
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{\resultsfigs/rq1_error_by_target_bin}
+    \caption[Baseline performance by optimizability band]{The full-graph baseline
+    as a function of how much the circuit actually needs optimizing. The model
+    tracks the truth on the two lowest bands, which hold 80\% of the corpus, and
+    then flattens: at a true optimizability above 0.20 it predicts 0.046 against a
+    true mean of 0.226, an absolute error of 0.180. It has largely learned the
+    label's marginal distribution rather than the task.}
+    \label{fig:rq1_error_by_target_bin}
+\end{figure*}
+\clearpage
+
+\input{\resultsgen/rq1_hyperparameters}
+\clearpage
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{RQ1a: Protocol Sensitivity}
+\label{sec:results:gallery:rq1a}
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{\resultsfigs/rq1a_split_protocol}
+    \caption[Split protocol sensitivity]{\textbf{MOSTLY FABRICATED.} How much of
+    the score is design recognition. Only the design-disjoint row is measured; the
+    random and recipe-disjoint rows are placeholders for two training runs that
+    have not been made. Until they exist, the comparison against published numbers
+    obtained under leakier protocols cannot be made quantitative.}
+    \label{fig:rq1a_split_protocol}
+\end{figure*}
+
+\input{\resultsgen/rq1a_protocol}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{RQ2: Reduction Efficiency}
+\label{sec:results:gallery:rq2}
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{\resultsfigs/rq2_retention}
+    \caption[Node and edge retention]{\textbf{PARTLY FABRICATED.} Offline
+    compression, reported separately for nodes and edges. Partitioning keeps every
+    node by construction, so a single ``compression'' figure would hide the whole
+    distinction (\ref{sec:prelim:reduction:measuring}). The summarization rows are
+    invented.}
+    \label{fig:rq2_retention}
+\end{figure*}
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{\resultsfigs/rq2_retention_distribution}
+    \caption[Retention distributions]{Per-graph retention over 10{,}000 graphs.
+    Compression is a distribution rather than a ratio: the parameter-free methods'
+    compression is a property of each circuit, and PageRank's node retention is
+    nearly a point mass at its configured 0.8 while AND-gate-only's is not, which
+    is what makes the pairing between them approximate rather than exact.}
+    \label{fig:rq2_retention_distribution}
+\end{figure*}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\columnwidth]{\resultsfigs/rq2_offline_cost}
+    \caption[Offline cost per method]{\textbf{PARTLY FABRICATED.} Wall-clock cost
+    of computing each reduction, per graph. Spans two orders of magnitude across
+    methods.}
+    \label{fig:rq2_offline_cost}
+\end{figure}
+\clearpage
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\columnwidth]{\resultsfigs/rq2_amortisation}
+    \caption[Amortisation threshold]{How many epochs over the corpus a cached
+    reduction must serve before its offline cost is repaid by the training time it
+    saves. This is the form~\ref{sec:method:experiment:metrics:reduction} asks the
+    offline cost to be reported in, rather than as a raw number of seconds.}
+    \label{fig:rq2_amortisation}
+\end{figure}
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{\resultsfigs/rq2_vram}
+    \caption[Peak training memory]{Peak allocated device memory per configuration at three
+    order statistics. The mean, p95 and max disagree by an order of magnitude, and
+    that gap is the point: a graph larger than the batch budget forms a batch of
+    its own, so the maximum is floored by the largest circuit in the corpus no
+    matter what the reduction did to the average one.}
+    \label{fig:rq2_vram}
+\end{figure*}
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{\resultsfigs/rq2_throughput}
+    \caption[Training throughput]{Mean step time and speedup against the full-graph
+    baseline. Speedup under-delivers relative to compression because the kernels are
+    latency-bound on message-passing gather/scatter
+    (\ref{sec:method:experiment:hardware}), so removing work does not translate
+    proportionally into wall-clock.}
+    \label{fig:rq2_throughput}
+\end{figure*}
+\clearpage
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{\resultsfigs/rq2_cost_vs_size}
+    \caption[Cost profile against graph size]{Peak memory and step time as a
+    function of graph size. In absolute terms every method traces the same memory
+    curve, because memory tracks the graph rather than the reduction, so the two ratio panels
+    are where any difference between methods is visible at all. Reporting a single
+    peak per configuration would conflate the reduction's effect with which graphs
+    happened to land in the peak batch.}
+    \label{fig:rq2_cost_vs_size}
+\end{figure*}
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{\resultsfigs/rq2_paired_savings}
+    \caption[Paired per-graph savings]{Per-graph peak-memory and step-time savings against
+    the baseline, paired by graph id, with 95\% percentile bootstrap intervals. A
+    red $p$-value marks a Wilcoxon signed-rank test that fails to separate the
+    saving from noise: spanning forest's step-time saving is inside the noise,
+    despite removing 42\% of edges.}
+    \label{fig:rq2_paired_savings}
+\end{figure*}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\columnwidth]{\resultsfigs/rq2_partition_balance}
+    \caption[Partitioner trade-off]{Edge cut against partition imbalance for the
+    four partitioners at the same $k$. Since all four keep every node and differ
+    only in which edges they cut, this plane is their entire comparison.}
+    \label{fig:rq2_partition_balance}
+\end{figure}
+\clearpage
+
+\input{\resultsgen/rq2_efficiency}
+\input{\resultsgen/rq2_paired_savings}
+\input{\resultsgen/rq2_partition_balance}
+\clearpage
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{RQ3: Predictive Retention and Trade-offs}
+\label{sec:results:gallery:rq3}
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{\resultsfigs/rq3_accuracy}
+    \caption[Matched-state accuracy]{\textbf{PARTLY FABRICATED.} RMSE, $R^2$ and
+    Spearman under the reduction each model was trained with, against the
+    full-graph baseline. The three metrics disagree about the ranking, which is
+    exactly the failure mode~\ref{sec:method:experiment:metrics} exists to catch.
+    The summarization rows are invented.}
+    \label{fig:rq3_accuracy}
+\end{figure*}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\columnwidth]{\resultsfigs/rq3_metric_divergence}
+    \caption[RMSE against explained variance]{RMSE against $R^2$, one point per
+    configuration. Several configurations hold RMSE close to the baseline while
+    $R^2$ falls below zero. This is the same dissociation \citet{cts_bench2026} report
+    on a coarsened EDA graph, and the reason error and explained variance are never
+    reported separately here.}
+    \label{fig:rq3_metric_divergence}
+\end{figure}
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{\resultsfigs/rq3_retention_vs_compression}
+    \caption[Accuracy against achieved compression]{Matched-state $R^2$ against
+    edge and node retention. Without this plane, ``which method is best'' confounds
+    a genuinely better method with one that simply reduced less
+    (\ref{sec:results:rq3:attribution}).}
+    \label{fig:rq3_retention_vs_compression}
+\end{figure*}
+\clearpage
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{\resultsfigs/rq3_pareto}
+    \caption[Pareto front]{Accuracy against efficiency, with the dominance frontier
+    drawn. The full-graph baseline sits on the same axes at zero saving, so ``no
+    reduction'' competes directly against every reduction.}
+    \label{fig:rq3_pareto}
+\end{figure*}
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{\resultsfigs/rq3_accuracy_retained}
+    \caption[Accuracy retained under reduction]{Each metric as a fraction of the
+    full-graph baseline, so that this figure lines up row-for-row against the
+    efficiency ranking of~\ref{sec:results:rq2:ranking}.}
+    \label{fig:rq3_accuracy_retained}
+\end{figure*}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\columnwidth]{\resultsfigs/rq3_val_test_gap}
+    \caption[Validation-to-test gap]{The same configurations scored on validation
+    and on test. Under a design-level split these are different circuits rather
+    than two samples of one population, so the size of this gap bounds how much of
+    the validation-selected model choice transfers.}
+    \label{fig:rq3_val_test_gap}
+\end{figure}
+\clearpage
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{\resultsfigs/rq3_stratified_matched}
+    \caption[Matched-state ranking under label strata]{The matched-state result
+    re-scored on four subsets of the same test split, from the persisted per-graph
+    predictions, with no retraining. Read the strata as answering different questions
+    rather than as more or less trustworthy: excluding the two fixed-point designs
+    selects on a design property; restricting to $y > 0$ selects on the outcome
+    variable and so its $R^2$ is not comparable to the pooled column; the Syn4
+    column is the easiest stratum. Two conclusions hold across all four: no
+    reduction beats the full graph on $R^2$, and sparsification beats partitioning.
+    Two do not: random hashing's $R^2$ moves from $-0.98$ to $-0.06$ once the
+    fixed-point designs are excluded, and METIS is worst overall yet best on
+    Syn4-derived graphs, which is the signature of a model that collapsed onto predicting
+    high optimizability rather than of a failure of partitioning.}
+    \label{fig:rq3_stratified_matched}
+\end{figure*}
+\clearpage
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{\resultsfigs/rq3_stratified_cross}
+    \caption[Cross-state ranking under label strata]{The same treatment for the
+    full-graph evaluation pass. Ranking behaviour separates sharply from error here:
+    level slicing reaches a Spearman of 0.601 on full graphs, above the full-graph
+    baseline's 0.185, while AND-gate-only reaches $-0.467$, ordering circuits
+    backwards. Neither is visible in $R^2$ alone.}
+    \label{fig:rq3_stratified_cross}
+\end{figure*}
+
+\input{\resultsgen/rq3_retention}
+\input{\resultsgen/rq3_pareto}
+\input{\resultsgen/rq3_stratified}
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{\resultsfigs/rq3_by_tier}
+    \caption[Matched-state accuracy by tier]{Every configuration split across the
+    two stored tiers. The full-graph baseline scores $R^2 = -0.038$ on tier-0 base
+    graphs against $+0.358$ on tier-1: its absolute error on tier 0 is smaller
+    (RMSE 0.025 vs 0.047), but tier-0 labels have so much less spread that the
+    model fails to beat their mean. PageRank pruning is the exception, scoring
+    $R^2 = 0.204$ and $\rho = 0.521$ on tier 0, better than the unreduced
+    baseline on that tier.}
+    \label{fig:rq3_by_tier}
+\end{figure*}
+\clearpage
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{\resultsfigs/rq3_by_source}
+    \caption[Matched-state accuracy by source script]{The same partition taken by
+    the script that produced each graph, which separates the corpus far more
+    sharply than the tier does (\ref{fig:rq1_variance_decomposition}). Every
+    configuration degrades from Syn4-derived graphs to C2RS-derived ones, and the
+    partitioners degrade catastrophically: METIS reaches $R^2 = -736$ on
+    C2RS-derived graphs, where the labels are near zero and it predicts high
+    optimizability regardless.}
+    \label{fig:rq3_by_source}
+\end{figure*}
+\clearpage
+
+\input{\resultsgen/rq3_by_subgroup}
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{\resultsfigs/rq3_by_target_bin}
+    \caption[All configurations by optimizability band]{Every configuration as a
+    function of how optimizable the circuit truly is. Level slicing predicts
+    $0.0000$ in every band, a fully collapsed model that the pooled metrics do
+    not expose. METIS over-predicts everywhere, which is why its pooled $R^2$ is
+    $-3.06$, yet that same miscalibration makes it the \emph{most} accurate
+    configuration on the highly optimizable circuits: MAE $0.046$ above $y = 0.20$
+    against the unreduced baseline's $0.180$. If the use case is finding circuits
+    worth optimizing rather than scoring all of them, the pooled ranking inverts.}
+    \label{fig:rq3_by_target_bin}
+\end{figure*}
+\clearpage
+
+\input{\resultsgen/rq3_by_target_bin}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{RQ4: Value of Domain-Informed Adaptation}
+\label{sec:results:gallery:rq4}
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{\resultsfigs/rq4_paired_gaps}
+    \caption[Paired domain-vs-generic gaps]{Domain-informed minus generic within
+    each pairing. The first two pairings are matched by construction (same $k$, all
+    nodes kept, only the cut rule differs); the third is matched by calibration;
+    the fourth is \emph{not} matched and is hatched accordingly. Read every bar
+    against~\ref{fig:rq4_pairing_compression}.}
+    \label{fig:rq4_paired_gaps}
+\end{figure*}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\columnwidth]{\resultsfigs/rq4_pairing_compression}
+    \caption[Pairing quality]{How closely matched each RQ4 pairing actually is. The
+    spanning-forest / random-edge-dropout pair is far apart because the configured
+    drop rate of 0.3 leaves 69.7\% of edges against spanning forest's 58.1\%;
+    raising the rate to approximately 0.419 would match them.}
+    \label{fig:rq4_pairing_compression}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\columnwidth]{\resultsfigs/rq4_seed_variance}
+    \caption[Gaps against run-to-run noise]{\textbf{ERROR BARS FABRICATED.} The
+    measured RQ4 gaps with an invented $\pm 0.05$ band. Every configuration in this
+    thesis is trained exactly once, so there is no run-to-run variance to judge
+    these gaps against. The figure exists to make that visible rather than to
+    report an interval (\ref{sec:results:rq4:gap}).}
+    \label{fig:rq4_seed_variance}
+\end{figure}
+\clearpage
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{\resultsfigs/rq4_domain_vs_generic}
+    \caption[Unpaired domain-vs-generic view]{Every domain-informed method against
+    every generic one on the same axes. Weaker evidence than the pairings, since
+    the two groups did not remove the same amount, but it answers the question a
+    reader asks first.}
+    \label{fig:rq4_domain_vs_generic}
+\end{figure*}
+
+\input{\resultsgen/rq4_pairings}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{RQ5: Cross-Structural Generalization}
+\label{sec:results:gallery:rq5}
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{\resultsfigs/rq5_matched_vs_full}
+    \caption[Matched-state against full-graph evaluation]{The same weights
+    evaluated under the reduction they were trained with and on unreduced graphs.
+    For every method here a full graph needs no conversion, since it already is a
+    valid input, which is what makes this a direct test rather than a comparison
+    across two input formats (\ref{sec:method:summary:schema}).}
+    \label{fig:rq5_matched_vs_full}
+\end{figure*}
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{\resultsfigs/rq5_dropoff}
+    \caption[Cost of the structural shift]{Full-graph score minus matched-state
+    score, by method and family. A positive bar means the model scores
+    \emph{better} on graphs it never trained on, which would say the reduction was
+    hurting the model rather than the evaluation.}
+    \label{fig:rq5_dropoff}
+\end{figure*}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\columnwidth]{\resultsfigs/rq5_transfer_quadrant}
+    \caption[Transfer quadrant]{Matched-state against full-graph $R^2$. The
+    diagonal is perfect transfer; below it the structural shift cost accuracy,
+    above it the reduction was the thing doing damage.}
+    \label{fig:rq5_transfer_quadrant}
+\end{figure}
+\clearpage
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{\resultsfigs/rq5_inference_cost}
+    \caption[Inference cost by evaluation state]{Throughput and peak memory for a
+    query, under each evaluation state. Inference stores neither gradients nor
+    activations, so the memory argument that forced the reduction at training time
+    need not bind here at all, which is the practical claim
+    of~\ref{sec:intro:rq5}.}
+    \label{fig:rq5_inference_cost}
+\end{figure*}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\columnwidth]{\resultsfigs/rq5_cpu_inference}
+    \caption[GPU against CPU inference]{\textbf{MOSTLY FABRICATED.} The ``infer
+    full on modest hardware'' half of RQ5. Every surviving inference CSV records
+    \texttt{device=cuda}; the CPU bars are placeholders for a
+    \texttt{src/shell/test\_cpu.sh} pass that has not been run.}
+    \label{fig:rq5_cpu_inference}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\columnwidth]{\resultsfigs/rq5_positive_control}
+    \caption[RQ5 positive control]{\textbf{ENTIRELY FABRICATED.} Colour refinement
+    at count-cap $\infty$ merges only nodes the encoder provably cannot
+    distinguish, so a model trained on those graphs \emph{must} land on the dashed
+    baseline when queried on full graphs. Without this control a poor transfer
+    elsewhere cannot be told apart from a broken evaluation path, which is why the
+    slot is held open rather than dropped.}
+    \label{fig:rq5_positive_control}
+\end{figure}
+\clearpage
+
+\input{\resultsgen/rq5_cross_state}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Summarization and H1 (no data yet)}
+\label{sec:results:gallery:summarization}
+% Placeholders. Without the summarization runs this subsection, and the summarization
+% family in the methodology and research questions, comes out.
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{\resultsfigs/summ_landscape}
+    \caption[Summarization landscape]{\textbf{ENTIRELY FABRICATED.} The
+    summarization family in the compression/accuracy plane and its offline cost.
+    No summarization configuration has been trained or measured, and random
+    within-type merging, the instrument that makes RQ4's third pairing kind
+    answerable at all (\ref{sec:method:summary:random}), is not implemented.}
+    \label{fig:summ_landscape}
+\end{figure*}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\columnwidth]{\resultsfigs/summ_wl_depth_probe}
+    \caption[Residual redundancy after strashing]{\textbf{ENTIRELY FABRICATED.}
+    Node retention under colour refinement at depths $d = 1 \dots 4$. Every corpus
+    graph is structurally hashed, so depth~1 should find almost nothing; how much
+    survives beyond one hop is a reportable statistic about AIGs in its own right
+    and bounds what the exact track can compress.}
+    \label{fig:summ_wl_depth_probe}
+\end{figure}
+
+\clearpage
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\columnwidth]{\resultsfigs/h1_receptive_field}
+    \caption[Effective receptive field]{\textbf{ENTIRELY FABRICATED.} Mean 4-hop
+    fanin-cone size after reduction relative to before. The metric is specified
+    in~\ref{sec:method:experiment:metrics:reduction} and \emph{not implemented};
+    until it is, H1 is asserted rather than tested and must not be reported as
+    evidenced.}
+    \label{fig:h1_receptive_field}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\columnwidth]{\resultsfigs/h1_path_contraction}
+    \caption[H1: receptive field against accuracy]{\textbf{ENTIRELY FABRICATED.}
+    The form the H1 test would take: if coarsening helps by contracting paths,
+    accuracy should rise with the receptive-field ratio. Both axes are invented.}
+    \label{fig:h1_path_contraction}
+\end{figure}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Consolidated Summary}
+\label{sec:results:gallery:summary}
+
+\input{\resultsgen/summary_all}

@@ -1,0 +1,62 @@
+\subsection{Graph Reduction Techniques}
+\label{sec:relwork:reduction}
+
+\subsubsection{Graph Partitioning}
+\label{sec:relwork:reduction:partitioning}
+METIS \citep{karypis1997metis} is the classical multilevel partitioner and the one used
+here: it minimises the number of cut edges subject to balanced block sizes. That
+objective is topology-blind in the sense that matters for an AIG\@: it counts cut edges
+without asking which edges they are, and a cut that severs a long combinational path
+costs the same as one that severs a local shortcut. The span-weighted variant
+of~\ref{sec:method:partition:spanmetis} modifies exactly this term.
+
+\subsubsection{Graph Sparsification}
+\label{sec:relwork:reduction:sparsification}
+The principled end of the family preserves a stated property within a stated tolerance:
+a $t$-spanner keeps pairwise distances within a factor $t$
+\citep{peleg1989spanners,baswana2007spanners}, and spectral methods preserve the
+Laplacian quadratic form. One negative result from this thesis belongs in the record:
+spanner-based sparsification was implemented and abandoned, because a strashed AIG lacks
+the dense cyclic redundancy spanners exploit and the surviving spanning structure is
+nearly the whole graph (\ref{sec:method:sparse:forest}). The methods actually run are
+correspondingly simpler (\ref{sec:method:reduction:sparsification}).
+
+\subsubsection{Graph Summarization and Coarsening}
+\label{sec:relwork:reduction:summarization}
+The methods of~\ref{sec:method:reduction:summarization} come from four strands. The exact
+strand merges by equivalence: colour refinement and bisimulation with the count-cap
+interpolation between them \citep{bollen2023exact}, resting on the equitable-partition
+foundation of \citet{grohe2014colourrefinement}, while k-SNAP \citep{tian2008ksnap}
+groups by attributes and neighbour classes and, being the depth-1 case of graded
+refinement, is cited rather than run. The spectral and classical strand descends from scientific
+computing: Local Variation coarsening \citep{loukas2019localvariation}, the lineage
+surveyed by \citet{chen2022coarsening}, and Kron reduction with its directed extension
+\citep{sugiyama2023kron}. The GNN-aware strand is ConvMatch
+\citep{dickens2024convmatch}, which merges nodes equivalent under the graph convolution
+itself rather than under a graph property, reporting about 95\% of full-graph
+performance at 1\% of the size on node classification. The cheap strand is hashing:
+UGC coarsens by locality-sensitive hashing in linear time \citep{ugc2024}.
+\citet{shabani2023summarization} survey the field's use with GNNs.
+
+Condensation is the family this thesis excludes (\ref{sec:intro:scope:reductions}), and
+the four reasons belong here, where a reader will look for them. GCond and its
+descendants \citep{jin2022gcond} synthesise a new small graph by gradient matching
+rather than merging the real one, so (i) no correspondence exists between synthetic and
+real nodes, (ii) the method is label-dependent by construction, (iii) gradient matching
+ties the result to one architecture, and (iv) with no real nodes there is nothing to run
+cross-state inference on, so RQ5 is unanswerable even in principle.
+
+\subsubsection{Reduction as Preprocessing for GNN Training}
+\label{sec:relwork:reduction:forgnn}
+The specific precedent for this setup is small. SCAL \citep{huang2021scal} trains on a
+coarsened graph and infers on the original with the same weights, the shared-weights
+mechanism RQ5 tests, whereas \citet{generale2022scaling} transfer weights back through a
+node-to-super-node mapping for a node-level task on knowledge graphs; their finding that
+the \emph{content} of super-node features was critical is the direct justification for
+carrying member counts and level statistics on super-nodes here
+(\ref{sec:method:summary:mergemap}). The same situation is framed by
+\citet{buffelli2022sizeshift} as distribution shift in graph size. The distinction that makes RQ5 well posed
+falls out of these three: a node-level task needs a mapping back to the original nodes,
+whereas a graph-level regression needs only a compatible input space
+(\ref{sec:method:summary:schema}), so shared weights suffice and no transfer step exists
+to go wrong.

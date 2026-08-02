@@ -19,13 +19,17 @@
 % Graph reduction: coarsening, summarization, sparsification
 % ---------------------------------------------------------------------
 
-@misc{bollen2023exact,
+@inproceedings{bollen2023exact,
   title     = {Learning Graph Neural Networks using Exact Compression},
   author    = {Bollen, Jeroen and Steegmans, Jasper and Van den Bussche, Jan and Vansummeren, Stijn},
+  booktitle = {Proceedings of the 6th Joint Workshop on Graph Data Management Experiences \& Systems (GRADES) and Network Data Analytics (NDA)},
+  pages     = {8:1--8:9},
+  publisher = {ACM},
   year      = {2023},
+  doi       = {10.1145/3594778.3594878},
   note      = {Collapses nodes in the same $d$-step colour-refinement class; provably identical GNN output. Graded variant $cr_c$ with $c=\infty$ (colour refinement) and $c=1$ (bisimulation)}
 }
-% TODO: verify venue (recorded in notes only as 2023)
+% Verified against DBLP conf/grades/BollenSBV23.
 
 @misc{generale2022scaling,
   title     = {Scaling R-GCN Training with Graph Summarization},
@@ -35,13 +39,14 @@
 }
 % TODO: verify venue (companion proceedings, recorded in notes only as 2022)
 
-@article{hashemi2024survey,
-  title   = {A Comprehensive Survey on Graph Reduction: Sparsification, Coarsening, and Condensation},
-  author  = {Hashemi, Mohammad and Gong, Shengbo and Ni, Juntong and Fan, Wenqi and Prakash, B. Aditya and Jin, Wei},
-  year    = {2024},
-  journal = {arXiv preprint}
+@inproceedings{hashemi2024survey,
+  title     = {A Comprehensive Survey on Graph Reduction: Sparsification, Coarsening, and Condensation},
+  author    = {Hashemi, Mohammad and Gong, Shengbo and Ni, Juntong and Fan, Wenqi and Prakash, B. Aditya and Jin, Wei},
+  booktitle = {Proceedings of the Thirty-Third International Joint Conference on Artificial Intelligence (IJCAI)},
+  pages     = {8058--8066},
+  year      = {2024}
 }
-% TODO: verify arXiv id and author list
+% Verified against DBLP conf/ijcai/HashemiGNFP024 (published record, supersedes the arXiv preprint).
 
 @misc{chen2022coarsening,
   title   = {Graph Coarsening: From Scientific Computing to Machine Learning},
@@ -79,12 +84,12 @@
   title     = {Graph Reduction with Spectral and Cut Guarantees},
   author    = {Loukas, Andreas},
   journal   = {Journal of Machine Learning Research},
+  volume    = {20},
+  pages     = {116:1--116:42},
   year      = {2019},
   note      = {Local Variation coarsening; restricted spectral approximation guarantee}
 }
-% TODO: verify -- entry type should probably be a journal article, not inproceedings.
-% (Do not write an "at" sign in a comment here: BibTeX scans for it even in comments
-% and will try to parse the following word as an entry type.)
+% Verified against DBLP journals/jmlr/Loukas19.
 
 @misc{sugiyama2023kron,
   title  = {Kron Reduction for Directed Graphs},
@@ -97,10 +102,13 @@
   title     = {A Fast and High Quality Multilevel Scheme for Partitioning Irregular Graphs},
   author    = {Karypis, George and Kumar, Vipin},
   journal   = {SIAM Journal on Scientific Computing},
+  volume    = {20},
+  number    = {1},
+  pages     = {359--392},
   year      = {1998},
-  note      = {METIS. The 1997 technical report is the version cited in most GNN work}
+  doi       = {10.1137/S1064827595287997}
 }
-% TODO: pick the report or the journal version and fix the entry type
+% Verified against DBLP journals/siamsc/KarypisK98.
 
 @inproceedings{tian2008ksnap,
   title     = {Efficient Aggregation for Graph Summarization},
@@ -110,13 +118,92 @@
   note      = {k-SNAP. Subsumed here by graded colour refinement at $d=1$; cited, not run}
 }
 
-@misc{grohe2014colourrefinement,
-  title  = {Dimension Reduction via Colour Refinement},
-  author = {Grohe, Martin and Kersting, Kristian and Mladenov, Martin and Selman, Erkal},
-  year   = {2014},
-  note   = {Colour refinement computes the coarsest equitable partition -- the formal basis for losslessness under a permutation-equivariant GNN}
+@inproceedings{grohe2014colourrefinement,
+  title     = {Dimension Reduction via Colour Refinement},
+  author    = {Grohe, Martin and Kersting, Kristian and Mladenov, Martin and Selman, Erkal},
+  booktitle = {Algorithms -- ESA 2014, 22th Annual European Symposium},
+  series    = {Lecture Notes in Computer Science},
+  volume    = {8737},
+  pages     = {505--516},
+  publisher = {Springer},
+  year      = {2014},
+  doi       = {10.1007/978-3-662-44777-2_42},
+  note      = {Colour refinement computes the coarsest equitable partition -- the formal basis for losslessness under a permutation-equivariant GNN}
 }
-% TODO: verify venue (ESA?) and author list
+% Verified against DBLP conf/esa/GroheKMS14.
+
+% ---------------------------------------------------------------------
+% Sparsification: methods cited in sec:method:reduction:sparsification
+% (all verified against DBLP except kruskal1956mst, see its note)
+% ---------------------------------------------------------------------
+
+@inproceedings{rong2020dropedge,
+  title     = {DropEdge: Towards Deep Graph Convolutional Networks on Node Classification},
+  author    = {Rong, Yu and Huang, Wenbing and Xu, Tingyang and Huang, Junzhou},
+  booktitle = {International Conference on Learning Representations (ICLR)},
+  year      = {2020}
+}
+% Verified against DBLP conf/iclr/RongHXH20.
+
+@article{kruskal1956mst,
+  title   = {On the Shortest Spanning Subtree of a Graph and the Traveling Salesman Problem},
+  author  = {Kruskal, Joseph B.},
+  journal = {Proceedings of the American Mathematical Society},
+  volume  = {7},
+  number  = {1},
+  pages   = {48--50},
+  year    = {1956},
+  doi     = {10.1090/S0002-9939-1956-0078686-7},
+  note    = {Not indexed in DBLP; metadata taken from the publisher record}
+}
+
+@article{peleg1989spanners,
+  title   = {Graph Spanners},
+  author  = {Peleg, David and Sch{\"a}ffer, Alejandro A.},
+  journal = {Journal of Graph Theory},
+  volume  = {13},
+  number  = {1},
+  pages   = {99--116},
+  year    = {1989},
+  doi     = {10.1002/jgt.3190130114}
+}
+% Verified against DBLP journals/jgt/PelegS89.
+
+@article{baswana2007spanners,
+  title   = {A Simple and Linear Time Randomized Algorithm for Computing Sparse Spanners in Weighted Graphs},
+  author  = {Baswana, Surender and Sen, Sandeep},
+  journal = {Random Structures \& Algorithms},
+  volume  = {30},
+  number  = {4},
+  pages   = {532--563},
+  year    = {2007},
+  doi     = {10.1002/rsa.20130}
+}
+% Verified against DBLP journals/rsa/BaswanaS07.
+
+@article{brin1998anatomy,
+  title   = {The Anatomy of a Large-Scale Hypertextual Web Search Engine},
+  author  = {Brin, Sergey and Page, Lawrence},
+  journal = {Computer Networks},
+  volume  = {30},
+  number  = {1-7},
+  pages   = {107--117},
+  year    = {1998},
+  doi     = {10.1016/S0169-7552(98)00110-X}
+}
+% Verified against DBLP journals/cn/BrinP98.
+
+@article{langville2003pagerank,
+  title   = {Deeper Inside PageRank},
+  author  = {Langville, Amy Nicole and Meyer, Carl Dean},
+  journal = {Internet Mathematics},
+  volume  = {1},
+  number  = {3},
+  pages   = {335--380},
+  year    = {2003},
+  doi     = {10.1080/15427951.2004.10129091}
+}
+% Verified against DBLP journals/im/LangvilleM03 (DBLP year 2003; the issue itself is dated 2004).
 
 % ---------------------------------------------------------------------
 % Coarsening as preprocessing for GNN training
@@ -147,13 +234,13 @@
 }
 
 @article{cts_bench2026,
-  title   = {Benchmarking Graph Coarsening Trade-offs for GNNs in Clock Tree Synthesis},
-  author  = {Khadka, TODO and Roxy, TODO and Ahmed, TODO},
+  title   = {CTS-Bench: Benchmarking Graph Coarsening Trade-offs for GNNs in Clock Tree Synthesis},
+  author  = {Khadka, Barsat and Roxy, Kawsher A. and Ahmed, Md Rubel},
   year    = {2026},
   journal = {arXiv preprint arXiv:2602.19330},
-  note    = {Nearest competitor. Post-placement gate-level netlists, clock-skew prediction; one bespoke spatial clustering heuristic. 17.2x memory / 3x speed at negative zero-shot $R^2$; calls for domain-aware coarsening}
+  doi     = {10.48550/arXiv.2602.19330},
+  note    = {Nearest competitor. Post-placement gate-level netlists, clock-skew prediction; one bespoke spatial clustering heuristic. 17.2x memory / 3x speed at negative zero-shot $R^2$; calls for domain-aware coarsening. DBLP: journals/corr/abs-2602-19330, preprint only, no published venue as of verification}
 }
-% TODO: full author given names
 
 % ---------------------------------------------------------------------
 % Logic synthesis, AIGs, and ABC
@@ -170,9 +257,94 @@
 @inproceedings{mishchenko2006rewriting,
   title     = {DAG-Aware AIG Rewriting: A Fresh Look at Combinational Logic Synthesis},
   author    = {Mishchenko, Alan and Chatterjee, Satrajit and Brayton, Robert K.},
-  booktitle = {Proceedings of the Design Automation Conference (DAC)},
+  booktitle = {Proceedings of the 43rd Design Automation Conference (DAC)},
+  pages     = {532--535},
+  publisher = {ACM},
   year      = {2006},
+  doi       = {10.1145/1146909.1147048},
   note      = {Defines the rewrite/refactor primitives and the MFFC as the unit refactoring operates on -- the basis for the S6 domain argument}
+}
+% Verified against DBLP conf/dac/MishchenkoCB06.
+
+@inproceedings{bjesse2004compression,
+  title     = {DAG-Aware Circuit Compression for Formal Verification},
+  author    = {Bjesse, Per and Bor{\"a}lv, Arne},
+  booktitle = {Proceedings of the International Conference on Computer-Aided Design (ICCAD)},
+  pages     = {42--49},
+  publisher = {IEEE Computer Society / ACM},
+  year      = {2004},
+  doi       = {10.1109/ICCAD.2004.1382541},
+  note      = {Origin of DAG-aware rewriting over precomputed equivalents}
+}
+% Verified against DBLP conf/iccad/BjesseB04.
+
+@article{kuehlmann2002robust,
+  title   = {Robust Boolean Reasoning for Equivalence Checking and Functional Property Verification},
+  author  = {Kuehlmann, Andreas and Paruthi, Viresh and Krohm, Florian and Ganai, Malay K.},
+  journal = {IEEE Transactions on Computer-Aided Design of Integrated Circuits and Systems},
+  volume  = {21},
+  number  = {12},
+  pages   = {1377--1394},
+  year    = {2002},
+  doi     = {10.1109/TCAD.2002.804386},
+  note    = {Structural hashing (one-level lookup on construction) for AIGs}
+}
+% Verified against DBLP journals/tcad/KuehlmannPKG02.
+
+@inproceedings{mishchenko2006scalable,
+  title     = {Scalable Logic Synthesis Using a Simple Circuit Structure},
+  author    = {Mishchenko, Alan and Brayton, Robert K.},
+  booktitle = {Proceedings of the 15th International Workshop on Logic \& Synthesis (IWLS)},
+  pages     = {15--22},
+  year      = {2006},
+  note      = {Not indexed in DBLP; metadata taken from the paper. Source of the resubstitution command and the compress2rs script that C2RS aliases}
+}
+
+@inproceedings{brayton2010abc,
+  title     = {{ABC}: An Academic Industrial-Strength Verification Tool},
+  author    = {Brayton, Robert K. and Mishchenko, Alan},
+  booktitle = {Computer Aided Verification (CAV)},
+  series    = {Lecture Notes in Computer Science},
+  volume    = {6174},
+  pages     = {24--40},
+  publisher = {Springer},
+  year      = {2010},
+  doi       = {10.1007/978-3-642-14295-6\_5},
+  note      = {The citable record for the ABC system; the software itself is \cite{abc}}
+}
+% Verified against DBLP conf/cav/BraytonM10.
+
+@article{li2024orchestration,
+  title   = {DAG-Aware Synthesis Orchestration},
+  author  = {Li, Yingjie and Liu, Mingju and Ren, Haoxing and Mishchenko, Alan and Yu, Cunxi},
+  journal = {IEEE Transactions on Computer-Aided Design of Integrated Circuits and Systems},
+  volume  = {43},
+  number  = {12},
+  pages   = {4666--4675},
+  year    = {2024},
+  doi     = {10.1109/TCAD.2024.3397052},
+  note    = {The orchestration policy behind the target algorithm: per-node selection among rewrite, refactor and resubstitution instead of a fixed command sequence}
+}
+% Verified against DBLP journals/tcad/LiLRMY24 (published record, supersedes arXiv 2310.07846).
+
+@article{lengauer1979dominators,
+  title   = {A Fast Algorithm for Finding Dominators in a Flowgraph},
+  author  = {Lengauer, Thomas and Tarjan, Robert Endre},
+  journal = {ACM Transactions on Programming Languages and Systems},
+  volume  = {1},
+  number  = {1},
+  pages   = {121--141},
+  year    = {1979},
+  doi     = {10.1145/357062.357071}
+}
+% Verified against DBLP journals/toplas/LengauerT79.
+
+@book{demicheli1994synthesis,
+  title     = {Synthesis and Optimization of Digital Circuits},
+  author    = {De Micheli, Giovanni},
+  publisher = {McGraw-Hill},
+  year      = {1994},
+  note      = {Not indexed in DBLP; metadata taken from the publisher record}
 }
 
 @misc{abc,
@@ -181,6 +353,50 @@
   note   = {\url{https://github.com/berkeley-abc/abc}}
 }
 % TODO: pin the commit/version actually used for dataset generation
+
+@misc{walter2025aigverse,
+  title  = {aigverse: A Python Library for Working with Logic Networks, Synthesis, and Optimization},
+  author = {Walter, Marcel},
+  year   = {2025},
+  note   = {MIT licensed. \url{https://github.com/marcelwa/aigverse}. Used by the ML pipeline to read and traverse AIGER files; pyproject.toml pins >=0.0.27}
+}
+% NOT the source of the eight synthetic designs, despite the naming coincidence: aigverse
+% gained a random AIG generator only on 2026-03-09 (v0.1.0), five weeks after those files
+% were committed. See the TODO in sections/methodology/data.tex.
+
+@misc{soeken2018epfl,
+  title  = {The EPFL Logic Synthesis Libraries},
+  author = {Soeken, Mathias and Riener, Heinz and Haaswijk, Winston and Testa, Eleonora and Schmitt, Bruno and Meuli, Giulia and Mozafari, Fereshte and Lee, Siang-Yun and Tempia Calvino, Alessandro and Marakkalage, Dewmini Sudara and De Micheli, Giovanni},
+  year   = {2018},
+  note   = {arXiv:1805.05121. mockturtle/kitty/lorina. Defines the random AIG sampling procedure behind the eight synthetic designs}
+}
+
+% ---------------------------------------------------------------------
+% Benchmark suites contributing source circuits
+% ---------------------------------------------------------------------
+
+@inproceedings{amaru2015epfl,
+  title     = {The EPFL Combinational Benchmark Suite},
+  author    = {Amar{\'u}, Luca and Gaillardon, Pierre-Emmanuel and De Micheli, Giovanni},
+  booktitle = {Proceedings of the 24th International Workshop on Logic \& Synthesis (IWLS)},
+  year      = {2015},
+  note      = {MIT licensed. Source of the eight arithmetic circuits in the corpus}
+}
+
+@inproceedings{brglez1985iscas,
+  title     = {A Neutral Netlist of 10 Combinational Benchmark Circuits and a Target Translator in Fortran},
+  author    = {Brglez, Franc and Fujiwara, Hideo},
+  booktitle = {Proceedings of the IEEE International Symposium on Circuits and Systems (ISCAS)},
+  pages     = {677--692},
+  year      = {1985}
+}
+
+@techreport{yang1991mcnc,
+  title       = {Logic Synthesis and Optimization Benchmarks User Guide: Version 3.0},
+  author      = {Yang, Saeyang},
+  institution = {Microelectronics Center of North Carolina (MCNC)},
+  year        = {1991}
+}
 
 % ---------------------------------------------------------------------
 % Machine learning for logic synthesis
@@ -263,13 +479,16 @@
   booktitle = {International Conference on Learning Representations (ICLR)},
   year      = {2017}
 }
+% Verified against DBLP conf/iclr/KipfW17.
 
 @inproceedings{hamilton2017graphsage,
   title     = {Inductive Representation Learning on Large Graphs},
-  author    = {Hamilton, William L. and Ying, Rex and Leskovec, Jure},
-  booktitle = {Advances in Neural Information Processing Systems (NeurIPS)},
+  author    = {Hamilton, William L. and Ying, Zhitao and Leskovec, Jure},
+  booktitle = {Advances in Neural Information Processing Systems (NIPS)},
+  pages     = {1024--1034},
   year      = {2017}
 }
+% Verified against DBLP conf/nips/HamiltonYL17 (author listed there as Zhitao, not Rex, Ying).
 
 @inproceedings{xu2019gin,
   title     = {How Powerful are Graph Neural Networks?},
@@ -277,6 +496,7 @@
   booktitle = {International Conference on Learning Representations (ICLR)},
   year      = {2019}
 }
+% Verified against DBLP conf/iclr/XuHLJ19.
 
 @inproceedings{xu2018jk,
   title     = {Representation Learning on Graphs with Jumping Knowledge Networks},
@@ -284,15 +504,26 @@
   booktitle = {Proceedings of the International Conference on Machine Learning (ICML)},
   year      = {2018}
 }
+% Verified against DBLP conf/icml/XuLTSKJ18.
 
-@misc{luo2024gnnplus,
-  title   = {What Are Good Positional Encodings for Directed Graphs?},
-  author  = {Luo, Yuankai and TODO},
-  year    = {2025},
-  note    = {GNN+ -- the encoder this work builds on. Implementation: \url{https://github.com/LUOyk1999/GNNPlus}}
+@inproceedings{luo2024gnnplus,
+  title     = {Can Classic GNNs Be Strong Baselines for Graph-level Tasks? Simple Architectures Meet Excellence},
+  author    = {Luo, Yuankai and Shi, Lei and Wu, Xiao-Ming},
+  booktitle = {Proceedings of the International Conference on Machine Learning (ICML)},
+  series    = {PMLR},
+  volume    = {267},
+  year      = {2025},
+  note      = {GNN+ -- the encoder this work builds on. arXiv:2502.09263. Implementation: \url{https://github.com/LUOyk1999/GNNPlus}}
 }
-% TODO: this is the wrong title -- find the actual GNN+ paper behind the repo,
-% which is what the architecture in Chapter 3 is based on
+
+@inproceedings{rampasek2022graphgps,
+  title     = {Recipe for a General, Powerful, Scalable Graph Transformer},
+  author    = {Ramp\'{a}sek, Ladislav and Galkin, Michael and Dwivedi, Vijay Prakash and Luu, Anh Tuan and Wolf, Guy and Beaini, Dominique},
+  booktitle = {Advances in Neural Information Processing Systems (NeurIPS)},
+  year      = {2022},
+  note      = {arXiv:2205.12454}
+}
+% Verified against DBLP conf/nips/RampasekGDLWB22 (Rampásek without the hácek on s; Galkin is Michael there).
 
 @inproceedings{cai2021graphnorm,
   title     = {GraphNorm: A Principled Approach to Accelerating Graph Neural Network Training},
@@ -308,13 +539,15 @@
   year      = {2021},
   note      = {Over-squashing. The mechanism behind the hypothesis that path-contracting coarsening can improve rather than degrade accuracy on deep graphs}
 }
+% Verified against DBLP conf/iclr/0002Y21.
 
 @inproceedings{dwivedi2022lrgb,
   title     = {Long Range Graph Benchmark},
-  author    = {Dwivedi, Vijay Prakash and Ramp{\'a}{\v{s}}ek, Ladislav and Galkin, Mikhail and Parviz, Ali and Wolf, Guy and Luu, Anh Tuan and Beaini, Dominique},
+  author    = {Dwivedi, Vijay Prakash and Ramp{\'a}sek, Ladislav and Galkin, Michael and Parviz, Ali and Wolf, Guy and Luu, Anh Tuan and Beaini, Dominique},
   booktitle = {Advances in Neural Information Processing Systems (NeurIPS) Datasets and Benchmarks Track},
   year      = {2022}
 }
+% Verified against DBLP conf/nips/DwivediRGPWLB22.
 
 @inproceedings{thost2021dagnn,
   title     = {Directed Acyclic Graph Neural Networks},

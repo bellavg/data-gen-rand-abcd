@@ -1,0 +1,36 @@
+\section{Contributions}
+\label{sec:intro:contributions}
+
+
+% To enable further ML applications in EDA and solve the memory bottleneck, this thesis proposes a four-part methodology:
+% \begin{itemize}
+%     \item \textbf{Domain-Aware AIG Reduction Framework:} First, this thesis contrasts generic graph reduction techniques with targeted, AIG-specific heuristics (such as level-aware span weighting and structural coarsening). The objective is to effectively compress massive logic graphs (reducing memory footprint and computation time) while preserving the causal logic and structural information required for predictive accuracy. This yields a domain-aware reduction methodology and a dataset of compressed graphs that can be readily applied to unblock other ML avenues in EDA.
+%     \item \textbf{Deep-Dive Optimizability Prediction:} Second, these reduction techniques are applied and rigorously validated on a high-value regression task: predicting circuit optimizability for a complex target synthesis algorithm. By focusing deeply on a single target algorithm, this approach provides a robust benchmark to measure exactly how well different reduction methods (generic vs. AIG-specific) retain critical structural features without the confounding variables of cross-algorithm comparisons.
+%     \item \textbf{A Provably Lossless Coarsening for AIGs:} Third, one member of the
+%     summarization family is exact rather than approximate. Merging nodes that share a
+%     $d$-step colour-refinement class, where $d$ is the encoder depth, removes only structure
+%     the network provably cannot distinguish \citep{bollen2023exact,grohe2014colourrefinement},
+%     so it compresses the input without changing the model's output at all. Realising that
+%     guarantee on an AIG requires a schema in which inverter polarity and edge multiplicity
+%     survive the merge exactly (\ref{sec:method:architecture:exact}). This gives the study a
+%     fixed anchor (a compression whose accuracy cost is known to be zero by construction)
+%     against which every lossy method can be read, and a positive control for RQ5.
+%     \item \textbf{Cross-Structural Generalization:} Finally, to establish practical
+%     applicability, this thesis evaluates cross-state inference. The objective is to determine
+%     whether a model trained exclusively on memory-friendly compressed AIGs can generalize and
+%     accurately predict optimizability when queried with normal, full-sized AIGs at inference
+%     time.
+%     \item \textbf{Protocol-Sensitivity Measurement (RQ1a):} A controlled comparison of
+%     three train/test protocols (random, recipe-disjoint, design-disjoint) under otherwise
+%     identical conditions, quantifying how much leaky evaluation inflates reported
+%     performance, with per-design error distributions. The surveyed literature motivates on
+%     the unseen-design gap but rarely measures it (matched seen/unseen results in only 4 of
+%     63 surveyed papers); all reported results here use the strictest
+%     protocol.
+% \end{itemize}
+
+% In conclusion, while machine learning could eliminate costly trial-and-error in logic synthesis, the scale of industrial AIGs exceeds the memory available for training. To overcome this, this thesis systematically evaluates generic reductions against domain-informed adaptations tailored for AIGs. By successfully compressing these massive structures while preserving their predictive power across structural states, this work enables efficient, scalable predictions for logic optimization.
+
+\subsection{Summary of Results}
+\label{sec:intro:contributions:results}
+% TODO: state the headline numbers here once RQ2 and RQ3 land.
