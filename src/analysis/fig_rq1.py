@@ -224,9 +224,10 @@ def error_by_design(preds: pd.DataFrame, out: Path) -> None:
     ax.axvline(0, color=INK_SECONDARY, lw=0.8)
     clipped = clip_bar_axis(ax, per_design["r2"].tolist(), floor)
     # White-on-red, drawn over the clipped bar: at the axis edge in FAKE_COLOR
-    # the label sits on a bar of the same colour and disappears.
+    # the label sits on a bar of the same colour and disappears. The trailing
+    # "<" reads as "continues past here", not as the axis's own extent.
     for i, value in clipped:
-        ax.text(floor, i, f"  actually {value:,.0f}", fontsize=6, color="white",
+        ax.text(floor, i, f"  {value:,.0f} <", fontsize=6, color="white",
                 va="center", ha="left", fontweight="bold", zorder=5)
     ax.set_xlabel("$R^2$  (negative = worse than that design's own mean)")
     ax.set_title(
@@ -426,7 +427,7 @@ def hp_sweep(trials: pd.DataFrame, out: Path) -> None:
     ax = axes[2]
     counts = {
         "completed": int(((trials["state"] == "COMPLETE")).sum()),
-        "pruned\n(OOM)": int((trials["oom_like"]).sum()),
+        "pruned\n(memory)": int((trials["oom_like"]).sum()),
         "pruned\n(other)": int(
             ((trials["state"] != "COMPLETE") & (~trials["oom_like"])).sum()
         ),

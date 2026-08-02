@@ -27,9 +27,7 @@ import pandas as pd
 
 import matplotlib.pyplot as plt
 
-from analysis.fake_data import TODO_SEED_VARIANCE
 from analysis.style import (
-    COL,
     FAKE_COLOR,
     FAMILY_COLORS,
     INK_MUTED,
@@ -37,7 +35,6 @@ from analysis.style import (
     WIDE,
     color_for,
     label_for,
-    mark_fake,
     savefig,
     style_axes,
 )
@@ -205,41 +202,6 @@ def pairing_compression(pairings: pd.DataFrame, out: Path) -> None:
     savefig(fig, out, "rq4_pairing_compression")
 
 
-def seed_variance(pairings: pd.DataFrame, out: Path) -> None:
-    """The honesty exhibit: every configuration is trained exactly once.
-
-    The error bars here are invented. Their only job is to show what the gaps
-    would have to be compared against before any of them can be called a
-    finding.
-    """
-    fig, ax = plt.subplots(figsize=COL)
-    y = np.arange(len(pairings))
-    std = 0.05  # fabricated, flat
-    ax.barh(y, pairings["delta_r2"], height=0.55, color=INK_MUTED)
-    ax.errorbar(
-        pairings["delta_r2"], y, xerr=std, fmt="none",
-        ecolor=FAKE_COLOR, elinewidth=1.6, capsize=3,
-    )
-    ax.axvline(0, color=INK_SECONDARY, lw=1.0)
-    ax.set_yticks(y)
-    ax.set_yticklabels(
-        [f"{label_for(d, True)} / {label_for(g, True)}"
-         for g, d in zip(pairings["generic"], pairings["domain"])],
-        fontsize=6.5,
-    )
-    ax.invert_yaxis()
-    ax.set_xlabel("$\\Delta R^2$ (domain $-$ generic)")
-    ax.set_title("Gaps against run-to-run noise")
-    style_axes(ax, grid_axis="x")
-    mark_fake(fig, ax, note=TODO_SEED_VARIANCE, watermark=False)
-    fig.text(
-        0.5, -0.08,
-        "Bars are measured; the $\\pm$0.05 whiskers are INVENTED — there is no second seed.",
-        ha="center", fontsize=6.5, color=FAKE_COLOR, fontweight="bold",
-    )
-    savefig(fig, out, "rq4_seed_variance")
-
-
 def domain_vs_generic_overview(matched: pd.DataFrame, out: Path) -> None:
     """The unpaired view: every domain-informed method against every generic
     one, on the same axes. Weaker evidence than the pairings, but it answers
@@ -281,6 +243,5 @@ def build(matched, offline, out) -> pd.DataFrame:
     pairings = build_pairings(matched, offline)
     paired_gaps(pairings, out)
     pairing_compression(pairings, out)
-    seed_variance(pairings, out)
     domain_vs_generic_overview(matched, out)
     return pairings

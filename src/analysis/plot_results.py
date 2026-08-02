@@ -119,11 +119,11 @@ def plot_rq2_hardware_bars(
         infer_throughput.append(float(i_row["throughput_graphs_per_s"].mean()) if not i_row.empty else np.nan)
         infer_vram.append(float(i_row["peak_vram_mb"].mean()) if not i_row.empty else np.nan)
 
-    _bar_chart(labels, train_vram, "Peak VRAM (MB) — training", figures_dir / "rq2_train_peak_vram.png")
+    _bar_chart(labels, train_vram, "Training peak memory (MB)", figures_dir / "rq2_train_peak_vram.png")
     _bar_chart(labels, train_step_time, "Avg training step time (s)", figures_dir / "rq2_train_step_time.png")
     _bar_chart(labels, train_throughput, "Training throughput (graphs/s)", figures_dir / "rq2_train_throughput.png")
     _bar_chart(labels, infer_throughput, "Inference throughput (graphs/s)", figures_dir / "rq2_infer_throughput.png")
-    _bar_chart(labels, infer_vram, "Peak VRAM (MB) — inference", figures_dir / "rq2_infer_peak_vram.png")
+    _bar_chart(labels, infer_vram, "Inference peak memory (MB)", figures_dir / "rq2_infer_peak_vram.png")
 
 
 def plot_rq2_offline_bars(
@@ -217,9 +217,9 @@ def plot_pareto_front(pareto_df: pd.DataFrame, figures_dir: Path) -> None:
             marker=marker,
             label=label,
         )
-    ax.set_xlabel("Peak Training VRAM (MB)")
+    ax.set_xlabel("Peak training memory (MB)")
     ax.set_ylabel("RMSE")
-    ax.set_title("Accuracy vs. Memory Cost — Pareto Front (RQ3)")
+    ax.set_title("Accuracy vs. Memory Cost, Pareto Front (RQ3)")
     ax.minorticks_on()
     ax.grid(which="major", alpha=0.3)
     ax.grid(which="minor", alpha=0.15, linestyle=":")
@@ -255,8 +255,8 @@ def plot_benchmark_vram_vs_size(
             s=18, alpha=0.5, marker=_PARETO_MARKERS[i % len(_PARETO_MARKERS)], label=label,
         )
     ax.set_xlabel("Graph size (nodes)")
-    ax.set_ylabel("Peak training VRAM (MB)")
-    ax.set_title("Per-graph training VRAM vs. graph size (RQ2)")
+    ax.set_ylabel("Peak training memory (MB)")
+    ax.set_title("Per-graph training memory vs. graph size (RQ2)")
     ax.minorticks_on()
     ax.grid(which="major", alpha=0.3)
     ax.grid(which="minor", alpha=0.15, linestyle=":")
@@ -325,8 +325,8 @@ def plot_benchmark_savings_vs_size(
 
     ax.axhline(0, color="black", linewidth=0.8)
     ax.set_xlabel("Full-graph size (nodes)")
-    ax.set_ylabel("Training VRAM saving vs. baseline (%)")
-    ax.set_title("Per-graph VRAM saving vs. graph size (RQ2/RQ3)")
+    ax.set_ylabel("Training memory saving vs. baseline (%)")
+    ax.set_title("Per-graph memory saving vs. graph size (RQ2/RQ3)")
     ax.minorticks_on()
     ax.grid(which="major", alpha=0.3)
     ax.grid(which="minor", alpha=0.15, linestyle=":")

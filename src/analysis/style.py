@@ -47,6 +47,23 @@ GRID = "#d8d7d2"
 DOMAIN_HATCH = "///"  # domain-informed methods
 FAKE_HATCH = "xxx"
 
+# --- Dataset-chapter accents --------------------------------------------------
+# fig_dataset.py describes the corpus itself (tiers, source scripts, splits),
+# axes the family scheme above has no opinion on. Named here anyway, so no hex
+# literal in fig_dataset.py stands for a colour nothing else can look up.
+TIER_COLORS = {"tier0": "#2a78d6", "tier1": "#eb6834"}
+SOURCE_COLORS = {
+    "tier0 base": "#52514e",
+    "Syn4": "#eb6834",
+    "Deepsyn": "#2a78d6",
+    "C2RS": "#1baf7a",
+}
+SPLIT_COLORS = {"val": "#2a78d6", "test": "#eb6834"}
+CORPUS_SAMPLE_COLOR = "#eb6834"
+DATASET_FLAG_COLOR = "#e34948"  # reference-line / flagged-value accent; shares
+# FAKE_COLOR's hue by coincidence of the validated palette, not by meaning --
+# nothing marked with this in fig_dataset.py is fabricated.
+
 # --- Figure geometry ---------------------------------------------------------
 # msc_thesis.tex is \twocolumn. A column is ~3.35in; the full text block is
 # ~6.9in. Figures are drawn at their final printed size so that fonts land at
@@ -338,15 +355,37 @@ def clip_bar_axis(ax, values, floor: float) -> list[tuple[int, float]]:
     matplotlib to autoscale the right edge from the *unclipped* data range, so
     a bar at $-748$ pushes the right edge out to $+37$ and the clipping buys
     nothing.
+
+    A bar truncated at the floor and a bar that genuinely ends there are
+    otherwise indistinguishable, which reads as the axis itself stopping at
+    the floor rather than continuing past it. Every off-scale bar therefore
+    gets a break marker: a left-pointing triangle sitting on the boundary,
+    the same "value continues past this point" glyph used for clipped points
+    elsewhere in the RQ3 scatter figures. Callers still label the real value
+    themselves, next to this marker.
     """
     on_scale = [v for v in values if v == v and v >= floor]
     top = max(on_scale) if on_scale else floor + 1.0
     ax.set_xlim(floor, top + 0.12 * max(abs(top - floor), 1e-9))
-    return [(i, v) for i, v in enumerate(values) if v == v and v < floor]
+    off_scale = [(i, v) for i, v in enumerate(values) if v == v and v < floor]
+    if off_scale:
+        ax.plot(
+            [floor] * len(off_scale),
+            [i for i, _ in off_scale],
+            marker="<",
+            ms=6,
+            linestyle="none",
+            color="white",
+            markeredgecolor=INK_SECONDARY,
+            markeredgewidth=0.9,
+            clip_on=False,
+            zorder=6,
+        )
+    return off_scale
 
 
 # --- Fabricated-data marking -------------------------------------------------
-FAKE_BANNER = "FABRICATED PLACEHOLDER — NOT MEASURED"
+FAKE_BANNER = "FABRICATED PLACEHOLDER: NOT MEASURED"
 
 
 def mark_fake(fig, ax=None, note: str = "", *, watermark: bool = True) -> None:
