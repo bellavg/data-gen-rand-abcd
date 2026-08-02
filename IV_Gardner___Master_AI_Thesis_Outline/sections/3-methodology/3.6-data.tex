@@ -72,9 +72,9 @@ bound on the depth encoding of~\ref{sec:method:data:representation:pe}.
 The remaining eight are synthetic circuits, named \texttt{128} through \texttt{16384} after
 their \emph{primary input count} rather than their size (\texttt{16384} has $16{,}384$
 inputs but $131{,}072$ AND gates): randomly sampled AIGs from the random AIG generator of
-\texttt{mockturtle} \citep{soeken2018epfl}, with a gate budget of eight times the input
-count and every gate left without a fanout becoming a primary output, $37$--$39\%$ of the
-gate count.
+\texttt{mockturtle}, part of the EPFL logic synthesis libraries \citep{soeken2018epfl}, with
+a gate budget of eight times the input count and every gate left without a fanout becoming a
+primary output, $37$--$39\%$ of the gate count.
 
 The generation script was not kept, so this account is reconstructed from the eight AIGs,
 which fix it exactly except for the seed. That the seed is not recoverable means the
@@ -147,8 +147,8 @@ Synthetic (this work) & 8 & n/a \\
 The license column of~\ref{tab:source_circuits} states each suite's own terms, not the term
 governing the copies used: since all 18 classical benchmarks were received through the
 OpenABC-D release, every non-synthetic netlist is covered by its BSD 3-Clause license, with
-the EPFL suite's MIT notice retained in addition. Any release of the corpus is governed
-accordingly (\ref{sec:discussion:ethics}).
+the EPFL suite's MIT notice retained in addition. Any release of the corpus is therefore
+governed by BSD 3-Clause attribution requirements (\ref{sec:discussion:ethics}).
 
 % Original, condensed above:
 % The license column of~\ref{tab:source_circuits} records each suite's own terms, but that
@@ -163,12 +163,13 @@ accordingly (\ref{sec:discussion:ethics}).
 
 The provenance matters because the design-level split
 (\ref{sec:method:experiment:splitting}) assumes these 55 are genuinely distinct circuits.
-Mostly they are, but three families bear naming: the AES variants, the \texttt{dft}/
-\texttt{idft} and \texttt{fir}/\texttt{iir} transform pairs, and the eight synthetic
-circuits, which differ from each other only in scale. A split by design cannot guarantee
-such a family lands entirely on one side of it, so a weaker, family-level leakage can cross
-the boundary even where no individual circuit does, bounding how strongly an unseen-design
-result can be read (\ref{sec:discussion:limitations}).
+Mostly they are, and no design is derived from another. Four families still bear naming: the
+AES variants, the \texttt{dft}/\texttt{idft} transform pair, the \texttt{fir}/\texttt{iir}
+pair to a lesser degree, and the eight synthetic circuits, which differ from each other only
+in scale. A split by design cannot guarantee such a family lands entirely on one side of it,
+so a weaker, family-level leakage can cross the boundary even where no individual circuit
+does, bounding how strongly an unseen-design result can be read
+(\ref{sec:discussion:limitations}).
 
 % Original, condensed above:
 % The provenance is the point here, not the inventory, because the design-level split
@@ -231,8 +232,9 @@ Each source design is expanded by applying random synthesis recipes and retainin
 intermediate result, following the construction of OpenABC-D~\citep{chowdhury2021openabc}.
 A recipe is a sequence of $20$ transformations drawn independently and uniformly from seven
 area-oriented passes: balancing, and rewriting, refactoring and resubstitution each in a
-plain and a zero-cost variant. The same $200$ recipes, the first $200$ of the $1{,}500$
-released with OpenABC-D, are applied to every design, so recipe identity is not confounded
+plain and a zero-cost variant, the latter accepting replacements that leave node count
+unchanged. The same $200$ recipes, the first $200$ of the $1{,}500$ released with OpenABC-D
+and all of them distinct, are applied to every design, so recipe identity is not confounded
 with design identity.
 
 % Original, condensed above:
@@ -302,12 +304,12 @@ partitions the corpus along the one boundary this construction never crosses.
 
 
 The step-21 output of every recipe is a \emph{choice network}: a structural-choice pass
-keeps multiple functionally equivalent implementations of a signal side by side rather than
-collapsing to one representative, so the synthesis tool's own node count covers only the
-chosen representative and undercounts $|\mathcal{V}(G)|$. Checked against the stored graphs,
-this is confirmed in 43 of the 200 recipes at step 21. Step 21 contributes one graph per
-recipe, so the affected graphs number 43 of the 4{,}201 stored per design, close to $1\%$ of
-the corpus.
+keeps multiple structurally distinct but functionally equivalent implementations of a signal
+side by side rather than collapsing to one representative, so the synthesis tool's own node
+count covers only the chosen representative and undercounts $|\mathcal{V}(G)|$. Checked
+against the stored graphs, this is confirmed in 43 of the 200 recipes at step 21. Step 21
+contributes one graph per recipe, so the affected graphs number 43 of the 4{,}201 stored per
+design, close to $1\%$ of the corpus.
 
 The recorded optimizability substitutes that smaller count for $|\mathcal{V}(G)|$
 in~\eqref{eq:prelim:target}, so $y(G)$ uses the wrong denominator wherever the two disagree.
@@ -697,10 +699,11 @@ model selection can be assumed to transfer.
     \centering
     \includegraphics[width=\textwidth]{\resultsfigs/dataset_structure}
     \caption[Structural corpus statistics]{Structural statistics recoverable without a pass
-    over the graph cache. AND gates and constants account for $82.1\%$ of nodes, exactly the
-    node retention of \texttt{and\_gate\_only} sparsification
-    (\ref{sec:method:sparse:andgate}). The right panel checks that the evaluation splits are
-    representative of the wider corpus on size.}
+    over the graph cache. AND gates and constants account for $82.1\%$ of nodes and the
+    primary-input/output interface for the remaining $17.9\%$. The former is exactly the node
+    retention of \texttt{and\_gate\_only} sparsification (\ref{sec:method:sparse:andgate}).
+    The right panel checks that the evaluation splits are representative of the wider corpus
+    sample on size.}
     % Original caption, condensed above:
     % Structural statistics recoverable without a pass over the graph cache. The AND-gate
     % share is read off the AND-gate-only node masks, which drop exactly the primary inputs
@@ -717,8 +720,9 @@ model selection can be assumed to transfer.
     \includegraphics[width=\textwidth]{\resultsfigs/dataset_label_distribution}
     \caption[Optimizability label distribution]{Distribution of the optimizability target on
     the held-out test corpus, pooled (log counts) and per tier. The label is concentrated
-    near zero, the variance every $R^2$ in~\ref{sec:results} is measured against, which is
-    why a respectable RMSE is compatible with a near-zero or negative $R^2$.}
+    near zero, with the great majority of graphs below $y = 0.005$. That concentration is the
+    variance every $R^2$ in~\ref{sec:results} is measured against, and is why a respectable
+    RMSE is compatible with a near-zero or negative $R^2$.}
     % Original caption, condensed above:
     % Distribution of the optimizability target on the held-out test corpus, pooled (log
     % counts) and per tier. The label is concentrated near zero: the great majority of graphs
