@@ -1,13 +1,15 @@
 \subsection{Graph Reduction Techniques}
 \label{sec:relwork:reduction}
-Each family below is fixed by the quantity its operator controls, and the methods inside a
-family differ only in how that quantity is chosen.
+Each family below is fixed by the quantity its operator controls. Methods within a family
+differ only in how that quantity is chosen.
+% Original: Each family below is fixed by the quantity its operator controls, and the methods inside a
+% family differ only in how that quantity is chosen.
 
 \subsubsection{Graph Partitioning}
 \label{sec:relwork:reduction:partitioning}
 A $k$-way partition $\pi \colon \mathcal{V} \rightarrow \{1, \dots, k\}$ deletes every edge
-whose endpoints land in different blocks, so a partitioner controls the cut and nothing
-else. The reference objective is the balanced minimum cut,
+whose endpoints land in different blocks, so a partitioner controls only the cut. The
+reference objective is the balanced minimum cut,
 \begin{equation}
     \min_{\pi}\ \bigl| \{\, (u, v) \in \mathcal{E} : \pi(u) \neq \pi(v) \,\} \bigr|
     \quad \text{subject to} \quad
@@ -15,28 +17,42 @@ else. The reference objective is the balanced minimum cut,
     \left\lceil \frac{|\mathcal{V}|}{k} \right\rceil,
     \label{eq:relwork:mincut}
 \end{equation}
-with imbalance tolerance $\varepsilon$. The problem is NP-hard, and METIS is the standard
-approximation to it \citep{karypis1997metis}: the graph is coarsened by successive
-matchings, the smallest graph is partitioned directly, and the assignment is projected back
-with local refinement at each level. Every cut edge in~\eqref{eq:relwork:mincut} counts one,
-whatever it connects. That indifference is the only term the domain-aware variant
+with imbalance tolerance $\varepsilon$. METIS is the standard approximation to this
+NP-hard problem \citep{karypis1997metis}. Every cut edge in~\eqref{eq:relwork:mincut}
+counts one regardless of what it connects, the only term the domain-aware variant
 of~\ref{sec:method:partition:spanmetis} changes.
 
-Two further constructions are references rather than competitors. Hash partitioning draws
-$\pi(v)$ uniformly and independently of $\mathcal{E}$, which is the default in distributed
-GNN systems, where partition quality is traded against the cost of computing it
-\citep{zheng2020distdgl}; each edge then survives with probability $1/k$, and a
-structure-aware objective earns its cost only by retaining more than that fraction.
-Ordering-based slicing sorts $\mathcal{V}$ by a scalar the graph already carries and cuts
-the sorted sequence into $k$ equal blocks, so balance is exact and the cut follows entirely
-from the ordering (\ref{sec:method:partition:levelslice}).
+Two references, not competitors, complete the picture. Hash partitioning draws $\pi(v)$
+uniformly and independently of $\mathcal{E}$, the default where partition cost matters
+more than quality \citep{zheng2020distdgl}, so a structure-aware objective earns its cost
+only by beating each edge's $1/k$ survival probability. Ordering-based slicing sorts
+$\mathcal{V}$ by a scalar the graph already carries into $k$ equal blocks
+(\ref{sec:method:partition:levelslice}).
+% Original: A $k$-way partition $\pi \colon \mathcal{V} \rightarrow \{1, \dots, k\}$ deletes every edge
+% whose endpoints land in different blocks, so a partitioner controls the cut and nothing
+% else. The reference objective is the balanced minimum cut, with imbalance tolerance
+% $\varepsilon$. The problem is NP-hard, and METIS is the standard
+% approximation to it \citep{karypis1997metis}: the graph is coarsened by successive
+% matchings, the smallest graph is partitioned directly, and the assignment is projected back
+% with local refinement at each level. Every cut edge in~\eqref{eq:relwork:mincut} counts one,
+% whatever it connects. That indifference is the only term the domain-aware variant
+% of~\ref{sec:method:partition:spanmetis} changes.
+%
+% Two further constructions are references rather than competitors. Hash partitioning draws
+% $\pi(v)$ uniformly and independently of $\mathcal{E}$, which is the default in distributed
+% GNN systems, where partition quality is traded against the cost of computing it
+% \citep{zheng2020distdgl}; each edge then survives with probability $1/k$, and a
+% structure-aware objective earns its cost only by retaining more than that fraction.
+% Ordering-based slicing sorts $\mathcal{V}$ by a scalar the graph already carries and cuts
+% the sorted sequence into $k$ equal blocks, so balance is exact and the cut follows entirely
+% from the ordering (\ref{sec:method:partition:levelslice}).
 
 \subsubsection{Graph Sparsification}
 \label{sec:relwork:reduction:sparsification}
 Sparsification keeps a subset $\mathcal{E}' \subseteq \mathcal{E}$, or an induced subgraph
-on a node subset $\mathcal{V}' \subseteq \mathcal{V}$, and the methods differ in what they
-promise the survivor preserves. The strongest such promise available at near-linear cost is
-a bound on stretch. A $t$-spanner is a subgraph $H \subseteq G$ with
+on $\mathcal{V}' \subseteq \mathcal{V}$, differing in what they promise the survivor
+preserves. The strongest promise available at near-linear cost bounds stretch: a
+$t$-spanner is a subgraph $H \subseteq G$ with
 \begin{equation}
     d_H(u, v) \leq t \cdot d_G(u, v)
     \qquad \text{for every } u, v \in \mathcal{V},
@@ -44,90 +60,155 @@ a bound on stretch. A $t$-spanner is a subgraph $H \subseteq G$ with
 \end{equation}
 so an edge may be discarded only when an alternative path of length at most $t$ survives
 \citep{peleg1989spanners}, and randomised constructions reach the optimal size-stretch
-trade-off in linear time \citep{baswana2007spanners}. The guarantee is paid for out of dense
-short-range redundancy. A graph that lacks it returns a spanner nearly as large as itself,
-which is the negative result reported in~\ref{sec:method:sparse:forest}.
+trade-off in linear time \citep{baswana2007spanners}. The guarantee is paid for out of
+dense short-range redundancy: a graph that lacks it returns a spanner nearly as large as
+itself, the negative result in~\ref{sec:method:sparse:forest}.
 % Cut: spectral sparsification makes the analogous promise about the Laplacian quadratic form.
 
 The remaining methods trade the guarantee for a knob or for simplicity. A minimum-weight
-spanning forest keeps $|\mathcal{V}| - c$ edges on $c$ components \citep{kruskal1956mst}: a
-connectivity backbone with every cycle destroyed, at a compression that is a property of the
-graph rather than a setting. Independent edge removal keeps each edge with probability
-$1 - p$ and was introduced as a per-epoch regulariser for deep GNNs
-\citep{rong2020dropedge}; a mask drawn once instead of per epoch is a reduction, and its
-ratio is freely tunable, which is what lets it serve as a matched-compression control.
+spanning forest keeps $|\mathcal{V}| - c$ edges on $c$ components, a connectivity backbone
+at a compression fixed by the graph, not a setting \citep{kruskal1956mst}. Independent
+edge removal, a per-epoch GNN regulariser \citep{rong2020dropedge}, keeps each edge with
+probability $1 - p$. Drawn once, it becomes a freely tunable matched-compression control.
 Centrality pruning keeps the $\lceil \kappa |\mathcal{V}| \rceil$ highest-scoring nodes
-under PageRank \citep{brin1998anatomy,langville2003pagerank} and returns the induced
-subgraph, so every edge incident on a discarded node goes with it, and $\kappa$ is again
-free. The two ratios of~\eqref{eq:prelim:retention} separate at exactly this point: the
-first two methods hold $\eta_{\mathcal{V}} = 1$, the last moves both.
+under PageRank \citep{brin1998anatomy,langville2003pagerank} as an induced subgraph, so
+every edge incident on a discarded node goes with it. The two ratios
+of~\eqref{eq:prelim:retention} separate here: the first two hold $\eta_{\mathcal{V}} = 1$,
+the last moves both.
+% Original: Sparsification keeps a subset $\mathcal{E}' \subseteq \mathcal{E}$, or an induced subgraph
+% on a node subset $\mathcal{V}' \subseteq \mathcal{V}$, and the methods differ in what they
+% promise the survivor preserves. The strongest such promise available at near-linear cost is
+% a bound on stretch. The guarantee is paid for out of dense
+% short-range redundancy. A graph that lacks it returns a spanner nearly as large as itself,
+% which is the negative result reported in~\ref{sec:method:sparse:forest}.
+%
+% The remaining methods trade the guarantee for a knob or for simplicity. A minimum-weight
+% spanning forest keeps $|\mathcal{V}| - c$ edges on $c$ components \citep{kruskal1956mst}: a
+% connectivity backbone with every cycle destroyed, at a compression that is a property of the
+% graph rather than a setting. Independent edge removal keeps each edge with probability
+% $1 - p$ and was introduced as a per-epoch regulariser for deep GNNs
+% \citep{rong2020dropedge}; a mask drawn once instead of per epoch is a reduction, and its
+% ratio is freely tunable, which is what lets it serve as a matched-compression control.
+% Centrality pruning keeps the $\lceil \kappa |\mathcal{V}| \rceil$ highest-scoring nodes
+% under PageRank \citep{brin1998anatomy,langville2003pagerank} and returns the induced
+% subgraph, so every edge incident on a discarded node goes with it, and $\kappa$ is again
+% free. The two ratios of~\eqref{eq:prelim:retention} separate at exactly this point: the
+% first two methods hold $\eta_{\mathcal{V}} = 1$, the last moves both.
 
 \subsubsection{Graph Summarization and Coarsening}
 \label{sec:relwork:reduction:summarization}
 Coarsening merges nodes into super-nodes under the merge map
-of~\ref{sec:prelim:reduction:summarization}, and the strands differ in what they treat as
-grounds for merging two nodes.
+of~\ref{sec:prelim:reduction:summarization}, and strands differ in what counts as grounds
+to merge.
+% Original: Coarsening merges nodes into super-nodes under the merge map
+% of~\ref{sec:prelim:reduction:summarization}, and the strands differ in what they treat as
+% grounds for merging two nodes.
 
 The exact strand merges only nodes that are provably indistinguishable. Colour
 refinement~\eqref{eq:prelim:cr} computes the coarsest equitable partition
-\citep{grohe2014colourrefinement}, and \citet{bollen2023exact} turn that partition into a
-training procedure: a graph is quotiented by its $d$-step refinement classes, and a network
-trained on the quotient produces exactly the output it would have produced on the original.
-Exactness is conditional, and the conditions are what make the result usable. The model must
-be message passing of depth at most $d$ over an aggregator that reads the multiset rather
-than the set of incoming messages, so that neighbour counts still reach it. The graph must
-be presented as a multigraph whose super-edges carry those multiplicities, and its initial
-features must be constant on each initial colour class. A count cap $c$ truncates the
-multiset, with $c = 1$ collapsing it to a set and giving bisimulation: coarser, and no
-longer exact for a counting model. Section~\ref{sec:prelim:reduction} states the condition
-formally. Both requirements are met by construction here, since the encoder sums over
-neighbours and the summarized schema records super-edge multiplicities
-(\ref{sec:method:summary:schema}), so refinement at $c = \infty$ is lossless for this
-encoder and is the study's positive control rather than one more contender
-(\ref{sec:method:architecture:exact}). k-SNAP groups by attribute and neighbour class
-\citep{tian2008ksnap} and is the depth-one case of the same construction, so it is cited and
-not run.
+\citep{grohe2014colourrefinement}. \citet{bollen2023exact} quotient a graph by its $d$-step
+classes and show a depth-$d$, multiset-aggregator network trained on the quotient
+reproduces the original's output exactly if the graph is a multigraph with super-edge
+multiplicities and per-class-constant features (\ref{sec:prelim:reduction} formalizes
+this); a cap $c$ truncates the multiset, with $c = 1$ giving bisimulation, coarser and no
+longer exact for a counting model. Both hold here by construction, so refinement at
+$c = \infty$ is lossless
+for this encoder and serves as the study's positive control rather than one more
+contender (\ref{sec:method:summary:schema}, \ref{sec:method:architecture:exact}). k-SNAP
+\citep{tian2008ksnap}, the depth-one case, groups by attribute and neighbour class and is
+cited but not run.
+% Original: The exact strand merges only nodes that are provably indistinguishable. Colour
+% refinement~\eqref{eq:prelim:cr} computes the coarsest equitable partition
+% \citep{grohe2014colourrefinement}, and \citet{bollen2023exact} turn that partition into a
+% training procedure: a graph is quotiented by its $d$-step refinement classes, and a network
+% trained on the quotient produces exactly the output it would have produced on the original.
+% Exactness is conditional, and the conditions are what make the result usable. The model must
+% be message passing of depth at most $d$ over an aggregator that reads the multiset rather
+% than the set of incoming messages, so that neighbour counts still reach it. The graph must
+% be presented as a multigraph whose super-edges carry those multiplicities, and its initial
+% features must be constant on each initial colour class. A count cap $c$ truncates the
+% multiset, with $c = 1$ collapsing it to a set and giving bisimulation: coarser, and no
+% longer exact for a counting model. Section~\ref{sec:prelim:reduction} states the condition
+% formally. Both requirements are met by construction here, since the encoder sums over
+% neighbours and the summarized schema records super-edge multiplicities
+% (\ref{sec:method:summary:schema}), so refinement at $c = \infty$ is lossless for this
+% encoder and is the study's positive control rather than one more contender
+% (\ref{sec:method:architecture:exact}). k-SNAP groups by attribute and neighbour class
+% \citep{tian2008ksnap} and is the depth-one case of the same construction, so it is cited and
+% not run.
 
-The spectral and classical strand descends from scientific computing. Local Variation
+The spectral and classical strand descends from scientific computing: Local Variation
 coarsening contracts node sets under a restricted spectral approximation bound
-\citep{loukas2019localvariation}, the lineage is surveyed by \citet{chen2022coarsening}, and
-Kron reduction has a directed extension \citep{sugiyama2023kron}. Its guarantees are stated
-for the spectrum of a symmetric Laplacian, so none of them survives the move to a directed
-graph unexamined, and the strand is surveyed here rather than run.
+\citep{loukas2019localvariation}, surveyed by \citet{chen2022coarsening}, and Kron
+reduction has a directed extension \citep{sugiyama2023kron}. Guarantees stated for a
+symmetric Laplacian's spectrum do not survive the move to a directed graph unexamined, so
+the strand is surveyed here, not run.
+% Original: The spectral and classical strand descends from scientific computing. Local Variation
+% coarsening contracts node sets under a restricted spectral approximation bound
+% \citep{loukas2019localvariation}, the lineage is surveyed by \citet{chen2022coarsening}, and
+% Kron reduction has a directed extension \citep{sugiyama2023kron}. Its guarantees are stated
+% for the spectrum of a symmetric Laplacian, so none of them survives the move to a directed
+% graph unexamined, and the strand is surveyed here rather than run.
 
-Convolution matching is the GNN-aware strand \citep{dickens2024convmatch}: nodes merge when
-the graph convolution itself cannot separate them, rather than when some graph property
-cannot, and about 95\% of full-graph performance is reported at 1\% of the node count on
-node classification. Merging under the operator the model actually applies is the strongest
-general-purpose criterion published, which makes it the bar a domain-specific method has to
-clear (\ref{sec:method:summary:convmatch}). Universal Graph Coarsening merges nodes that
-collide under locality-sensitive hashing, in time linear in the size of the graph
-\citep{ugc2024}, and occupies the cheap end of the same axis.
-\citet{shabani2023summarization} survey the use of both strands with GNNs.
+Convolution matching, the GNN-aware strand \citep{dickens2024convmatch}, merges nodes the
+convolution itself cannot separate, rather than some graph property, at about 95\% of
+full-graph performance for 1\% of the node count on node classification, the strongest
+general-purpose criterion published and the bar a domain-specific method must clear
+(\ref{sec:method:summary:convmatch}). Universal Graph Coarsening merges nodes colliding
+under locality-sensitive hashing in linear time \citep{ugc2024}, the cheap end of the same
+axis. \citet{shabani2023summarization} survey both strands with GNNs.
+% Original: Convolution matching is the GNN-aware strand \citep{dickens2024convmatch}: nodes merge when
+% the graph convolution itself cannot separate them, rather than when some graph property
+% cannot, and about 95\% of full-graph performance is reported at 1\% of the node count on
+% node classification. Merging under the operator the model actually applies is the strongest
+% general-purpose criterion published, which makes it the bar a domain-specific method has to
+% clear (\ref{sec:method:summary:convmatch}). Universal Graph Coarsening merges nodes that
+% collide under locality-sensitive hashing, in time linear in the size of the graph
+% \citep{ugc2024}, and occupies the cheap end of the same axis.
+% \citet{shabani2023summarization} survey the use of both strands with GNNs.
 
-Uniform merging to a stated target is the control the rest are read against. Compression is
-a free parameter for only some coarseners, so no general procedure makes two real methods
-meet at one ratio; a random merge reaches any ratio exactly, and each method is therefore
-compared against a random control run at that method's own achieved compression
+Compression is a free parameter for only some coarseners, so no procedure makes two real
+methods meet at one ratio, while a random merge reaches any ratio exactly. Each method is
+therefore compared against a random control at its own achieved compression
 (\ref{sec:method:summary:random}).
+% Original: Uniform merging to a stated target is the control the rest are read against. Compression is
+% a free parameter for only some coarseners, so no general procedure makes two real methods
+% meet at one ratio; a random merge reaches any ratio exactly, and each method is therefore
+% compared against a random control run at that method's own achieved compression
+% (\ref{sec:method:summary:random}).
 
-Condensation is the family this thesis excludes (\ref{sec:intro:scope:reductions}). GCond
-and its descendants synthesise a new small graph by gradient matching instead of merging the
-real one \citep{jin2022gcond}, so (i) no correspondence exists between synthetic and real
-nodes, (ii) the method is label-dependent by construction, (iii) gradient matching ties the
-result to one architecture, and (iv) with no real nodes there is nothing to run cross-state
-inference on.
+Condensation is the family this thesis excludes (\ref{sec:intro:scope:reductions}): GCond
+and its descendants synthesise a new small graph by gradient matching instead of merging
+the real one \citep{jin2022gcond}, so (i) no correspondence exists between synthetic and
+real nodes, (ii) the method is label-dependent by construction, (iii) gradient matching
+ties the result to one architecture, and (iv) with no real nodes there is nothing to run
+cross-state inference on.
+% Original: Condensation is the family this thesis excludes (\ref{sec:intro:scope:reductions}). GCond
+% and its descendants synthesise a new small graph by gradient matching instead of merging the
+% real one \citep{jin2022gcond}, so (i) no correspondence exists between synthetic and real
+% nodes, (ii) the method is label-dependent by construction, (iii) gradient matching ties the
+% result to one architecture, and (iv) with no real nodes there is nothing to run cross-state
+% inference on.
 
 \subsubsection{Reduction as Preprocessing for GNN Training}
 \label{sec:relwork:reduction:forgnn}
-Two systems already train on a reduced graph and then serve the original. SCAL coarsens the
+Two systems already train on a reduced graph and serve the original. SCAL coarsens the
 training graph and applies the same weights to the full graph at inference
-\citep{huang2021scal}, the shared-weights mechanism RQ5 tests.
-\citet{generale2022scaling} instead transfer weights back through the node-to-super-node
-mapping for a node-level task on knowledge graphs, and their ablation finds the
-\emph{content} carried on a super-node to be the deciding factor, which is why member counts
-and level statistics travel with super-nodes here (\ref{sec:method:summary:mergemap}). The
-distance between the two is the distance between their tasks. A node-level prediction needs
-a mapping back to individual nodes, whereas a graph-level regression needs only an input
-space that both structural states inhabit (\ref{sec:method:summary:schema}), so shared
-weights suffice and no transfer step exists to go wrong.
+\citep{huang2021scal}, the shared-weights mechanism RQ5 tests. \citet{generale2022scaling}
+instead transfer weights through the node-to-super-node mapping for a node-level task on
+knowledge graphs, finding by ablation that a super-node's \emph{content} is the deciding
+factor, why member counts and level statistics travel with super-nodes here
+(\ref{sec:method:summary:mergemap}). Node-level prediction needs a mapping back to
+individual nodes. Graph-level regression needs only an input space both structural states
+inhabit (\ref{sec:method:summary:schema}), so shared weights suffice here.
+% Original: Two systems already train on a reduced graph and then serve the original. SCAL coarsens the
+% training graph and applies the same weights to the full graph at inference
+% \citep{huang2021scal}, the shared-weights mechanism RQ5 tests.
+% \citet{generale2022scaling} instead transfer weights back through the node-to-super-node
+% mapping for a node-level task on knowledge graphs, and their ablation finds the
+% \emph{content} carried on a super-node to be the deciding factor, which is why member counts
+% and level statistics travel with super-nodes here (\ref{sec:method:summary:mergemap}). The
+% distance between the two is the distance between their tasks. A node-level prediction needs
+% a mapping back to individual nodes, whereas a graph-level regression needs only an input
+% space that both structural states inhabit (\ref{sec:method:summary:schema}), so shared
+% weights suffice and no transfer step exists to go wrong.
