@@ -2,13 +2,16 @@
 \label{sec:method:reduction}
 This section describes the reduction methods evaluated in this thesis. Their objective is to relieve the memory bottleneck that prevents training on unreduced AIGs and to shorten training time, while preserving the structural features on which accurate optimizability prediction depends.
 
+The three families are defined in~\ref{sec:prelim:reduction} and their generic members are
+surveyed in~\ref{sec:relwork:reduction}. What follows states what changes when those methods
+meet an AIG: the adaptation each one required, and the value every free parameter was given
+together with what fixes it. The parameters are collected in~\ref{sec:apx:params}.
+
 \subsection{Partitioning}
 \label{sec:method:reduction:partitioning}
-Partitioning splits a graph into blocks small enough to process, keeping every node and
-discarding only the edges that cross blocks. A $k$-way partition of an AIG
-$G = (\mathcal{V}, \mathcal{E})$ is a map
+Applied to an AIG $G = (\mathcal{V}, \mathcal{E})$, an assignment
 $\pi \colon \mathcal{V} \rightarrow \{1, \dots, k\}$ with blocks
-$\mathcal{V}_i = \pi^{-1}(i)$, and the reduced graph keeps exactly the edges internal to a
+$\mathcal{V}_i = \pi^{-1}(i)$ keeps exactly the edges internal to a
 block,
 \begin{equation}
     R_\pi(G) = \bigl( \mathcal{V},\
@@ -23,8 +26,7 @@ $\eta_{\mathcal{V}} = 1$ by construction, so the only quantity a partitioner con
 the edge retention
 $\eta_{\mathcal{E}} = 1 - |\mathcal{E}_{\mathrm{cut}}(\pi)| / |\mathcal{E}|$
 of~\eqref{eq:prelim:retention}. All blocks of a graph are kept and enter the model
-together; the hierarchical pooling path that reads them is described
-in~\ref{sec:method:architecture:partitioning}.
+together, through the hierarchical readout of~\ref{sec:method:architecture:partitioning}.
 
 The number of blocks is set per graph from a target block size $s$,
 \begin{equation}
@@ -32,9 +34,18 @@ The number of blocks is set per graph from a target block size $s$,
     \max\bigl\{ k_{\min},\ \lfloor |\mathcal{V}| / s \rfloor \bigr\} \Bigr\},
     \label{eq:method:partition-k}
 \end{equation}
-with $s = 10{,}000$ and $[k_{\min}, k_{\max}] = [2, 32]$, so blocks hold roughly $s$ nodes
-until the cap binds. The four methods below receive the same $k(G)$ on every graph and
-differ only in the assignment $\pi$, which is what makes them directly comparable.
+with $s = 10{,}000$ and $[k_{\min}, k_{\max}] = [2, 32]$. The two bounds are fixed by the
+corpus rather than chosen. The floor binds below $2s = 20{,}000$ nodes, which covers the
+median graph of~\ref{sec:method:data:statistics:scale}, and it guarantees that every graph is
+genuinely partitioned instead of passing through unreduced. The cap is reached only above
+$s \, k_{\max} = 320{,}000$ nodes, beyond the largest graph in the evaluation splits, so it
+acts as a guard against $k$ growing without bound and never as an operating point. The target
+block size itself was fixed a priori and never swept, which leaves the sensitivity of every
+partitioning result to $s$ unmeasured.
+% TODO: sweep the target block size, or report partitioning as fixed at one.
+
+The four methods below receive the same $k(G)$ on every graph and differ only in the
+assignment $\pi$, which is what makes them directly comparable.
 
 \subsubsection{Random Hashing}
 \label{sec:method:partition:random}
@@ -60,13 +71,16 @@ METIS \citep{karypis1997metis} approximates the balanced minimum-cut partition
     \leq (1 + \varepsilon) \left\lceil \frac{|\mathcal{V}|}{k} \right\rceil,
     \label{eq:method:partition-metis}
 \end{equation}
-a problem that is NP-hard, with a multilevel heuristic: the graph is coarsened by
-successive matchings, the coarsest graph is partitioned directly, and the partition is
-projected back through the levels with local refinement at each step. It operates on the
-undirected projection of the AIG, so edge direction plays no part in where the cuts fall.
-The objective also counts every cut edge equally: severing a connection between adjacent
-levels costs the same as severing an edge that bridges half the circuit's depth. That is
-precisely the assumption the domain-informed variant below modifies.
+by the multilevel heuristic of~\ref{sec:relwork:reduction:partitioning}. It is applied
+unmodified, at the balance tolerance $\varepsilon$ its implementation defaults to, which is
+what makes it the generic arm of the comparison rather than a method this thesis tuned.
+% TODO: record the default balance tolerance the partitioner runs at.
+
+Two consequences of applying it to an AIG matter downstream. It operates on the undirected
+projection, so edge direction plays no part in where the cuts fall. Its objective also counts
+every cut edge equally, so severing a connection between adjacent levels costs the same as
+severing an edge that bridges half the circuit's depth. That is precisely the assumption the
+domain-informed variant below modifies.
 
 \subsubsection{Level Slicing}
 \label{sec:method:partition:levelslice}
@@ -83,13 +97,14 @@ Balance is exact by construction, and blocks are contiguous in depth:
 $\ell(u) < \ell(v)$ implies $\pi(u) \leq \pi(v)$. Because every edge runs from a lower
 level to a strictly higher one, an edge is cut exactly when its endpoints straddle one of
 the $k - 1$ block boundaries. The local directed structure of each depth band therefore
-survives intact; the price is that every path from the inputs to the outputs crosses every
-boundary and is severed $k - 1$ times.
+survives intact. The price is that every path from the inputs to the outputs crosses every
+boundary and is severed $k - 1$ times. The construction introduces no parameter of its own:
+$k$ comes from~\eqref{eq:method:partition-k} and the ordering is fixed by the graph.
 
 \subsubsection{Span-Weighted METIS}
 \label{sec:method:partition:spanmetis}
-The domain-aware adaptation changes only the objective of METIS\@. Each edge
-$e = (u, v)$ has a span
+The domain-aware adaptation changes only the objective of~\eqref{eq:method:partition-metis}.
+Each edge $e = (u, v)$ has a span
 \begin{equation}
     \operatorname{sp}(e) = \ell(v) - \ell(u) \geq 1,
     \qquad
@@ -98,12 +113,17 @@ $e = (u, v)$ has a span
 \end{equation}
 the number of levels it crosses, and the weighted cut
 $\sum_{e \in \mathcal{E}_{\mathrm{cut}}(\pi)} w(e)$ is minimised under the same balance
-constraint as~\eqref{eq:method:partition-metis}, with $\gamma = 10$. A long edge is a
-shortcut between distant levels, and cutting it removes gates from the fanin
-cones~\eqref{eq:prelim:cone} of everything downstream, which is exactly the damage the
-uniform objective is indifferent to. Under~\eqref{eq:method:partition-span} the cost of a
-cut grows linearly with the length of the chain it breaks, so the minimiser pushes cuts
-toward span-one edges and the longest causal chains stay whole.
+constraint. A long edge is a shortcut between distant levels, and cutting it removes gates
+from the fanin cones~\eqref{eq:prelim:cone} of everything downstream, which is exactly the
+damage the uniform objective is indifferent to. Under~\eqref{eq:method:partition-span} the
+cost of a cut grows linearly with the length of the chain it breaks, so the minimiser pushes
+cuts toward span-one edges and the longest causal chains stay whole.
 
-
-\todo{make sure the  methods mentioned in related work are defined formulaically there and here is jus the adaptations i had ot make or how they are applied}
+The weight $\gamma = 10$ follows from a limit rather than from a sweep. A minimiser is
+unchanged by a common scaling of all weights, so as $\gamma$ grows, $w$ and
+$\gamma \operatorname{sp}$ pose the same problem, and that limiting problem is minimisation of
+the total span severed. Every weight sits within
+$1 / (1 + \gamma \operatorname{sp}(e)) \leq 1/11$ of the limit at $\gamma = 10$, so the
+objective is already a small perturbation of pure span minimisation and larger values would
+move the partition little. Smaller values would not: at $\gamma = 1$ the unit term is half
+the cost of a span-one cut.

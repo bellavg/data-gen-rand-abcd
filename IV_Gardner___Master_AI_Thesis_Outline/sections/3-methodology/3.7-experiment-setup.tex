@@ -8,24 +8,27 @@ optimizer and evaluation protocol are held constant, so that differences in outc
 attributable to the reduction. The reference point is the full-graph model of RQ1, and every
 reduced configuration is reported relative to it rather than in isolation.
 
-Two hypotheses are stated in advance (\ref{sec:intro:rq3},~\ref{sec:intro:rq4}): H1, that
-path-contracting summarization retains more than edge-removing sparsification at matched
-compression, because contraction shortens propagation paths where deletion only lengthens
-them; and H2, that the domain-informed adaptations tested here are too simple to win
-outright, in which case the informative outcome is what the null result says about where the
-predictive signal lives.
-\todo{done really need to restate hypithesis more so say how this addresses each RQ or how i iwll address them}
+Each question makes its own demand on that design. RQ1 requires the unreduced reference
+point to be trainable at all, which is what bounds the corpus scale
+(\ref{sec:method:experiment:scale}). RQ2 requires every configuration to be measured under
+one batching budget, since memory and throughput are not comparable across budgets
+(\ref{sec:method:experiment:batching}). RQ3 requires the reduction to be the only thing that
+changed, which is why hyperparameters are fixed at the full-graph values
+(\ref{sec:method:experiment:hp}). RQ4 requires pairs matched on \emph{achieved} compression
+rather than on configured parameters, so that a retention gap is not a compression gap in
+disguise. RQ5 requires no new training, only a second evaluation pass over the Phase~3
+checkpoints. The two hypotheses under test, H1 on path contraction and H2 on the strength of
+the heuristics, are stated with the questions they belong to
+(\ref{sec:intro:rq3},~\ref{sec:intro:rq4}).
 
-\todo{this paragraph seems unnecessary and wdym known}
 \paragraph{Positive control.}
-The design includes one configuration whose outcome is known in advance. Colour refinement at
-count-cap $\infty$ on the exact-compression track is provably lossless for this encoder
+One configuration has a predetermined outcome. Colour refinement at count-cap $\infty$ on
+the exact-compression track merges only nodes the encoder provably cannot distinguish
 (\ref{sec:method:architecture:exact}), so a model trained on those coarsened graphs must
-score essentially identically to the full-graph baseline, both on reduced graphs and when
-queried on full ones. This is what makes a poor cross-state result interpretable: without it,
-RQ5 cannot distinguish ``models trained on reduced graphs do not generalize'' from ``the
-evaluation path is wrong''. Any deviation of this configuration from the baseline is a defect
-to be found, not a finding to be reported.
+score identically to the full-graph baseline, on reduced and on unreduced graphs alike. Any
+deviation is a defect to be found rather than a finding to be reported, and without it RQ5
+cannot separate ``models trained on reduced graphs do not generalize'' from ``the evaluation
+path is wrong''.
 
 \paragraph{The experiments.}
 \label{sec:method:experiment:phases}
@@ -61,12 +64,9 @@ Phase~3 places the reduced configurations against the Phase~1 reference on a Par
 of predictive degradation versus memory and speed. Phase~4 queries models trained
 exclusively on reduced graphs with unreduced ones, testing structural generalization.
 
-\paragraph{Limits of the design.}
-The comparison is within one encoder family, one synthesis algorithm and one bounded graph
-scale. It can rank reduction methods against each other under those conditions; it cannot
-establish that the ranking transfers to another architecture, another target algorithm, or
-industrial-scale circuits. Section~\ref{sec:discussion:limitations} treats each in turn.
-\todo{dont discuss limits outside of limitatoin this much in my opinion}
+Encoder family, target synthesis algorithm and graph scale are held fixed, so the design
+ranks reduction methods under those conditions and establishes nothing about transfer beyond
+them (\ref{sec:discussion:limitations}).
 
 \subsection{Setup}
 \label{sec:method:experiment:setup}
@@ -181,48 +181,66 @@ fixed for every reduced configuration. This is the conservative choice for the c
 being made: re-tuning per reduction method would confound ``this reduction retains more
 signal'' with ``this reduction received more tuning effort''. It does mean reduced
 configurations are evaluated at hyperparameters chosen for a different input distribution,
-which if anything biases against them. That is worth stating explicitly, since it bounds the
-strength of any negative result about reduction.
-% TODO: record the search space and the number of trials from src/shell/big_hp_tuning.sh.
+which if anything biases against them, and bounds the strength of any negative result about
+reduction.
+
+The search covered architecture and optimization jointly, in 13 to 18 dimensions depending
+on which encoder a trial drew. The architectural dimensions were the encoder itself, drawn
+from six candidates (a graph convolutional network, two edge-conditioned isomorphism
+networks, a plain message-passing network, an attentional convolution and a hybrid
+local/global model), hidden width in $\{32, 64, 128, 256, 512\}$, message-passing depth
+$L \in \{2, \dots, 8\}$, jumping-knowledge mode in $\{\text{last}, \text{cat}, \text{max},
+\text{sum}\}$, normalisation in $\{\text{batch}, \text{layer}, \text{graph}\}$, graph
+pooling in $\{\text{mean}, \text{max}, \text{sum}\}$, positional encoding in
+$\{\text{none}, \text{level}, \text{input paths}, \text{local shortest-path sum}\}$ with
+width in $\{16, 32, 64, 128\}$, and, on the encoders that have them, attention heads in
+$\{1, 2, 4\}$, edge-channel width in $\{32, 64, 128\}$ and update-layer depth in
+$\{2, 3, 4\}$. The optimization dimensions were learning rate, weight decay, dropout, the
+loss transition point and the batch size in graphs, the first two searched over about two
+decades each ($10^{-4}$ to $6 \times 10^{-3}$ and $3 \times 10^{-5}$ to $10^{-2}$).
+% TODO: the sweep searched the loss transition point; the reported value was set by hand.
+
+The sweep ran in two stages across three parallel workers with distinct sampler seeds and a
+shared data split. An exploration stage requested 50 trials per worker on a 15,000-graph
+subsample with a one-hour cap per trial; an exploitation stage requested 20 per worker on
+35,000 graphs with a four-hour cap, warm-started from the ten best exploration
+configurations. Of the 210 trials requested, the surviving worker logs record 94 started, 52
+completed and 38 pruned, 34 of those on memory exhaustion. The tuning stage therefore hits
+the same bottleneck the thesis is about, and it prunes hardest on precisely the
+configurations that would have been most expensive to train.
 
 \subsubsection{Training Configuration}
 \label{sec:method:experiment:training}
-Smooth L1 loss with $\beta = 0.01$, chosen well below the default because the target occupies
-a narrow band within $[0,1]$ and the default threshold would place nearly every residual in
-the quadratic regime, making the loss effectively squared error. Optimization uses AdamW with
-learning rate $3 \times 10^{-4}$ and weight decay $3.96 \times 10^{-3}$, a linear warmup over
-the first 10,000 steps, and \texttt{ReduceLROnPlateau} thereafter (factor 0.5, patience 2,
-floor $10^{-6}$). Training stops early on validation loss with patience 3. Gradients are
-clipped at 1.0.
+Smooth L1 loss with transition point $\beta = 0.01$~\eqref{eq:method:smoothl1}, set well
+below the default because the target occupies a narrow band within $[0, 1]$ and the default
+would place nearly every residual in the quadratic branch. Optimization uses AdamW at
+learning rate $3 \times 10^{-4}$ and weight decay $3.96 \times 10^{-3}$, with linear warmup
+over 10,000 steps and plateau-triggered decay thereafter, stopping early on validation loss.
+The remaining schedule, clipping and regularisation values are listed
+in~\ref{sec:apx:config}.
 
-Two settings affect the measurements rather than the model and must therefore be disclosed
-with them: \texttt{torch.compile} is enabled, which changes every timing figure, and mixed
-precision is used on GPU, which changes every memory figure. Neither is varied across
-configurations, so comparisons remain valid; absolute numbers are only meaningful together
-with these settings.
+Two settings change the measurements rather than the model and are disclosed with them: the
+training step is compiled, which moves every timing figure, and mixed precision is used on
+the accelerator, which moves every memory figure. Neither varies across configurations, so
+the comparisons hold, but no absolute number here means anything without them.
+% Optimization uses AdamW with learning rate $3 \times 10^{-4}$ and weight decay
+% $3.96 \times 10^{-3}$, a linear warmup over the first 10,000 steps, and
+% \texttt{ReduceLROnPlateau} thereafter (factor 0.5, patience 2, floor $10^{-6}$). Training
+% stops early on validation loss with patience 3. Gradients are clipped at 1.0.
 
-\todo{all these specific hyperparemeters like train split etc.
- how can i best display this more concisely idk if it should really be takign up this much space in my methodlogy or if this is more appendix info}
-
-\subsubsection{Hardware and Software Environment}
+\subsubsection{Execution Environment and Workload Profile}
 \label{sec:method:experiment:hardware}
 All experiments ran on the Snellius national supercomputer: H100 80\,GB GPU nodes for
 training and evaluation, and CPU-only nodes for the offline reduction precompute, which is
-embarrassingly parallel over graphs and does not benefit from a GPU\@.
+embarrassingly parallel over graphs and does not benefit from a GPU\@. Software versions and
+the total wall-clock budget are recorded in~\ref{sec:method:experiment:reproducibility}.
 
-Two measured characteristics of the workload are worth recording, because they explain the
-shape of the RQ2 results rather than merely describing the setup. First, memory scales close
-to linearly with nodes and edges per batch, the encoder's own parameters being negligible at
-this width and depth, which is why a node budget bounds memory effectively at all. Second,
-message passing is latency-bound on gather and scatter operations rather than
-compute-bound: at full device occupancy the floating-point pipelines and memory bandwidth
-both sit far below saturation. The consequence for RQ2 is that a larger
-batch amortises per-batch overhead but does not deliver a proportional speedup, and that
-reductions which remove \emph{edges} should help throughput more than their node compression
+Two measured characteristics of the workload belong here rather than there, because they
+explain the shape of the RQ2 results. Memory scales close to linearly with nodes and edges
+per batch, the encoder's own parameters being negligible at this width and depth, which is
+why a node budget bounds memory effectively at all. Message passing is latency-bound on
+gather and scatter operations rather than compute-bound: at full device occupancy the
+floating-point pipelines and memory bandwidth both sit far below saturation. A larger batch
+therefore amortises per-batch overhead without delivering a proportional speedup, and
+reductions that remove \emph{edges} should help throughput more than their node compression
 alone would suggest.
-\todo{shoudl this be here or in reproducability?}
-
-% TODO: library versions, the synthesis tool version, and the total wall-clock budget. This should go to appendix start ordering my appendix by things that will most likely end up there
-
-
-\todo{keep full text commented out. make more concise for this turn in. }

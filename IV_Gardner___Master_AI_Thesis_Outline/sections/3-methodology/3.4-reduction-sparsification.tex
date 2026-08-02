@@ -1,14 +1,14 @@
 \subsection{Sparsification}
 \label{sec:method:reduction:sparsification}
-Sparsification reduces graph density by selectively removing edges or nodes while attempting
-to preserve overall structural properties \citep{hashemi2024survey}. Two of the four methods
-below act on the edge set alone, replacing $\mathcal{E}$ with a subset
+Two of the four methods below act on the edge set alone, replacing $\mathcal{E}$ with a subset
 $\mathcal{E}' \subseteq \mathcal{E}$ and leaving $\eta_{\mathcal{V}} = 1$. The other two
 select a node subset $\mathcal{V}' \subseteq \mathcal{V}$ and return the induced subgraph
 $R(G) = G[\mathcal{V}']$, so every edge with an endpoint outside $\mathcal{V}'$ is removed as
 well. That difference determines which retention figure is meaningful for each method, and it
 is why~\ref{sec:prelim:reduction:measuring} insists on reporting node and edge retention
-separately rather than as one compression number.
+separately rather than as one compression number. Only one of the four has a compression
+parameter at all; for the other three the achieved retention is a measurement, reported
+in~\ref{sec:results:rq2:offline} rather than here.
 
 \subsubsection{Random Edge Dropout}
 \label{sec:method:sparse:dropout}
@@ -25,11 +25,19 @@ so each edge is kept independently with probability $1 - p$ and
 $\mathbb{E}[\eta_{\mathcal{E}}] = 1 - p$. Random edge removal is established as a per-epoch
 regulariser for deep Graph Neural Network (GNN) training \citep{rong2020dropedge}. Here the
 mask of~\eqref{eq:method:sparse-dropout} is instead drawn once and fixed, which makes it a
-reduction rather than a regulariser. The drop rate is a freely tunable compression parameter,
-which is what makes this method usable as a matched-compression control against the
-parameter-free methods below. The sweep sets $p = 0.3$, for a measured edge retention of
-69.7\%.
-% TODO: matched compression against spanning forest needs the drop rate at 0.419, not 0.3.
+reduction rather than a regulariser.
+
+The drop rate is the only freely tunable compression parameter in the family, so its value
+decides which parameter-free method it can be matched against, and it was set for a pairing
+other than the one it is used in. It is fixed at $p = 0.3$, chosen to place
+$\mathbb{E}[\eta_{\mathcal{E}}]$ near the edge retention of the AND-gate method
+of~\ref{sec:method:sparse:andgate}. The pairing it actually serves is against the spanning
+forest of~\ref{sec:method:sparse:forest}, which requires
+$p = 1 - \eta_{\mathcal{E}}^{\mathrm{forest}} \approx 0.419$ instead. The reported runs use
+$0.3$, so that pairing removes visibly less than its partner and no accuracy difference
+inside it can be read as a difference between the two methods
+(\ref{sec:results:rq4:pairings}, \ref{fig:rq4_pairing_compression}).
+% TODO: rerun random edge dropout at 0.419, or drop the spanning-forest pairing.
 
 \subsubsection{AND-Gate Retention}
 \label{sec:method:sparse:andgate}
@@ -43,9 +51,10 @@ role notation of~\eqref{eq:prelim:role},
 so all Primary Input (PI) and Primary Output (PO) nodes are dropped with every edge that
 touches them, and the internal AND network survives intact. The rationale is that the PI/PO
 boundary is fixed by the circuit's interface and cannot be restructured by synthesis, so the
-AND network carries the optimizable structure. The method is parameter-free: its compression
-is whatever fraction of the graph the interface happens to occupy (measured 82.1\% node and
-73.3\% edge retention), not a value that can be dialled.
+AND network carries the optimizable structure. The method is parameter-free. Its node
+retention is exactly the AND-gate share of the circuit, a corpus statistic
+(\ref{sec:method:data:statistics:scale}) rather than a value that can be dialled, and it
+varies from graph to graph.
 
 \subsubsection{Random Spanning Forest}
 \label{sec:method:sparse:forest}
@@ -69,8 +78,8 @@ a real loss of information on a DAG, and one reason to expect this method to dam
 predictive signal.
 
 The edge count in~\eqref{eq:method:sparse-forest} also makes the method parameter-free:
-$|\mathcal{V}| - c$ edges is a property of the graph rather than a setting, and the measured
-edge retention of 58.1\% follows from the density of the corpus.
+$|\mathcal{V}| - c$ edges is a property of the graph rather than a setting, so its retention
+follows from the density of the corpus (\ref{sec:results:rq2:offline}).
 
 This method replaced a stretch-bounded spanner \citep{peleg1989spanners}, which was
 implemented and abandoned. A $t$-spanner keeps a subgraph $H \subseteq \tilde{G}$ with
@@ -78,9 +87,11 @@ $d_H(u,v) \leq t \cdot d_{\tilde{G}}(u,v)$ for every node pair, so an edge can b
 only when an alternative path of length at most $t$ survives. Spanners exploit dense
 short-range redundancy, and AIGs have little of it: the reconvergence they are rich in runs
 through long paths, so at stretch $t = 3$ the randomised construction of
-\citet{baswana2007spanners} returned the graph nearly unchanged. That negative result is
-worth reporting: it is a small, concrete instance of the thesis's general claim that generic
-graph machinery does not transfer to AIGs unexamined.
+\citet{baswana2007spanners} returned the graph nearly unchanged. That stretch is the smallest
+the construction admits above the exact case $t = 1$, so the failure is not one a weaker
+setting could have avoided. The negative result is worth reporting: it is a small, concrete
+instance of the thesis's general claim that generic graph machinery does not transfer to AIGs
+unexamined.
 
 \subsubsection{PageRank Node Pruning}
 \label{sec:method:sparse:pagerank}
@@ -93,17 +104,16 @@ low-centrality nodes. The score is the stationary solution of
         \frac{\operatorname{pr}(u)}{|\operatorname{fo}(u)|},
     \label{eq:method:sparse-pagerank}
 \end{equation}
-computed on the directed graph with damping factor $\alpha = 0.85$
-\citep{brin1998anatomy,langville2003pagerank}, with fanin and fanout as
-in~\eqref{eq:prelim:fanin} and the mass of the POs, whose fanout is empty, redistributed
-uniformly \citep{langville2003pagerank}. The kept set $\mathcal{V}'$ collects the
-$\lceil \kappa \, |\mathcal{V}| \rceil$ nodes of highest score.
+computed on the directed graph with fanin and fanout as in~\eqref{eq:prelim:fanin} and the
+mass of the POs, whose fanout is empty, redistributed uniformly
+\citep{brin1998anatomy,langville2003pagerank}. The kept set $\mathcal{V}'$ collects the
+$\lceil \kappa \, |\mathcal{V}| \rceil$ nodes of highest score. The damping factor is left at
+the $\alpha = 0.85$ of the original formulation \citep{brin1998anatomy} and was not tuned,
+since it governs how far centrality propagates and not how much the method removes.
 
-The retention fraction $\kappa$ is a parameter, which is what allows this method to be
-matched against AND-gate retention: $\kappa = 0.8$ was chosen to sit at that method's
-measured 82.1\% node retention, making the two a directly comparable domain-informed /
-generic pair (\ref{sec:results:rq4:pairings}).
-
-
-\todo{the retention values and such go in the end when evaluating i think. }
-\todo{i originally did .3 i think for random edge dropout since it was close to the and gate only... need jsutification for all these hyperparameters for all the reduction methods}
+The retention fraction $\kappa$ is the method's compression knob and is set to $\kappa = 0.8$,
+calibrated to the AND-gate share of~\ref{sec:method:data:statistics:scale} so that the two
+form a generic and domain-informed pair at approximately equal node retention
+(\ref{sec:results:rq4:pairings}). The equality is weaker than the shared figure suggests.
+Here $\kappa$ fixes node retention exactly on every graph, whereas the AND-gate share varies
+by circuit, so the pair meets at the corpus mean and not graph by graph.
