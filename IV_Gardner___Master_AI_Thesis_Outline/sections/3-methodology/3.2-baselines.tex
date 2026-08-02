@@ -23,10 +23,12 @@ and the third is an ordinary least squares fit on graph size alone,
     \label{eq:method:baseline-size}
 \end{equation}
 Equation~\eqref{eq:method:baseline-constant} fixes the zero point of~\eqref{eq:method:r2}:
-the test mean is the least-squares optimum, so any other constant scores $R^2 \leq 0$, and
-the median lower-bounds absolute error likewise. Equation~\eqref{eq:method:baseline-size} is
-the weakest non-trivial hypothesis, optimizability as a function of size alone, which any
-structural claim has to clear.
+the test mean is the least-squares optimum, so any other constant scores $R^2 \leq 0$, with
+equality only at $\bar{y}_{\text{val}} = \bar{y}_{\text{test}}$. The median is the
+corresponding optimal constant under absolute error, so the pair together lower-bounds both
+error metrics. Equation~\eqref{eq:method:baseline-size} is the weakest non-trivial
+hypothesis, optimizability as a function of size alone, which any structural claim has to
+clear.
 % Original: Equation~\eqref{eq:method:baseline-constant} fixes the zero point of~\eqref{eq:method:r2}:
 % the test-set mean is the least-squares optimal constant, so any other constant scores
 % $R^2 \leq 0$, with equality only at $\bar{y}_{\text{val}} = \bar{y}_{\text{test}}$. The
@@ -39,8 +41,8 @@ structural claim has to clear.
 A fourth reference point is architectural, not statistical: the edge-aware encoder of
 \ref{sec:method:architecture} at initialisation, with only the regression
 head~\eqref{eq:method:readout} trained. Randomly initialised graph convolutions are known
-to encode usable structure untrained \citep{gallicchio2020fastdeep}, isolating architectural
-bias from learning.
+to encode usable structure untrained \citep{gallicchio2020fastdeep}. Comparing the trained
+encoder against this frozen control isolates architectural inductive bias from learning.
 % Original: A fourth reference point is architectural rather than statistical: the edge-aware encoder of
 % \ref{sec:method:architecture} with its message-passing weights left at initialisation and
 % only the regression head of~\eqref{eq:method:readout} trained. Randomly initialised graph
@@ -103,12 +105,13 @@ Three, each a consequence of the target being one scalar per circuit under one f
     here, $s$ is constant across the corpus, so the branch would only emit a constant bias
     and is dropped rather than learned.
     \item \textbf{Batches are bounded by nodes, not graphs.} A graph-level readout needs all
-    of $\mathcal{V}(G)$ in one pass, so no published batch size transfers; batches are
-    assembled instead to a node budget $B$ and accumulation $a$, tuned as a pair so the
-    product $a \cdot \mathbb{E}[\,B / |\mathcal{V}(G)|\,]$ stays near the primary model's
-    value.
+    of $\mathcal{V}(G)$ in one pass, and no published batch size transfers: HOGA minibatches
+    nodes drawn from one graph, DeepGate4 minibatches cones. Batches are assembled instead to
+    a node budget $B$ and accumulation $a$, tuned as a pair. One graph contributes one label
+    regardless of its size, so the number of losses averaged per update is
+    $a \cdot \mathbb{E}[\,B / |\mathcal{V}(G)|\,]$, held near the primary model's value.
     \item \textbf{Activations are recomputed rather than retained.} DeepGate4's virtual edge
-    set $\bar{\mathcal{E}}_k$ (\eqref{eq:relwork:deepgate4}) measures roughly $180$ edges per
+    set $\bar{\mathcal{E}}_k$ \eqref{eq:relwork:deepgate4} measures roughly $180$ edges per
     circuit node at radius $k = 8$, against an AIG fanin of at most two; gradient
     checkpointing (\ref{sec:prelim:gnn:cost}) on its attention layers makes the baseline
     runnable.
@@ -138,11 +141,14 @@ Three, each a consequence of the target being one scalar per circuit under one f
 % \end{itemize}
 
 \paragraph{Corrections to the released implementations.}
-Two departures correct rather than adapt the released code: HOGA's attention normalises
-scores over the head axis instead of the key axis, and its reverse-propagation branch
-duplicates the forward branch instead of reversing it; the port fixes both, following Eq.~5.
-A third is a convention: OpenABC-D orients edges toward the primary inputs, this corpus the
-other way; the port keeps OpenABC-D's orientation and reports that score alone.
+Two departures correct rather than adapt the released code. HOGA's attention normalises
+scores over the head axis instead of the key axis, so the weights never form a distribution
+over hop neighbours; the port normalises over keys, following Eq.~5 of the paper. Its
+optional reverse-propagation branch applies the forward adjacency to the reverse features,
+which duplicates the forward branch rather than reversing it, and the port applies the
+reverse adjacency. A third is a convention: OpenABC-D orients edges toward the primary
+inputs, this corpus the other way; the port keeps OpenABC-D's orientation and reports that
+score alone.
 % Original: Two departures are corrections rather than adaptations, and are stated because they change
 % published behaviour. HOGA's released attention normalises its scores over the head axis
 % rather than the key axis, so the weights never form a distribution over hop neighbours; the
