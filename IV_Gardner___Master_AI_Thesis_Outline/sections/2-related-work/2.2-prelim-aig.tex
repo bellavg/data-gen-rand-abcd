@@ -3,7 +3,7 @@
 
 \subsubsection{Definition and Structure}
 \label{sec:prelim:aig:definition}
-An And-Inverter Graph (AIG) is a Directed Acyclic Graph (DAG) $G = (\mathcal{V}, \mathcal{E})$
+An AIG is a DAG $G = (\mathcal{V}, \mathcal{E})$
 representing a Boolean network over the basis $\{\wedge, \neg\}$
 \citep{mishchenko2006rewriting}. Every internal node is a two-input AND gate, and every edge
 carries an optional inversion, so conjunction is the only operation that costs a node and
@@ -26,8 +26,8 @@ The vocabulary used throughout follows from the edge set. The fanin and fanout o
     \label{eq:prelim:fanin}
 \end{equation}
 with $|\operatorname{fi}(v)| = 2$ at every AND gate, $\operatorname{fi}(v) = \emptyset$ at
-every Primary Input (PI) and at the constant, and $|\operatorname{fi}(v)| = 1$ at every
-Primary Output (PO). Acyclicity yields a topological order $\prec$ on $\mathcal{V}$
+every \emph{Primary Input} (PI) and at the constant, and $|\operatorname{fi}(v)| = 1$ at every
+\emph{Primary Output} (PO). Acyclicity yields a topological order $\prec$ on $\mathcal{V}$
 with $u \prec v$ for every $(u, v) \in \mathcal{E}$, so signals flow from the PIs to the
 POs and never return.
 

@@ -12,8 +12,8 @@ tool that has to run to completion before its result is known.
 \subsection{Machine Learning for Optimizability Prediction}
 \label{sec:intro:motivation:ml}
 A model that predicted a circuit's \emph{optimizability}, the fraction of nodes a given
-script removes from it, would replace much of that search with a forward pass. Graph Neural
-Networks (GNNs) are the natural family for the task: an AIG is a graph, and the quantity to
+script removes from it, would replace much of that search with a forward pass. \emph{Graph Neural
+Networks} (GNNs) are the natural family for the task: an AIG is a graph, and the quantity to
 be predicted is structural. Scale is what stops them. Industrial AIGs reach millions of
 nodes, at which point training a GNN on them exceeds the memory available on a single device
 and drives training time beyond what is practical.

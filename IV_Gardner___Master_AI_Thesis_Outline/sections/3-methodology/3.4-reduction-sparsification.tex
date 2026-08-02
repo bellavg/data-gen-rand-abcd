@@ -23,7 +23,7 @@ variate and survives when the draw clears the drop rate $p$,
 \end{equation}
 so each edge is kept independently with probability $1 - p$ and
 $\mathbb{E}[\eta_{\mathcal{E}}] = 1 - p$. Random edge removal is established as a per-epoch
-regulariser for deep Graph Neural Network (GNN) training \citep{rong2020dropedge}. Here the
+regulariser for deep GNN training \citep{rong2020dropedge}. Here the
 mask of~\eqref{eq:method:sparse-dropout} is instead drawn once and fixed, which makes it a
 reduction rather than a regulariser.
 
@@ -48,7 +48,7 @@ role notation of~\eqref{eq:prelim:role},
         \tau(v) \notin \{\mathrm{PI}, \mathrm{PO}\} \,\},
     \label{eq:method:sparse-andgate}
 \end{equation}
-so all Primary Input (PI) and Primary Output (PO) nodes are dropped with every edge that
+so all PI and PO nodes are dropped with every edge that
 touches them, and the internal AND network survives intact. The rationale is that the PI/PO
 boundary is fixed by the circuit's interface and cannot be restructured by synthesis, so the
 AND network carries the optimizable structure. The method is parameter-free. Its node
