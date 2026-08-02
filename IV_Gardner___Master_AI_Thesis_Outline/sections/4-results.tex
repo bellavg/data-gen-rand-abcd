@@ -1,11 +1,12 @@
 \chapter{Results}
 \label{sec:results}
 
-% Tables here are generated into media/results/tables by the analysis pipeline;
+% Tables and figures here are generated into media/results by the analysis pipeline;
 % numbers are not typed in by hand.
-% TODO: generator still lacks the summarization rows, the RQ1 published-model and standard-encoder baseline rows,
-% and the consolidated summary table of \ref{sec:results:summary}. Its cross-state
-% caption is labelled RQ4 and should read RQ5.
+% TODO: fabricated placeholders remain for the outstanding runs listed in the gallery header.
+
+\providecommand{\resultsfigs}{media/results/figures}
+\providecommand{\resultsgen}{media/results/tables}
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \section{Baseline Predictive Performance on Full AIGs (RQ1)}
@@ -16,27 +17,31 @@
 \label{sec:results:rq1:baselines}
 % Three-group comparison of \ref{sec:method:architecture:baselines} in one table:
 % trivial predictors, standard encoders, published circuit models.
+% \input{\resultsgen/rq1_baselines}   % tab:rq1_baselines, with fig:rq1_baseline_tiers
 
 \subsection{Predictive Accuracy Metrics}
 \label{sec:results:rq1:accuracy}
 Tabular presentation of Smooth L1 Loss, RMSE, and $R^2$ for the Edge-Aware GCN+ predicting
 Orchestrate optimizability, on a test set of full AIGs.
 
-% \input{\resultstables/baseline_accuracy}   % tab:baseline_accuracy
+% Exhibits: fig:rq1_parity, fig:rq1_calibration; encoder row of tab:rq1_baselines.
 
 \subsection{Ranking Efficacy}
 \label{sec:results:rq1:ranking}
 Spearman correlation coefficients.
+% Exhibit: Spearman column of tab:rq1_baselines.
 
 \subsection{Baseline Model Outcomes}
 \label{sec:results:rq1:baselinemodels}
 % SynthNet collapsed to a constant prediction on this split; mechanism in
 % \ref{sec:method:architecture:baselines}. Upstream z-scores per design, so its $R^2$
 % and the one reported here are different quantities and cannot share a column.
+% Exhibit: published-model rows of tab:rq1_baselines.
 
 \subsection{Error Analysis}
 \label{sec:results:rq1:erroranalysis}
 % Residuals by graph size, tier and source design.
+% Exhibits: fig:rq1_residuals_by_size, fig:rq1_error_by_target_bin, fig:rq1_variance_decomposition.
 
 \subsection{Protocol Sensitivity: How Much of the Score Is Design Recognition? (RQ1a)}
 \label{sec:results:rq1:protocol}
@@ -44,12 +49,14 @@ Spearman correlation coefficients.
 % (\ref{sec:method:experiment:splitting}), plus an inflation column against the
 % design-disjoint row, and per-design metrics from the persisted predictions.
 % TODO: needs the random-split and recipe-split runs; only the design-split run exists.
+% \input{\resultsgen/rq1a_protocol}   % tab:rq1a_protocol, with fig:rq1a_split_protocol and fig:rq1_error_by_design
 
 \subsection{Cost of the Full-Graph Baseline}
 \label{sec:results:rq1:hardware}
 Three quantities characterise the cost of training on unreduced graphs, and together they
 form the reference against which every reduction in RQ2 is read: time per optimisation step
 and per epoch, peak allocated device memory, and inference throughput in graphs per second.
+% Exhibits: fig:rq1_training_cost; baseline row of tab:rq2_efficiency.
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -72,7 +79,7 @@ and per epoch, peak allocated device memory, and inference throughput in graphs 
 % property of the reduction and is what forces the matched-random design
 % (\ref{sec:method:summary:random}).
 
-% \input{\resultstables/reduction_efficiency}   % tab:reduction_efficiency
+% Exhibits: fig:rq2_retention, fig:rq2_retention_distribution, fig:rq2_offline_cost, fig:rq2_amortisation.
 
 
 \subsection{Training Memory Dynamics and Compute Efficiency}
@@ -84,17 +91,18 @@ compute-bound from one that is waiting on memory.
 % Host-side memory is logged; report only if it constrains a configuration.
 
 % Peak memory against graph size, not only as a per-configuration scalar.
-% \input{\resultstables/vram_scaling}   % tab:vram_scaling
+% Exhibits: fig:rq2_vram, fig:rq2_cost_vs_size.
 % A graph larger than the batch budget forms a batch of its own, so peak memory for any
 % method that leaves node counts intact is floored by the largest circuit in the corpus.
 
 \subsection{Throughput and Training Speedup}
 \label{sec:results:rq2:throughput}
 \begin{itemize}
-    \item Comparison of \texttt{train\_step\_time\_s\_step} and \texttt{train\_step\_time\_s\_epoch} against the full-graph baseline.
+    \item Comparison of time per optimisation step and per epoch against the full-graph baseline.
     \item Inference throughput improvements (graphs processed per second) over the baseline.
 \end{itemize}
 
+% Exhibits: fig:rq2_throughput, fig:rq2_paired_savings.
 % Report the bootstrap intervals and Wilcoxon test rather than bare means.
 % Speedups under-deliver relative to compression because the kernels are latency-bound
 % on gather/scatter (\ref{sec:method:experiment:hardware}).
@@ -103,6 +111,7 @@ compute-bound from one that is waiting on memory.
 \label{sec:results:rq2:ranking}
 % Same data as the subsections above, one row per method, ranked. Generic versus
 % domain-informed is a column, not the organising axis.
+% \input{\resultsgen/rq2_efficiency}   % tab:rq2_efficiency
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -114,7 +123,7 @@ compute-bound from one that is waiting on memory.
 \label{sec:results:rq3:degradation}
 Grouped bar charts comparing the RMSE and $R^2$ of models trained and tested on reduced graphs against the RQ1 full-graph baseline.
 
-% \input{\resultstables/predictive_retention}   % tab:predictive_retention
+% \input{\resultsgen/rq3_retention}   % tab:rq3_retention, with fig:rq3_accuracy, fig:rq3_metric_divergence, fig:rq3_by_target_bin
 % RMSE, $R^2$ and Spearman together throughout (\ref{sec:method:experiment:metrics}).
 % Positive control, reported first and separately: the exact colour-refinement
 % configuration must land on the full-graph baseline within tolerance
@@ -123,6 +132,7 @@ Grouped bar charts comparing the RMSE and $R^2$ of models trained and tested on 
 \subsection{Ranking Preservation}
 \label{sec:results:rq3:ranking}
 % Spearman under reduction; ranking can survive when absolute error degrades.
+% Exhibit: Spearman columns of tab:rq3_retention.
 
 \subsection{Accuracy Loss Attributable to Reduction}
 \label{sec:results:rq3:attribution}
@@ -130,10 +140,12 @@ Grouped bar charts comparing the RMSE and $R^2$ of models trained and tested on 
 % matched compression: AND-gate-only keeps 73.3\% of edges against spanning forest's
 % 58.1\%, so raw accuracies are not comparable. One row per method, aligned with
 % \ref{sec:results:rq2:ranking}.
+% Exhibits: fig:rq3_retention_vs_compression, fig:rq3_accuracy_retained.
 
 \subsection{The Pareto Front (Trade-Off Analysis)}
 \label{sec:results:rq3:pareto}
 Scatter plots visualizing Accuracy (y-axis) vs. Memory/Speed Gains (x-axis) to identify the optimal graph reduction technique, bridging RQ2 and RQ3.
+% Exhibit: fig:rq3_pareto.
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -149,6 +161,7 @@ Scatter plots visualizing Accuracy (y-axis) vs. Memory/Speed Gains (x-axis) to i
 % random control at the method's own ratio (summarization, \ref{sec:method:summary:random}).
 % TODO: spanning forest against random edge dropout is not matched at a drop rate of 0.3
 % (69.7\% against 58.1\% edge retention); approximately 0.419 matches it.
+% \input{\resultsgen/rq4_pairings}   % tab:rq4_pairings, with fig:rq4_pairing_compression and fig:rq2_partition_balance
 
 \subsection{Retention Gap at Matched Compression}
 \label{sec:results:rq4:gap}
@@ -156,6 +169,7 @@ Scatter plots visualizing Accuracy (y-axis) vs. Memory/Speed Gains (x-axis) to i
 % Each configuration is trained once (\ref{sec:method:experiment:metrics:stats}), so
 % these gaps carry no variance estimate. Either seeds on the RQ4 pairs or point
 % estimates reported as such.
+% Exhibits: fig:rq4_paired_gaps, fig:rq4_domain_vs_generic, fig:rq4_seed_variance.
 
 \subsection{Structural Interpretation}
 \label{sec:results:rq4:interpretation}
