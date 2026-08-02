@@ -1,18 +1,22 @@
 \section{Graph Reduction}
 \label{sec:method:reduction}
-This section describes the reduction methods evaluated in this thesis. Their objective is to relieve the memory bottleneck that prevents training on unreduced AIGs and to shorten training time, while preserving the structural features on which accurate optimizability prediction depends.
+Reduction here targets the memory bottleneck preventing training on unreduced AIGs and
+shortens training time, while preserving the structure optimizability prediction depends on.
+% Original: This section describes the reduction methods evaluated in this thesis. Their objective is to relieve the memory bottleneck that prevents training on unreduced AIGs and to shorten training time, while preserving the structural features on which accurate optimizability prediction depends.
 
-The three families are defined in~\ref{sec:prelim:reduction} and their generic members are
-surveyed in~\ref{sec:relwork:reduction}. What follows states what changes when those methods
-meet an AIG: the adaptation each one required, and the value every free parameter was given
-together with what fixes it. The parameters are collected in~\ref{sec:apx:params}.
+The three families are defined in~\ref{sec:prelim:reduction}, their generic members surveyed
+in~\ref{sec:relwork:reduction}. What follows states only each AIG adaptation and the value
+given to every free parameter, with what fixes it (\ref{sec:apx:params}).
+% Original: The three families are defined in~\ref{sec:prelim:reduction} and their generic members are
+% surveyed in~\ref{sec:relwork:reduction}. What follows states what changes when those methods
+% meet an AIG: the adaptation each one required, and the value every free parameter was given
+% together with what fixes it. The parameters are collected in~\ref{sec:apx:params}.
 
 \subsection{Partitioning}
 \label{sec:method:reduction:partitioning}
 Applied to an AIG $G = (\mathcal{V}, \mathcal{E})$, an assignment
-$\pi \colon \mathcal{V} \rightarrow \{1, \dots, k\}$ with blocks
-$\mathcal{V}_i = \pi^{-1}(i)$ keeps exactly the edges internal to a
-block,
+$\pi \colon \mathcal{V} \rightarrow \{1, \dots, k\}$ keeps exactly the edges internal to a
+block $\mathcal{V}_i = \pi^{-1}(i)$,
 \begin{equation}
     R_\pi(G) = \bigl( \mathcal{V},\
     \mathcal{E} \setminus \mathcal{E}_{\mathrm{cut}}(\pi) \bigr),
@@ -21,12 +25,22 @@ block,
     = \{\, (u, v) \in \mathcal{E} : \pi(u) \neq \pi(v) \,\},
     \label{eq:method:partition-graph}
 \end{equation}
-the disjoint union of the $k$ induced subgraphs. Node retention is
-$\eta_{\mathcal{V}} = 1$ by construction, so the only quantity a partitioner controls is
-the edge retention
-$\eta_{\mathcal{E}} = 1 - |\mathcal{E}_{\mathrm{cut}}(\pi)| / |\mathcal{E}|$
-of~\eqref{eq:prelim:retention}. All blocks of a graph are kept and enter the model
-together, through the hierarchical readout of~\ref{sec:method:architecture:partitioning}.
+the disjoint union of the $k$ induced subgraphs, so the only quantity a partitioner controls
+is the edge retention $\eta_{\mathcal{E}} = 1 - |\mathcal{E}_{\mathrm{cut}}(\pi)| /
+|\mathcal{E}|$ of~\eqref{eq:prelim:retention}.
+% Cut: all blocks enter the model together, through the hierarchical readout
+% of~\ref{sec:method:architecture:partitioning}.
+% Original: Applied to an AIG $G = (\mathcal{V}, \mathcal{E})$, an assignment
+% $\pi \colon \mathcal{V} \rightarrow \{1, \dots, k\}$ with blocks
+% $\mathcal{V}_i = \pi^{-1}(i)$ keeps exactly the edges internal to a
+% block,
+% [[equation unchanged, see above]]
+% the disjoint union of the $k$ induced subgraphs. Node retention is
+% $\eta_{\mathcal{V}} = 1$ by construction, so the only quantity a partitioner controls is
+% the edge retention
+% $\eta_{\mathcal{E}} = 1 - |\mathcal{E}_{\mathrm{cut}}(\pi)| / |\mathcal{E}|$
+% of~\eqref{eq:prelim:retention}. All blocks of a graph are kept and enter the model
+% together, through the hierarchical readout of~\ref{sec:method:architecture:partitioning}.
 
 The number of blocks is set per graph from a target block size $s$,
 \begin{equation}
@@ -34,15 +48,21 @@ The number of blocks is set per graph from a target block size $s$,
     \max\bigl\{ k_{\min},\ \lfloor |\mathcal{V}| / s \rfloor \bigr\} \Bigr\},
     \label{eq:method:partition-k}
 \end{equation}
-with $s = 10{,}000$ and $[k_{\min}, k_{\max}] = [2, 32]$. The two bounds are fixed by the
-corpus rather than chosen. The floor binds below $2s = 20{,}000$ nodes, which covers the
-median graph of~\ref{sec:method:data:statistics:scale}, and it guarantees that every graph is
-genuinely partitioned instead of passing through unreduced. The cap is reached only above
-$s \, k_{\max} = 320{,}000$ nodes, beyond the largest graph in the evaluation splits, so it
-acts as a guard against $k$ growing without bound and never as an operating point. The target
-block size itself was fixed a priori and never swept, which leaves the sensitivity of every
-partitioning result to $s$ unmeasured.
+with $s = 10{,}000$ and $[k_{\min}, k_{\max}] = [2, 32]$, fixed by the corpus rather than
+chosen: the floor binds below $2s = 20{,}000$ nodes, covering the median graph
+(\ref{sec:method:data:statistics:scale}) and guaranteeing every graph is genuinely
+partitioned. The cap binds only above $s \, k_{\max} = 320{,}000$ nodes, beyond the largest
+evaluation graph, guarding against unbounded $k$ rather than setting an operating point. $s$
+was fixed a priori and never swept, leaving its sensitivity unmeasured.
 % TODO: sweep the target block size, or report partitioning as fixed at one.
+% Original: with $s = 10{,}000$ and $[k_{\min}, k_{\max}] = [2, 32]$. The two bounds are fixed by the
+% corpus rather than chosen. The floor binds below $2s = 20{,}000$ nodes, which covers the
+% median graph of~\ref{sec:method:data:statistics:scale}, and it guarantees that every graph is
+% genuinely partitioned instead of passing through unreduced. The cap is reached only above
+% $s \, k_{\max} = 320{,}000$ nodes, beyond the largest graph in the evaluation splits, so it
+% acts as a guard against $k$ growing without bound and never as an operating point. The target
+% block size itself was fixed a priori and never swept, which leaves the sensitivity of every
+% partitioning result to $s$ unmeasured.
 
 The four methods below receive the same $k(G)$ on every graph and differ only in the
 assignment $\pi$, which is what makes them directly comparable.
@@ -50,20 +70,27 @@ assignment $\pi$, which is what makes them directly comparable.
 \subsubsection{Random Hashing}
 \label{sec:method:partition:random}
 Each node is assigned a block independently and uniformly at random,
-$\pi(v) \sim \operatorname{Uniform}\{1, \dots, k\}$, from a fixed seed. The assignment
-ignores the edge set entirely, so each edge survives with probability $1/k$ and
+$\pi(v) \sim \operatorname{Uniform}\{1, \dots, k\}$, from a fixed seed
+(\ref{sec:relwork:reduction:partitioning}), so each edge survives with probability $1/k$,
 \begin{equation}
     \mathbb{E}\bigl[ \eta_{\mathcal{E}}(R_\pi(G)) \bigr] = \frac{1}{k},
     \label{eq:method:partition-random}
 \end{equation}
-independently of the graph. This is the floor of the family: a structure-aware method
-justifies its cost only by retaining more than this fraction. Blocks are balanced only in
-expectation, but the deviation is negligible at the block sizes implied
-by~\eqref{eq:method:partition-k}.
+independently of the graph. Blocks are balanced only in expectation, but the deviation is
+negligible at the block sizes implied by~\eqref{eq:method:partition-k}.
+% Original: Each node is assigned a block independently and uniformly at random,
+% $\pi(v) \sim \operatorname{Uniform}\{1, \dots, k\}$, from a fixed seed. The assignment
+% ignores the edge set entirely, so each edge survives with probability $1/k$ and
+% [[equation unchanged, see above]]
+% independently of the graph. This is the floor of the family: a structure-aware method
+% justifies its cost only by retaining more than this fraction. Blocks are balanced only in
+% expectation, but the deviation is negligible at the block sizes implied
+% by~\eqref{eq:method:partition-k}.
 
 \subsubsection{METIS}
 \label{sec:method:partition:metis}
 METIS \citep{karypis1997metis} approximates the balanced minimum-cut partition
+(\ref{sec:relwork:reduction:partitioning}),
 \begin{equation}
     \min_{\pi}\ \bigl| \mathcal{E}_{\mathrm{cut}}(\pi) \bigr|
     \quad \text{subject to} \quad
@@ -71,59 +98,91 @@ METIS \citep{karypis1997metis} approximates the balanced minimum-cut partition
     \leq (1 + \varepsilon) \left\lceil \frac{|\mathcal{V}|}{k} \right\rceil,
     \label{eq:method:partition-metis}
 \end{equation}
-by the multilevel heuristic of~\ref{sec:relwork:reduction:partitioning}. It is applied
-unmodified, at the balance tolerance $\varepsilon$ its implementation defaults to, which is
-what makes it the generic arm of the comparison rather than a method this thesis tuned.
+applied unmodified at its default balance tolerance $\varepsilon$: the generic arm of the
+comparison, not a method this thesis tuned.
 % TODO: record the default balance tolerance the partitioner runs at.
+% Original: METIS \citep{karypis1997metis} approximates the balanced minimum-cut partition
+% [[equation unchanged, see above]]
+% by the multilevel heuristic of~\ref{sec:relwork:reduction:partitioning}. It is applied
+% unmodified, at the balance tolerance $\varepsilon$ its implementation defaults to, which is
+% what makes it the generic arm of the comparison rather than a method this thesis tuned.
 
-Two consequences of applying it to an AIG matter downstream. It operates on the undirected
-projection, so edge direction plays no part in where the cuts fall. Its objective also counts
-every cut edge equally, so severing a connection between adjacent levels costs the same as
-severing an edge that bridges half the circuit's depth. That is precisely the assumption the
-domain-informed variant below modifies.
+Two consequences matter downstream: edge direction plays no part in where cuts fall
+(undirected projection), and every cut edge counts equally, so severing an adjacent-level
+connection costs the same as severing an edge spanning half the circuit's depth, the
+assumption the domain-informed variant below modifies.
+% Original: Two consequences of applying it to an AIG matter downstream. It operates on the undirected
+% projection, so edge direction plays no part in where the cuts fall. Its objective also counts
+% every cut edge equally, so severing a connection between adjacent levels costs the same as
+% severing an edge that bridges half the circuit's depth. That is precisely the assumption the
+% domain-informed variant below modifies.
 
 \subsubsection{Level Slicing}
 \label{sec:method:partition:levelslice}
-Nodes are ordered by topological level~\eqref{eq:prelim:level} and the ordering is cut
-into $k$ blocks of equal cardinality. Writing
-$\operatorname{rank}(v) \in \{0, \dots, |\mathcal{V}| - 1\}$ for the position of $v$ in a
-stable sort by $\ell(v)$,
+Nodes are ordered by topological level~\eqref{eq:prelim:level} and cut into $k$ blocks of
+equal cardinality: writing $\operatorname{rank}(v)$ for the position of $v$ in a stable sort
+by $\ell(v)$,
 \begin{equation}
     \pi(v) = 1 + \left\lfloor
     \frac{k \cdot \operatorname{rank}(v)}{|\mathcal{V}|} \right\rfloor.
     \label{eq:method:partition-slice}
 \end{equation}
-Balance is exact by construction, and blocks are contiguous in depth:
-$\ell(u) < \ell(v)$ implies $\pi(u) \leq \pi(v)$. Because every edge runs from a lower
-level to a strictly higher one, an edge is cut exactly when its endpoints straddle one of
-the $k - 1$ block boundaries. The local directed structure of each depth band therefore
-survives intact. The price is that every path from the inputs to the outputs crosses every
-boundary and is severed $k - 1$ times. The construction introduces no parameter of its own:
-$k$ comes from~\eqref{eq:method:partition-k} and the ordering is fixed by the graph.
+Balance is exact by construction and blocks are contiguous in depth
+($\ell(u) < \ell(v) \Rightarrow \pi(u) \leq \pi(v)$), so an edge is cut only when its
+endpoints straddle a block boundary, and local directed structure within each depth band
+survives intact. The price: every input-to-output path crosses every boundary and is severed
+$k - 1$ times. $k$ comes from~\eqref{eq:method:partition-k}, adding no parameter of its own.
+% Original: Nodes are ordered by topological level~\eqref{eq:prelim:level} and the ordering is cut
+% into $k$ blocks of equal cardinality. Writing
+% $\operatorname{rank}(v) \in \{0, \dots, |\mathcal{V}| - 1\}$ for the position of $v$ in a
+% stable sort by $\ell(v)$,
+% [[equation unchanged, see above]]
+% Balance is exact by construction, and blocks are contiguous in depth:
+% $\ell(u) < \ell(v)$ implies $\pi(u) \leq \pi(v)$. Because every edge runs from a lower
+% level to a strictly higher one, an edge is cut exactly when its endpoints straddle one of
+% the $k - 1$ block boundaries. The local directed structure of each depth band therefore
+% survives intact. The price is that every path from the inputs to the outputs crosses every
+% boundary and is severed $k - 1$ times. The construction introduces no parameter of its own:
+% $k$ comes from~\eqref{eq:method:partition-k} and the ordering is fixed by the graph.
 
 \subsubsection{Span-Weighted METIS}
 \label{sec:method:partition:spanmetis}
-The domain-aware adaptation changes only the objective of~\eqref{eq:method:partition-metis}.
-Each edge $e = (u, v)$ has a span
+The domain-aware adaptation changes only the objective of~\eqref{eq:method:partition-metis}:
+each edge $e = (u, v)$ has a span
 \begin{equation}
     \operatorname{sp}(e) = \ell(v) - \ell(u) \geq 1,
     \qquad
     w(e) = 1 + \gamma \cdot \operatorname{sp}(e),
     \label{eq:method:partition-span}
 \end{equation}
-the number of levels it crosses, and the weighted cut
-$\sum_{e \in \mathcal{E}_{\mathrm{cut}}(\pi)} w(e)$ is minimised under the same balance
-constraint. A long edge is a shortcut between distant levels, and cutting it removes gates
-from the fanin cones~\eqref{eq:prelim:cone} of everything downstream, which is exactly the
-damage the uniform objective is indifferent to. Under~\eqref{eq:method:partition-span} the
-cost of a cut grows linearly with the length of the chain it breaks, so the minimiser pushes
-cuts toward span-one edges and the longest causal chains stay whole.
+the number of levels it crosses, with the weighted cut
+$\sum_{e \in \mathcal{E}_{\mathrm{cut}}(\pi)} w(e)$ minimised under the same balance
+constraint. A long edge is a shortcut between distant levels. Cutting it removes gates from
+the fanin cones~\eqref{eq:prelim:cone} downstream, the damage the uniform objective ignores.
+Cut cost under~\eqref{eq:method:partition-span} grows linearly with the chain length broken,
+favouring span-one cuts so the longest causal chains stay whole.
+% Original: The domain-aware adaptation changes only the objective of~\eqref{eq:method:partition-metis}.
+% Each edge $e = (u, v)$ has a span
+% [[equation unchanged, see above]]
+% the number of levels it crosses, and the weighted cut
+% $\sum_{e \in \mathcal{E}_{\mathrm{cut}}(\pi)} w(e)$ is minimised under the same balance
+% constraint. A long edge is a shortcut between distant levels, and cutting it removes gates
+% from the fanin cones~\eqref{eq:prelim:cone} of everything downstream, which is exactly the
+% damage the uniform objective is indifferent to. Under~\eqref{eq:method:partition-span} the
+% cost of a cut grows linearly with the length of the chain it breaks, so the minimiser pushes
+% cuts toward span-one edges and the longest causal chains stay whole.
 
-The weight $\gamma = 10$ follows from a limit rather than from a sweep. A minimiser is
-unchanged by a common scaling of all weights, so as $\gamma$ grows, $w$ and
-$\gamma \operatorname{sp}$ pose the same problem, and that limiting problem is minimisation of
-the total span severed. Every weight sits within
-$1 / (1 + \gamma \operatorname{sp}(e)) \leq 1/11$ of the limit at $\gamma = 10$, so the
-objective is already a small perturbation of pure span minimisation and larger values would
-move the partition little. Smaller values would not: at $\gamma = 1$ the unit term is half
-the cost of a span-one cut.
+The weight $\gamma = 10$ follows from a limit, not a sweep: a minimiser is unchanged by
+scaling all weights, so as $\gamma$ grows, $w$ and $\gamma \operatorname{sp}$ pose the same
+problem, namely minimising total span severed. Every weight sits within
+$1 / (1 + \gamma \operatorname{sp}(e)) \leq 1/11$ of that limit at $\gamma = 10$, so larger
+values would move the partition little. Smaller values would not, since at $\gamma = 1$ the
+unit term is already half the cost of a span-one cut.
+% Original: The weight $\gamma = 10$ follows from a limit rather than from a sweep. A minimiser is
+% unchanged by a common scaling of all weights, so as $\gamma$ grows, $w$ and
+% $\gamma \operatorname{sp}$ pose the same problem, and that limiting problem is minimisation of
+% the total span severed. Every weight sits within
+% $1 / (1 + \gamma \operatorname{sp}(e)) \leq 1/11$ of the limit at $\gamma = 10$, so the
+% objective is already a small perturbation of pure span minimisation and larger values would
+% move the partition little. Smaller values would not: at $\gamma = 1$ the unit term is half
+% the cost of a span-one cut.

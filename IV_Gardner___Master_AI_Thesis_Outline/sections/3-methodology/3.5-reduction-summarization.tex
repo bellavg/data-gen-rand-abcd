@@ -1,17 +1,26 @@
 \subsection{Summarization and Coarsening}
 \label{sec:method:reduction:summarization}
-A coarsening is a quotient. A merge map $\mu \colon \mathcal{V} \rightarrow \mathcal{V}'$
-sends each node to the super-node containing it, and the reduced graph is the quotient of $G$
-under $\mu$ (\ref{sec:prelim:reduction:summarization}). Unlike the other two families, which
-only delete, a coarsening must also decide what a super-node \emph{is}. The rewrite that
-turns a merge map into a graph is therefore fixed once
+A coarsening is a quotient under a merge map $\mu \colon \mathcal{V} \rightarrow \mathcal{V}'$
+(\ref{sec:prelim:reduction:summarization}), and, unlike the other two families, which only
+delete, must also decide what a super-node \emph{is}. The rewrite that does so is fixed once
 (\ref{sec:method:summary:mergemap}), and every candidate below reduces to its choice of
 $\mu$.
+% Original: A coarsening is a quotient. A merge map $\mu \colon \mathcal{V} \rightarrow \mathcal{V}'$
+% sends each node to the super-node containing it, and the reduced graph is the quotient of $G$
+% under $\mu$ (\ref{sec:prelim:reduction:summarization}). Unlike the other two families, which
+% only delete, a coarsening must also decide what a super-node \emph{is}. The rewrite that
+% turns a merge map into a graph is therefore fixed once
+% (\ref{sec:method:summary:mergemap}), and every candidate below reduces to its choice of
+% $\mu$.
 
-Four candidates span domain-specific, exact and general-purpose, with a random control that
-is what makes matched-compression comparison possible
-(Table~\ref{tab:summarization_methods}). No summarization configuration has been trained, so
-what follows states the intended construction rather than a measured method.
+Four candidates span domain-specific, exact and general-purpose, with a random control
+making matched-compression comparison possible (Table~\ref{tab:summarization_methods}). No
+summarization configuration has been trained, so what follows states the intended
+construction, not a measured method.
+% Original: Four candidates span domain-specific, exact and general-purpose, with a random control that
+% is what makes matched-compression comparison possible
+% (Table~\ref{tab:summarization_methods}). No summarization configuration has been trained, so
+% what follows states the intended construction rather than a measured method.
 
 \begin{table}[htbp]
 \centering
@@ -35,9 +44,9 @@ Random within-type       & uniform within type      & control         & exact \\
 
 \subsubsection{Merge Map and Super-Node Schema}
 \label{sec:method:summary:mergemap}
-One rewrite turns any merge map into a graph, so that methods differ in what they merge and
-in nothing else. A super-node carries the counts of its members by role, and a super-edge the
-counts of the normal and inverted connections it stands for,
+One rewrite turns any merge map into a graph, so methods differ only in what they merge. A
+super-node carries the counts of its members by role, a super-edge the counts of normal and
+inverted connections it stands for,
 \begin{equation}
     x_{u'} = \Bigl( \bigl| \{\, u \in \mu^{-1}(u') : \tau(u) = r \,\} \bigr|
         \Bigr)_{r \in \{\mathrm{const},\, \mathrm{PI},\, \mathrm{AND},\, \mathrm{PO}\}},
@@ -47,12 +56,22 @@ counts of the normal and inverted connections it stands for,
     \label{eq:method:summary-rewrite}
 \end{equation}
 with $\tau$ the role of~\eqref{eq:prelim:role} and $\mathrm{inv}$ the inversion
-of~\eqref{eq:prelim:inversion}. Super-edges are kept only for $u' \neq v'$, so intra-cluster
-edges become self-loops and are dropped; their count is retained as a graph attribute rather
-than lost silently. The two entries of $a_{u'v'}$ sum to the multiplicity $w_{u'v'}$
-of~\eqref{eq:prelim:multiplicity}. Positional encodings are pooled by member minimum, so a
-super-node sits at the level of its earliest member.
+of~\eqref{eq:prelim:inversion}. Super-edges are kept only for $u' \neq v'$. Intra-cluster
+edges become self-loops and are dropped, their count retained as a graph attribute. The two
+entries of $a_{u'v'}$ sum to the multiplicity $w_{u'v'}$ of~\eqref{eq:prelim:multiplicity},
+and positional encodings are pooled by member minimum, so a super-node sits at the level of
+its earliest member.
 % TODO: super-node content is not yet exploited; do not write as though it is.
+% Original: One rewrite turns any merge map into a graph, so that methods differ in what they merge and
+% in nothing else. A super-node carries the counts of its members by role, and a super-edge the
+% counts of the normal and inverted connections it stands for,
+% [[equation unchanged, see above]]
+% with $\tau$ the role of~\eqref{eq:prelim:role} and $\mathrm{inv}$ the inversion
+% of~\eqref{eq:prelim:inversion}. Super-edges are kept only for $u' \neq v'$, so intra-cluster
+% edges become self-loops and are dropped; their count is retained as a graph attribute rather
+% than lost silently. The two entries of $a_{u'v'}$ sum to the multiplicity $w_{u'v'}$
+% of~\eqref{eq:prelim:multiplicity}. Positional encodings are pooled by member minimum, so a
+% super-node sits at the level of its earliest member.
 
 \paragraph{Boundary preservation.}
 Every candidate merges within one node role,
@@ -60,63 +79,96 @@ Every candidate merges within one node role,
     \mu(u) = \mu(v) \implies \tau(u) = \tau(v).
     \label{eq:method:summary-boundary}
 \end{equation}
-The PI/PO interface is the circuit's contract with the rest of the design, and dissolving it
-changes what the graph represents rather than coarsening it. Imposing the restriction
-uniformly also makes a comparison between methods a comparison of \emph{which} nodes are
-merged, not of whether the interface survived.
+The PI/PO interface is the circuit's contract with the rest of the design. Dissolving it
+changes what the graph represents rather than coarsening it, and imposing the restriction
+uniformly makes a comparison between methods a comparison of \emph{which} nodes are merged,
+not of whether the interface survived.
+% Original: The PI/PO interface is the circuit's contract with the rest of the design, and dissolving it
+% changes what the graph represents rather than coarsening it. Imposing the restriction
+% uniformly also makes a comparison between methods a comparison of \emph{which} nodes are
+% merged, not of whether the interface survived.
 
 \paragraph{Schema compatibility.}
 \label{sec:method:summary:schema}
 The count representation of~\eqref{eq:method:summary-rewrite} is a strict superset of the
 one-hot one: a super-node with a single member reproduces its original feature row exactly,
-and a single edge reproduces its own inversion indicator. An unreduced AIG is therefore
-already a valid input in the summarized schema, without conversion, and that is what makes
-RQ5 testable with one set of weights. It is a design constraint on every method rather than a
-convenience. A merge producing features outside this space would leave summary and full
-graphs in different input spaces and make cross-state inference undefined.
+and a single edge its own inversion indicator. An unreduced AIG is therefore already a valid
+input in the summarized schema, without conversion, which is what makes RQ5 testable with
+one set of weights. It is a design constraint on every method, not a convenience: a merge
+producing features outside this space would leave summary and full graphs in different
+input spaces and make cross-state inference undefined.
+% Original: The count representation of~\eqref{eq:method:summary-rewrite} is a strict superset of the
+% one-hot one: a super-node with a single member reproduces its original feature row exactly,
+% and a single edge reproduces its own inversion indicator. An unreduced AIG is therefore
+% already a valid input in the summarized schema, without conversion, and that is what makes
+% RQ5 testable with one set of weights. It is a design constraint on every method rather than a
+% convenience. A merge producing features outside this space would leave summary and full
+% graphs in different input spaces and make cross-state inference undefined.
 
 \subsubsection{Domain-Specific Coarsening}
 \label{sec:method:summary:domain}
-Two AIG-native candidates, with the choice between them open because neither one's
-compression on this corpus is known.
+Two AIG-native candidates. The choice between them awaits measured compression on this
+corpus.
 
 \emph{MFFC contraction} sends every gate to the root of the maximal fanout-free cone
 containing it, $\mu(u) = v$ for the $v$ with $u \in \operatorname{MFFC}(v)$
 of~\eqref{eq:prelim:mffc}, iterated to a fixed point. What survives is the multi-fanout
-sharing skeleton together with the fixed interface. It takes no parameter, so its compression
-is a property of the circuit.
+sharing skeleton plus the fixed interface. It takes no parameter, so its compression is a
+property of the circuit.
+% Original: \emph{MFFC contraction} sends every gate to the root of the maximal fanout-free cone
+% containing it, $\mu(u) = v$ for the $v$ with $u \in \operatorname{MFFC}(v)$
+% of~\eqref{eq:prelim:mffc}, iterated to a fixed point. What survives is the multi-fanout
+% sharing skeleton together with the fixed interface. It takes no parameter, so its compression
+% is a property of the circuit.
 
-\emph{Cone coarsening} merges along two axes. Chains of single-fanout gates contract into one
-super-node up to a capped chain length, which reduces depth. Gates inside a bounded band of
-topological levels that share an immediate post-dominator
-(\ref{sec:prelim:aig:properties}) merge together, which compresses width while leaving
-critical-path depth, and with it the level encoding, exact. The chain cap and the band width
-are the only compression controls a domain-specific candidate offers here, and neither has
-been given a value.
+\emph{Cone coarsening} merges along two axes: chains of single-fanout gates contract into
+one super-node up to a capped chain length, reducing depth, and gates inside a bounded band
+of topological levels sharing an immediate post-dominator (\ref{sec:prelim:aig:properties})
+merge together, compressing width while leaving critical-path depth, and with it the level
+encoding, exact. The chain cap and band width are the only compression controls a
+domain-specific candidate offers here, and neither has been given a value.
 % TODO: fix the chain cap and the level-band width, or drop the cone candidate.
 % TODO: report that the width axis must use post-dominators, if this method is written up.
 % TODO: neither cone nor MFFC compression is measured on the corpus.
+% Original: \emph{Cone coarsening} merges along two axes. Chains of single-fanout gates contract into one
+% super-node up to a capped chain length, which reduces depth. Gates inside a bounded band of
+% topological levels that share an immediate post-dominator
+% (\ref{sec:prelim:aig:properties}) merge together, which compresses width while leaving
+% critical-path depth, and with it the level encoding, exact. The chain cap and the band width
+% are the only compression controls a domain-specific candidate offers here, and neither has
+% been given a value.
 
-The two are related rather than rival. Chain contraction is the capped, chain-shaped special
-case of MFFC absorption, which additionally captures cones whose interior reconverges. Both
-preserve acyclicity, since a cluster is absorbed only into the single cluster receiving all
-of its outgoing edges, which cannot close a cycle in a DAG\@. For cone coarsening the
-guarantee holds at band width zero, where the width axis merges only within a level; wider
-bands give it up along with the exactness of the level encoding.
+The two are related, not rival: chain contraction is MFFC absorption's capped, chain-shaped
+special case, which additionally captures reconverging cone interiors. Both preserve
+acyclicity, since a cluster absorbs only into the cluster receiving all its outgoing edges,
+which cannot close a cycle in a DAG\@. For cone coarsening this holds only at band width
+zero, and wider bands lose the level encoding's exactness too.
+% Original: The two are related rather than rival. Chain contraction is the capped, chain-shaped special
+% case of MFFC absorption, which additionally captures cones whose interior reconverges. Both
+% preserve acyclicity, since a cluster is absorbed only into the single cluster receiving all
+% of its outgoing edges, which cannot close a cycle in a DAG\@. For cone coarsening the
+% guarantee holds at band width zero, where the width axis merges only within a level; wider
+% bands give it up along with the exactness of the level encoding.
 
-Merging MFFCs invites an objection, and the answer is the thesis claim in miniature.
-Refactoring collapses and re-expresses one MFFC at a time, so merging them might be expected
-to destroy exactly the signal the model must read. The claim here is the opposite, and it is
-falsifiable: intra-cone wiring is what local rewriting is \emph{free} to change, so it is
-noise with respect to the label, whereas the sharing structure that \emph{constrains} what
-rewriting can achieve is what survives the merge.
+Merging MFFCs invites an objection, and the answer is the thesis claim in miniature:
+refactoring collapses and re-expresses one MFFC at a time, so merging them might be expected
+to destroy exactly the signal the model must read. The claim here is the opposite, and
+falsifiable: intra-cone wiring is what local rewriting is \emph{free} to change, hence noise
+with respect to the label, while the sharing structure that \emph{constrains} rewriting is
+what survives the merge.
+% Original: Merging MFFCs invites an objection, and the answer is the thesis claim in miniature.
+% Refactoring collapses and re-expresses one MFFC at a time, so merging them might be expected
+% to destroy exactly the signal the model must read. The claim here is the opposite, and it is
+% falsifiable: intra-cone wiring is what local rewriting is \emph{free} to change, so it is
+% noise with respect to the label, whereas the sharing structure that \emph{constrains} what
+% rewriting can achieve is what survives the merge.
 
 \subsubsection{Graded Colour Refinement}
 \label{sec:method:summary:wl}
-The exact anchor of the study, and the one candidate whose merge map is defined by what the
-encoder can see rather than by a property of the graph. Nodes merge when they agree after $d$
-rounds of the refinement~\eqref{eq:prelim:cr}, and two substitutions in that recurrence carry
-the whole adaptation to AIGs,
+The exact anchor of the study: the one candidate whose merge map is defined by what the
+encoder can see, not by a property of the graph. Nodes merge when they agree after $d$
+rounds of colour refinement~\eqref{eq:prelim:cr} (\ref{sec:prelim:gnn:expressivity}), and two
+substitutions in that recurrence carry the whole adaptation to AIGs,
 \begin{equation}
     c_v^{(0)} = \bigl( \tau(v),\ \ell(v) \bigr),
     \qquad
@@ -126,75 +178,123 @@ the whole adaptation to AIGs,
         u \in \operatorname{fi}(v) \,\bigr\}\!\!\bigr\}_{c}.
     \label{eq:method:summary-refine}
 \end{equation}
-Initialising from the role and the level~\eqref{eq:prelim:level} rather than uniformly keeps
-nodes at different depths in different classes, so a super-node's pooled level is exact.
-Carrying $\mathrm{inv}$ inside the neighbour's identity keeps a normal and an inverted
-connection out of the same class; without it, logically distinct subgraphs merge. The
-neighbourhood is the fanin~\eqref{eq:prelim:fanin}, so refinement runs backward from the
-primary outputs. Direction is itself a parameter, and it changes both how much compresses and
-which structure survives.
+Initialising from role and level~\eqref{eq:prelim:level} rather than uniformly keeps nodes
+at different depths in different classes, so a super-node's pooled level is exact. Carrying
+$\mathrm{inv}$ inside the neighbour's identity keeps a normal and an inverted connection out
+of the same class. Without it, logically distinct subgraphs merge. The neighbourhood is the
+fanin~\eqref{eq:prelim:fanin}, so refinement runs backward from the primary outputs, itself
+a parameter that changes both how much compresses and which structure survives.
 % TODO: fix the refinement direction, or run both and report each.
+% Original: The exact anchor of the study, and the one candidate whose merge map is defined by what the
+% encoder can see rather than by a property of the graph. Nodes merge when they agree after $d$
+% rounds of the refinement~\eqref{eq:prelim:cr}, and two substitutions in that recurrence carry
+% the whole adaptation to AIGs,
+% [[equation unchanged, see above]]
+% Initialising from the role and the level~\eqref{eq:prelim:level} rather than uniformly keeps
+% nodes at different depths in different classes, so a super-node's pooled level is exact.
+% Carrying $\mathrm{inv}$ inside the neighbour's identity keeps a normal and an inverted
+% connection out of the same class; without it, logically distinct subgraphs merge. The
+% neighbourhood is the fanin~\eqref{eq:prelim:fanin}, so refinement runs backward from the
+% primary outputs. Direction is itself a parameter, and it changes both how much compresses and
+% which structure survives.
 
 The subscript in~\eqref{eq:method:summary-refine} is the count cap
-of~\ref{sec:prelim:gnn:expressivity}, and only its two named endpoints are run:
-$c = \infty$, lossless for a summing GNN, and $c = 1$, which is bisimulation, coarser and
-lossy for a counting model. Intermediate caps are omitted because the endpoints bracket them
-and each value costs a training run. The depth is set to $d = L$, the encoder's
-message-passing depth, and that equality is the justification rather than a convenience. A
-smaller $d$ merges less and gains nothing; a larger one merges nodes the encoder can
-separate, and the losslessness argument fails.
+of~\ref{sec:prelim:gnn:expressivity}. Only its two named endpoints, $c = \infty$ and
+$c = 1$, are run, since intermediate caps are bracketed by them and each value costs a
+training run. The depth is set to $d = L$, the encoder's message-passing depth, and that
+equality is the justification, not a convenience: a smaller $d$ merges less and gains
+nothing, while a larger one merges nodes the encoder can separate, and the losslessness
+argument fails.
+% Original: The subscript in~\eqref{eq:method:summary-refine} is the count cap
+% of~\ref{sec:prelim:gnn:expressivity}, and only its two named endpoints are run:
+% $c = \infty$, lossless for a summing GNN, and $c = 1$, which is bisimulation, coarser and
+% lossy for a counting model. Intermediate caps are omitted because the endpoints bracket them
+% and each value costs a training run. The depth is set to $d = L$, the encoder's
+% message-passing depth, and that equality is the justification rather than a convenience. A
+% smaller $d$ merges less and gains nothing; a larger one merges nodes the encoder can
+% separate, and the losslessness argument fails.
 
-At $c = \infty$ the merge is orthogonal to the optimization being predicted by construction:
-it removes only what the model provably cannot see, so it cannot erase the label. That is
-what makes it the positive control for RQ5 rather than merely another contender, and
-realising the guarantee end to end requires the encoder variant
-of~\ref{sec:method:architecture:exact}.
+At $c = \infty$ the merge is orthogonal to the optimization being predicted by construction
+(\ref{sec:relwork:reduction:summarization}): the positive control for RQ5, realised end to
+end only through the encoder variant of~\ref{sec:method:architecture:exact}.
+% Original: At $c = \infty$ the merge is orthogonal to the optimization being predicted by construction:
+% it removes only what the model provably cannot see, so it cannot erase the label. That is
+% what makes it the positive control for RQ5 rather than merely another contender, and
+% realising the guarantee end to end requires the encoder variant
+% of~\ref{sec:method:architecture:exact}.
 
-Structural hashing has already removed the one-hop equivalences
-(\ref{sec:prelim:algorithms:primitives}), since every corpus graph is strashed. What this
-method finds is therefore \emph{residual} redundancy beyond one hop. How much of it exists is
-not yet known, and the answer bounds what the exact track can compress.
+Structural hashing has already removed one-hop equivalences
+(\ref{sec:prelim:algorithms:primitives}), since every corpus graph is strashed, so what this
+method finds is \emph{residual} redundancy beyond one hop. How much exists is unknown, and
+the answer bounds what the exact track can compress.
 % TODO: run the residual-redundancy probe over depths 1 to 4; depth 1 subsumes k-SNAP \citep{tian2008ksnap}.
+% Original: Structural hashing has already removed the one-hop equivalences
+% (\ref{sec:prelim:algorithms:primitives}), since every corpus graph is strashed. What this
+% method finds is therefore \emph{residual} redundancy beyond one hop. How much of it exists is
+% not yet known, and the answer bounds what the exact track can compress.
 
 \subsubsection{Convolution Matching}
 \label{sec:method:summary:convmatch}
-The strongest general-purpose competitor. ConvMatch \citep{dickens2024convmatch} merges nodes
-that are equivalent with respect to the \emph{graph convolution operation} itself rather than
-with respect to a graph property, and it accepts a target compression ratio directly. The
-only adaptation is~\eqref{eq:method:summary-boundary}, imposed on the candidate set so that
-the convolution objective is left unmodified. It is the bar the domain-specific candidate
-must clear, and the right bar because it is GNN-aware and domain-blind: a win against it is a
-win against a method optimising the same objective, not against a strawman.
+ConvMatch \citep{dickens2024convmatch} (\ref{sec:relwork:reduction:summarization}) is
+adapted only by imposing the boundary constraint~\eqref{eq:method:summary-boundary} on its
+candidate set, leaving the convolution objective itself unmodified. It accepts a target
+compression ratio directly, and is the bar the domain-specific candidate must clear.
 % TODO: set the target ratio from the domain-specific candidate's achieved compression.
+% Original: The strongest general-purpose competitor. ConvMatch \citep{dickens2024convmatch} merges nodes
+% that are equivalent with respect to the \emph{graph convolution operation} itself rather than
+% with respect to a graph property, and it accepts a target compression ratio directly. The
+% only adaptation is~\eqref{eq:method:summary-boundary}, imposed on the candidate set so that
+% the convolution objective is left unmodified. It is the bar the domain-specific candidate
+% must clear, and the right bar because it is GNN-aware and domain-blind: a win against it is a
+% win against a method optimising the same objective, not against a strawman.
 
 Its behaviour on a deep DAG with inverted edges is untested in the literature, and one
-property of its objective explains why it may differ from the published setting. The merge
-cost is an unweighted sum over the convolution output, so merging two low-degree nodes scores
-better than merging two genuine convolution twins of higher degree, regardless of similarity.
-Convolution equivalence therefore decides \emph{between} pairs of comparable degree and not
-across them, which on the degree profile of an AIG biases merging toward the input frontier.
+property of its objective suggests why it may differ here: the merge cost is an unweighted
+sum over the convolution output, so merging two low-degree nodes scores better than merging
+two genuine convolution twins of higher degree, regardless of similarity. Convolution
+equivalence therefore decides \emph{between} pairs of comparable degree, not across them,
+which on an AIG's degree profile biases merging toward the input frontier.
 % TODO: measure the per-graph cost of probe sampling before quoting it.
+% Original: Its behaviour on a deep DAG with inverted edges is untested in the literature, and one
+% property of its objective explains why it may differ from the published setting. The merge
+% cost is an unweighted sum over the convolution output, so merging two low-degree nodes scores
+% better than merging two genuine convolution twins of higher degree, regardless of similarity.
+% Convolution equivalence therefore decides \emph{between} pairs of comparable degree and not
+% across them, which on the degree profile of an AIG biases merging toward the input frontier.
 
 \subsubsection{Random Within-Type Merging}
 \label{sec:method:summary:random}
-Uniformly random nodes of the same type are merged until the node count reaches a target. The
-target is not a free parameter: it is set per pairing to the partner method's achieved
-compression. Restricting merges by~\eqref{eq:method:summary-boundary} is what makes the
-comparison isolate \emph{which} nodes are merged rather than confounding it with whether the
-interface survived.
+Uniformly random nodes of the same type are merged until the node count reaches a target,
+itself not free: it is set per pairing to the partner method's achieved compression, under
+the same boundary restriction~\eqref{eq:method:summary-boundary} as every other candidate
+(\ref{sec:method:summary:mergemap}).
+% Original: Uniformly random nodes of the same type are merged until the node count reaches a target. The
+% target is not a free parameter: it is set per pairing to the partner method's achieved
+% compression. Restricting merges by~\eqref{eq:method:summary-boundary} is what makes the
+% comparison isolate \emph{which} nodes are merged rather than confounding it with whether the
+% interface survived.
 
 As a naive floor, it answers the question a reader asks first: a method that does not beat
-random merging at the same compression bought nothing with its sophistication. It is also the
-counterpart of random edge dropout (\ref{sec:method:sparse:dropout}), so both halves of the
-study have a floor built the same way.
+random merging at the same compression bought nothing with its sophistication, the
+counterpart of random edge dropout (\ref{sec:method:sparse:dropout}) so both halves of the
+study share a floor built the same way.
+% Original: As a naive floor, it answers the question a reader asks first: a method that does not beat
+% random merging at the same compression bought nothing with its sophistication. It is also the
+% counterpart of random edge dropout (\ref{sec:method:sparse:dropout}), so both halves of the
+% study have a floor built the same way.
 
-As a matching instrument, it is what makes RQ4 answerable for this family at all. Compression
-is a free parameter for only some methods: convolution matching takes a target ratio, cone
-coarsening offers coarse integer knobs, and MFFC contraction and colour refinement have none
-whatsoever. There is no general way to make two \emph{real} methods meet at one ratio. Each
-method is instead compared against a random control run at that method's own achieved
-compression, which replaces a matching problem that has no solution.
+As a matching instrument, it is what makes RQ4 answerable for this family
+(\ref{sec:relwork:reduction:summarization}): convolution matching takes a target ratio,
+cone coarsening offers coarse integer knobs, and MFFC contraction and colour refinement have
+none whatsoever, so each is compared against a random control at its own achieved
+compression.
 % TODO: not built. The cost is the training runs, one per matched point, not the code.
+% Original: As a matching instrument, it is what makes RQ4 answerable for this family at all. Compression
+% is a free parameter for only some methods: convolution matching takes a target ratio, cone
+% coarsening offers coarse integer knobs, and MFFC contraction and colour refinement have none
+% whatsoever. There is no general way to make two \emph{real} methods meet at one ratio. Each
+% method is instead compared against a random control run at that method's own achieved
+% compression, which replaces a matching problem that has no solution.
 
 % Superseded draft, retained for reference until the summarization runs exist.
 % \subsection{Summarization and Coarsening}

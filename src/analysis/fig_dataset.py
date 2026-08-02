@@ -9,6 +9,7 @@ cache and are not available from the exported results.
 
 from __future__ import annotations
 
+import textwrap
 from pathlib import Path
 
 import numpy as np
@@ -248,7 +249,7 @@ def zero_inflation(preds: pd.DataFrame, out: Path) -> None:
         ax.text(frac, yi, f"  max $y$={mx:.4f}", va="center", fontsize=6, color=INK_MUTED)
     ax.set_xlim(0, 1.35)
     ax.set_xlabel("Fraction of graphs with $y$ exactly 0")
-    ax.set_title("By design (red: Orchestrate is at a fixed point)")
+    ax.set_title(textwrap.fill("By design (red: Orchestrate is at a fixed point)", width=30))
     style_axes(ax, grid_axis="x")
 
     ax = axes[1]
@@ -265,7 +266,7 @@ def zero_inflation(preds: pd.DataFrame, out: Path) -> None:
     ax.set_ylim(-0.05, 1.05)
     ax.set_xlabel("Nodes per graph (log)")
     ax.set_ylabel("Fraction with $y$ exactly 0")
-    ax.set_title("By circuit scale: small circuits are already minimal")
+    ax.set_title(textwrap.fill("By circuit scale: small circuits are already minimal", width=30))
     style_axes(ax, grid_axis="both")
 
     frac = float((preds["target"] == 0).mean())
