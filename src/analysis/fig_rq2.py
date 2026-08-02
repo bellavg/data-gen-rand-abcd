@@ -325,7 +325,6 @@ def cost_vs_size(per_graph: pd.DataFrame, out: Path) -> None:
     separates the two.
     """
     fig, axes = plt.subplots(1, 3, figsize=(6.9, 2.7))
-    fig.subplots_adjust(wspace=0.42)
     labels = per_graph["run_label"].unique()
 
     # Bin on the graph's UNREDUCED size, joined by graph_id, not on the size it

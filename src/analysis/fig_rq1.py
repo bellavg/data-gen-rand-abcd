@@ -371,7 +371,6 @@ def hp_sweep(trials: pd.DataFrame, out: Path) -> None:
     trials carry no value.
     """
     fig, axes = plt.subplots(1, 3, figsize=(6.9, 2.7))
-    fig.subplots_adjust(wspace=0.45)
     done = trials[trials["state"] == "COMPLETE"].copy()
     # A handful of catastrophic trials (objective up to ~28) compress everything
     # else onto one line; the axis is clipped and the clipping is stated.
@@ -559,7 +558,6 @@ def hp_parameters(trials: pd.DataFrame, out: Path) -> None:
     best = done["value"].min()
 
     fig, axes = plt.subplots(2, 6, figsize=(6.9, 3.6))
-    fig.subplots_adjust(wspace=0.55, hspace=0.85)
 
     for ax, col in zip(axes[0], numeric):
         ax.plot(done[col], done["value"], "o", ms=3, alpha=0.55,
@@ -626,7 +624,6 @@ def error_by_target_bin(preds: pd.DataFrame, out: Path) -> None:
     x = np.arange(len(grouped))
 
     fig, axes = plt.subplots(1, 3, figsize=(6.9, 2.6))
-    fig.subplots_adjust(wspace=0.42)
 
     ax = axes[0]
     ax.bar(x, grouped["n"], color=INK_MUTED, width=0.6)

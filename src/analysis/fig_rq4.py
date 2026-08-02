@@ -20,6 +20,7 @@ spanning forest's 58.1%, so the arms are not comparable and the figure says so.
 
 from __future__ import annotations
 
+import textwrap
 from pathlib import Path
 
 import numpy as np
@@ -180,11 +181,14 @@ def pairing_compression(pairings: pd.DataFrame, out: Path) -> None:
             )
         ax.set_xlim(0.3, 1.55)
         ax.set_xlabel(f"{axis.capitalize()} retention (open = generic, filled = domain)")
+        note = (
+            "(matching axis for the partitioners and PageRank pair)"
+            if axis == "node" else
+            "(matching axis for the edge-mask pair; an outcome elsewhere)"
+        )
         ax.set_title(
-            f"{axis.capitalize()} retention"
-            + ("\n(matching axis for the partitioners and PageRank pair)"
-               if axis == "node" else
-               "\n(matching axis for the edge-mask pair; an outcome elsewhere)")
+            f"{axis.capitalize()} retention\n"
+            + textwrap.fill(note, width=30)
         )
         style_axes(ax, grid_axis="x")
 
