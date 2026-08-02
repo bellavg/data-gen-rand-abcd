@@ -1,69 +1,45 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \section{Value of Domain-Informed Adaptation (RQ4)}
 \label{sec:results:rq4}
 % Answers \ref{sec:intro:rq4}: whether AIG-specific knowledge bought anything.
 
 \subsection{Matched-Compression Pairings}
 \label{sec:results:rq4:pairings}
-% Pairings are defined before they are reported, with the achieved compression of each
-% arm stated. Three kinds: matched by construction (the four partitioners, same $k$),
-% matched by calibration (AND-gate-only against PageRank at 0.8), and matched against a
-% random control at the method's own ratio (summarization, \ref{sec:method:summary:random}).
-% TODO: spanning forest against random edge dropout is not matched at a drop rate of 0.3
-% (69.7\% against 58.1\% edge retention); approximately 0.419 matches it.
-
-\subsection{Retention Gap at Matched Compression}
-\label{sec:results:rq4:gap}
-% Paired RMSE, $R^2$ and Spearman difference within each pairing.
-% Each configuration is trained once (\ref{sec:method:experiment:metrics:stats}), so
-% these gaps carry no variance estimate. Either seeds on the RQ4 pairs or point
-% estimates reported as such.
-
-\subsection{Structural Interpretation}
-\label{sec:results:rq4:interpretation}
-% If domain-informed methods do not win, the predictive signal is distributed rather
-% than concentrated in the cones and long paths the heuristics protect.
-
-\subsection{Adequacy of the Heuristics Tested}
-\label{sec:results:rq4:adequacy}
-% These are simple adaptations, so a null result bounds these heuristics rather than
-% domain-aware reduction in general.
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\label{sec:results:gallery:rq4}
-
-\begin{figure*}[htbp]
-    \centering
-    \includegraphics[width=\textwidth]{\resultsfigs/rq4_paired_gaps}
-    \caption[Paired domain-vs-generic gaps]{Domain-informed minus generic within
-    each pairing. The first two pairings are matched by construction (same $k$, all
-    nodes kept, only the cut rule differs); the third is matched by calibration;
-    the fourth is \emph{not} matched and is hatched accordingly. Read every bar
-    against~\ref{fig:rq4_pairing_compression}.}
-    \label{fig:rq4_paired_gaps}
-\end{figure*}
+Each domain-informed method is read against one generic counterpart at the closest
+compression available, since an unmatched comparison confounds the heuristic with how much
+it happened to remove. Three kinds of match are used. By construction, both arms share the
+same $k$ (\ref{sec:method:reduction:partitioning}). By calibration, a free parameter is tuned
+to approximate the other arm's retention, as for AND-gate-only against PageRank pruning at
+$\kappa = 0.8$. The third kind matches against a random control at the method's own ratio,
+reserved for summarization (\ref{sec:method:summary:random}) and unpopulated until that
+family is trained.
 
 \begin{figure}[htbp]
     \centering
     \includegraphics[width=\columnwidth]{\resultsfigs/rq4_pairing_compression}
     \caption[Pairing quality]{How closely matched each RQ4 pairing actually is. The
     spanning-forest / random-edge-dropout pair is far apart because the configured
-    drop rate of 0.3 leaves 69.7\% of edges against spanning forest's 58.1\%;
-    raising the rate to approximately 0.419 would match them.}
+    drop rate of 0.3 leaves 69.7\% of edges against spanning forest's 58.1\%.
+    Raising the rate to approximately 0.419 would match them.}
     \label{fig:rq4_pairing_compression}
 \end{figure}
 
-\begin{figure}[htbp]
-    \centering
-    \includegraphics[width=\columnwidth]{\resultsfigs/rq4_seed_variance}
-    \caption[Gaps against run-to-run noise]{\textbf{ERROR BARS FABRICATED.} The
-    measured RQ4 gaps with an invented $\pm 0.05$ band. Every configuration in this
-    thesis is trained exactly once, so there is no run-to-run variance to judge
-    these gaps against. The figure exists to make that visible rather than to
-    report an interval (\ref{sec:results:rq4:gap}).}
-    \label{fig:rq4_seed_variance}
-\end{figure}
+The two partitioning pairings hold $k$ fixed and let retention fall out of the assignment
+rule, so their match is a property of the construction rather than a tuned outcome. The
+sparsification pairings need a free parameter for that, and the fourth is the one case where
+the parameter was set for a different pairing entirely: the drop rate behind random edge
+dropout was calibrated against AND-gate-only (\ref{sec:method:sparse:dropout}), so against
+spanning forest it leaves 11.6 percentage points of edge retention on the table, and no
+accuracy difference inside that pairing can be attributed to the heuristic rather than to the
+gap in~\ref{fig:rq4_pairing_compression}.
 \clearpage
+
+\subsection{Retention Gap at Matched Compression}
+\label{sec:results:rq4:gap}
+The paired gap $\Delta_{\mathrm{pair}}$ of~\eqref{eq:method:paired-gap} taken within each
+pairing above, first without the match enforced and then with it. Each configuration is
+trained once (\ref{sec:method:experiment:metrics:stats}), so every gap below is a point
+estimate with no run-to-run variance behind it.
 
 \begin{figure*}[htbp]
     \centering
@@ -75,6 +51,85 @@
     \label{fig:rq4_domain_vs_generic}
 \end{figure*}
 
+Pooling every domain-informed method against every generic one, regardless of pairing, is the
+comparison a reader reaches for first, and the weaker one: the two groups are matched only
+pairing by pairing, not as pooled groups, so this view carries less evidential weight than
+the paired comparison that follows.
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{\resultsfigs/rq4_paired_gaps}
+    \caption[Paired domain-vs-generic gaps]{Domain-informed minus generic within
+    each pairing. The first two pairings are matched by construction (same $k$, all
+    nodes kept, only the cut rule differs). The third is matched by calibration.
+    The fourth is \emph{not} matched and is hatched accordingly. Read every bar
+    against~\ref{fig:rq4_pairing_compression}.}
+    \label{fig:rq4_paired_gaps}
+\end{figure*}
+
 \input{\resultsgen/rq4_pairings}
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+Level slicing separates cleanly from random hashing, gaining $\Delta R^2 = 0.839$ and
+$\Delta\rho = 0.302$ at the same $k$: a real domain-informed win, though both configurations
+still score below zero on $R^2$ in absolute terms (\ref{sec:results:rq3:degradation}).
+AND-gate-only moves the other way against PageRank pruning, losing $\Delta\rho = -0.393$
+while $\Delta$RMSE and $\Delta R^2$ stay near zero. Span-weighted METIS gains the largest
+margin, $\Delta R^2 = 3.071$, but only because plain METIS collapses to $R^2 = -3.062$: the
+domain-informed arm is not competitive in absolute terms either. It is simply less broken.
+The fourth pairing is not matched closely enough to read at all
+(\ref{fig:rq4_pairing_compression}).
+\clearpage
+
+\subsection{Structural Interpretation}
+\label{sec:results:rq4:interpretation}
+A heuristic that protects the right structure should separate from its generic control even
+when both arms are weak. One that does not implies the predictive signal is spread across the
+AIG rather than concentrated in the fanin cones and causal chains these heuristics single out
+(\ref{sec:method:reduction:partitioning},~\ref{sec:method:sparse:andgate}).
+
+\begin{figure}[htbp]
+    \centering
+    \fbox{\parbox[c][0.24\textheight][c]{0.86\columnwidth}{\centering\footnotesize
+    Reserved slot. No plot generated.}}
+    \caption[Signal locality against protected structure]{\textbf{FABRICATED.} Reserved slot
+    for the paired gap of~\ref{fig:rq4_paired_gaps} against the share of each graph's fanin
+    cones and longest causal chains that a pairing's domain-informed arm specifically
+    protects. A gap rising with that share would place the predictive signal inside the
+    protected structure. Nothing is plotted and no data stands behind this float.}
+    \label{fig:rq4_structural_locality}
+\end{figure}
+
+Level slicing is the one pairing that behaves as concentrated signal would predict: its clean
+separation above (\ref{tab:rq4_pairings}) places some of the signal in topological level, the
+one property it isolates cleanly (\ref{sec:method:partition:levelslice}). AND-gate-only moves
+the opposite way, and span-weighted METIS's margin is inherited from a partner that collapsed
+rather than earned against a competitive one. The result is split rather than uniform: one of
+three unconfounded pairings supports concentrated signal, one argues against it, and the
+third, spanning forest against random edge dropout, is not matched closely enough to read at
+all.
+\clearpage
+
+\subsection{Adequacy of the Heuristics Tested}
+\label{sec:results:rq4:adequacy}
+These are simple adaptations, so the split result above bounds these four heuristics rather
+than domain-aware reduction as an idea.
+
+\begin{figure}[htbp]
+    \centering
+    \fbox{\parbox[c][0.24\textheight][c]{0.86\columnwidth}{\centering\footnotesize
+    Reserved slot. No plot generated.}}
+    \caption[Heuristic scope against the wider literature]{\textbf{FABRICATED.} Reserved slot
+    for the four tested heuristics placed against the wider domain-aware reduction literature
+    (\ref{sec:relwork:reduction}) on the single structural signal each consults: edge span,
+    topological level, gate role, or reconvergence. Multi-signal and learned heuristics are
+    absent from the comparison entirely. Nothing is plotted.}
+    \label{fig:rq4_heuristic_scope}
+\end{figure}
+
+Edge-span weighting, level slicing, gate-role filtering and reconvergence-bounded merging
+each read exactly one structural property off the AIG and act on it with a fixed rule. None
+combines signals, is learned, or is fit to the corpus. A single-signal rule separating on one
+pairing and failing on another bounds what these four rules can do. It does not bound what a
+more expressive domain-aware method, one that combines level, span, gate role and
+reconvergence rather than picking one, could still achieve.
+\clearpage

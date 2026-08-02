@@ -1,91 +1,13 @@
-\section{Cross-Structural Generalization (RQ5)}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Cross-State Inference (RQ5)}
 \label{sec:results:rq5}
 % Answers \ref{sec:intro:rq5}: train on reduced, infer on full.
 
 \subsection{Reduced-to-Full Inference Accuracy}
 \label{sec:results:rq5:accuracy}
-Smooth L1 Loss, RMSE, and $R^2$ metrics from testing a model (which was trained exclusively on reduced AIGs via partitioning, sparsification, or summarization) directly on normal, full-sized AIGs.
-
-% \input{\resultstables/cross_state_generalization}   % tab:cross_state_generalization
-% Positive control first: the exact colour-refinement configuration transfers losslessly
-% by construction. Schema asymmetry: standard-track methods need no conversion of a full
-% graph, the exact track does (\ref{sec:method:architecture:exact}).
-% Prior expectation: \citet{cts_bench2026} report negative $R^2$ zero-shot after generic
-% coarsening.
-
-\subsection{Zero-Shot Ranking}
-\label{sec:results:rq5:ranking}
-Spearman correlation.
-
-\subsection{Matched-State vs. Cross-State Drop-Off}
-\label{sec:results:rq5:dropoff}
-Comparison measuring the performance drop-off between matched-state testing (Reduced $\rightarrow$ Reduced) vs.\ cross-state testing (Reduced $\rightarrow$ Full).
-
-\subsection{Generalization by Reduction Family}
-\label{sec:results:rq5:byfamily}
-% Which family survives the structural shift best, node-preserving against node-removing
-% against partitioning.
-
-\subsection{Inference Cost}
-\label{sec:results:rq5:cost}
-% Inference stores no gradients or activations, so full-graph inference memory and
-% latency are reported, including on CPU.
-
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\label{sec:results:gallery:rq5}
-
-\begin{figure*}[htbp]
-    \centering
-    \includegraphics[width=\textwidth]{\resultsfigs/rq5_matched_vs_full}
-    \caption[Matched-state against full-graph evaluation]{The same weights
-    evaluated under the reduction they were trained with and on unreduced graphs.
-    For every method here a full graph needs no conversion, since it already is a
-    valid input, which is what makes this a direct test rather than a comparison
-    across two input formats (\ref{sec:method:summary:schema}).}
-    \label{fig:rq5_matched_vs_full}
-\end{figure*}
-
-\begin{figure*}[htbp]
-    \centering
-    \includegraphics[width=\textwidth]{\resultsfigs/rq5_dropoff}
-    \caption[Cost of the structural shift]{Full-graph score minus matched-state
-    score, by method and family. A positive bar means the model scores
-    \emph{better} on graphs it never trained on, which would say the reduction was
-    hurting the model rather than the evaluation.}
-    \label{fig:rq5_dropoff}
-\end{figure*}
-
-\begin{figure}[htbp]
-    \centering
-    \includegraphics[width=\columnwidth]{\resultsfigs/rq5_transfer_quadrant}
-    \caption[Transfer quadrant]{Matched-state against full-graph $R^2$. The
-    diagonal is perfect transfer; below it the structural shift cost accuracy,
-    above it the reduction was the thing doing damage.}
-    \label{fig:rq5_transfer_quadrant}
-\end{figure}
-\clearpage
-
-\begin{figure*}[htbp]
-    \centering
-    \includegraphics[width=\textwidth]{\resultsfigs/rq5_inference_cost}
-    \caption[Inference cost by evaluation state]{Throughput and peak memory for a
-    query, under each evaluation state. Inference stores neither gradients nor
-    activations, so the memory argument that forced the reduction at training time
-    need not bind here at all, which is the practical claim
-    of~\ref{sec:intro:rq5}.}
-    \label{fig:rq5_inference_cost}
-\end{figure*}
-
-\begin{figure}[htbp]
-    \centering
-    \includegraphics[width=\columnwidth]{\resultsfigs/rq5_cpu_inference}
-    \caption[GPU against CPU inference]{\textbf{MOSTLY FABRICATED.} The ``infer
-    full on modest hardware'' half of RQ5. Every surviving inference CSV records
-    \texttt{device=cuda}; the CPU bars are placeholders for a
-    \texttt{src/shell/test\_cpu.sh} pass that has not been run.}
-    \label{fig:rq5_cpu_inference}
-\end{figure}
+Smooth L1 loss, RMSE and $R^2$ from querying each reduction-trained model on unreduced AIGs,
+against the same model scored under the reduction it was trained with
+(\ref{sec:method:experiment:metrics}).
 
 \begin{figure}[htbp]
     \centering
@@ -98,8 +20,143 @@ Comparison measuring the performance drop-off between matched-state testing (Red
     slot is held open rather than dropped.}
     \label{fig:rq5_positive_control}
 \end{figure}
-\clearpage
+
+The control is reported first because it bounds every other result in this section
+(\ref{sec:method:architecture:exact}): if it lands away from the dashed baseline once
+measured, cross-state failure elsewhere cannot be separated from a defect in the evaluation
+path itself.
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{\resultsfigs/rq5_matched_vs_full}
+    \caption[Matched-state against full-graph evaluation]{The same weights
+    evaluated under the reduction they were trained with and on unreduced graphs.
+    For every method here a full graph needs no conversion, since it already is a
+    valid input, which is what makes this a direct test rather than a comparison
+    across two input formats (\ref{sec:method:summary:schema}).}
+    \label{fig:rq5_matched_vs_full}
+\end{figure*}
 
 \input{\resultsgen/rq5_cross_state}
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+No method comes close to the full-graph baseline's $R^2 = 0.343$ once queried on full graphs.
+Random edge dropout is the strongest reduction in both states, $R^2 = 0.215$ matched and
+$0.247$ full, and the only sparsifier that improves on the shift at all. Random hashing moves
+by the largest margin of any method, $R^2 = -0.981$ rising to $-0.071$, though neither score
+is close to competitive.
+\clearpage
+
+\subsection{Zero-Shot Ranking}
+\label{sec:results:rq5:ranking}
+Spearman correlation under the same matched-against-full comparison, which is what the
+script-selection use case in~\ref{sec:intro:motivation} depends on rather than on absolute
+error.
+
+\begin{figure}[htbp]
+    \centering
+    \fbox{\parbox[c][0.24\textheight][c]{0.86\columnwidth}{\centering\footnotesize
+    Reserved slot. No plot generated.}}
+    \caption[Zero-shot ranking under cross-state transfer]{\textbf{FABRICATED.} Reserved slot
+    for the ranking view of the RQ5 comparison: Spearman correlation matched against full for
+    each method, with a bootstrap interval per point. Nothing is plotted and no data stands
+    behind this float. The numbers it would draw are the $\rho$ columns
+    of~\ref{tab:rq5_cross_state}.}
+    \label{fig:rq5_ranking}
+\end{figure}
+
+Ranking moves independently of error here just as it does under matched-state evaluation
+(\ref{sec:results:rq3:ranking}). Level slicing is the extreme case: $\rho = 0.119$ matched
+rises to $\rho = 0.601$ on full graphs, the best ranking score of any configuration in either
+state, while its own $R^2$ stays flat and negative. AND-gate-only moves the opposite way,
+from $\rho = -0.025$ matched to $-0.467$ full, ordering circuits backwards on exactly the
+graphs it is meant to serve at inference time.
+\clearpage
+
+\subsection{Matched-State against Cross-State Drop-Off}
+\label{sec:results:rq5:dropoff}
+The cross-state drop-off $\Delta_{\mathrm{state}}$ of~\eqref{eq:method:dropoff}, the
+difference the structural shift alone makes once a model is fixed.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\columnwidth]{\resultsfigs/rq5_transfer_quadrant}
+    \caption[Transfer quadrant]{Matched-state against full-graph $R^2$. The
+    diagonal is perfect transfer. Below it the structural shift cost accuracy,
+    above it the reduction was the thing doing damage.}
+    \label{fig:rq5_transfer_quadrant}
+\end{figure}
+
+Three of the eight measured configurations sit strictly above the diagonal, scoring
+\emph{better} on full graphs than on the reduction they trained with, which
+under~\eqref{eq:method:dropoff} reads as $\Delta_{\mathrm{state}} > 0$ and says the
+reduction, not the structural shift, was costing accuracy for those methods. A fourth, level
+slicing, lands exactly on it. Span-weighted METIS is the sharpest case in the other
+direction, $R^2 = 0.008$ matched falling to $-0.352$ full: a configuration that looked
+competitive under the condition it trained on and is not competitive under the condition RQ5
+asks about.
+\clearpage
+
+\subsection{Cross-State Transfer by Reduction Family}
+\label{sec:results:rq5:byfamily}
+The same drop-off grouped by family, which asks whether node-preserving methods transfer
+differently from node-removing ones or from partitioning as a whole
+(\ref{sec:prelim:reduction}).
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{\resultsfigs/rq5_dropoff}
+    \caption[Cost of the structural shift]{Full-graph score minus matched-state
+    score, by method and family. A positive bar means the model scores
+    \emph{better} on graphs it never trained on, which would say the reduction was
+    hurting the model rather than the evaluation.}
+    \label{fig:rq5_dropoff}
+\end{figure*}
+
+Sparsification keeps every node and changes only which edges survive, so a sparsified graph
+and its full counterpart differ least as inputs. The four sparsifiers cluster near zero
+drop-off, and only random edge dropout crosses into positive territory. Partitioning changes
+the batch structure itself, one block at a time under matched-state and one connected graph
+under full, and its four members swing wider in both directions, from span-weighted METIS's
+$-0.360$ to random hashing's $+0.910$. Summarization contributes no row: no configuration in
+that family has been trained, so it cannot be placed on this axis yet.
+\clearpage
+
+\subsection{Inference Cost}
+\label{sec:results:rq5:cost}
+Throughput and peak memory for a forward pass alone, which stores neither gradients nor
+activations and so is not bound by the memory ceiling that forced training-time reduction in
+the first place (\ref{sec:method:experiment:hardware}).
+
+\begin{figure*}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{\resultsfigs/rq5_inference_cost}
+    \caption[Inference cost by evaluation state]{Throughput and peak memory for a
+    query, under each evaluation state. Inference stores neither gradients nor
+    activations, so the memory argument that forced the reduction at training time
+    need not bind here at all, which is the practical claim
+    of~\ref{sec:intro:rq5}.}
+    \label{fig:rq5_inference_cost}
+\end{figure*}
+
+Full-graph throughput sits within a tenth of a percent across every configuration
+in~\ref{tab:rq5_cross_state}, from $74.650$ graphs per second for the unreduced baseline to
+$74.721$ for spanning forest and PageRank pruning, so which reduction a model trained under
+has no measurable effect on how fast it serves full graphs at inference time. Training-time
+memory savings (\ref{sec:results:rq2:memory}) consequently do not need to be reproduced at
+inference for the train-cheap, infer-full claim to hold.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\columnwidth]{\resultsfigs/rq5_cpu_inference}
+    \caption[GPU against CPU inference]{\textbf{MOSTLY FABRICATED.} The ``infer
+    full on modest hardware'' half of RQ5. Every surviving inference measurement
+    was recorded on GPU. The CPU bars are placeholders for a CPU inference pass
+    that has not been run.}
+    \label{fig:rq5_cpu_inference}
+\end{figure}
+
+Modest hardware is the deployment target the practical claim of~\ref{sec:intro:rq5} is
+actually about, and GPU throughput does not stand in for it: every figure above
+was measured on the same device class training used, so the CPU pass is the one measurement
+this chapter cannot yet substitute around.
+\clearpage
