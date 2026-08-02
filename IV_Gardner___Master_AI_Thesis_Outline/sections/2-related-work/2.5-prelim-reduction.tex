@@ -1,11 +1,10 @@
 \subsection{Graph Reduction: Definitions}
 \label{sec:prelim:reduction}
-A reduction operator $R$ maps a graph $G$ to a smaller graph $R(G)$ intended to stand in
-for it. The taxonomy follows the survey of \citet{hashemi2024survey}, with one
-substitution: partitioning replaces condensation as the third family, because partitioning
-is what a distributed setup forces on a graph that does not fit one device
-(\ref{sec:relwork:scaling:distributed}) and condensation is excluded from this study
-outright (\ref{sec:relwork:reduction:summarization}).
+A reduction operator $R$ maps a graph $G$ to a smaller graph $R(G)$ standing in for it. The
+taxonomy follows \citet{hashemi2024survey}, with one substitution: partitioning replaces
+condensation as the third family, since partitioning is what a distributed setup forces on
+a graph too large for one device (\ref{sec:relwork:scaling:distributed}), and condensation
+is excluded outright (\ref{sec:relwork:reduction:summarization}).
 
 % A reduction operator $R$ maps a graph $G$ to a smaller graph $R(G)$ intended to stand in
 % for it. The taxonomy used throughout follows the survey of \citet{hashemi2024survey},
@@ -19,7 +18,7 @@ outright (\ref{sec:relwork:reduction:summarization}).
 \subsubsection{Partitioning}
 \label{sec:prelim:reduction:partitioning}
 Partitioning splits $\mathcal{V}$ into $k$ disjoint blocks and deletes every edge whose
-endpoints fall in different blocks. Every node survives, so whatever it compresses is the
+endpoints fall in different blocks, so every node survives and whatever it compresses is the
 edge set alone.
 
 % Partitioning splits $\mathcal{V}$ into $k$ disjoint blocks and deletes every edge whose
@@ -31,10 +30,10 @@ edge set alone.
 
 \subsubsection{Sparsification}
 \label{sec:prelim:reduction:sparsification}
-Sparsification removes edges, or nodes together with their incident edges, while preserving
-some structural property of the original, such as pairwise distances up to a stretch factor.
+Sparsification removes edges, or nodes with their incident edges, while preserving some
+structural property of the original, such as pairwise distances up to a stretch factor.
 Edge-removing and node-removing variants differ in whether $|\mathcal{V}|$ moves at all,
-which is what forces the two-ratio convention of~\ref{sec:prelim:reduction:measuring}.
+forcing the two-ratio convention of~\ref{sec:prelim:reduction:measuring}.
 
 % Sparsification removes edges, or nodes together with their incident edges, while
 % preserving some structural property of the original, such as pairwise distances up to a
@@ -45,10 +44,10 @@ which is what forces the two-ratio convention of~\ref{sec:prelim:reduction:measu
 
 \subsubsection{Summarization and Coarsening}
 \label{sec:prelim:reduction:summarization}
-Summarization merges nodes into \emph{super-nodes}. A coarsening is specified by a merge
-map, a surjection $\mu \colon \mathcal{V} \rightarrow \mathcal{V}'$ onto the cluster set,
-and the resulting quotient graph connects two clusters whenever any of their members were
-connected. The number of member edges a super-edge stands for is its multiplicity,
+Summarization merges nodes into \emph{super-nodes} by a merge map, a surjection
+$\mu \colon \mathcal{V} \rightarrow \mathcal{V}'$ onto the cluster set, and the resulting
+quotient graph connects two clusters whenever any of their members were connected. The
+number of member edges a super-edge stands for is its multiplicity,
 \begin{equation}
     w_{u'v'} = \bigl| \{\, (u, v) \in \mathcal{E} :
         \mu(u) = u',\ \mu(v) = v' \,\} \bigr|,
@@ -80,10 +79,10 @@ graph-level readout, and $R$ for the coarsening with merge map $\mu$, exactness 
     \quad \text{for every } \theta .
     \label{eq:prelim:exact}
 \end{equation}
-Quantifying over $\theta$ is what separates exactness from an approximation that happens to
-be accurate at the weights that were trained. The conditions under
-which~\eqref{eq:prelim:exact} holds \citep{bollen2023exact} constrain three separate
-objects, and a method meeting two of the three is not exact.
+Quantifying over every $\theta$, not just the weights that were trained, separates exactness
+from an approximation that merely happens to be accurate. Its conditions
+\citep{bollen2023exact} constrain three separate objects, and a method meeting two of the
+three is not exact.
 
 \paragraph{(a) The quotient.}
 Merged nodes must be indistinguishable to $L$ rounds of colour refinement
@@ -92,52 +91,50 @@ Merged nodes must be indistinguishable to $L$ rounds of colour refinement
     \mu(u) = \mu(v) \;\Longrightarrow\; c_u^{(L)} = c_v^{(L)} ,
     \label{eq:prelim:exact-quotient}
 \end{equation}
-so the partition induced by $\mu$ refines the $L$-round colour partition, whose classes are
-the coarsest admissible merge. Two side conditions come with~\eqref{eq:prelim:exact-quotient}.
-The initial colouring $c^{(0)}$ must separate distinct feature rows, and~\eqref{eq:prelim:cr}
-must run over the same neighbourhood and the same edge attributes the encoder aggregates
-over: refining by fan-out while aggregating over fan-in merges nodes the encoder can still
-tell apart. The count cap must also match what the aggregation can count. Capping below
-that makes the colour a coarser invariant than the aggregate the encoder computes, which is
-why bisimulation is exact for a set-valued aggregation and lossy for a counting one.
+so $\mu$'s partition refines the $L$-round colour partition, the coarsest admissible merge.
+Two side conditions apply: the initial colouring $c^{(0)}$ must separate distinct feature
+rows, and~\eqref{eq:prelim:cr} must run over the same neighbourhood and edge attributes the
+encoder aggregates over, since refining by fan-out while aggregating over fan-in merges
+nodes the encoder can still tell apart. The count cap must likewise match what the
+aggregation can count: capping below that makes the colour a coarser invariant than the
+aggregate computed, which is why bisimulation is exact for a set-valued aggregation and
+lossy for a counting one.
 
 \paragraph{(b) The aggregation.}
 Collapsing $w_{u'v'}$ parallel edges into one super-edge replaces $w_{u'v'}$ identical
 messages by a single message, so $\bigoplus$ must read the multiplicity
-of~\eqref{eq:prelim:multiplicity} rather than the set of distinct neighbours. For the
-summing encoder used here that multiplicity enters as a coefficient on the message:
+of~\eqref{eq:prelim:multiplicity}, not the set of distinct neighbours. For the summing
+encoder used here, that multiplicity enters as a coefficient on the message:
 \begin{equation}
     \bigoplus_{u \in \mathcal{N}(v)} \psi \bigl( h_u, e_{uv} \bigr)
     \;=\; \sum_{u' \in \mathcal{N}'(\mu(v))}
         w_{u' \mu(v)} \, \psi \bigl( h_{u'}, e_{u' \mu(v)} \bigr) ,
     \label{eq:prelim:exact-aggregation}
 \end{equation}
-where $\mathcal{N}'$ is the neighbourhood taken in the quotient. Where the multiplicity
-enters decides whether~\eqref{eq:prelim:exact-aggregation} holds. The message function
-$\psi$ is nonlinear, so $\psi(h, w_{u'v'} e) \neq w_{u'v'} \, \psi(h, e)$ and a
-multiplicity carried as an edge attribute breaks the equality that a coefficient outside
-$\psi$ preserves (\ref{sec:method:architecture:exact}).
+with $\mathcal{N}'$ the quotient neighbourhood. Where the multiplicity enters decides
+whether~\eqref{eq:prelim:exact-aggregation} holds: $\psi$ is nonlinear, so
+$\psi(h, w_{u'v'} e) \neq w_{u'v'} \, \psi(h, e)$, and a multiplicity carried as an edge
+attribute breaks the equality a coefficient outside $\psi$ preserves
+(\ref{sec:method:architecture:exact}).
 
 \paragraph{(c) The readout.}
-Conditions (a) and (b) give $h_{\mu(v)}^{l} = h_v^{l}$ at every layer, so each super-node
-carries the representation its members would have received. Pooling over $\mathcal{V}'$
-must then weight each super-node by its member count $m_{v'} = | \mu^{-1}(v') |$ to
-reproduce pooling over $\mathcal{V}$:
+Conditions (a) and (b) give $h_{\mu(v)}^{l} = h_v^{l}$ at every layer, so pooling over
+$\mathcal{V}'$ must weight each super-node by its member count $m_{v'} = | \mu^{-1}(v') |$
+to reproduce pooling over $\mathcal{V}$:
 \begin{equation}
     \frac{1}{\left| \mathcal{V} \right|} \sum_{v \in \mathcal{V}} h_v^{L}
     \;=\; \frac{\sum_{v' \in \mathcal{V}'} m_{v'} \, h_{v'}^{L}}
                {\sum_{v' \in \mathcal{V}'} m_{v'}} .
     \label{eq:prelim:exact-readout}
 \end{equation}
-An unweighted mean over super-nodes violates~\eqref{eq:prelim:exact-readout}, giving a
-super-node of fifty members the weight of one. The member counts already carried by a
-summarized feature schema are what make the weighting available.
+An unweighted mean violates~\eqref{eq:prelim:exact-readout}, giving a super-node of fifty
+members the weight of one. The member counts a summarized feature schema already carries
+make the weighting available.
 
-Colour refinement at unbounded count cap is the one reduction in this study that satisfies
-all three (\ref{sec:method:summary:wl}). Sparsification and partitioning produce no
-quotient and delete edges the encoder aggregates over, so~\eqref{eq:prelim:exact} fails for
-them by construction, and exactness is unavailable to those families rather than merely
-unachieved.
+Colour refinement at unbounded count cap is the one reduction here that satisfies all three
+(\ref{sec:method:summary:wl}). Sparsification and partitioning produce no quotient and
+delete edges the encoder aggregates over, so~\eqref{eq:prelim:exact} fails for them by
+construction: exactness is unavailable to those families, not merely unachieved.
 
 \subsubsection{Measuring Reduction: Compression Ratio}
 \label{sec:prelim:reduction:measuring}
@@ -152,10 +149,8 @@ Reduction is reported as retention, kept over original, separately per node and 
 \end{equation}
 with reduction $1 - \eta$. One number cannot carry both: partitioning and edge-removing
 sparsification hold $\eta_{\mathcal{V}} = 1$ while lowering $\eta_{\mathcal{E}}$, and
-node-removing methods move the two together. How the ratios
-of~\eqref{eq:prelim:retention} are measured on this corpus, and how methods whose
-compression is an outcome rather than a parameter are brought to a matched ratio, is
-in~\ref{sec:method:experiment:metrics:reduction}.
+node-removing methods move the two together, measured on this corpus and matched across
+methods in~\ref{sec:method:experiment:metrics:reduction}.
 
 % Reduction is reported as retention, kept over original, separately per node and per edge:
 % with reduction $1 - \eta$. One number cannot carry both: partitioning and edge-removing
