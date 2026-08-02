@@ -3,6 +3,7 @@
 
 %TODO intro sentence
 
+\todo{lets }
 \subsection{Source Circuits}
 \label{sec:method:data:sources}
 The corpus is built from 55 source circuits, drawn from three collections and summarised
@@ -80,6 +81,8 @@ none of the repeated local subfunctions that \texttt{rewrite}, \texttt{refactor}
 rather than a measurement failure, and it is the largest circuits, where the pool is widest
 and collisions rarest, that sit closest to an exact fixed point.
 
+\todo{if in table text could mayeb be reduced? comment out the original text and rewrite more concise outline style}
+
 \begin{table}[htbp]
 \centering
 \caption{Where the 55 source designs come from, and under what terms. The license column
@@ -139,6 +142,10 @@ still, at 366{,}040 AND nodes and a depth of 24{,}972.
 
 % TODO: seed unrecovered: search Snellius home and scratch for the original generation script.
 
+
+\subsubsection{Stats}
+\todo{mention all the depths, nodes distributions and etc. for the chosen starting circuits. rename this to something more formal}
+
 \subsection{Dataset Generation}
 \label{sec:method:data:generation}
 
@@ -181,7 +188,9 @@ near-siblings of every test graph into training, and the resulting score would m
 of a design the model had already seen rather than generalization. Splitting on the design
 partitions the corpus along the one boundary this construction never crosses.
 
-% TODO: step-21 choice networks are not plain AIGs; the node count understates them in 43 of 200 cases.
+
+\todo{TODO: step-21 choice networks are not plain AIGs; the node count understates them in 43 of 200 cases. 
+this was a mistake i dont want to retrain can this be added in limitation insteead do imention this here? i will just pul lit from inference values at least}
 
 \subsubsection{Optimization}
 \label{sec:method:data:generation:algorithms}
@@ -509,3 +518,6 @@ assumed to transfer.
 \label{sec:method:data:hpsubset}
 A smaller subset of 50,000 graphs, balanced between the two stored tiers, was used
 exclusively for the initial hyperparameter tuning and then excluded from the rest.
+
+
+\todo{make much more concise. keep full text commented out.}

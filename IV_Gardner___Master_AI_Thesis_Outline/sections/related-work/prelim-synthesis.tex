@@ -1,11 +1,11 @@
 \section{Preliminaries}
 \label{sec:prelim}
-% Definitions and notation only, no argumentation.
-% TODO: 20 subsubsections against a budget of about 4 pages. The ones marked as merge
-% candidates fold into a neighbour first.
 
 \subsection{Logic Synthesis and the EDA Flow}
 \label{sec:prelim:synthesis}
+
+\todo{lets call this subsection Electronic Design Automation and Logic Synthesis}
+\todo{add subsubseciton on EDA itself what is it what is it used for why should i care}
 
 \subsubsection{Position of Logic Synthesis in the Design Flow}
 \label{sec:prelim:synthesis:flow}
@@ -18,6 +18,8 @@ pre-physical: the network it operates on has no coordinates, no wire lengths and
 layout-extracted timing, which is what makes the spatial coarsening methods
 of~\ref{sec:relwork:domain:circuits} inapplicable to it.
 
+
+\todo{consider shoudl these subsubseciotn not be after mayeb introducing AIGs and with the algorithm.tex }
 \subsubsection{Optimization Objectives: Area, Power, Delay}
 \label{sec:prelim:synthesis:objectives}
 Synthesis quality is measured against three costs: the silicon area a circuit occupies,
@@ -26,7 +28,7 @@ physical before technology mapping, so synthesis tracks each through a structura
 gate count for area and logic depth for delay, both formalized on the AIG representation
 in~\ref{sec:prelim:aig}. This work uses node count as its area proxy and models nothing
 else (\ref{sec:intro:scope:target}). The validity cost of that restriction is assessed
-in~\ref{sec:discussion:limitations:validity}.
+in~\ref{sec:discussion:limitations:validity}. \todo{mentioned already earlier,prelim should just be introduction to concepts not arguments abotu psitions and thesis}
 
 \subsubsection{Synthesis Scripts and Pipelines}
 \label{sec:prelim:synthesis:scripts}
@@ -40,3 +42,5 @@ and order matters: the $t_i$ do not commute, and the gain of each depends on the
 its predecessors produced, so the same script yields different gains on different designs.
 Script choice can therefore not be fixed once and reused across designs. The scripts used
 in this work are the subject of~\ref{sec:prelim:algorithms}.
+\todo{work in somehow the work recipe since it is used and steps and what they are as this is used to explain teh dataset generation}
+\todo{also i dont htink this mentions why one needs and does AIG optimization like why smaller why is that better}

@@ -444,13 +444,15 @@
 % TODO: author list and venue
 
 @inproceedings{polargate2024,
-  title  = {PolarGate: Breaking the Functionality Representation Bottleneck of Logic Gate Networks},
-  author = {TODO},
+  title  = {PolarGate: Breaking the Functionality Representation Bottleneck of And-Inverter Graph Neural Network},
+  author = {Liu, Jiawei and Zhai, Jianwang and Zhao, Mingyu and Lin, Zhe and Yu, Bei and Shi, Chuan},
   booktitle = {Proceedings of the International Conference on Computer-Aided Design (ICCAD)},
   year   = {2024},
+  doi    = {10.1145/3676536.3676834},
   note   = {Polarity/functionality bottleneck in AIG GNNs -- supports treating inverter polarity as a first-class relation}
 }
-% TODO: author list
+% Verified against DBLP conf/iccad/0006ZZLY024. Title corrected: "And-Inverter Graph Neural
+% Network", not "Logic Gate Networks".
 
 @misc{wu2022lostin,
   title  = {LOSTIN: Logic Optimization via Spatio-Temporal Information with Hybrid Graph Models},
@@ -468,6 +470,59 @@
   note    = {Joint Transformer (recipe) + GraphSAGE (circuit) QoR prediction}
 }
 % TODO: verify title and authors -- the notes recorded only the arXiv id
+
+@inproceedings{hosny2020drills,
+  title     = {DRiLLS: Deep Reinforcement Learning for Logic Synthesis},
+  author    = {Hosny, Abdelrahman and Hashemi, Soheil and Shalan, Mohamed and Reda, Sherief},
+  booktitle = {Proceedings of the Asia and South Pacific Design Automation Conference (ASP-DAC)},
+  year      = {2020},
+  doi       = {10.1109/ASP-DAC47756.2020.9045559},
+  note      = {Representative learned-synthesis-script-generation work: an RL agent selects among the same primitive transformations at each step}
+}
+% Verified against DBLP conf/aspdac/HosnyHSR20 (published record, supersedes arXiv 1911.04021).
+
+@article{karimi2024lsoformer,
+  title   = {Logic Synthesis Optimization with Predictive Self-Supervision via Causal Transformers},
+  author  = {Karimi, Raika and Faez, Faezeh and Zhang, Yingxue and Li, Xing and Chen, Lei and Yuan, Mingxuan and Biparva, Mahdi},
+  year    = {2024},
+  journal = {arXiv preprint arXiv:2409.10653},
+  doi     = {10.48550/arXiv.2409.10653},
+  note    = {LSOformer. One of the four surveyed papers reporting matched seen/unseen-design QoR results}
+}
+% Verified against DBLP journals/corr/abs-2409-10653; no non-preprint venue indexed as of verification.
+
+@inproceedings{jiang2025aigtiming,
+  title     = {ML-Based AIG Timing Prediction to Enhance Logic Optimization},
+  author    = {Jiang, Wenjing and Yan, Jin and Sapatnekar, Sachin S.},
+  booktitle = {Design, Automation and Test in Europe Conference (DATE)},
+  year      = {2025},
+  doi       = {10.23919/DATE64628.2025.10993071},
+  note      = {XGBoost AIG-timing predictor; one of the four surveyed papers reporting matched seen/unseen-design results}
+}
+% Verified against DBLP conf/date/JiangYS25 (published record, supersedes arXiv 2412.02268).
+
+@article{ni2025openlsdgf,
+  title   = {OpenLS-DGF: An Adaptive Open-Source Dataset Generation Framework for Machine-Learning Tasks in Logic Synthesis},
+  author  = {Ni, Liwei and Wang, Rui and Liu, Miao and Meng, Xingyu and Lin, Xiaoze and Liu, Junfeng and Luo, Guojie and Chu, Zhufei and Qian, Weikang and Yang, Xiaoyan and Xie, Biwei and Li, Xingquan and Li, Huawei},
+  journal = {IEEE Transactions on Computer-Aided Design of Integrated Circuits and Systems},
+  volume  = {44},
+  number  = {10},
+  pages   = {3830--3843},
+  year    = {2025},
+  doi     = {10.1109/TCAD.2025.3555506},
+  note    = {Adaptive open-source dataset generation framework for ML4EDA, positioned against the dataset built here}
+}
+% Verified against DBLP journals/tcad/NiWLMLLLCQYXLL25 (published record, supersedes arXiv 2411.09422).
+
+@inproceedings{chowdhury2023imagenets,
+  title     = {Towards the Imagenets of ML4EDA},
+  author    = {Chowdhury, Animesh Basak and Thakur, Shailja and Pearce, Hammond and Karri, Ramesh and Garg, Siddharth},
+  booktitle = {Proceedings of the IEEE/ACM International Conference on Computer-Aided Design (ICCAD)},
+  year      = {2023},
+  doi       = {10.1109/ICCAD57390.2023.10323663},
+  note      = {Invited paper. Position piece on benchmark and dataset standards for ML4EDA, motivating the framing used here}
+}
+% Verified against DBLP conf/iccad/ChowdhuryTPKG23 (published record, supersedes arXiv 2310.10560).
 
 % ---------------------------------------------------------------------
 % Graph neural networks: architectures, expressivity, scaling
@@ -489,6 +544,16 @@
   year      = {2017}
 }
 % Verified against DBLP conf/nips/HamiltonYL17 (author listed there as Zhitao, not Rex, Ying).
+
+@inproceedings{zheng2020distdgl,
+  title     = {DistDGL: Distributed Graph Neural Network Training for Billion-Scale Graphs},
+  author    = {Zheng, Da and Ma, Chao and Wang, Minjie and Zhou, Jinjing and Su, Qidong and Song, Xiang and Gan, Quan and Zhang, Zheng and Karypis, George},
+  booktitle = {IEEE/ACM Workshop on Irregular Applications: Architectures and Algorithms (IA3)},
+  year      = {2020},
+  doi       = {10.1109/IA351965.2020.00011},
+  note      = {Graph partitioning across devices for distributed GNN training -- the setting in which cutting edges is forced rather than chosen}
+}
+% Verified against DBLP conf/sc/Zheng0WZSSGZK20 (published record, supersedes arXiv 2010.05337).
 
 @inproceedings{xu2019gin,
   title     = {How Powerful are Graph Neural Networks?},

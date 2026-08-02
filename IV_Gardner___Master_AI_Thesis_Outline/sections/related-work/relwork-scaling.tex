@@ -19,8 +19,8 @@ messages at the boundaries, or forgo them there. This is the setting in which cu
 edges is forced rather than chosen, and it is why partitioning is carried as a reduction
 family here (\ref{sec:prelim:reduction:partitioning}) despite removing no nodes: the
 accuracy cost of severed spanning edges is exactly what a distributed practitioner pays,
-measured on one device.
-% TODO(citation): add a distributed GNN training reference.
+measured on one device. DistDGL \citep{zheng2020distdgl} is representative of the
+practice at billion-node scale.
 
 \subsubsection{Memory-Efficient Training Techniques}
 \label{sec:relwork:scaling:memory}
@@ -32,3 +32,6 @@ compute, precision or latency for memory at a fixed input size, reduction change
 input size itself, and the two stack. The baseline configurations depend on the first
 fact, DeepGate4 being runnable only under checkpointing
 (\ref{sec:method:architecture:baselines}), and the contribution depends on the second.
+
+
+\todo{evaluatre if this is needed? }

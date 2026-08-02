@@ -1,5 +1,7 @@
 \section{Architecture}
 \label{sec:method:architecture}
+
+\todo{make more concise also to evaluate what to put in the appendix and what to keep here write that as a permanent note so my thesis supervisor can see so not a ocmment}
 The encoder follows GNN+ \citep{luo2024gnnplus}; hyperparameters come from the literature
 and from the tuning sweep of~\ref{sec:method:experiment:hp}. One architecture is used for
 unreduced, sparsified, partitioned and summarized graphs alike, with two exceptions stated
@@ -236,3 +238,6 @@ accuracy by construction, and the positive control for RQ5
 (\ref{sec:method:experiment:design}). The variant pays for this in schema compatibility. A
 full graph must be converted before this encoder can be queried on it, whereas the other
 methods support cross-state inference with no such step.
+
+
+\todo{go over this when comparins to exact sumamrizaiotn related work}

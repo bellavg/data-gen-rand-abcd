@@ -15,7 +15,11 @@ How well can a Graph Neural Network predict the optimizability of a circuit dire
 its full, unreduced AIG representation, relative to trivial predictors, standard graph-level
 GNN encoders, and published circuit-representation models?
 
-\paragraph{RQ1a (protocol sensitivity).}
+% my model against baselines SOTA
+% data splitting for AIGS dont like how this is phrased this subquesoitn
+
+\subsubsection{RQ1a: Protocol Sensitivity}
+\todo{redo dont like the phrasing}
 How much of the measured score is a property of the evaluation protocol rather than of the
 model? Three train/test protocols are run under otherwise identical conditions: a plain
 random split, a recipe-disjoint split, and the design-disjoint split used for every reported
@@ -27,6 +31,7 @@ designs or concentrated in a few (\ref{sec:results:rq1:protocol}).
 
 \subsection{RQ2: Reduction Efficiency}
 \label{sec:intro:rq2}
+\todo{when applied to AIGs}
 How do graph reduction techniques, spanning partitioning, sparsification, and
 summarization/coarsening, differ in graph shrinkage rate, peak memory usage,
 training and inference speed, and the offline cost of applying the reduction itself?
@@ -39,6 +44,7 @@ relative to the full-graph baseline established in RQ1, and which techniques off
 best accuracy-to-efficiency trade-off?
 
 \paragraph{Hypothesis H1 (path contraction).}
+\todo{redo this completely and also why only have hypothesis here and not in others?}
 Sparsification \emph{removes edges} and can only impede message propagation, whereas
 summarization \emph{contracts paths} and shortens the distance a signal must travel. AIGs
 are very deep relative to the encoder's four message-passing layers, so the model is
@@ -51,10 +57,10 @@ trade it away, and is expected to retain more than sparsification at matched com
 
 \subsection{RQ4: Value of Domain-Informed Adaptation}
 \label{sec:intro:rq4}
+\todo{aig-specific/ domain-knowledge informed....}
 Do AIG-specific reduction heuristics, which exploit topological level, reconvergence
 structure, and gate roles, retain more predictive accuracy than generic techniques at
-equivalent compression? Where no generic method compresses to the same degree, the
-comparison is made against a compression-matched random control. If domain knowledge does
+equivalent compression?  If domain knowledge does
 not pay, what does that indicate about which structural features the model actually relies
 on?
 
@@ -110,11 +116,12 @@ The corpus is bounded at an intermediate scale (see~\ref{sec:method:experiment:s
 at industrial scale. This is a deliberate consequence of the design: RQ1 requires a
 full-graph baseline, and a baseline that does not fit in memory cannot be measured. The
 motivation invokes AIGs of millions to billions of nodes; the evaluation does not reach
-them, and~\ref{sec:discussion:limitations:scalability} states plainly what does and does
+them, and~\ref{sec:discussion:limitations:scalability} elaborates on what does and does
 not extrapolate.
 
 \subsubsection{Reduction Families Considered}
 \label{sec:intro:scope:reductions}
+\todo{chosen because of survery on graph reduction paper}
 Three families are covered: partitioning, sparsification, and summarization/coarsening.
 Graph \emph{condensation} (synthesising a small graph by gradient or distribution matching)
 is excluded, for reasons given in~\ref{sec:relwork:reduction:summarization}: it produces no
@@ -139,3 +146,6 @@ are under one fixed script. Selecting a script would require ranking \emph{algor
 one circuit, which a single-algorithm model cannot do. Closing that loop is future work
 (\ref{sec:conclusion:futurework:generation}); the contribution claimed here is the
 representation and reduction machinery it would need, not the selector itself.
+
+
+\todo{to consider something more specific on summairzation exact vs approximate? the proving of exactness bollen style?}

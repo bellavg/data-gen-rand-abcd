@@ -30,6 +30,9 @@ $\bar{y}_{\text{val}} = \bar{y}_{\text{test}}$. Equation~\eqref{eq:method:baseli
 the weakest non-trivial hypothesis about the task, that optimizability is a function of size
 alone, and any claim that the encoder reads circuit \emph{structure} has to clear it.
 
+\todo{evaluate which of these i will actulaly do shoudl be the base scores the means and all that for comparatability and compared to random and CIs}
+\todo{is ranodmly intialized GNN a baseline? i think so but i need to check the literature}
+
 \subsubsection{Adapting Published Circuit Models}
 \label{sec:method:baselines:published}
 SynthNet \citep{chowdhury2021openabc}, HOGA \citep{deng2024hoga} and DeepGate4
@@ -97,12 +100,13 @@ difference is a convention, not an error: OpenABC-D orients edges toward the pri
 inputs and this corpus orients them the
 other way, so each node summarises its fanout cone under one convention and its fanin cone
 under the other. Both orientations are run and the pair reported.
-
+\todo{i will provavly not report both just the proper one the correct one that was originally used in paper
+}
 \paragraph{Comparability.}
 Only the data pipeline is shared, since a different split would make the comparison
 meaningless. Hyperparameters, optimizer, loss and schedule take each paper's published
 values. Settings a paper leaves unpublished are recorded as assumptions
-in~\ref{sec:apx:baselines} rather than silently absorbed.
+in~\ref{sec:apx:baselines}.
 
 Scores printed in those papers are a different matter and cannot be placed beside the ones
 here. OpenABC-D standardises its targets within each design $d$, so its reference spread is
@@ -115,4 +119,7 @@ the within-design sum of squares where the denominator of~\eqref{eq:method:r2} i
 \end{equation}
 The two differ by the between-design term, which on a design-disjoint split
 (\ref{sec:method:experiment:splitting}) is the variation the task is about. Only the sign
-of the score transfers (\ref{sec:results:rq1:baselinemodels}).
+of the score transfers (\ref{sec:results:rq1:baselinemodels}). \todo{do  i need this?}
+
+\todo{this shoudl really be mostly on how i adapted my baselines ot the task.
+ so recipe was not inputted i cut off that branch}

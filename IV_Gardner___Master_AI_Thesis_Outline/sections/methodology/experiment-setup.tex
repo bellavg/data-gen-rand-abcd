@@ -3,8 +3,7 @@
 
 \subsection{Research Design}
 \label{sec:method:experiment:design}
-This is a controlled comparison against a fixed reference point. The manipulated variable is
-the reduction method applied to the training data; the encoder, dataset, splits, label,
+The manipulated variable is the reduction method applied to the training data; the encoder, dataset, splits, label,
 optimizer and evaluation protocol are held constant, so that differences in outcome are
 attributable to the reduction. The reference point is the full-graph model of RQ1, and every
 reduced configuration is reported relative to it rather than in isolation.
@@ -15,7 +14,9 @@ compression, because contraction shortens propagation paths where deletion only 
 them; and H2, that the domain-informed adaptations tested here are too simple to win
 outright, in which case the informative outcome is what the null result says about where the
 predictive signal lives.
+\todo{done really need to restate hypithesis more so say how this addresses each RQ or how i iwll address them}
 
+\todo{this paragraph seems unnecessary and wdym known}
 \paragraph{Positive control.}
 The design includes one configuration whose outcome is known in advance. Colour refinement at
 count-cap $\infty$ on the exact-compression track is provably lossless for this encoder
@@ -65,6 +66,7 @@ The comparison is within one encoder family, one synthesis algorithm and one bou
 scale. It can rank reduction methods against each other under those conditions; it cannot
 establish that the ranking transfers to another architecture, another target algorithm, or
 industrial-scale circuits. Section~\ref{sec:discussion:limitations} treats each in turn.
+\todo{dont discuss limits outside of limitatoin this much in my opinion}
 
 \subsection{Setup}
 \label{sec:method:experiment:setup}
@@ -199,6 +201,9 @@ precision is used on GPU, which changes every memory figure. Neither is varied a
 configurations, so comparisons remain valid; absolute numbers are only meaningful together
 with these settings.
 
+\todo{all these specific hyperparemeters like train split etc.
+ how can i best display this more concisely idk if it should really be takign up this much space in my methodlogy or if this is more appendix info}
+
 \subsubsection{Hardware and Software Environment}
 \label{sec:method:experiment:hardware}
 All experiments ran on the Snellius national supercomputer: H100 80\,GB GPU nodes for
@@ -215,5 +220,9 @@ both sit far below saturation. The consequence for RQ2 is that a larger
 batch amortises per-batch overhead but does not deliver a proportional speedup, and that
 reductions which remove \emph{edges} should help throughput more than their node compression
 alone would suggest.
+\todo{shoudl this be here or in reproducability?}
 
-% TODO: library versions, the synthesis tool version, and the total wall-clock budget.
+% TODO: library versions, the synthesis tool version, and the total wall-clock budget. This should go to appendix start ordering my appendix by things that will most likely end up there
+
+
+\todo{keep full text commented out. make more concise for this turn in. }

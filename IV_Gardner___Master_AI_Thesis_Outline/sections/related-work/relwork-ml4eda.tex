@@ -1,5 +1,6 @@
 \section{Related Work}
 \label{sec:relwork}
+\todo{this setnence is not subtle enough imo}
 The gap this chapter documents can be stated before the evidence: graph reduction is a
 developed literature with surveys of its own
 \citep{hashemi2024survey,shabani2023summarization}, circuit representation learning is a
@@ -10,6 +11,11 @@ claim once the evidence for it is on the table.
 
 \subsection{Machine Learning for Logic Synthesis}
 \label{sec:relwork:ml4eda}
+
+\todo{order of subsections seems odd here shoudl be
+tasks it is used in then maybe datset then maybe eval protocols and unseen design then baselines?
+also think about the tasks we elaborate on and if they are relevant we should list all tasks that ML 
+is used with but also instead of ML4EDA mayeb say ML4LS and specify AIG. but tasks missing are like AIG generation etc. }
 
 \subsubsection{Quality-of-Result and Optimizability Prediction}
 \label{sec:relwork:ml4eda:qor}
@@ -30,10 +36,10 @@ this thesis uses structurally, and the two share nothing beyond the name.
 design, or an unseen design-recipe pair whose parts were both seen, and the third is far
 easier than the second. Generalization to unseen designs is the stated motivation of much
 of the field, yet matched seen and unseen results are rare: of the papers surveyed for
-this thesis, 4 of 63 report both sides, among them OpenABC-D \citep{chowdhury2021openabc}
-and LOSTIN \citep{wu2022lostin}, while HOGA \citep{deng2024hoga} motivates on the gap
-without publishing a seen-design baseline, so its degradation cannot be computed.
-% TODO(citation): LSOformer and Jiang et al. are the other two; add keys before naming them.
+this thesis, 4 of 63 report both sides, OpenABC-D \citep{chowdhury2021openabc}, LOSTIN
+\citep{wu2022lostin}, LSOformer \citep{karimi2024lsoformer}, and the XGBoost AIG-timing
+predictor of \citet{jiang2025aigtiming}, while HOGA \citep{deng2024hoga} motivates on the
+gap without publishing a seen-design baseline, so its degradation cannot be computed.
 The canonical unseen-IP split trains on 16 small designs and tests on 8 large ones,
 confounding design novelty with size extrapolation. Reported error moves more with the
 benchmark than with the architecture, from a few percent on small homogeneous suites to
@@ -49,8 +55,9 @@ learning or sequence prediction over the same primitive transformations. It is t
 downstream application the motivation invokes, and it is out of scope here
 (\ref{sec:intro:scope:prediction}): script generation consumes exactly the kind of cheap
 optimizability estimate this thesis builds, which is why the prediction task is worth
-solving on its own.
-% TODO(citation): add one representative script-generation reference.
+solving on its own. DRiLLS \citep{hosny2020drills} is representative, an RL agent
+choosing among the transformations of~\ref{sec:prelim:algorithms:primitives} at each
+step rather than committing to a fixed script in advance.
 
 \subsubsection{Circuit Representation Learning}
 \label{sec:relwork:ml4eda:representation}
@@ -69,6 +76,7 @@ gap this chapter closes in~\ref{sec:relwork:gap}.
 
 \subsubsection{Models Used as Baselines}
 \label{sec:relwork:ml4eda:baselines}
+\todo{make each baseline model its own subsubsubsection or paragraph explain why it is important and useful as a baseline without sayign this is why it was chosen as a basleine so be liek its SOTA or its foundational or its standard or its the best at this or claims to be etc. also include the math and what makes these models and apparoaches special}
 Three published models serve as tier-2 baselines,
 and~\ref{sec:method:baselines:published} states only how each was adapted, so what each
 one \emph{is} belongs here. SynthNet
@@ -91,5 +99,7 @@ for this thesis (\ref{sec:method:data}) differs in axis rather than only in size
 tiered by optimization state, pairing each base graph with already-optimized variants of
 itself (\ref{sec:method:data:tiers}), because the reduction questions RQ3 and RQ5 need
 graphs at several points along the optimization trajectory, not several recipes on one
-starting point.
-% TODO(citation): OpenLS-DGF and the ML4EDA benchmark position paper; add or drop.
+starting point. OpenLS-DGF \citep{ni2025openlsdgf} takes a third axis again, generating
+designs adaptively rather than fixing a benchmark suite, and
+\citet{chowdhury2023imagenets} argue the position this dataset acts on: ML4EDA lacks the
+standard, prototypical datasets that drove progress in computer vision.
