@@ -1,107 +1,153 @@
 \section{Related Work}
 \label{sec:relwork}
-Two literatures bear on this thesis. Graph reduction is developed enough to have surveys
-of its own \citep{hashemi2024survey,shabani2023summarization}. Circuit representation
-learning is developed enough to support a growing model family. The subsections below
-take each in turn, then the two nearest attempts at a bridge between them,
-before~\ref{sec:relwork:gap} states what still separates them.
+Two literatures bear on this thesis: graph reduction, with its own surveys
+\citep{hashemi2024survey,shabani2023summarization}, and circuit representation learning, a
+growing model family. Section~\ref{sec:relwork:gap} states what still separates them.
+% Original: Two literatures bear on this thesis. Graph reduction is developed enough to have surveys
+% of its own \citep{hashemi2024survey,shabani2023summarization}. Circuit representation
+% learning is developed enough to support a growing model family. The subsections below
+% take each in turn, then the two nearest attempts at a bridge between them,
+% before~\ref{sec:relwork:gap} states what still separates them.
 
 \subsection{Machine Learning for Logic Synthesis}
 \label{sec:relwork:ml4eda}
 
 \subsubsection{Quality-of-Result and Optimizability Prediction}
 \label{sec:relwork:ml4eda:qor}
-The direct precedents predict synthesis Quality of Result (QoR) from a circuit before
-running the tool. OpenABC-D \citep{chowdhury2021openabc} is the reference dataset for the
-task and publishes, among its graph-level labels, the percentage of nodes a recipe
-optimizes away, essentially the target~\eqref{eq:prelim:target}; that overlap is what
-makes its accompanying SynthNet a fair baseline here rather than a repurposed model
-(\ref{sec:relwork:ml4eda:baselines}). Recipe-conditioned models jointly encode the
-circuit and the synthesis sequence \citep{qor_transformer2022,wu2022lostin}. One
-terminological collision is worth heading off: LOSTIN \citep{wu2022lostin} attaches a
-super-node that encodes the synthesis \emph{sequence}, a temporal use of the same device
-this thesis uses structurally, and the two share nothing beyond the name.
+The direct precedents predict synthesis Quality of Result (QoR) before running the tool.
+OpenABC-D \citep{chowdhury2021openabc} publishes the fraction of nodes a recipe removes,
+matching the target~\eqref{eq:prelim:target} and making its SynthNet a fair baseline
+(\ref{sec:relwork:ml4eda:baselines}). Recipe-conditioned models jointly encode circuit and
+synthesis sequence \citep{qor_transformer2022,wu2022lostin}, LOSTIN's super-node encoding
+that sequence temporally rather than structurally as here.
+% Original: The direct precedents predict synthesis Quality of Result (QoR) from a circuit before
+% running the tool. OpenABC-D \citep{chowdhury2021openabc} is the reference dataset for the
+% task and publishes, among its graph-level labels, the percentage of nodes a recipe
+% optimizes away, essentially the target~\eqref{eq:prelim:target}; that overlap is what
+% makes its accompanying SynthNet a fair baseline here rather than a repurposed model
+% (\ref{sec:relwork:ml4eda:baselines}). Recipe-conditioned models jointly encode the
+% circuit and the synthesis sequence \citep{qor_transformer2022,wu2022lostin}. One
+% terminological collision is worth heading off: LOSTIN \citep{wu2022lostin} attaches a
+% super-node that encodes the synthesis \emph{sequence}, a temporal use of the same device
+% this thesis uses structurally, and the two share nothing beyond the name.
 
 \subsubsection{Circuit Generation}
 \label{sec:relwork:ml4eda:generation}
-A third line generates AIGs rather than scoring them. The motivation is structural bias, the tendency for optimization quality to be bounded by the
-structure the circuit arrives in \citep{chatterjee2006structuralbias}, so a corpus drawn from
-a handful of source designs explores a correspondingly narrow space \citep{gardner2025bias}. Generative models widen that space by producing structurally novel
-circuits, which matters here for one reason only, namely that the corpus of
-\ref{sec:method:data} inherits exactly this bound, and it is why the eight synthetic designs
-sit beside the benchmark circuits.
+A third line generates AIGs rather than scoring them, motivated by structural bias:
+optimization quality is bounded by the structure a circuit arrives in
+\citep{chatterjee2006structuralbias}, so few source designs give a narrow search space
+\citep{gardner2025bias}. Generative models widen that space, so \ref{sec:method:data} adds
+eight synthetic designs beside the benchmark circuits.
 % TODO: cite AIG2PT here once it leaves anonymous submission.
+% Original: A third line generates AIGs rather than scoring them. The motivation is structural bias, the tendency for optimization quality to be bounded by the
+% structure the circuit arrives in \citep{chatterjee2006structuralbias}, so a corpus drawn from
+% a handful of source designs explores a correspondingly narrow space \citep{gardner2025bias}. Generative models widen that space by producing structurally novel
+% circuits, which matters here for one reason only, namely that the corpus of
+% \ref{sec:method:data} inherits exactly this bound, and it is why the eight synthetic designs
+% sit beside the benchmark circuits.
 
 \subsubsection{Learned Synthesis Script Generation}
 \label{sec:relwork:ml4eda:scripts}
-A separate line learns to construct or select synthesis scripts, by reinforcement
-learning or sequence prediction over the same primitive transformations. It is the
-downstream application the motivation invokes, and it is out of scope here
-(\ref{sec:intro:scope:prediction}): script generation consumes exactly the kind of cheap
-optimizability estimate this thesis builds, which is why the prediction task is worth
-solving on its own. DRiLLS \citep{hosny2020drills} is representative, an RL agent
-choosing among the transformations of~\ref{sec:prelim:algorithms:primitives} at each
-step rather than committing to a fixed script in advance.
+A separate line learns to construct or select synthesis scripts by reinforcement learning
+or sequence prediction over the same primitive transformations. It is out of scope here
+(\ref{sec:intro:scope:prediction}): script generation consumes the cheap optimizability
+estimate this thesis builds. DRiLLS \citep{hosny2020drills} is representative, an RL agent
+choosing among the transformations of~\ref{sec:prelim:algorithms:primitives} instead of
+fixing a script.
+% Original: A separate line learns to construct or select synthesis scripts, by reinforcement
+% learning or sequence prediction over the same primitive transformations. It is the
+% downstream application the motivation invokes, and it is out of scope here
+% (\ref{sec:intro:scope:prediction}): script generation consumes exactly the kind of cheap
+% optimizability estimate this thesis builds, which is why the prediction task is worth
+% solving on its own. DRiLLS \citep{hosny2020drills} is representative, an RL agent
+% choosing among the transformations of~\ref{sec:prelim:algorithms:primitives} at each
+% step rather than committing to a fixed script in advance.
 
 \subsubsection{Circuit Representation Learning}
 \label{sec:relwork:ml4eda:representation}
 The DeepGate line \citep{li2022deepgate,shi2024deepgate3,deepgate4_2025} learns
-general-purpose gate embeddings on AIGs, and PolarGate \citep{polargate2024} identifies
-the handling of inverted connections as the representational bottleneck of AIG encoders,
-external support for treating inversion as a relation summarization must preserve rather
-than average away (\ref{sec:method:summary:wl}). Two facts from this line shape the
-present study. First, DeepGate3 and DeepGate4 answer scale by growing the \emph{model},
-with sparse attention and larger training corpora, where this thesis shrinks the
-\emph{input}. DeepGate4 doubles as a baseline (\ref{sec:relwork:ml4eda:baselines}), so
-the contrast is measured rather than rhetorical. Second, these models train on extracted
-subcircuits of tens to a few thousand gates. Extraction is a reduction, applied at corpus
-construction and never named or evaluated as one, and that unexamined step is half of the
-gap this chapter closes in~\ref{sec:relwork:gap}.
+general-purpose gate embeddings on AIGs. PolarGate \citep{polargate2024} identifies inverted-connection handling as AIG encoders'
+representational bottleneck, support for treating inversion as a relation to preserve, not
+average away (\ref{sec:method:summary:wl}). DeepGate3 and DeepGate4 answer scale by
+growing the \emph{model} where this thesis shrinks the \emph{input}. DeepGate4 doubles as
+a baseline (\ref{sec:relwork:ml4eda:baselines}). These train on extracted subcircuits of
+tens to a few thousand gates, an unnamed, unevaluated reduction and half the gap closed
+in~\ref{sec:relwork:gap}.
+% Original: The DeepGate line \citep{li2022deepgate,shi2024deepgate3,deepgate4_2025} learns
+% general-purpose gate embeddings on AIGs, and PolarGate \citep{polargate2024} identifies
+% the handling of inverted connections as the representational bottleneck of AIG encoders,
+% external support for treating inversion as a relation summarization must preserve rather
+% than average away (\ref{sec:method:summary:wl}). Two facts from this line shape the
+% present study. First, DeepGate3 and DeepGate4 answer scale by growing the \emph{model},
+% with sparse attention and larger training corpora, where this thesis shrinks the
+% \emph{input}. DeepGate4 doubles as a baseline (\ref{sec:relwork:ml4eda:baselines}), so
+% the contrast is measured rather than rhetorical. Second, these models train on extracted
+% subcircuits of tens to a few thousand gates. Extraction is a reduction, applied at corpus
+% construction and never named or evaluated as one, and that unexamined step is half of the
+% gap this chapter closes in~\ref{sec:relwork:gap}.
 
 \subsubsection{Benchmarks and Datasets for ML in EDA}
 \label{sec:relwork:ml4eda:datasets}
 OpenABC-D \citep{chowdhury2021openabc} remains the largest published synthesis-prediction
-corpus: 29 designs, 1500 recipes each, labels per design-recipe pair. The dataset built
-for this thesis (\ref{sec:method:data}) differs in axis rather than only in size: it is
-tiered by optimization state, pairing each base graph with already-optimized variants of
-itself (\ref{sec:method:data:tiers}), because the reduction questions RQ3 and RQ5 need
-graphs at several points along the optimization trajectory, not several recipes on one
-starting point. OpenLS-DGF \citep{ni2025openlsdgf} takes a third axis again, generating
-designs adaptively rather than fixing a benchmark suite, and
-\citet{chowdhury2023imagenets} argue the position this dataset acts on: ML4EDA lacks the
-standard, prototypical datasets that drove progress in computer vision.
+corpus: 29 designs, 1500 recipes each. The dataset built here (\ref{sec:method:data})
+differs in axis, not size: it is tiered by optimization state, pairing each base graph
+with already-optimized variants of itself (\ref{sec:method:data:tiers}), since RQ3 and
+RQ5 need several points along one trajectory, not several recipes on one start.
+OpenLS-DGF \citep{ni2025openlsdgf} generates designs adaptively instead of fixing a suite.
+\citet{chowdhury2023imagenets} argue ML4EDA lacks the prototypical datasets that drove
+computer vision.
+% Original: OpenABC-D \citep{chowdhury2021openabc} remains the largest published synthesis-prediction
+% corpus: 29 designs, 1500 recipes each, labels per design-recipe pair. The dataset built
+% for this thesis (\ref{sec:method:data}) differs in axis rather than only in size: it is
+% tiered by optimization state, pairing each base graph with already-optimized variants of
+% itself (\ref{sec:method:data:tiers}), because the reduction questions RQ3 and RQ5 need
+% graphs at several points along the optimization trajectory, not several recipes on one
+% starting point. OpenLS-DGF \citep{ni2025openlsdgf} takes a third axis again, generating
+% designs adaptively rather than fixing a benchmark suite, and
+% \citet{chowdhury2023imagenets} argue the position this dataset acts on: ML4EDA lacks the
+% standard, prototypical datasets that drove progress in computer vision.
 
 \subsubsection{Evaluation Protocols and the Unseen-Design Gap}
 \label{sec:relwork:ml4eda:protocols}
-``Unseen'' means three different things in this literature: an unseen recipe, an unseen
-design, or an unseen design-recipe pair whose parts were both seen, and the third is far
-easier than the second. Generalization to unseen designs is the stated motivation of much
-of the field, yet matched seen and unseen results are rare: of the papers surveyed for
-this thesis, 4 of 63 report both sides, OpenABC-D \citep{chowdhury2021openabc}, LOSTIN
-\citep{wu2022lostin}, LSOformer \citep{karimi2024lsoformer}, and the XGBoost AIG-timing
-predictor of \citet{jiang2025aigtiming}, while HOGA \citep{deng2024hoga} motivates on the
-gap without publishing a seen-design baseline, so its degradation cannot be computed.
-The canonical unseen-IP split trains on 16 small designs and tests on 8 large ones,
-confounding design novelty with size extrapolation. Reported error moves more with the
-benchmark than with the architecture, from a few percent on small homogeneous suites to
-above twenty percent on OpenABC-D, and within one test set the error concentrates in a
-few designs rather than spreading uniformly. Those three observations motivate RQ1a's
-matched three-protocol comparison and the per-design reporting used throughout
+``Unseen'' can mean an unseen recipe, an unseen design, or an unseen design-recipe pair
+whose parts were both seen individually, and the third is far easier. Matched seen and
+unseen-design results, the field's stated motivation, are rare: only 4 of 63 surveyed
+papers report both, OpenABC-D \citep{chowdhury2021openabc}, LOSTIN \citep{wu2022lostin},
+LSOformer \citep{karimi2024lsoformer}, and the XGBoost AIG-timing predictor of
+\citet{jiang2025aigtiming}, while HOGA \citep{deng2024hoga} motivates on the gap without
+publishing one. The canonical split trains on 16 small designs and tests on 8 large ones,
+confounding novelty with size. Error tracks the benchmark more than the architecture,
+from a few percent on small suites to above twenty percent on OpenABC-D. These motivate
+RQ1a's matched three-protocol comparison and per-design reporting throughout
 (\ref{sec:intro:rq1}).
+% Original: ``Unseen'' means three different things in this literature: an unseen recipe, an unseen
+% design, or an unseen design-recipe pair whose parts were both seen, and the third is far
+% easier than the second. Generalization to unseen designs is the stated motivation of much
+% of the field, yet matched seen and unseen results are rare: of the papers surveyed for
+% this thesis, 4 of 63 report both sides, OpenABC-D \citep{chowdhury2021openabc}, LOSTIN
+% \citep{wu2022lostin}, LSOformer \citep{karimi2024lsoformer}, and the XGBoost AIG-timing
+% predictor of \citet{jiang2025aigtiming}, while HOGA \citep{deng2024hoga} motivates on the
+% gap without publishing a seen-design baseline, so its degradation cannot be computed.
+% The canonical unseen-IP split trains on 16 small designs and tests on 8 large ones,
+% confounding design novelty with size extrapolation. Reported error moves more with the
+% benchmark than with the architecture, from a few percent on small homogeneous suites to
+% above twenty percent on OpenABC-D, and within one test set the error concentrates in a
+% few designs rather than spreading uniformly. Those three observations motivate RQ1a's
+% matched three-protocol comparison and the per-design reporting used throughout
+% (\ref{sec:intro:rq1}).
 
 \subsubsection{Models Used as Baselines}
 \label{sec:relwork:ml4eda:baselines}
-Three published models are used for comparison here,
-and~\ref{sec:method:baselines:published} states only how each was adapted, so what each
-one \emph{is} belongs here.
+Three published models serve as baselines here. \ref{sec:method:baselines:published}
+covers only their adaptation.
+% Original: Three published models are used for comparison here,
+% and~\ref{sec:method:baselines:published} states only how each was adapted, so what each
+% one \emph{is} belongs here.
 
 \paragraph{SynthNet.}
-SynthNet \citep{chowdhury2021openabc} is the reference architecture released with
-OpenABC-D, the dataset's own demonstration of a learnable, recipe-conditioned QoR
-predictor. A graph convolutional encoder produces node states $h_v$ as
-in~\eqref{eq:prelim:mp}, a second encoder $\rho$ reads the synthesis recipe $s$ as a
-sequence of transformation choices, and the two are concatenated ahead of a regression
-head:
+SynthNet \citep{chowdhury2021openabc} is OpenABC-D's reference architecture: a graph
+convolutional encoder produces node states $h_v$ as in~\eqref{eq:prelim:mp}, a second
+encoder $\rho$ reads the recipe $s$, and the two concatenate ahead of a regression head:
 \begin{equation}
     \hat{y}(G, s) = \mathrm{MLP}\Bigl(
         \pi\bigl( \{h_v\}_{v \in \mathcal{V}(G)} \bigr) \,\Vert\, \rho(s)
@@ -109,16 +155,22 @@ head:
     \pi(\cdot) = \bigl[\max(\cdot) \,\Vert\, \mathrm{mean}(\cdot)\bigr].
     \label{eq:relwork:synthnet}
 \end{equation}
-Conditioning the prediction on $s$ is the distinctive move: one trained model answers a
-QoR query for any recipe in the search space instead of for one fixed script, turning QoR
-prediction into an oracle a script search can call cheaply and repeatedly.
+Conditioning on $s$ is the distinctive move: one trained model answers a QoR query for
+any recipe, an oracle a script search can call cheaply.
+% Original: SynthNet \citep{chowdhury2021openabc} is the reference architecture released with
+% OpenABC-D, the dataset's own demonstration of a learnable, recipe-conditioned QoR
+% predictor. A graph convolutional encoder produces node states $h_v$ as
+% in~\eqref{eq:prelim:mp}, a second encoder $\rho$ reads the synthesis recipe $s$ as a
+% sequence of transformation choices, and the two are concatenated ahead of a regression
+% head. Conditioning the prediction on $s$ is the distinctive move: one trained model
+% answers a QoR query for any recipe in the search space instead of for one fixed script,
+% turning QoR prediction into an oracle a script search can call cheaply and repeatedly.
 
 \paragraph{HOGA.}
-HOGA \citep{deng2024hoga} reports a large reduction in QoR estimation error over
-conventional GNNs and is motivated by generalization to unseen designs, the
-architecture-side answer to the scalability limit this thesis addresses from the input
-side. Hop-wise features are propagated once before training and combined by a gated
-self-attention module:
+HOGA \citep{deng2024hoga} reports large error reductions over conventional GNNs,
+motivated by generalization to unseen designs. This thesis addresses the same scalability
+limit from the input side instead. Hop-wise features are propagated once and combined by
+gated self-attention:
 \begin{equation}
     \begin{aligned}
         x_v^{(k)} &= \hat{A}^{k} x_v^{(0)}, & k &= 0, \dots, K, \\
@@ -128,25 +180,37 @@ self-attention module:
     \label{eq:relwork:hoga}
 \end{equation}
 with $\hat A$ the normalized adjacency. Only the $K+1$ vectors $x_v^{(k)}$ reach the
-learned model, never $\mathcal{E}(G)$ itself, so training is attention over fixed-size
-vectors, decoupled from $|\mathcal{V}(G)|$ and from~\eqref{eq:prelim:mp}'s coupling
-between depth and receptive field. Because the propagation step runs once and is never
-revisited, nodes can be shuffled or split arbitrarily downstream of it, which is what
-makes training distributable across devices.
+model, decoupling training from $|\mathcal{V}(G)|$ and enabling distributed training.
+% Original: HOGA \citep{deng2024hoga} reports a large reduction in QoR estimation error over
+% conventional GNNs and is motivated by generalization to unseen designs, the
+% architecture-side answer to the scalability limit this thesis addresses from the input
+% side. Hop-wise features are propagated once before training and combined by a gated
+% self-attention module. Only the $K+1$ vectors $x_v^{(k)}$ reach the
+% learned model, never $\mathcal{E}(G)$ itself, so training is attention over fixed-size
+% vectors, decoupled from $|\mathcal{V}(G)|$ and from~\eqref{eq:prelim:mp}'s coupling
+% between depth and receptive field. Because the propagation step runs once and is never
+% revisited, nodes can be shuffled or split arbitrarily downstream of it, which is what
+% makes training distributable across devices.
 
 \paragraph{DeepGate4.}
-DeepGate4 \citep{deepgate4_2025} is the largest model in the DeepGate line and reports the
-strongest circuit representation results in it, a graph transformer built to stay
-attention-based at sizes where dense attention no longer fits in memory. Full
-self-attention over $\mathcal{V}(G)$ costs $\Theta(|\mathcal{V}(G)|^2)$ per layer;
-DeepGate4 instead restricts every query to a distance-bounded virtual edge set,
+DeepGate4 \citep{deepgate4_2025} is the largest, strongest-performing DeepGate model, a
+graph transformer viable past dense attention's memory limit: full self-attention over
+$\mathcal{V}(G)$ costs $\Theta(|\mathcal{V}(G)|^2)$ per layer, so DeepGate4 restricts every
+query to a distance-bounded virtual edge set,
 \begin{equation}
     \bar{\mathcal{E}}_k = \bigl\{ (u, v) : \operatorname{dist}(u, v) \leq k \bigr\},
     \label{eq:relwork:deepgate4}
 \end{equation}
-paired with an update rule the authors report as adaptable to any graph transformer,
-which keeps activation memory sub-linear in graph size at a fixed radius $k$. The
-restriction is sparse relative to full attention, not relative to the graph: DeepGate4
-answers the memory problem by growing the receptive field efficiently, where the
-reduction studied here shrinks $\mathcal{V}(G)$ before any attention or message passing
-runs.
+keeping activation memory sub-linear at fixed radius $k$. DeepGate4 grows the receptive
+field efficiently. The reduction studied here instead shrinks $\mathcal{V}(G)$ before any
+attention or message passing runs.
+% Original: DeepGate4 \citep{deepgate4_2025} is the largest model in the DeepGate line and reports the
+% strongest circuit representation results in it, a graph transformer built to stay
+% attention-based at sizes where dense attention no longer fits in memory. Full
+% self-attention over $\mathcal{V}(G)$ costs $\Theta(|\mathcal{V}(G)|^2)$ per layer;
+% DeepGate4 instead restricts every query to a distance-bounded virtual edge set, paired
+% with an update rule the authors report as adaptable to any graph transformer, which keeps
+% activation memory sub-linear in graph size at a fixed radius $k$. The restriction is
+% sparse relative to full attention, not relative to the graph: DeepGate4 answers the
+% memory problem by growing the receptive field efficiently, where the reduction studied
+% here shrinks $\mathcal{V}(G)$ before any attention or message passing runs.

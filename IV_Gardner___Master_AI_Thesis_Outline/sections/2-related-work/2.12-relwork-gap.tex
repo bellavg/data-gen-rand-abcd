@@ -1,55 +1,100 @@
 \subsection{Research Gap}
 \label{sec:relwork:gap}
-The two halves surveyed above do not meet. The openings are specific, and each is narrower
-than a claim that nobody has coarsened a circuit graph.
+The two halves surveyed above do not meet, and each opening below is narrower than a
+claim that nobody has coarsened a circuit graph.
+% Original: The two halves surveyed above do not meet. The openings are specific, and each is narrower
+% than a claim that nobody has coarsened a circuit graph.
 
 \begin{itemize}
-    \item \textbf{Unseen designs are seldom the tested condition.} Prediction on designs the
-    model has never seen is the field's stated motivation. Matched seen and unseen-design
-    numbers appear in 4 of the 63 papers surveyed here
-    (\ref{sec:relwork:ml4eda:protocols}). Under a random or recipe-disjoint split every test
-    design also appears in training under another recipe, so an unmeasured share of the
-    reported score is design recognition rather than structural inference. The standard
-    design-disjoint split on the reference corpus trains on 16 small designs and tests on 8
-    large ones \citep{chowdhury2021openabc}, which confounds novelty with size, and a model
-    motivated on the gap need not publish the seen-design number its degradation would be
-    measured against \citep{deng2024hoga}.
+    \item \textbf{Unseen designs are seldom the tested condition.} Prediction on designs
+    never seen in training is the field's stated motivation, yet only 4 of 63 surveyed
+    papers report matched seen and unseen numbers (\ref{sec:relwork:ml4eda:protocols}): under a
+    random or recipe-disjoint split, every test design also appears in training under
+    another recipe, so an unmeasured share of the reported score is design recognition,
+    not structural inference. The standard split trains on 16 small designs and tests on
+    8 large ones \citep{chowdhury2021openabc}, confounding novelty with size, and a model
+    motivated on the gap need not publish the seen-design baseline \citep{deng2024hoga}.
 
     \item \textbf{Circuit models already reduce their input and never measure it.} The
-    representation-learning line trains on extracted subcircuits of tens to a few thousand
-    gates \citep{li2022deepgate,deepgate4_2025}. Extraction is a reduction, applied at
-    corpus construction, and it is neither named as one nor evaluated as one
+    representation-learning line trains on extracted subcircuits of tens to a few
+    thousand gates \citep{li2022deepgate,deepgate4_2025}, a reduction applied at corpus
+    construction and neither named nor evaluated as one
     (\ref{sec:relwork:ml4eda:representation}). What it costs is unknown.
 
-    \item \textbf{Graph reduction has not been evaluated on AIGs.} The taxonomy is developed
-    and surveyed \citep{hashemi2024survey,shabani2023summarization}, and no method in it has
-    been measured against a logic-synthesis target. Transfer cannot be assumed, for a
-    mechanical reason: a generic method cuts or merges under an undirected criterion, and a
-    single severed edge removes gates from the fanin cone~\eqref{eq:prelim:cone} of
-    everything downstream of it (\ref{sec:prelim:aig:distinct}).
+    \item \textbf{Graph reduction has not been evaluated on AIGs.} The taxonomy is
+    developed and surveyed \citep{hashemi2024survey,shabani2023summarization}, but no
+    method in it has been measured against a logic-synthesis target. Transfer cannot be
+    assumed: a generic method cuts or merges under an undirected criterion, and a single
+    severed edge removes gates from the fanin cone~\eqref{eq:prelim:cone} of everything
+    downstream (\ref{sec:prelim:aig:distinct}).
 
-    \item \textbf{Coarsening results in this domain carry no compression-matched control.}
-    CTS-Bench reports memory and speed gains for one bespoke heuristic and compares no
-    second method \citep{cts_bench2026}. Absent a control at the same ratio, a gain cannot
-    be attributed to the merge criterion rather than to the compression.
+    \item \textbf{Coarsening results in this domain carry no compression-matched
+    control.} CTS-Bench reports memory and speed gains for one bespoke heuristic and
+    compares no second method \citep{cts_bench2026}, so a gain cannot be attributed to
+    the merge criterion rather than the compression.
 
-    \item \textbf{The two equivalence literatures are not connected.} Structural hashing,
-    FRAIG and maximal fanout-free cone decomposition are coarsenings by merge map
-    \citep{kuehlmann2002robust,mishchenko2005fraig,mishchenko2006rewriting}, and the
-    exactness framework that decides which of them an encoder can absorb without loss
+    \item \textbf{The two equivalence literatures are not connected.} Structural
+    hashing, FRAIG and maximal fanout-free cone decomposition are coarsenings by merge
+    map \citep{kuehlmann2002robust,mishchenko2005fraig,mishchenko2006rewriting}. The
+    exactness framework deciding which an encoder can absorb without loss
     \citep{bollen2023exact} has never been turned on them.
 \end{itemize}
+% Original bullets:
+% Unseen designs: Prediction on designs the model has never seen is the field's stated motivation.
+% Matched seen and unseen-design numbers appear in 4 of the 63 papers surveyed here
+% (\ref{sec:relwork:ml4eda:protocols}). Under a random or recipe-disjoint split every test
+% design also appears in training under another recipe, so an unmeasured share of the
+% reported score is design recognition rather than structural inference. The standard
+% design-disjoint split on the reference corpus trains on 16 small designs and tests on 8
+% large ones \citep{chowdhury2021openabc}, which confounds novelty with size, and a model
+% motivated on the gap need not publish the seen-design number its degradation would be
+% measured against \citep{deng2024hoga}.
+%
+% Circuit models: The representation-learning line trains on extracted subcircuits of tens
+% to a few thousand gates \citep{li2022deepgate,deepgate4_2025}. Extraction is a reduction,
+% applied at corpus construction, and it is neither named as one nor evaluated as one
+% (\ref{sec:relwork:ml4eda:representation}). What it costs is unknown.
+%
+% Graph reduction on AIGs: The taxonomy is developed and surveyed
+% \citep{hashemi2024survey,shabani2023summarization}, and no method in it has been measured
+% against a logic-synthesis target. Transfer cannot be assumed, for a mechanical reason: a
+% generic method cuts or merges under an undirected criterion, and a single severed edge
+% removes gates from the fanin cone~\eqref{eq:prelim:cone} of everything downstream of it
+% (\ref{sec:prelim:aig:distinct}).
+%
+% Compression-matched control: CTS-Bench reports memory and speed gains for one bespoke
+% heuristic and compares no second method \citep{cts_bench2026}. Absent a control at the
+% same ratio, a gain cannot be attributed to the merge criterion rather than to the
+% compression.
+%
+% Equivalence literatures: Structural hashing, FRAIG and maximal fanout-free cone
+% decomposition are coarsenings by merge map
+% \citep{kuehlmann2002robust,mishchenko2005fraig,mishchenko2006rewriting}, and the
+% exactness framework that decides which of them an encoder can absorb without loss
+% \citep{bollen2023exact} has never been turned on them.
 
-After CTS-Bench, being first to coarsen in EDA cannot be claimed unqualified, and the claim
+After CTS-Bench, being first to coarsen in EDA cannot be claimed unqualified, so the claim
 made here is narrower. This thesis is the first to (i) benchmark multiple coarsening
 families, exact refinement-based, GNN-aware, and domain-specific, against a
 compression-matched random control for GNN training in EDA, (ii) do so on AIGs and
 optimizability regression, (iii) bring provably lossless compression into an EDA GNN
 setting, (iv) connect AIG-native equivalence reduction to the generic summarization
 framework, and (v) run a controlled three-protocol split comparison with per-design error
-distributions on this task. Spectral and hashing-based coarsening are surveyed
-in~\ref{sec:relwork:reduction:summarization} but not run, and are no part of the claim. The
-eventual results are compared against SynthNet \citep{chowdhury2021openabc}, HOGA
-\citep{deng2024hoga} and DeepGate4 \citep{deepgate4_2025} on the prediction task, and
-against CTS-Bench \citep{cts_bench2026} on the shape of the memory, speed and accuracy
-trade-off.
+distributions. Spectral and hashing-based coarsening are surveyed
+in~\ref{sec:relwork:reduction:summarization} but not run. Results are compared against
+SynthNet \citep{chowdhury2021openabc}, HOGA \citep{deng2024hoga} and DeepGate4
+\citep{deepgate4_2025} on the prediction task, and against CTS-Bench
+\citep{cts_bench2026} on the memory, speed and accuracy trade-off.
+% Original: After CTS-Bench, being first to coarsen in EDA cannot be claimed unqualified, and the claim
+% made here is narrower. This thesis is the first to (i) benchmark multiple coarsening
+% families, exact refinement-based, GNN-aware, and domain-specific, against a
+% compression-matched random control for GNN training in EDA, (ii) do so on AIGs and
+% optimizability regression, (iii) bring provably lossless compression into an EDA GNN
+% setting, (iv) connect AIG-native equivalence reduction to the generic summarization
+% framework, and (v) run a controlled three-protocol split comparison with per-design error
+% distributions on this task. Spectral and hashing-based coarsening are surveyed
+% in~\ref{sec:relwork:reduction:summarization} but not run, and are no part of the claim. The
+% eventual results are compared against SynthNet \citep{chowdhury2021openabc}, HOGA
+% \citep{deng2024hoga} and DeepGate4 \citep{deepgate4_2025} on the prediction task, and
+% against CTS-Bench \citep{cts_bench2026} on the shape of the memory, speed and accuracy
+% trade-off.
