@@ -54,7 +54,10 @@ export MKL_NUM_THREADS=1
 
 cd "$BASE_DIR"
 
-# Same "type:method" array convention as test.sh / benchmark.sh.
+# Same "type:method[:split_by]" array convention as test.sh / benchmark.sh.
+# Indices 9-10 are opt-in: the baseline checkpoint (none:none) re-evaluated on
+# the recipe/random splits instead of design — see test.sh's ARRAY MAPPING
+# comment for why this isn't a full grid with the 8 reduction configs above.
 ALGORITHM="Orchestrate"
 CONFIGS=(
     "none:none"
@@ -63,13 +66,13 @@ CONFIGS=(
     "partition:random" "partition:metis"
     "partition:level_slicing" "partition:span_weighted_metis"
     # "summarization:<method>"   # appended here once implemented
+    "none:none:recipe" "none:none:random"
 )
 
 CONFIG="${CONFIGS[$SLURM_ARRAY_TASK_ID]}"
-REDUCTION_TYPE="${CONFIG%%:*}"
-REDUCTION_METHOD="${CONFIG##*:}"
+IFS=':' read -r REDUCTION_TYPE REDUCTION_METHOD SPLIT_BY <<< "$CONFIG"
 
-echo "Task $SLURM_ARRAY_TASK_ID assigned to reduction_type=$REDUCTION_TYPE reduction_method=$REDUCTION_METHOD"
+echo "Task $SLURM_ARRAY_TASK_ID assigned to reduction_type=$REDUCTION_TYPE reduction_method=$REDUCTION_METHOD split_by=${SPLIT_BY:-<config default>}"
 
 CSV_PATH="$BASE_DIR/data/designs/design_metadata/algo_${ALGORITHM}_ml.csv"
 
@@ -96,9 +99,8 @@ mkdir -p "$RESULTS_DIR"
 
 NUM_WORKERS="${NUM_WORKERS:-16}"
 
-# Split strategy the checkpoint was trained with — same env-var contract as
-# test.sh (unset falls through to config.SPLIT_BY inside test.py):
-#   sbatch --export=ALL,SPLIT_BY=recipe --array=0-8 src/shell/test_cpu.sh
+# SPLIT_BY comes from the array index decoded above — same convention as
+# test.sh (empty for indices 0-8, meaning config.SPLIT_BY's default).
 SPLIT_BY_ARGS=()
 if [[ -n "${SPLIT_BY:-}" ]]; then
     SPLIT_BY_ARGS=(--split_by "$SPLIT_BY")
@@ -149,5 +151,5 @@ srun python -u -m test \
     ${EXTRA_ARGS_ARR[@]+"${EXTRA_ARGS_ARR[@]}"}
 
 echo "=========================================="
-echo "Task $SLURM_ARRAY_TASK_ID CPU inference eval ($REDUCTION_TYPE/$REDUCTION_METHOD) complete."
+echo "Task $SLURM_ARRAY_TASK_ID CPU inference eval ($REDUCTION_TYPE/$REDUCTION_METHOD, split_by=${SPLIT_BY:-<config default>}) complete."
 echo "End time: $(date)"

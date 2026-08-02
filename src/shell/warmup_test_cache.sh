@@ -14,6 +14,18 @@
 # need the test split's graph cache (and, downstream, its sparsification /
 # partition masks) actually built, so run this once before those jobs.
 #
+# ARRAY MAPPING (split strategy, opt-in) — no #SBATCH --array default, so a
+# bare `sbatch warmup_test_cache.sh` is unchanged from before: a single job
+# warming config.SPLIT_BY's default (design). Pass `--array=N` on the sbatch
+# command line to pick a strategy by index instead — same convention as
+# warmup_train_cache.sh/train_no_sparsification.sh: index 0/1/2 ->
+# design/recipe/random, selected via SLURM_ARRAY_TASK_ID directly rather than
+# an exported env var (whose delivery depends on --export policy). Only run
+# ONE index per submission (not `--array=0-2`): all three write into the SAME
+# cache_dir/shared tier dirs (only the splits-JSON/sentinel filenames are
+# tagged by strategy), so concurrent tasks would race on shared manifest
+# files — e.g. `--array=1` for recipe.
+#
 # CHAIN WITH TEST + MASK PRECOMPUTE JOBS
 # ---------------------------------------
 # This job is step 1 of the chain in EVALUATION.md — follow it there rather
@@ -27,7 +39,7 @@
 set -euo pipefail
 
 echo "=========================================="
-echo "TEST CACHE WARMUP JOB"
+echo "TEST CACHE WARMUP JOB (array_task=${SLURM_ARRAY_TASK_ID:-0})"
 echo "Running on: $(hostname)"
 echo "Start time: $(date)"
 echo "CPUs available: $(nproc)"
@@ -79,12 +91,20 @@ mkdir -p "$CACHE_DIR"
 
 N_IO_WORKERS="${N_IO_WORKERS:-$(nproc)}"
 
-# Split strategy — must match the SPLIT_BY passed to test.sh/test_cpu.sh (and
-# the one the checkpoint was trained with), because a different strategy puts
-# a different set of graphs in the test split. Unset means config.SPLIT_BY.
-# The sentinel is keyed on it so warming "design" does not make a later
-# "recipe" warmup skip itself with a cache that lacks its graphs.
-SPLIT_BY="${SPLIT_BY:-}"
+# Split strategy — must match the array index passed to test.sh/test_cpu.sh
+# (and the one the checkpoint was trained with), because a different strategy
+# puts a different set of graphs in the test split. Same array convention as
+# warmup_train_cache.sh/train_no_sparsification.sh: index 0/1/2 ->
+# design/recipe/random. Falls back to the SPLIT_BY env var (or
+# config.SPLIT_BY) for a plain, non-array submission. The sentinel is keyed
+# on the resolved value so warming "design" does not make a later "recipe"
+# warmup skip itself with a cache that lacks its graphs.
+declare -A SPLIT_BY_MODES=([0]="design" [1]="recipe" [2]="random")
+if [[ -n "${SLURM_ARRAY_TASK_ID:-}" ]]; then
+    SPLIT_BY="${SPLIT_BY_MODES[$SLURM_ARRAY_TASK_ID]:?Unknown SLURM_ARRAY_TASK_ID=$SLURM_ARRAY_TASK_ID, expected one of: ${!SPLIT_BY_MODES[*]}}"
+else
+    SPLIT_BY="${SPLIT_BY:-}"
+fi
 DEFAULT_SPLIT_BY=$(python -c 'import config; print(config.SPLIT_BY)')
 if [[ -n "$SPLIT_BY" ]]; then
     SPLIT_BY_PY="\"$SPLIT_BY\""

@@ -13,7 +13,9 @@
 # GPU inference eval — accuracy (Smooth L1/RMSE/R2/Spearman) + inference
 # hardware (throughput, peak VRAM, GPU util, host memory) on the complete
 # test split, for each of the 9 trained configs (baseline, 4 sparsification,
-# 4 partition methods). Each array task runs test.py once, which itself runs
+# 4 partition methods) — plus two opt-in array indices (9, 10) that
+# re-evaluate the baseline checkpoint on the recipe/random splits instead
+# (see ARRAY MAPPING below). Each array task runs test.py once, which itself runs
 # the full-graph pass (always) plus the matched-reduction pass (for
 # non-baseline configs) on the TEST split, plus one automatic sanity pass on
 # the VALIDATION split in this config's own trained-on reduction form (a
@@ -82,9 +84,21 @@ export MKL_NUM_THREADS=1
 cd "$BASE_DIR"
 
 # =========================================================
-# 2. ARRAY MAPPING — same "type:method" convention as benchmark.sh /
-#    test_cpu.sh, so adding summarization later is one appended line here
-#    (and in those two scripts) plus bumping --array's range.
+# 2. ARRAY MAPPING — same "type:method[:split_by]" convention as
+#    benchmark.sh / test_cpu.sh, so adding summarization later is one
+#    appended line here (and in those two scripts) plus bumping --array's
+#    range.
+#
+#    Indices 9-10 are opt-in: the baseline checkpoint (none:none) re-evaluated
+#    on the recipe/random splits instead of design. Not combined with the 8
+#    reduction configs above as a full grid — only the baseline is ever
+#    trained on a non-design split (train_no_sparsification.sh, array tasks
+#    0/1/2 -> design/recipe/random), so there is nothing for e.g.
+#    "sparsification:pagerank:recipe" to evaluate. Submit these with
+#    `--array=9` (recipe) or `--array=10` (random) instead of `0-8`.
+#    SLURM_ARRAY_TASK_ID is injected by the scheduler directly, so this
+#    reliably selects split_by with no --export policy involved (unlike an
+#    exported SPLIT_BY env var, which this replaced).
 # =========================================================
 
 ALGORITHM="Orchestrate"
@@ -95,13 +109,13 @@ CONFIGS=(
     "partition:random" "partition:metis"
     "partition:level_slicing" "partition:span_weighted_metis"
     # "summarization:<method>"   # appended here once implemented
+    "none:none:recipe" "none:none:random"
 )
 
 CONFIG="${CONFIGS[$SLURM_ARRAY_TASK_ID]}"
-REDUCTION_TYPE="${CONFIG%%:*}"
-REDUCTION_METHOD="${CONFIG##*:}"
+IFS=':' read -r REDUCTION_TYPE REDUCTION_METHOD SPLIT_BY <<< "$CONFIG"
 
-echo "Task $SLURM_ARRAY_TASK_ID assigned to reduction_type=$REDUCTION_TYPE reduction_method=$REDUCTION_METHOD"
+echo "Task $SLURM_ARRAY_TASK_ID assigned to reduction_type=$REDUCTION_TYPE reduction_method=$REDUCTION_METHOD split_by=${SPLIT_BY:-<config default>}"
 
 CSV_PATH="$BASE_DIR/data/designs/design_metadata/algo_${ALGORITHM}_ml.csv"
 
@@ -137,17 +151,14 @@ mkdir -p "$RESULTS_DIR/predictions"
 
 NUM_WORKERS="${NUM_WORKERS:-12}"
 
-# Split strategy the checkpoint under test was TRAINED with (train.py
-# --split_by; train_no_sparsification.sh maps array tasks 0/1/2 to
-# design/recipe/random). SLURM_ARRAY_TASK_ID is already spoken for here (it
-# selects the reduction config), so this comes in as an env var:
-#   sbatch --export=ALL,SPLIT_BY=recipe --array=0-8 src/shell/test.sh
-# Left unset it falls through to config.SPLIT_BY inside test.py rather than
-# being duplicated here. For non-default values test.py both evaluates that
-# split and looks in the matching <run_label>_<split_by> checkpoint dir, and
-# its result/prediction filenames carry the suffix, so runs cannot collide.
-# NOTE: warmup_test_cache.sh must have been run with the SAME SPLIT_BY, or the
-# test graphs for this split are not in the eval cache yet.
+# SPLIT_BY comes from the array index decoded above (empty for indices 0-8,
+# meaning config.SPLIT_BY's default). For non-default values test.py both
+# evaluates that split and looks in the matching <run_label>_<split_by>
+# checkpoint dir, and its result/prediction filenames carry the suffix, so
+# runs cannot collide with the design-split results.
+# NOTE: warmup_test_cache.sh must have been run with the SAME SPLIT_BY (it
+# takes the same 0/1/2 -> design/recipe/random array index — see its header),
+# or the test graphs for this split are not in the eval cache yet.
 SPLIT_BY_ARGS=()
 if [[ -n "${SPLIT_BY:-}" ]]; then
     SPLIT_BY_ARGS=(--split_by "$SPLIT_BY")
@@ -175,18 +186,19 @@ WANDB="${WANDB:-true}"
 # EVALUATION.md / commit c308b27), then revert it in the same session.
 #
 # Why a forgotten true is costly: for the 8 reduction configs it drops only
-# the full_graph pass; for the BASELINE config (array index 0, "none:none")
-# build_eval_passes() appends no matched_reduction pass at all, so it would
-# drop that config's ENTIRE test-split accuracy result, leaving only the val
-# sanity-check row. Nothing in the job log flags this as an anomaly — only the
-# absence of a "Running split='test' 'full_graph' pass" line reveals it.
+# the full_graph pass; for a BASELINE config (array index 0, 9, or 10 — all
+# "none:none", just under different split_by) build_eval_passes() appends no
+# matched_reduction pass at all, so it would drop that config's ENTIRE
+# test-split accuracy result, leaving only the val sanity-check row. Nothing
+# in the job log flags this as an anomaly — only the absence of a "Running
+# split='test' 'full_graph' pass" line reveals it.
 SKIP_FULL_GRAPH=false
 if [[ "$SKIP_FULL_GRAPH" == "true" ]]; then
     echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
     echo "WARNING: SKIP_FULL_GRAPH is hardcoded true in this script — the"
     echo "full_graph pass will NOT run for task $SLURM_ARRAY_TASK_ID."
-    echo "If this is array index 0 (baseline, none:none), NO test-split"
-    echo "accuracy metrics will be produced at all this run (baseline has no"
+    echo "If this is array index 0, 9, or 10 (baseline, none:none), NO"
+    echo "test-split accuracy metrics will be produced at all this run (baseline has no"
     echo "matched_reduction fallback). Revert to SKIP_FULL_GRAPH=false in"
     echo "src/shell/test.sh before the next full 0-8 sweep."
     echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
@@ -234,5 +246,5 @@ srun python -u -m test \
     ${EXTRA_ARGS_ARR[@]+"${EXTRA_ARGS_ARR[@]}"}
 
 echo "=========================================="
-echo "Task $SLURM_ARRAY_TASK_ID GPU inference eval ($REDUCTION_TYPE/$REDUCTION_METHOD) complete."
+echo "Task $SLURM_ARRAY_TASK_ID GPU inference eval ($REDUCTION_TYPE/$REDUCTION_METHOD, split_by=${SPLIT_BY:-<config default>}) complete."
 echo "End time: $(date)"

@@ -18,7 +18,7 @@ task, rather than silently recomputing them inside the eval job.
 ## 1. Warm the test-split cache (once)
 ```bash
 export EVAL_ROOT="/scratch-shared/$USER/aig_eval_run"   # separate from train cache
-W=$(sbatch --parsable src/shell/warmup_test_cache.sh)
+W=$(sbatch --parsable --array=0 src/shell/warmup_test_cache.sh)   # 0 = design
 
 # SPARSIFICATION_ALGO defaults to "all" — data.sparsification computes all 4
 # methods (and_gate_only, random_edge_dropout, spanning_forest, pagerank) in
@@ -46,22 +46,35 @@ in front of it competing for GPU budget.
 
 ### Evaluating a non-default split strategy
 
-The steps above evaluate `config.SPLIT_BY` (`design`). To evaluate a checkpoint
-trained with `train.py --split_by recipe|random` (e.g. `sbatch -a 0-2
-src/shell/train_no_sparsification.sh`, whose tasks 0/1/2 are design/recipe/random),
-pass the same value through the **whole** chain — the warmup included, since a
-different strategy puts different graphs in the test split:
+Only the baseline checkpoint is ever trained on a non-design split (`sbatch
+-a 0-2 src/shell/train_no_sparsification.sh`, whose tasks 0/1/2 are
+design/recipe/random — sparsification/partition checkpoints are design-split
+only), so this is a baseline-only array index, not a value combined with the
+9-config sweep in step 2.
+
+`warmup_test_cache.sh` takes the same `0/1/2 -> design/recipe/random` array
+index as `train_no_sparsification.sh` (step 1 above already uses `--array=0`
+for the default design run). `test.sh`/`test_cpu.sh` take it as indices
+`9`/`10` appended to their own 9-config array (`0` there is already the
+design-split baseline). SLURM_ARRAY_TASK_ID is injected by the scheduler
+directly, so this selects the split reliably with no `--export` policy
+involved:
 
 ```bash
-sbatch --parsable --export=ALL,SPLIT_BY=recipe src/shell/warmup_test_cache.sh
-sbatch --dependency=$DEPS --export=ALL,SPLIT_BY=recipe src/shell/test.sh
+W_RECIPE=$(sbatch --parsable --array=1 src/shell/warmup_test_cache.sh)   # 1 = recipe
+sbatch --dependency=afterok:$W_RECIPE --array=9 src/shell/test.sh        # 9 = baseline/recipe
 ```
+
+(Swap `1`/`9` for `2`/`10` to evaluate the random split instead.) Neither step
+needs the sparsification/partition mask jobs (`$S`/`$M` from step 1): the
+baseline config never applies a reduction, so `test.py` runs no
+matched_reduction pass and needs no precomputed mask either way.
 
 `test.py` then evaluates that split and reads the `<run_label>_recipe`
 checkpoint directory `train.py` wrote to; its result/prediction filenames and
 WandB run names carry the same suffix, so they never collide with the design
-run. The warmup sentinel is keyed on `SPLIT_BY` too, so a prior design warmup
-does not make the recipe warmup skip itself.
+run. The warmup sentinel is keyed on the resolved split, so a prior design
+warmup does not make the recipe warmup skip itself.
 
 ### Batching at eval time
 
