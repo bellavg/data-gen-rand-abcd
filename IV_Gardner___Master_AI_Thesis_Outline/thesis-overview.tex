@@ -98,16 +98,20 @@ In conclusion, while machine learning could eliminate costly trial-and-error in 
 % \end{itemize}
 \subsection*{Research Questions (RQs)}
 \begin{itemize}
-    \item \textbf{RQ1 (Task Feasibility \& Baseline):} Can Graph Neural Networks accurately predict the theoretical optimizability of a circuit directly from its full, unreduced AIG representation?
-    
-    \item \textbf{RQ2 (Reduction Efficiency):} How do generic graph reduction techniques compare to domain-informed adaptations (across partitioning, sparsification, and summarization/coarsening) in terms of graph shrinkage rates, peak memory (VRAM) usage, and improvements to training and inference speeds?
-    
-    \item \textbf{RQ3 (Predictive Retention \& Trade-offs):} To what extent do models trained on reduced AIGs retain the predictive accuracy (measured via Smooth L1 Loss, RMSE, and $R^2$) and circuit-ranking ability (Spearman correlation) compared to the full-graph baselines established in RQ1, and do domain-informed adaptations offer better predictive retention than generic techniques?
-    
-    \item \textbf{RQ4 (Reduced to Unreduced? Generalization):} Can a model trained exclusively on reduced AIGs (partitioned, sparsified, or summarized) be successfully queried on normal, full-sized AIGs during inference, and does it retain accurate predictive capabilities across these structural state changes? 
+    \item \textbf{RQ1 (Task Feasibility \& Baseline):} How well can a GNN predict the optimizability of a circuit directly from its full, unreduced AIG representation, relative to trivial predictors and published circuit-representation models?
+    \begin{itemize}
+        \item \textbf{RQ1a (Protocol Sensitivity):} How much of the RQ1 result survives a stricter split? The same model is trained under a random split, a recipe-disjoint split, and the design-disjoint split behind every reported result, and the spread across the three separates structural inference from design recognition.
+    \end{itemize}
+
+    \item \textbf{RQ2 (Reduction Efficiency):} Applied to AIGs, how do partitioning, sparsification, and summarization/coarsening differ in shrinkage rate, peak memory, training and inference speed, and the offline cost of computing the reduction itself?
+
+    \item \textbf{RQ3 (Predictive Retention \& Trade-offs):} To what extent do models trained on reduced AIGs retain the predictive accuracy (measured via Smooth L1 Loss, RMSE, and $R^2$) and circuit-ranking ability (Spearman correlation) relative to the full-graph baseline established in RQ1, and which techniques offer the best accuracy-to-efficiency trade-off?
+
+    \item \textbf{RQ4 (Value of Domain-Informed Adaptation):} Do domain-informed reductions, which exploit topological level, reconvergence structure, and gate roles, retain more predictive accuracy than their generic counterparts at matched retention?
+
+    \item \textbf{RQ5 (Cross-State Inference):} Can a model trained exclusively on reduced AIGs, whether partitioned, sparsified or summarized, be queried on full ones at inference time without losing predictive accuracy?
     \todo{inference works why inference would work grads. inference on cpu. less intensive - motivation}
 \end{itemize}
-\todo{naming?}
 
 \section{Graph Reduction} 
 This section outlines the diverse reduction methods integrated and tested in this framework for compressing AIGs. The primary objective of applying these reductions is to mitigate severe memory bottlenecks (such as GPU OOM errors) and accelerate training, all while attempting to preserve the structural features necessary for accurate optimizability prediction.

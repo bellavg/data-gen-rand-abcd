@@ -1,37 +1,47 @@
 \section{Architecture}
 \label{sec:method:architecture}
 
-\todo{Appendix candidate: the departure-by-departure comparison against GNN+'s own equation
-numbers within~\ref{sec:method:architecture:equations}, the itemised configuration list and
-the paper-vs-reference-implementation asides in the normalisation and positional-encoding
-paragraphs. Kept here: every equation the exactness and summarization claims
-of~\ref{sec:method:architecture:summarization} and~\ref{sec:method:architecture:exact} cite
-directly, since those claims cannot be checked against a bulleted configuration.}
-The encoder follows GNN+ \citep{luo2024gnnplus}; hyperparameters come from the literature
-and from the tuning sweep of~\ref{sec:method:experiment:hp}. One architecture is used for
-unreduced, sparsified, partitioned and summarized graphs alike, with two exceptions:
-partitioning changes the pooling path (\ref{sec:method:architecture:partitioning}), and the
-exact-compression track changes the input schema (\ref{sec:method:architecture:exact}).
+\todo{Appendix candidate: the GNN+ equation-number comparison in~\ref{sec:method:architecture:equations}, the configuration list, and the paper-vs-implementation asides. Kept here: every equation the exactness and summarization claims (\ref{sec:method:architecture:summarization}, \ref{sec:method:architecture:exact}) cite directly.}
+% Original: \todo{Appendix candidate: the departure-by-departure comparison against GNN+'s own equation
+% numbers within~\ref{sec:method:architecture:equations}, the itemised configuration list and
+% the paper-vs-reference-implementation asides in the normalisation and positional-encoding
+% paragraphs. Kept here: every equation the exactness and summarization claims
+% of~\ref{sec:method:architecture:summarization} and~\ref{sec:method:architecture:exact} cite
+% directly, since those claims cannot be checked against a bulleted configuration.}
+The encoder follows GNN+ \citep{luo2024gnnplus}, with hyperparameters from the literature
+and the tuning sweep of~\ref{sec:method:experiment:hp}. One architecture serves unreduced,
+sparsified, partitioned and summarized graphs, except that partitioning changes the pooling
+path (\ref{sec:method:architecture:partitioning}) and the exact-compression track changes
+the input schema (\ref{sec:method:architecture:exact}).
 
-The encoder is an edge-aware graph convolutional network over AIGs. A node carries a one-hot
-type indicator over $[\text{constant}, \text{PI}, \text{AND}, \text{PO}]$, so an AND gate is
-$[0, 0, 1, 0]$, and an edge carries a one-hot indicator of whether it is inverted. The one
-departure from that schema is the summarized track, where a node is a super-node and its
-vector counts the members it absorbed: a super-node holding 2 primary inputs, 15 AND gates
-and 1 primary output is $[0, 2, 15, 1]$, and a super-edge counts the inverted and
-non-inverted wires merged into it. A one-hot vector is the count vector of a single-member
-super-node, so both graph types occupy the same four-dimensional input space and are read by
-the same encoder weights (\ref{sec:method:summary:schema}). The remaining settings are given
-in~\ref{tab:method:architecture} and derived
-in~\ref{sec:method:architecture:equations}.
+The encoder is an edge-aware graph convolutional network: a node carries a one-hot type
+indicator over $[\text{constant}, \text{PI}, \text{AND}, \text{PO}]$, an edge a one-hot
+inversion indicator. The summarized track's super-node instead counts absorbed members by
+role, and its super-edge counts merged inverted and non-inverted wires; a one-hot vector is
+the count vector of a single-member super-node, so both graph types share one
+four-dimensional input space and encoder weights (\ref{sec:method:summary:schema}). Settings
+are in~\ref{tab:method:architecture}, derived in~\ref{sec:method:architecture:equations}.
+% Original: The encoder is an edge-aware graph convolutional network over AIGs. A node carries a one-hot
+% type indicator over $[\text{constant}, \text{PI}, \text{AND}, \text{PO}]$, so an AND gate is
+% $[0, 0, 1, 0]$, and an edge carries a one-hot indicator of whether it is inverted. The one
+% departure from that schema is the summarized track, where a node is a super-node and its
+% vector counts the members it absorbed: a super-node holding 2 primary inputs, 15 AND gates
+% and 1 primary output is $[0, 2, 15, 1]$, and a super-edge counts the inverted and
+% non-inverted wires merged into it. A one-hot vector is the count vector of a single-member
+% super-node, so both graph types occupy the same four-dimensional input space and are read by
+% the same encoder weights (\ref{sec:method:summary:schema}). The remaining settings are given
+% in~\ref{tab:method:architecture} and derived
+% in~\ref{sec:method:architecture:equations}.
 
 \begin{table}[htbp]
 \centering
-\caption[Encoder configuration]{Encoder configuration, used unchanged for unreduced,
-sparsified, partitioned and summarized graphs. The two exceptions are the pooling path
-under partitioning and the input schema of the exact-compression track, described in
-Sections~\ref{sec:method:architecture:partitioning}
+\caption[Encoder configuration]{Encoder configuration, shared across all graph types except
+the two departures in Sections~\ref{sec:method:architecture:partitioning}
 and~\ref{sec:method:architecture:exact}.}
+% Original caption: Encoder configuration, used unchanged for unreduced, sparsified, partitioned and summarized
+% graphs. The two exceptions are the pooling path under partitioning and the input schema of
+% the exact-compression track, described in Sections~\ref{sec:method:architecture:partitioning}
+% and~\ref{sec:method:architecture:exact}.
 \label{tab:method:architecture}
 \small
 \begin{tabular}{ll}
@@ -47,11 +57,11 @@ Depth & 4 message-passing layers \\
 Hidden width & 128, constant across layers \\
 Activation & LeakyReLU in the encoder blocks, ReLU in the regression head \\
 Feed-forward block & $128 \rightarrow 256 \rightarrow 128$ \\
-Normalisation & Layer normalisation in graph mode, bracketing the feed-forward block \\
-Residuals & Skip connection added after message passing in every layer \\
+Normalisation & Layer norm, graph mode, bracketing the feed-forward block \\
+Residuals & Skip connection after message passing, every layer \\
 Dropout & $0.15$ in the encoder blocks, $0.3$ in the regression head \\
 Degree normalisation & Disabled \\
-Readout & Jumping knowledge summed over the 4 layers, then mean pooling \\
+Readout & Jumping knowledge (sum over 4 layers), then mean pooling \\
 Regression head & $128 \rightarrow 64 \rightarrow 1$ with a terminal sigmoid \\
 \bottomrule
 \end{tabular}
@@ -59,11 +69,13 @@ Regression head & $128 \rightarrow 64 \rightarrow 1$ with a terminal sigmoid \\
 
 \subsection{Encoder Formulation}
 \label{sec:method:architecture:equations}
-Nothing in this subsection is a contribution of this thesis: the formulation is GNN+'s
-\citep{luo2024gnnplus}, written out in full because the exactness and summarization claims
-of~\ref{sec:method:architecture:summarization} and~\ref{sec:method:architecture:exact} are
-claims about \emph{this} forward pass and cannot be checked against a bulleted
-configuration. The classic GCN layer it modifies \citep{kipf2017gcn} is
+The formulation is GNN+'s \citep{luo2024gnnplus}. The classic GCN layer it modifies
+\citep{kipf2017gcn} is
+% Original: Nothing in this subsection is a contribution of this thesis: the formulation is GNN+'s
+% \citep{luo2024gnnplus}, written out in full because the exactness and summarization claims
+% of~\ref{sec:method:architecture:summarization} and~\ref{sec:method:architecture:exact} are
+% claims about \emph{this} forward pass and cannot be checked against a bulleted
+% configuration. The classic GCN layer it modifies \citep{kipf2017gcn} is
 \begin{equation}
     h_v^{l} = \sigma\!\left( \sum_{u \in \mathcal{N}(v) \cup \{v\}}
     \frac{1}{\sqrt{\hat{d}_u \hat{d}_v}}\, h_u^{l-1} W^{l} \right).
@@ -74,22 +86,29 @@ attribute of edge $(u,v)$, $\sigma$ the activation, $\|$ concatenation, and bias
 suppressed for readability.
 
 \paragraph{Edge-conditioned messages.}
-Each edge attribute is projected by its own weight $W_e^{l}$ and fused with the neighbour
-representation, so the message a node receives depends on the wire it arrived on:
+Each edge attribute is projected by weight $W_e^{l}$ and fused with the neighbour
+representation:
 \begin{equation}
     m_v^{l} = \sum_{u \in \mathcal{N}(v)}
     c_{uv} \, \sigma\!\left( h_u^{l-1} W^{l} + e_{uv} W_e^{l} \right).
     \label{eq:method:message}
 \end{equation}
-The per-edge coefficient $c_{uv}$ is the one place~\eqref{eq:method:message} is
-configurable rather than fixed. With symmetric degree normalisation enabled it is the
-GCN coefficient $1 / \sqrt{\hat{d}_u \hat{d}_v}$ of~\eqref{eq:method:gcn}, computed once
-per edge when graphs are cached rather than at every forward pass; disabled, as it is
-here, it is $1$ and no edge-weight tensor is carried at all. The same edge-weight
-channel is what the exact-compression track of~\ref{sec:method:architecture:exact}
-reuses: setting $c_{uv}$ to the edge multiplicity $w_{uv}$ scales the message
-\emph{outside} $\sigma$, which is what makes one merged message equal the sum of the
-messages it replaces.
+The per-edge coefficient $c_{uv}$ is~\eqref{eq:method:message}'s one configurable term: the
+GCN coefficient $1 / \sqrt{\hat{d}_u \hat{d}_v}$ of~\eqref{eq:method:gcn} under degree
+normalisation, or, disabled as here, $1$ with no edge-weight tensor carried.
+% Cut: \ref{sec:method:architecture:exact} reuses this same channel for exact compression.
+% Original: Each edge attribute is projected by its own weight $W_e^{l}$ and fused with the neighbour
+% representation, so the message a node receives depends on the wire it arrived on:
+% [[equation unchanged, see above]]
+% The per-edge coefficient $c_{uv}$ is the one place~\eqref{eq:method:message} is
+% configurable rather than fixed. With symmetric degree normalisation enabled it is the
+% GCN coefficient $1 / \sqrt{\hat{d}_u \hat{d}_v}$ of~\eqref{eq:method:gcn}, computed once
+% per edge when graphs are cached rather than at every forward pass; disabled, as it is
+% here, it is $1$ and no edge-weight tensor is carried at all. The same edge-weight
+% channel is what the exact-compression track of~\ref{sec:method:architecture:exact}
+% reuses: setting $c_{uv}$ to the edge multiplicity $w_{uv}$ scales the message
+% \emph{outside} $\sigma$, which is what makes one merged message equal the sum of the
+% messages it replaces.
 
 \paragraph{Normalisation, dropout, residual and feed-forward block.}
 GNN+ adds four of its six techniques inside the layer block:
@@ -108,49 +127,68 @@ GNN+ adds four of its six techniques inside the layer block:
 with $W_1^{l} \colon 128 \rightarrow 256$ and $W_2^{l} \colon 256 \rightarrow 128$. GNN+
 additionally normalises the aggregated message before the activation and the residual; that
 step is dropped here, leaving only the pre- and post-FFN bracketing of GraphGPS
-\citep{rampasek2022graphgps}. The two dropouts of~\eqref{eq:method:ffn} follow the GNN+
-reference implementation.
+\citep{rampasek2022graphgps}.
+% Original trailing sentence: The two dropouts of~\eqref{eq:method:ffn} follow the GNN+
+% reference implementation.
 
 \paragraph{Positional encoding.}
-A per-node structural scalar, here the log-compressed logic level $\ell_v$, is
-projected and concatenated to the node features rather than summed into them:
+A per-node structural scalar, here the log-compressed logic level $\ell_v$, is projected
+and concatenated to the node features rather than summed into them:
 \begin{equation}
     h_v^{0} = \operatorname{GraphNorm}\!\left(
         x_v W_{\text{in}} \;\big\|\; \sigma(\ell_v W_{\text{PE}}) \right),
     \label{eq:method:input}
 \end{equation}
 with $x_v \in \mathbb{R}^{4}$, $W_{\text{in}} \colon 4 \rightarrow 128$ and
-$W_{\text{PE}} \colon 1 \rightarrow 32$, so $h_v^{0} \in \mathbb{R}^{160}$. GNN+ instead
-projects the joined vector back down to the model width. Keeping all $160$ dimensions
-here means the first layer maps $160 \rightarrow 128$ and is the one layer whose residual
-in~\eqref{eq:method:residual} is skipped, its input and output widths being unequal.
+$W_{\text{PE}} \colon 1 \rightarrow 32$, so $h_v^{0} \in \mathbb{R}^{160}$: kept whole,
+rather than projected back to model width as in GNN+, so the first layer maps
+$160 \rightarrow 128$ and alone skips the residual~\eqref{eq:method:residual}.
+% Original: with $x_v \in \mathbb{R}^{4}$, $W_{\text{in}} \colon 4 \rightarrow 128$ and
+% $W_{\text{PE}} \colon 1 \rightarrow 32$, so $h_v^{0} \in \mathbb{R}^{160}$. GNN+ instead
+% projects the joined vector back down to the model width. Keeping all $160$ dimensions
+% here means the first layer maps $160 \rightarrow 128$ and is the one layer whose residual
+% in~\eqref{eq:method:residual} is skipped, its input and output widths being unequal.
 
 \paragraph{Configuration specific to this work.}
-The encoder is GNN+; the following are this project's configuration of it, and none of
-them change the technique:
+The encoder is GNN+; the following are this project's configuration of it:
 \begin{itemize}
-    \item \textbf{Degree normalisation off.} $c_{uv} = 1$ in~\eqref{eq:method:message},
-    rather than the $1 / \sqrt{\hat{d}_u \hat{d}_v}$ of~\eqref{eq:method:gcn}. Fan-in in an
-    AIG is fixed by node type, so that coefficient is constant within each type pair and
-    adds nothing the type indicator does not already carry. GNN+'s own edge-aware layer
-    disables it too, and its ablations do not cover the choice either way. The normalised
-    variant remains reachable through the model configuration.
-    \item \textbf{No self-loop.} Aggregation in~\eqref{eq:method:message} runs over
-    $\mathcal{N}(v)$ without the $\cup \{v\}$ of~\eqref{eq:method:gcn}; a node's own
-    state re-enters through the residual of~\eqref{eq:method:residual} only.
-    \item \textbf{\texttt{LeakyReLU} for $\sigma$} in the encoder, and
-    layer normalisation in graph mode for $\operatorname{Norm}$, taking statistics over all
-    nodes of one graph, rather than the batch normalisation used throughout the GNN+
-    ablations.
-    \item \textbf{Level-based positional encoding} in~\eqref{eq:method:input}, a single
-    learned projection of log logic depth, where GNN+ uses a Random Walk Structural
-    Encoding (RWSE). Level comes from a single topological pass, where RWSE costs one
-    sparse matrix product per walk step on graphs of this size and adds the walk length to
-    a tuning budget already committed to the reduction parameters.
-    \item \textbf{Readout and head.} GNN+ reads out from the last layer alone; here the
-    layer outputs are summed first (jumping knowledge over all $L = 4$ layers), then
-    mean-pooled and passed through a bounded head:
+    \item \textbf{Degree normalisation off.} $c_{uv} = 1$ in~\eqref{eq:method:message}:
+    AIG fan-in is fixed by node type, so the coefficient of~\eqref{eq:method:gcn} would be
+    constant within a type pair and adds nothing the type indicator lacks.
+    \item \textbf{No self-loop.} Aggregation runs over $\mathcal{N}(v)$ without
+    $\cup \{v\}$; a node's own state re-enters only through the
+    residual~\eqref{eq:method:residual}.
+    \item \textbf{\texttt{LeakyReLU}} for $\sigma$, graph-mode layer normalisation for
+    $\operatorname{Norm}$, in place of GNN+'s batch normalisation.
+    \item \textbf{Level-based positional encoding}~\eqref{eq:method:input}: log logic
+    depth, in place of GNN+'s costlier Random Walk Structural Encoding (RWSE).
+    \item \textbf{Readout and head.} Layer outputs summed (jumping knowledge, $L = 4$),
+    mean-pooled, through a bounded head, rather than GNN+'s last-layer readout:
 \end{itemize}
+% Original itemize:
+% \begin{itemize}
+%     \item \textbf{Degree normalisation off.} $c_{uv} = 1$ in~\eqref{eq:method:message},
+%     rather than the $1 / \sqrt{\hat{d}_u \hat{d}_v}$ of~\eqref{eq:method:gcn}. Fan-in in an
+%     AIG is fixed by node type, so that coefficient is constant within each type pair and
+%     adds nothing the type indicator does not already carry. GNN+'s own edge-aware layer
+%     disables it too, and its ablations do not cover the choice either way. The normalised
+%     variant remains reachable through the model configuration.
+%     \item \textbf{No self-loop.} Aggregation in~\eqref{eq:method:message} runs over
+%     $\mathcal{N}(v)$ without the $\cup \{v\}$ of~\eqref{eq:method:gcn}; a node's own
+%     state re-enters through the residual of~\eqref{eq:method:residual} only.
+%     \item \textbf{\texttt{LeakyReLU} for $\sigma$} in the encoder, and
+%     layer normalisation in graph mode for $\operatorname{Norm}$, taking statistics over all
+%     nodes of one graph, rather than the batch normalisation used throughout the GNN+
+%     ablations.
+%     \item \textbf{Level-based positional encoding} in~\eqref{eq:method:input}, a single
+%     learned projection of log logic depth, where GNN+ uses a Random Walk Structural
+%     Encoding (RWSE). Level comes from a single topological pass, where RWSE costs one
+%     sparse matrix product per walk step on graphs of this size and adds the walk length to
+%     a tuning budget already committed to the reduction parameters.
+%     \item \textbf{Readout and head.} GNN+ reads out from the last layer alone; here the
+%     layer outputs are summed first (jumping knowledge over all $L = 4$ layers), then
+%     mean-pooled and passed through a bounded head:
+% \end{itemize}
 \begin{align}
     h_G &= \frac{1}{|\mathcal{V}|} \sum_{v \in \mathcal{V}} \sum_{l=1}^{L} h_v^{l},
     \label{eq:method:pooling} \\
@@ -159,17 +197,18 @@ them change the technique:
     \label{eq:method:readout}
 \end{align}
 with $W_3 \colon 128 \rightarrow 64$ and $W_4 \colon 64 \rightarrow 1$. The terminal
-sigmoid matches the $[0, 1]$ range of the optimizability target, and is the reason the
-head uses \texttt{ReLU} and a heavier dropout ($p = 0.3$) than the $p = 0.15$ of the
-encoder blocks.
+sigmoid matches the $[0, 1]$ optimizability range; the head uses \texttt{ReLU} and heavier
+dropout ($p = 0.3$ vs.\ $0.15$) than the encoder blocks.
+% Original closing sentence: with $W_3 \colon 128 \rightarrow 64$ and $W_4 \colon 64 \rightarrow 1$. The terminal
+% sigmoid matches the $[0, 1]$ range of the optimizability target, and is the reason the
+% head uses \texttt{ReLU} and a heavier dropout ($p = 0.3$) than the $p = 0.15$ of the
+% encoder blocks.
 
 \subsection{Partitioned Inputs}
 \label{sec:method:architecture:partitioning}
-Partitioning is the one reduction family that requires an architectural change. Graphs are
-partitioned offline and the edges spanning partitions are removed, which leaves the node
-set intact but disconnects the graph into $k$ components. Pooling directly to the graph
-level would then average over components the encoder never allowed to communicate, so the
-readout is made hierarchical:
+Partitioning is the one reduction family that requires an architectural change: edges
+spanning partitions are removed offline, disconnecting the graph into $k$ components while
+the node set stays intact, so the readout is made hierarchical:
 
 \begin{itemize}
   \item GNN encoder (applied on intra-partition edges only)
@@ -177,36 +216,55 @@ readout is made hierarchical:
   \item Mean pooling from partition representations to a single graph representation
   \item Prediction head applied to the graph representation to produce the output $\hat{y}$
 \end{itemize}
+% Original intro: Partitioning is the one reduction family that requires an architectural change. Graphs are
+% partitioned offline and the edges spanning partitions are removed, which leaves the node
+% set intact but disconnects the graph into $k$ components. Pooling directly to the graph
+% level would then average over components the encoder never allowed to communicate, so the
+% readout is made hierarchical:
 
-Feature normalization is also made partition-aware: the input \texttt{GraphNorm} normalizes
-within each partition rather than within each graph, so statistics do not leak across a
-boundary the message passing itself cannot cross.
+Feature normalization is partition-aware too: \texttt{GraphNorm} normalizes within each
+partition rather than within each graph, so statistics do not leak across a boundary
+message passing cannot cross.
+% Original: Feature normalization is also made partition-aware: the input \texttt{GraphNorm} normalizes
+% within each partition rather than within each graph, so statistics do not leak across a
+% boundary the message passing itself cannot cross.
 
 \subsection{Sparsified Inputs}
 \label{sec:method:architecture:sparsification}
-Sparsification alters only the data pipeline: a sparsified AIG preserves the feature
-schema of the original, so the encoder of~\ref{sec:method:architecture} ingests it
-unmodified.
+Sparsification alters only the data pipeline: a sparsified AIG preserves the feature schema
+of the original, so the encoder of~\ref{sec:method:architecture} ingests it unmodified.
 
-Reductions are stored as node and edge masks applied at load time rather than materialised
-into the corpus, so a single corpus serves every sparsification setting. Edge masks (random
-edge dropout, spanning forest) leave the node count unchanged, whereas node masks (PageRank
-pruning, AND-gate-only) reduce it. The node budget governing batch assembly
-(\ref{sec:method:experiment:batching}) is therefore measured on the post-mask count.
+Reductions are stored as node and edge masks applied at load time, so one corpus serves
+every sparsification setting. Edge masks (random edge dropout, spanning forest) leave the
+node count unchanged; node masks (PageRank pruning, AND-gate-only) reduce it, so the node
+budget governing batch assembly (\ref{sec:method:experiment:batching}) is measured on the
+post-mask count.
+% Original second paragraph: Reductions are stored as node and edge masks applied at load time rather than materialised
+% into the corpus, so a single corpus serves every sparsification setting. Edge masks (random
+% edge dropout, spanning forest) leave the node count unchanged, whereas node masks (PageRank
+% pruning, AND-gate-only) reduce it. The node budget governing batch assembly
+% (\ref{sec:method:experiment:batching}) is therefore measured on the post-mask count.
 
 \subsection{Summarized Inputs}
 \label{sec:method:architecture:summarization}
-Summarized graphs are also fed to the unmodified encoder, which is possible only because
-the merge preserves the input schema as a superset: node and edge features become member
-counts rather than one-hot indicators, and a super-node containing a single node reproduces
-its original feature row exactly (\ref{sec:method:summary:schema}). Positional encodings are
-pooled by member minimum, so a super-node's level is that of its earliest member. This
-adaptation has not yet been tested.
+Summarized graphs feed the unmodified encoder because the merge preserves the schema as a
+superset (\ref{sec:method:summary:schema}): features become member counts rather than
+one-hot indicators, and a single-member super-node reproduces its original row exactly.
+Positional encodings pool by member minimum, so a super-node's level is its earliest
+member's; this adaptation is untested.
 % TODO: unrun, confirm before defending positinal encoding adaptation
+% Original: Summarized graphs are also fed to the unmodified encoder, which is possible only because
+% the merge preserves the input schema as a superset: node and edge features become member
+% counts rather than one-hot indicators, and a super-node containing a single node reproduces
+% its original feature row exactly (\ref{sec:method:summary:schema}). Positional encodings are
+% pooled by member minimum, so a super-node's level is that of its earliest member. This
+% adaptation has not yet been tested.
 
-A full graph is consequently a valid input to a summary-trained model without preprocessing,
-being a graph of size-1 super-nodes. The cross-state inference of RQ5 therefore evaluates
-one set of weights on both representations.
+A full graph is therefore already valid input, being all size-1 super-nodes, so RQ5's
+cross-state inference evaluates one set of weights on both representations.
+% Original: A full graph is consequently a valid input to a summary-trained model without preprocessing,
+% being a graph of size-1 super-nodes. The cross-state inference of RQ5 therefore evaluates
+% one set of weights on both representations.
 
 \subsection{Encoder Variant for Exact Colour Refinement}
 \label{sec:method:architecture:exact}
@@ -216,19 +274,28 @@ approximate, but the guarantee holds only under a modified encoder.
 When $k$ nodes merge, parallel edges collapse into one super-edge whose message must equal
 the sum of the $k$ it replaces. Multiplicity $w_{uv}$ carried as an edge attribute enters
 $\sigma$ in~\eqref{eq:method:message}, which does not decompose over sums. Setting
-$c_{uv} = w_{uv}$ instead scales the message outside $\sigma$ and gives equality. Edge
-attributes are therefore dropped, and inversion moves onto the nodes: fan-in is fixed by
-node type in an AIG (zero for constants and primary inputs, two for AND gates, one for
-primary outputs), so a node's type and its count of inverted incoming edges determine which
-fan-ins are inverted, up to order. Which specific fan-in is inverted is lost, which a
-graph-level target does not need.
+$c_{uv} = w_{uv}$ instead scales the message outside $\sigma$ and gives equality.
 
-Coarsening to depth $d$ equal to the number of message-passing layers then yields outputs
-identical to the uncoarsened graph \citep{bollen2023exact}: compression that costs no
-accuracy by construction, and the positive control for RQ5
-(\ref{sec:method:experiment:design}). The variant pays for this in schema compatibility. A
-full graph must be converted before this encoder can be queried on it, whereas the other
-methods support cross-state inference with no such step.
+Edge attributes are therefore dropped, and inversion moves onto the nodes: fan-in is fixed
+by node type (zero for constants and PIs, two for AND gates, one for POs), so a node's type
+and inverted-edge count determine which fan-ins are inverted, up to order, which a
+graph-level target does not need.
+% Original: Edge attributes are therefore dropped, and inversion moves onto the nodes: fan-in is fixed by
+% node type in an AIG (zero for constants and primary inputs, two for AND gates, one for
+% primary outputs), so a node's type and its count of inverted incoming edges determine which
+% fan-ins are inverted, up to order. Which specific fan-in is inverted is lost, which a
+% graph-level target does not need.
+
+Coarsening to depth $d = L$ then yields outputs identical
+to the uncoarsened graph \citep{bollen2023exact}: the positive control for RQ5
+(\ref{sec:method:experiment:design}), traded against schema compatibility, since a full
+graph must first be converted, unlike the other methods.
+% Original: Coarsening to depth $d$ equal to the number of message-passing layers then yields outputs
+% identical to the uncoarsened graph \citep{bollen2023exact}: compression that costs no
+% accuracy by construction, and the positive control for RQ5
+% (\ref{sec:method:experiment:design}). The variant pays for this in schema compatibility. A
+% full graph must be converted before this encoder can be queried on it, whereas the other
+% methods support cross-state inference with no such step.
 
 Exactness (\ref{sec:prelim:reduction:exact}) needs two properties from the encoder: a
 permutation-invariant sum over the neighbour multiset (\eqref{eq:prelim:exact-aggregation}),

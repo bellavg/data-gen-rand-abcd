@@ -12,64 +12,78 @@ The corpus is built from 55 source circuits, drawn from three collections and su
 in~\ref{tab:source_circuits}. The characteristics of each design, measured on its
 untransformed base AIG, are given in~\ref{tab:corpus_designs}.
 
-Twenty-nine are the hardware IP designs of OpenABC-D \citep{chowdhury2021openabc}, which
-collects them in turn from OpenCores, IWLS, the MIT Lincoln Laboratory CEP and OpenPiton.
-They span bus and peripheral control (\texttt{spi}, \texttt{simple\_spi}, \texttt{i2c},
-\texttt{sasc}, \texttt{ss\_pcm}, \texttt{usb\_phy}, \texttt{wb\_dma}, \texttt{wb\_conmax},
-\texttt{ac97\_ctrl}, \texttt{pci}, \texttt{mem\_ctrl}, \texttt{ethernet},
-\texttt{vga\_lcd}), cryptography (\texttt{aes}, \texttt{aes\_xcrypt},
-\texttt{aes\_secworks}, \texttt{des3\_area}, \texttt{sha256}), signal processing
-(\texttt{fir}, \texttt{iir}, \texttt{dft}, \texttt{idft}, \texttt{jpeg}), and processors and
-SoC fragments (\texttt{tv80}, \texttt{tinyRocket}, \texttt{bp\_be}, \texttt{picosoc},
-\texttt{fpu}, \texttt{dynamic\_node}).
+Twenty-nine are the hardware IP designs of OpenABC-D \citep{chowdhury2021openabc}, spanning
+bus and peripheral control, cryptography, signal processing, and processor/SoC fragments
+(names in~\ref{tab:corpus_designs}).
 
-All 47 non-synthetic designs entered the pipeline as BENCH netlists from the OpenABC-D
-distribution, obtained from the NYU UltraViolet repository record
-(\url{https://ultraviolet.library.nyu.edu/records/mw6q2-a8p15}) linked in the project's code
-repository (\url{https://github.com/NYU-MLDA/OpenABC}). Its \texttt{bench} directory carries
-the classical benchmarks of the following paragraph alongside the 29 IP designs the dataset
-paper documents. Each netlist is converted to an AIG by a single ABC pass that reads it and
-applies structural hashing, which is the only preprocessing applied before the
-transformation of~\ref{sec:method:data:generation:transform}.
+% Original, condensed above:
+% Twenty-nine are the hardware IP designs of OpenABC-D \citep{chowdhury2021openabc}, which
+% collects them in turn from OpenCores, IWLS, the MIT Lincoln Laboratory CEP and OpenPiton.
+% They span bus and peripheral control (\texttt{spi}, \texttt{simple\_spi}, \texttt{i2c},
+% \texttt{sasc}, \texttt{ss\_pcm}, \texttt{usb\_phy}, \texttt{wb\_dma}, \texttt{wb\_conmax},
+% \texttt{ac97\_ctrl}, \texttt{pci}, \texttt{mem\_ctrl}, \texttt{ethernet},
+% \texttt{vga\_lcd}), cryptography (\texttt{aes}, \texttt{aes\_xcrypt},
+% \texttt{aes\_secworks}, \texttt{des3\_area}, \texttt{sha256}), signal processing
+% (\texttt{fir}, \texttt{iir}, \texttt{dft}, \texttt{idft}, \texttt{jpeg}), and processors and
+% SoC fragments (\texttt{tv80}, \texttt{tinyRocket}, \texttt{bp\_be}, \texttt{picosoc},
+% \texttt{fpu}, \texttt{dynamic\_node}).
 
-Eighteen more are classical combinational benchmarks that OpenABC-D does not include: the
-eight arithmetic circuits of the EPFL suite \citep{amaru2015epfl} (\texttt{div},
-\texttt{hyp}, \texttt{log2}, \texttt{max}, \texttt{multiplier}, \texttt{sin}, \texttt{sqrt},
-\texttt{square}), four ISCAS-85 circuits \citep{brglez1985iscas} (\texttt{c1355},
-\texttt{c5315}, \texttt{c6288}, \texttt{c7552}), and six MCNC/LGSynth circuits
-\citep{yang1991mcnc} (\texttt{apex1}, \texttt{bc0}, \texttt{dalu}, \texttt{i10},
-\texttt{k2}, \texttt{mainpla}). These extend the corpus into deep arithmetic, which
-OpenABC-D deliberately excludes in favour of larger and functionally more diverse IP. The
-effect on the depth distribution is pronounced. Median depth across the 47 designs outside
-this suite is 31 levels and the deepest of them is \texttt{fpu} at 819, whereas the EPFL
-circuits reach
-4{,}373 (\texttt{div}), 5{,}059 (\texttt{sqrt}) and 24{,}802 (\texttt{hyp}). The three
-deepest circuits in the corpus therefore all enter through this collection, and they set the
-bound on the precomputed depth encoding
-of~\ref{sec:method:data:representation:pe}.
+All 47 non-synthetic designs, the 29 above and the 18 classical benchmarks below, entered the
+pipeline as BENCH netlists from the OpenABC-D distribution, converted to an AIG by a single
+ABC pass applying structural hashing, the only preprocessing before the transformation
+of~\ref{sec:method:data:generation:transform}.
+
+% Original, condensed above:
+% All 47 non-synthetic designs entered the pipeline as BENCH netlists from the OpenABC-D
+% distribution, obtained from the NYU UltraViolet repository record
+% (\url{https://ultraviolet.library.nyu.edu/records/mw6q2-a8p15}) linked in the project's code
+% repository (\url{https://github.com/NYU-MLDA/OpenABC}). Its \texttt{bench} directory carries
+% the classical benchmarks of the following paragraph alongside the 29 IP designs the dataset
+% paper documents. Each netlist is converted to an AIG by a single ABC pass that reads it and
+% applies structural hashing, which is the only preprocessing applied before the
+% transformation of~\ref{sec:method:data:generation:transform}.
+
+Eighteen more are classical combinational benchmarks OpenABC-D does not include: eight
+arithmetic circuits from the EPFL suite \citep{amaru2015epfl}, four from ISCAS-85
+\citep{brglez1985iscas}, and six from MCNC/LGSynth \citep{yang1991mcnc}, named
+in~\ref{tab:corpus_designs}. These carry the corpus's deepest circuits: median depth across
+the 47 designs outside the EPFL suite is 31 levels (deepest \texttt{fpu} at 819), against
+4{,}373 (\texttt{div}),
+5{,}059 (\texttt{sqrt}) and 24{,}802 (\texttt{hyp}) for three EPFL circuits, which set the
+bound on the depth encoding of~\ref{sec:method:data:representation:pe}.
+
+% Original, condensed above:
+% Eighteen more are classical combinational benchmarks that OpenABC-D does not include: the
+% eight arithmetic circuits of the EPFL suite \citep{amaru2015epfl} (\texttt{div},
+% \texttt{hyp}, \texttt{log2}, \texttt{max}, \texttt{multiplier}, \texttt{sin}, \texttt{sqrt},
+% \texttt{square}), four ISCAS-85 circuits \citep{brglez1985iscas} (\texttt{c1355},
+% \texttt{c5315}, \texttt{c6288}, \texttt{c7552}), and six MCNC/LGSynth circuits
+% \citep{yang1991mcnc} (\texttt{apex1}, \texttt{bc0}, \texttt{dalu}, \texttt{i10},
+% \texttt{k2}, \texttt{mainpla}). These extend the corpus into deep arithmetic, which
+% OpenABC-D deliberately excludes in favour of larger and functionally more diverse IP. The
+% effect on the depth distribution is pronounced. Median depth across the 47 designs outside
+% this suite is 31 levels and the deepest of them is \texttt{fpu} at 819, whereas the EPFL
+% circuits reach
+% 4{,}373 (\texttt{div}), 5{,}059 (\texttt{sqrt}) and 24{,}802 (\texttt{hyp}). The three
+% deepest circuits in the corpus therefore all enter through this collection, and they set the
+% bound on the precomputed depth encoding
+% of~\ref{sec:method:data:representation:pe}.
 
 The remaining eight are synthetic circuits, named \texttt{128} through \texttt{16384} after
-their \emph{primary input count} rather than their size (\texttt{16384} has $16{,}384$ inputs
-but $131{,}072$ AND gates). They are randomly sampled AIGs from the random AIG generator of
-\texttt{mockturtle}, part of the EPFL logic synthesis libraries \citep{soeken2018epfl}. Each
-new gate draws two operands uniformly at random from the signals built so far, the constant,
-the primary inputs and every prior gate, and inverts each independently with probability
-$1/2$. A draw that structurally hashes to an existing node or collapses to a trivial case is
-discarded and redrawn, so every gate in the result is distinct. The gate budget is eight
-times the input count throughout, doubling at each step from $128$ inputs / $1{,}024$ gates
-to $16{,}384$ inputs / $131{,}072$ gates, and every node without a fanout at the end becomes a
-primary output, between $37\%$ and $39\%$ of the gate count.
+their \emph{primary input count} rather than their size (\texttt{16384} has $16{,}384$
+inputs but $131{,}072$ AND gates): randomly sampled AIGs from the random AIG generator of
+\texttt{mockturtle} \citep{soeken2018epfl}, with a gate budget of eight times the input
+count and every gate left without a fanout becoming a primary output, $37$--$39\%$ of the
+gate count.
 
-The generation script itself was not kept. This account is reconstructed from the eight
-AIGs, which fix it exactly except for one parameter: the seed is not recoverable, so the
-eight circuits cannot be regenerated independently
-(\ref{sec:method:experiment:reproducibility}). The construction also explains their
-behaviour under optimization, because fanins drawn uniformly at random with duplicates
-rejected arrive already structurally hashed, with almost none of the repeated local
-subfunctions that \texttt{rewrite}, \texttt{refactor} and \texttt{resub} exist to collapse.
-Their near-zero optimizability (\ref{sec:method:data:label:distribution}) is therefore a
-property of the sampling, not a measurement failure, sharpest in the largest circuits, where
-the pool is widest and collisions rarest.
+The generation script was not kept, so this account is reconstructed from the eight AIGs,
+which fix it exactly except for the seed. That the seed is not recoverable means the
+circuits cannot be regenerated independently
+(\ref{sec:method:experiment:reproducibility}). Their near-zero optimizability
+(\ref{sec:method:data:label:distribution}) follows from the construction, not a measurement
+failure: uniformly drawn, deduplicated fanins arrive already structurally hashed, with
+almost none of the repeated local subfunctions that \texttt{rewrite}, \texttt{refactor} and
+\texttt{resub} exist to collapse.
 
 % Original, condensed above:
 % The remaining eight are synthetic circuits, named \texttt{128}, \texttt{256}, \texttt{512},
@@ -130,37 +144,61 @@ Synthetic (this work) & 8 & n/a \\
 \end{tabular}
 \end{table}
 
-The license column of~\ref{tab:source_circuits} records each suite's own terms, but that
-is not the term that governs the copies actually used, because the 18 classical benchmarks
-were not obtained from their original distributions. Every non-synthetic netlist entered
-the corpus through the OpenABC-D release, so those copies were received under its BSD
-3-Clause license. The EPFL suite's MIT license applies in addition, and the ISCAS-85 and
-MCNC circuits attach no formal terms of their own, leaving the BSD 3-Clause license of the
-redistributing dataset as the only written term on the copies used. Any release of the
-corpus is therefore governed by BSD 3-Clause attribution requirements, retaining the MIT
-notice for the EPFL circuits (\ref{sec:discussion:ethics}).
+The license column of~\ref{tab:source_circuits} states each suite's own terms, not the term
+governing the copies used: since all 18 classical benchmarks were received through the
+OpenABC-D release, every non-synthetic netlist is covered by its BSD 3-Clause license, with
+the EPFL suite's MIT notice retained in addition. Any release of the corpus is governed
+accordingly (\ref{sec:discussion:ethics}).
 
-The provenance is the point here, not the inventory, because the design-level split
-(\ref{sec:method:experiment:splitting}) rests on the assumption that these 55 are genuinely
-distinct circuits rather than variants of one another. Mostly they are: three different
-sources, four benchmark traditions, and no design derived from another. The assumption is
-not perfect, and the exceptions should be named rather than assumed away. The three AES
-variants implement the same cipher; \texttt{dft} and \texttt{idft} are forward and inverse
-transforms of one structure, as are \texttt{fir} and \texttt{iir} to a lesser degree; and
-the eight synthetic circuits differ from each other only in scale. A split by design does
-not guarantee that such a family lands entirely on one side of it, so a small amount of
-family-level similarity can cross the train/test boundary even though no individual circuit
-does. This is a weaker form of leakage than the one design-level splitting exists to close,
-being a structural family resemblance rather than the same circuit in two optimization
-states, but it bounds how strongly an unseen-design result can be read and is taken up
-in~\ref{sec:discussion:limitations}.
+% Original, condensed above:
+% The license column of~\ref{tab:source_circuits} records each suite's own terms, but that
+% is not the term that governs the copies actually used, because the 18 classical benchmarks
+% were not obtained from their original distributions. Every non-synthetic netlist entered
+% the corpus through the OpenABC-D release, so those copies were received under its BSD
+% 3-Clause license. The EPFL suite's MIT license applies in addition, and the ISCAS-85 and
+% MCNC circuits attach no formal terms of their own, leaving the BSD 3-Clause license of the
+% redistributing dataset as the only written term on the copies used. Any release of the
+% corpus is therefore governed by BSD 3-Clause attribution requirements, retaining the MIT
+% notice for the EPFL circuits (\ref{sec:discussion:ethics}).
 
-Scale spans nearly three orders of magnitude, which is what forces the node-budget batching
-of~\ref{sec:method:experiment:batching}. The base AIGs range from 403 AND nodes
-(\texttt{ss\_pcm}) to 245{,}046 (\texttt{dft}) at a median of 11{,}464, and depth ranges
-from 8 levels to 24{,}802 at a median of 35. Transformation and optimization move these
-figures, so the bounds the preprocessing pipeline records over the full corpus are higher
-still, at 366{,}040 AND nodes and a depth of 24{,}972.
+The provenance matters because the design-level split
+(\ref{sec:method:experiment:splitting}) assumes these 55 are genuinely distinct circuits.
+Mostly they are, but three families bear naming: the AES variants, the \texttt{dft}/
+\texttt{idft} and \texttt{fir}/\texttt{iir} transform pairs, and the eight synthetic
+circuits, which differ from each other only in scale. A split by design cannot guarantee
+such a family lands entirely on one side of it, so a weaker, family-level leakage can cross
+the boundary even where no individual circuit does, bounding how strongly an unseen-design
+result can be read (\ref{sec:discussion:limitations}).
+
+% Original, condensed above:
+% The provenance is the point here, not the inventory, because the design-level split
+% (\ref{sec:method:experiment:splitting}) rests on the assumption that these 55 are genuinely
+% distinct circuits rather than variants of one another. Mostly they are: three different
+% sources, four benchmark traditions, and no design derived from another. The assumption is
+% not perfect, and the exceptions should be named rather than assumed away. The three AES
+% variants implement the same cipher; \texttt{dft} and \texttt{idft} are forward and inverse
+% transforms of one structure, as are \texttt{fir} and \texttt{iir} to a lesser degree; and
+% the eight synthetic circuits differ from each other only in scale. A split by design does
+% not guarantee that such a family lands entirely on one side of it, so a small amount of
+% family-level similarity can cross the train/test boundary even though no individual circuit
+% does. This is a weaker form of leakage than the one design-level splitting exists to close,
+% being a structural family resemblance rather than the same circuit in two optimization
+% states, but it bounds how strongly an unseen-design result can be read and is taken up
+% in~\ref{sec:discussion:limitations}.
+
+Scale spans nearly three orders of magnitude, forcing the node-budget batching
+of~\ref{sec:method:experiment:batching}: base AIGs range from 403 (\texttt{ss\_pcm}) to
+245{,}046 AND nodes (\texttt{dft}), median 11{,}464, and depth from 8 to 24{,}802 levels,
+median 35. Transformation pushes these bounds higher still, to 366{,}040 AND nodes and depth
+24{,}972 over the full corpus.
+
+% Original, condensed above:
+% Scale spans nearly three orders of magnitude, which is what forces the node-budget batching
+% of~\ref{sec:method:experiment:batching}. The base AIGs range from 403 AND nodes
+% (\texttt{ss\_pcm}) to 245{,}046 (\texttt{dft}) at a median of 11{,}464, and depth ranges
+% from 8 levels to 24{,}802 at a median of 35. Transformation and optimization move these
+% figures, so the bounds the preprocessing pipeline records over the full corpus are higher
+% still, at 366{,}040 AND nodes and a depth of 24{,}972.
 
 \input{media/tables/corpus_designs}
 
@@ -169,85 +207,143 @@ still, at 366{,}040 AND nodes and a depth of 24{,}972.
 
 \subsubsection{Structural Characteristics of the Source Designs}
 \label{sec:method:data:sources:stats}
-The remaining columns of~\ref{tab:corpus_designs} show the same spread. PI and PO counts
-range from 24 (\texttt{sin}) to $37{,}603$ (\texttt{idft}) and from 11 (\texttt{bc0}) to
-$49{,}307$ (\texttt{16384}), at medians of 494 and 398. Edge count tracks node count
-directly, since every AND node contributes two edges and every output one, from 896
-(\texttt{ss\_pcm}) to $527{,}509$ (\texttt{dft}) at a median of $25{,}065$. The inverted-edge
-share that fixes the edge feature of~\ref{sec:method:data:representation:features} varies
-from $33.8\%$ to $87.8\%$ of a design's edges, at a median of $57.2\%$.
+The remaining columns of~\ref{tab:corpus_designs} show the same spread: PI/PO counts from
+24/11 to $37{,}603$/$49{,}307$ (medians 494, 398), edge count from 896 to $527{,}509$
+(median $25{,}065$), and the inverted-edge share that fixes the edge feature
+of~\ref{sec:method:data:representation:features} from $33.8\%$ to $87.8\%$ (median
+$57.2\%$).
+
+% Original, condensed above:
+% The remaining columns of~\ref{tab:corpus_designs} show the same spread. PI and PO counts
+% range from 24 (\texttt{sin}) to $37{,}603$ (\texttt{idft}) and from 11 (\texttt{bc0}) to
+% $49{,}307$ (\texttt{16384}), at medians of 494 and 398. Edge count tracks node count
+% directly, since every AND node contributes two edges and every output one, from 896
+% (\texttt{ss\_pcm}) to $527{,}509$ (\texttt{dft}) at a median of $25{,}065$. The inverted-edge
+% share that fixes the edge feature of~\ref{sec:method:data:representation:features} varies
+% from $33.8\%$ to $87.8\%$ of a design's edges, at a median of $57.2\%$.
 
 \subsection{Dataset Generation}
 \label{sec:method:data:generation}
 
 \subsubsection{Random Structural Transformation}
 \label{sec:method:data:generation:transform}
-Each source design is expanded by applying random synthesis recipes to it and retaining
-every intermediate result, following the construction of
-OpenABC-D~\citep{chowdhury2021openabc}. A recipe is a sequence of $20$ transformations drawn
-independently and uniformly from seven area-oriented passes: balancing, and rewriting,
-refactoring and resubstitution each in a plain and a zero-cost variant, the latter accepting
-replacements that leave node count unchanged. The same $200$ recipes, the first $200$ of the
-$1{,}500$ released with OpenABC-D and all of them distinct, are applied to every design, so
-recipe identity is not confounded with design identity.
+Each source design is expanded by applying random synthesis recipes and retaining every
+intermediate result, following the construction of OpenABC-D~\citep{chowdhury2021openabc}.
+A recipe is a sequence of $20$ transformations drawn independently and uniformly from seven
+area-oriented passes: balancing, and rewriting, refactoring and resubstitution each in a
+plain and a zero-cost variant. The same $200$ recipes, the first $200$ of the $1{,}500$
+released with OpenABC-D, are applied to every design, so recipe identity is not confounded
+with design identity.
 
-The AIG is written after \emph{every} pass rather than only at the end, so a single recipe
-contributes $20$ graphs, one per prefix of the recipe, plus one further graph after the
-structural-choice pass that follows the transformation sequence: $21$ in total. Together with
-the unmodified design itself this gives $1 + 200 \times 21 = 4{,}201$ base graphs per design,
-and $55 \times 4{,}201 = 231{,}055$ overall. The recipes continue into a technology-mapping
-tail, which does not execute because no standard-cell library is loaded in this flow, so no
-graph beyond the structural-choice pass is produced. The per-design count is verified rather
-than assumed, and generation is treated as failed unless exactly $4{,}201$ AIGs are present.
-The pass alphabet, the recipe format and the unexecuted tail are listed
-in~\ref{sec:apx:algorithms}.
+% Original, condensed above:
+% Each source design is expanded by applying random synthesis recipes to it and retaining
+% every intermediate result, following the construction of
+% OpenABC-D~\citep{chowdhury2021openabc}. A recipe is a sequence of $20$ transformations drawn
+% independently and uniformly from seven area-oriented passes: balancing, and rewriting,
+% refactoring and resubstitution each in a plain and a zero-cost variant, the latter accepting
+% replacements that leave node count unchanged. The same $200$ recipes, the first $200$ of the
+% $1{,}500$ released with OpenABC-D and all of them distinct, are applied to every design, so
+% recipe identity is not confounded with design identity.
+
+The AIG is written after \emph{every} pass rather than only at the end: a recipe contributes
+$20$ graphs, one per prefix, plus one further graph after the structural-choice pass that
+follows it, $21$ in total. With the unmodified design itself this gives
+$1 + 200 \times 21 = 4{,}201$ base graphs per design, and $55 \times 4{,}201 = 231{,}055$
+overall. The recipes continue into a technology-mapping tail that does not execute, since no
+standard-cell library is loaded in this flow, so no graph beyond the structural-choice pass
+is produced. Generation is verified rather than assumed: it is treated as failed unless
+exactly $4{,}201$ AIGs are present. The pass alphabet, recipe format and unexecuted tail are
+listed in~\ref{sec:apx:algorithms}.
+
+% Original, condensed above:
+% The AIG is written after \emph{every} pass rather than only at the end, so a single recipe
+% contributes $20$ graphs, one per prefix of the recipe, plus one further graph after the
+% structural-choice pass that follows the transformation sequence: $21$ in total. Together with
+% the unmodified design itself this gives $1 + 200 \times 21 = 4{,}201$ base graphs per design,
+% and $55 \times 4{,}201 = 231{,}055$ overall. The recipes continue into a technology-mapping
+% tail, which does not execute because no standard-cell library is loaded in this flow, so no
+% graph beyond the structural-choice pass is produced. The per-design count is verified rather
+% than assumed, and generation is treated as failed unless exactly $4{,}201$ AIGs are present.
+% The pass alphabet, the recipe format and the unexecuted tail are listed
+% in~\ref{sec:apx:algorithms}.
 
 Randomised transformation rather than plain replication is what makes this corpus a learning
-problem at all. Replicating a design would yield identical graphs carrying identical labels,
-adding weight but no information. A random recipe prefix instead yields a circuit that is
-\emph{functionally} equivalent to its source, since every pass is equivalence-preserving, but
-structurally different, and, critically, differently optimizable: how much a synthesis script
-can still remove depends on which rewriting the graph has already absorbed. The corpus
-therefore varies along exactly the axis the label measures while holding the function fixed.
+problem: a recipe prefix yields a circuit that is functionally equivalent to its source,
+since every pass is equivalence-preserving, but structurally different and differently
+optimizable. The corpus therefore varies along exactly the axis the label measures while
+holding the function fixed.
 
-That is also what makes the design-level split
-(\ref{sec:method:experiment:splitting}) necessary rather than merely conservative. The
-$4{,}201$ graphs derived from one design are not independent samples: they share a Boolean
-function, a primary-input interface, and a large amount of common structure, and successive
-prefixes of one recipe differ by a single pass. A random split over graphs would place
-near-siblings of every test graph into training, and the resulting score would measure recall
-of a design the model had already seen rather than generalization. Splitting on the design
+% Original, condensed above:
+% Randomised transformation rather than plain replication is what makes this corpus a learning
+% problem at all. Replicating a design would yield identical graphs carrying identical labels,
+% adding weight but no information. A random recipe prefix instead yields a circuit that is
+% \emph{functionally} equivalent to its source, since every pass is equivalence-preserving, but
+% structurally different, and, critically, differently optimizable: how much a synthesis script
+% can still remove depends on which rewriting the graph has already absorbed. The corpus
+% therefore varies along exactly the axis the label measures while holding the function fixed.
+
+This is also why the design-level split (\ref{sec:method:experiment:splitting}) is necessary
+rather than merely conservative: the $4{,}201$ graphs derived from one design are not
+independent samples, since they share a Boolean function and a large amount of common
+structure, and successive recipe prefixes differ by a single pass. A random split over graphs
+would place near-siblings of every test graph into training, so the resulting score would
+measure recall of a seen design rather than generalization. Splitting on the design
 partitions the corpus along the one boundary this construction never crosses.
 
+% Original, condensed above:
+% That is also what makes the design-level split
+% (\ref{sec:method:experiment:splitting}) necessary rather than merely conservative. The
+% $4{,}201$ graphs derived from one design are not independent samples: they share a Boolean
+% function, a primary-input interface, and a large amount of common structure, and successive
+% prefixes of one recipe differ by a single pass. A random split over graphs would place
+% near-siblings of every test graph into training, and the resulting score would measure recall
+% of a design the model had already seen rather than generalization. Splitting on the design
+% partitions the corpus along the one boundary this construction never crosses.
 
-The step-21 output of every recipe is not a plain AIG. It follows a structural-choice pass
-that retains multiple structurally distinct but functionally equivalent implementations of a
-signal side by side, a \emph{choice network}, rather than collapsing to one representative.
-The synthesis tool's own node count describes only the chosen representative and is smaller
-than $|\mathcal{V}(G)|$, the graph's true node count, whenever the pass finds such an
-equivalence. Checked against the stored graphs, that undercount is confirmed in 43 of the
-200 recipes at step 21. Step 21 is one of the 21 stored outputs per recipe, so it alone
-accounts for 200 of the $4{,}201$ graphs generated per design, close to $4.8\%$ of the total.
 
-The recorded optimizability for these graphs substitutes that smaller, tool-reported count
-for $|\mathcal{V}(G)|$ in~\eqref{eq:prelim:target}, so $y(G)$ is computed against the wrong
-denominator wherever the two disagree. The mismatch was found after training. The affected
-labels were not recomputed, and the model was not retrained: the graphs remain in the
-corpus and in every reported split, and no result in~\ref{sec:results} currently excludes
-them. This is recorded here as a limitation of the reported accuracy rather than as a
-resolved issue.
+The step-21 output of every recipe is a \emph{choice network}: a structural-choice pass
+keeps multiple functionally equivalent implementations of a signal side by side rather than
+collapsing to one representative, so the synthesis tool's own node count covers only the
+chosen representative and undercounts $|\mathcal{V}(G)|$. Checked against the stored graphs,
+this is confirmed in 43 of the 200 recipes at step 21. Step 21 contributes one graph per
+recipe, so the affected graphs number 43 of the 4{,}201 stored per design, close to $1\%$ of
+the corpus.
+
+The recorded optimizability substitutes that smaller count for $|\mathcal{V}(G)|$
+in~\eqref{eq:prelim:target}, so $y(G)$ uses the wrong denominator wherever the two disagree.
+Found after training, the mismatch was not corrected: labels were not recomputed, the model
+was not retrained, and the affected graphs remain in the corpus and in every reported split,
+with no result in~\ref{sec:results} currently excluding them.
 % TODO: exclude step-21 graphs from every reported accuracy figure.
+
+% Original, condensed above:
+% The step-21 output of every recipe is not a plain AIG. It follows a structural-choice pass
+% that retains multiple structurally distinct but functionally equivalent implementations of a
+% signal side by side, a \emph{choice network}, rather than collapsing to one representative.
+% The synthesis tool's own node count describes only the chosen representative and is smaller
+% than $|\mathcal{V}(G)|$, the graph's true node count, whenever the pass finds such an
+% equivalence. Checked against the stored graphs, that undercount is confirmed in 43 of the
+% 200 recipes at step 21. Step 21 is one of the 21 stored outputs per recipe, so it alone
+% accounts for 200 of the $4{,}201$ graphs generated per design, close to $4.8\%$ of the total.
+%
+% The recorded optimizability for these graphs substitutes that smaller, tool-reported count
+% for $|\mathcal{V}(G)|$ in~\eqref{eq:prelim:target}, so $y(G)$ is computed against the wrong
+% denominator wherever the two disagree. The mismatch was found after training. The affected
+% labels were not recomputed, and the model was not retrained: the graphs remain in the
+% corpus and in every reported split, and no result in~\ref{sec:results} currently excludes
+% them. This is recorded here as a limitation of the reported accuracy rather than as a
+% resolved issue.
 
 \subsubsection{Optimization}
 \label{sec:method:data:generation:algorithms}
 Four synthesis scripts were applied during dataset generation: \texttt{Orchestrate},
-\texttt{Deepsyn}, \texttt{Syn4} and \texttt{C2RS}. They differ in how they search: some
-apply a fixed sequence of rewriting, refactoring and balancing passes, while others explore
-seeded or scored variations. Command templates and per-algorithm parameters are given
+\texttt{Deepsyn}, \texttt{Syn4} and \texttt{C2RS}, differing in how they search: some apply a
+fixed sequence of rewriting, refactoring and balancing passes, others explore seeded or
+scored variations. Command templates and per-algorithm parameters are given
 in~\ref{sec:apx:first_appendix}.
 
 Only \texttt{Orchestrate} is used for training and evaluation in this thesis
-(\ref{sec:intro:scope:algorithm}); the remaining three exist on disk and are the most
+(\ref{sec:intro:scope:algorithm}). The remaining three exist on disk and are the most
 direct extension available (\ref{sec:conclusion:futurework:algorithms}).
 
 \subsection{Tiered Dataset Structure}
@@ -264,37 +360,56 @@ This originates from 55 designs randomly transformed into 231,055 base graphs (T
 \subsubsection{Tier 1: Single-Algorithm Optimization}
 \label{sec:method:data:tier1}
 Applying the target synthesis algorithms to these base graphs yields exactly 231,055
-primary (Tier-1) samples per algorithm. For the Orchestrate prediction task three of
-them contribute samples (\texttt{Deepsyn}, \texttt{Syn4} and \texttt{C2RS}), while
-\texttt{Orchestrate} itself does not: an Orchestrate-produced graph relabelled by
-Orchestrate is precisely the sequential step
-that~\ref{sec:method:data:tiers:labelling} stops at, so it is a label source rather than a
-sample.
+primary (Tier-1) samples per algorithm. For the Orchestrate prediction task, three of them
+contribute samples (\texttt{Deepsyn}, \texttt{Syn4} and \texttt{C2RS}). \texttt{Orchestrate}
+itself does not: an Orchestrate-produced graph relabelled by Orchestrate is precisely the
+sequential step that~\ref{sec:method:data:tiers:labelling} stops at, so it is a label source
+rather than a sample.
 
 \subsubsection{Labelling and Tier Depth}
 \label{sec:method:data:tiers:labelling}
 Labelling a graph means running the target script on it and recording how many nodes it
-removed (\ref{sec:method:data:label:definition}). The optimized \emph{output} of that run
-is a graph too, so the construction could be iterated indefinitely; it is stopped after
-one step, and the outputs of the labelling runs on tier-1 graphs are discarded rather than
-promoted to a third tier.
+removed (\ref{sec:method:data:label:definition}). The optimized output of that run is
+itself a graph, so the construction could be iterated indefinitely. It is stopped after one
+step, and the labelling outputs on tier-1 graphs are discarded rather than promoted to a
+third tier.
 
-Two consequences are worth stating, because both shape the results.
+Two consequences follow. First, the tiers are not independent: optimizing a tier-0 graph
+with algorithm $S$ produces both that graph's label under $S$ and the corresponding tier-1
+graph, so the tier-1 set is exactly the set of tier-0 labelling outputs. Second, this bounds
+how optimizable the corpus is. A tier-1 graph has already been through one full synthesis
+script, so what Orchestrate can still remove from it is small, though far more sharply
+dependent on \emph{which} script ran first than on the tier itself
+(\ref{fig:dataset_label_by_source}): the tier ordering in fact inverts, and tier 1 carries
+the higher mean target (\ref{sec:method:data:statistics:source}). Roughly half the
+evaluation corpus has an optimizability of exactly zero
+(\ref{fig:dataset_zero_inflation}), a property of the construction rather than a defect,
+but one every $R^2$ in~\ref{sec:results} has to be read against
+(\ref{sec:method:data:label:distribution}).
 
-First, the two tiers are not independent of each other. Optimizing a tier-0 graph with
-algorithm $S$ produces both that graph's label under $S$ \emph{and} the corresponding
-tier-1 graph: one synthesis run serves both purposes. The tier-1 set is therefore exactly
-the set of labelling outputs of tier 0.
-
-Second, this is what bounds how optimizable the corpus is. A tier-1 graph has already been
-through one full synthesis script, so what Orchestrate can still remove from it is small,
-though how small depends far more sharply on \emph{which} script ran first than on the tier
-itself (\ref{fig:dataset_label_by_source}), to the point that the tier ordering inverts and
-tier 1 carries the higher mean target. That decomposition is taken up
-in~\ref{sec:method:data:statistics:source}. Roughly half the evaluation corpus has an
-optimizability of exactly zero (\ref{fig:dataset_zero_inflation}). That is a property of
-the construction rather than a defect, but every $R^2$ in~\ref{sec:results} has to be read
-against it (\ref{sec:method:data:label:distribution}).
+% Original, condensed above:
+% Labelling a graph means running the target script on it and recording how many nodes it
+% removed (\ref{sec:method:data:label:definition}). The optimized \emph{output} of that run
+% is a graph too, so the construction could be iterated indefinitely; it is stopped after
+% one step, and the outputs of the labelling runs on tier-1 graphs are discarded rather than
+% promoted to a third tier.
+%
+% Two consequences are worth stating, because both shape the results.
+%
+% First, the two tiers are not independent of each other. Optimizing a tier-0 graph with
+% algorithm $S$ produces both that graph's label under $S$ \emph{and} the corresponding
+% tier-1 graph: one synthesis run serves both purposes. The tier-1 set is therefore exactly
+% the set of labelling outputs of tier 0.
+%
+% Second, this is what bounds how optimizable the corpus is. A tier-1 graph has already been
+% through one full synthesis script, so what Orchestrate can still remove from it is small,
+% though how small depends far more sharply on \emph{which} script ran first than on the tier
+% itself (\ref{fig:dataset_label_by_source}), to the point that the tier ordering inverts and
+% tier 1 carries the higher mean target. That decomposition is taken up
+% in~\ref{sec:method:data:statistics:source}. Roughly half the evaluation corpus has an
+% optimizability of exactly zero (\ref{fig:dataset_zero_inflation}). That is a property of
+% the construction rather than a defect, but every $R^2$ in~\ref{sec:results} has to be read
+% against it (\ref{sec:method:data:label:distribution}).
 
 \subsection{Target Label: Optimizability}
 \label{sec:method:data:label}
@@ -302,25 +417,35 @@ against it (\ref{sec:method:data:label:distribution}).
 \subsubsection{Definition}
 \label{sec:method:data:label:definition}
 For an AIG $G$ and synthesis algorithm $S$, the optimizability target is the relative node
-reduction $y(G)$ of~\eqref{eq:prelim:target}, formulated as a regression task, and is not
-restated here. The bound motivates the terminal sigmoid in the prediction
-head (\ref{sec:method:architecture}): the model cannot predict outside the achievable range.
+reduction $y(G)$ of~\eqref{eq:prelim:target}, formulated as a regression task and not
+restated here. Its bound motivates the terminal sigmoid in the prediction head
+(\ref{sec:method:architecture}): the model cannot predict outside the achievable range.
 
-Note what this does and does not measure. It is a \emph{relative} quantity, so it is
-comparable across circuits of different sizes, which is what makes a single model over a
-heterogeneous corpus meaningful, but it is also therefore harder to predict than an
-absolute count, since the model must infer both what will be removed and what the graph
-started with. It is an area proxy and says nothing about delay or power
+The target is a \emph{relative} quantity, comparable across circuits of different sizes,
+which is what makes a single model over a heterogeneous corpus meaningful, but also harder
+to predict than an absolute count, since the model must infer both what will be removed and
+what the graph started with. It is an area proxy and says nothing about delay or power
 (\ref{sec:intro:scope:target}).
+
+% Original, condensed above:
+% For an AIG $G$ and synthesis algorithm $S$, the optimizability target is the relative node
+% reduction $y(G)$ of~\eqref{eq:prelim:target}, formulated as a regression task, and is not
+% restated here. The bound motivates the terminal sigmoid in the prediction
+% head (\ref{sec:method:architecture}): the model cannot predict outside the achievable range.
+%
+% Note what this does and does not measure. It is a \emph{relative} quantity, so it is
+% comparable across circuits of different sizes, which is what makes a single model over a
+% heterogeneous corpus meaningful, but it is also therefore harder to predict than an
+% absolute count, since the model must infer both what will be removed and what the graph
+% started with. It is an area proxy and says nothing about delay or power
+% (\ref{sec:intro:scope:target}).
 
 \subsubsection{Label Distribution}
 \label{sec:method:data:label:distribution}
 The target is heavily concentrated near zero (mean $0.020$, standard deviation $0.053$,
-and just under half of all graphs at exactly zero), and what determines it is the synthesis
-script a graph came from rather than the circuit or the tier. Both facts constrain how the
-results can be read, and both are set out with the measurements
-in~\ref{sec:method:data:statistics:label} and~\ref{sec:method:data:statistics:source} rather
-than repeated here.
+just under half of all graphs at exactly zero), and determined more by the synthesis script
+a graph came from than by the circuit or the tier. Both are set out with the measurements
+in~\ref{sec:method:data:statistics:label} and~\ref{sec:method:data:statistics:source}.
 
 \subsection{Graph Representation}
 \label{sec:method:data:representation}
@@ -328,42 +453,72 @@ than repeated here.
 \subsubsection{Node and Edge Features}
 \label{sec:method:data:representation:features}
 Each AIG is represented as an attributed graph carrying one-hot node types (constant,
-primary input, AND, primary output), a one-hot edge inversion flag (regular connection or
-inverted signal), and a topological depth encoding. The AIGER files are read and traversed with
-\textsc{aigverse} \citep{walter2025aigverse}, an interface to the same EPFL logic synthesis
-libraries \citep{soeken2018epfl}.
+primary input, AND, primary output), a one-hot edge inversion flag, and a topological depth
+encoding. AIGER files are read and traversed with \textsc{aigverse}
+\citep{walter2025aigverse}, an interface to the same EPFL logic synthesis libraries
+\citep{soeken2018epfl}.
 
 \subsubsection{Positional Encoding Precomputation}
 \label{sec:method:data:representation:pe}
-Topological levels are computed once, offline, and stored on the graph; the model reads the
-stored attribute rather than recomputing it. This matters for more than speed. Levels are
-computed on the \emph{unreduced} graph and then carried through reduction, so a partitioned
-or sparsified graph retains the depth information of the circuit it came from even where the
-edges that establish that depth have been cut. A runtime encoding would instead describe the
-reduced graph's own topology, which is a different and, for this task, less informative
-quantity.
+Topological levels are computed once, offline, on the \emph{unreduced} graph, and stored on
+the graph rather than recomputed at runtime: a partitioned or sparsified graph therefore
+retains the depth information of its source circuit even where the edges establishing that
+depth have been cut. A runtime encoding would instead describe the reduced graph's own
+topology, a different and less informative quantity for this task.
+
+% Original, condensed above:
+% Each AIG is represented as an attributed graph carrying one-hot node types (constant,
+% primary input, AND, primary output), a one-hot edge inversion flag (regular connection or
+% inverted signal), and a topological depth encoding. The AIGER files are read and traversed with
+% \textsc{aigverse} \citep{walter2025aigverse}, an interface to the same EPFL logic synthesis
+% libraries \citep{soeken2018epfl}.
+%
+% Topological levels are computed once, offline, and stored on the graph; the model reads the
+% stored attribute rather than recomputing it. This matters for more than speed. Levels are
+% computed on the \emph{unreduced} graph and then carried through reduction, so a partitioned
+% or sparsified graph retains the depth information of the circuit it came from even where the
+% edges that establish that depth have been cut. A runtime encoding would instead describe the
+% reduced graph's own topology, which is a different and, for this task, less informative
+% quantity.
 
 \subsection{Dataset Analysis}
 \label{sec:method:data:statistics}
 \providecommand{\resultsfigs}{media/results/figures}
 \providecommand{\resultsgen}{media/results/tables}
-This subsection characterises the corpus the model is actually trained and evaluated on: its
-scale, its structure, the shape of the target, and how the two evaluation splits differ from
-one another. Several decisions made elsewhere in this chapter rest on the distributions
-reported here rather than on argument: the graph-scale bound
+This subsection characterises the corpus the model is trained and evaluated on: its scale,
+structure, target shape, and how the evaluation splits differ. The graph-scale bound
 of~\ref{sec:method:experiment:scale}, the node-budget batching
-of~\ref{sec:method:experiment:batching}, the terminal sigmoid
-of~\ref{sec:method:architecture}. Every $R^2$ in~\ref{sec:results} has to be read
-against them.
+of~\ref{sec:method:experiment:batching} and the terminal sigmoid
+of~\ref{sec:method:architecture} all rest on the distributions reported here, and every
+$R^2$ in~\ref{sec:results} has to be read against them.
 
-One scope caveat applies throughout, and it is not a small one. Except for
-\ref{tab:corpus_stats}, which covers every stored graph, what follows is measured on the
-\emph{evaluation splits}, 96{,}430 test graphs over six designs and 80{,}525
-validation graphs over five, rather than over the full corpus
+% Original, condensed above:
+% This subsection characterises the corpus the model is actually trained and evaluated on: its
+% scale, its structure, the shape of the target, and how the two evaluation splits differ from
+% one another. Several decisions made elsewhere in this chapter rest on the distributions
+% reported here rather than on argument: the graph-scale bound
+% of~\ref{sec:method:experiment:scale}, the node-budget batching
+% of~\ref{sec:method:experiment:batching}, the terminal sigmoid
+% of~\ref{sec:method:architecture}. Every $R^2$ in~\ref{sec:results} has to be read
+% against them.
+
+One scope caveat applies throughout. Except for~\ref{tab:corpus_stats}, which covers every
+stored graph, what follows is measured on the \emph{evaluation splits}, 96{,}430 test graphs
+over six designs and 80{,}525 validation graphs over five, rather than the full corpus
 of~\ref{sec:method:data:tiers}. The splits are design-disjoint samples of the same
-construction, so the structural statistics can be read as representative; the label
-statistics cannot, because which designs land in a split changes them substantially
+construction, so structural statistics can be read as representative. Label statistics
+cannot, since which designs land in a split changes them substantially
 (\ref{sec:method:data:statistics:splits}).
+
+% Original, condensed above:
+% One scope caveat applies throughout, and it is not a small one. Except for
+% \ref{tab:corpus_stats}, which covers every stored graph, what follows is measured on the
+% \emph{evaluation splits}, 96{,}430 test graphs over six designs and 80{,}525
+% validation graphs over five, rather than over the full corpus
+% of~\ref{sec:method:data:tiers}. The splits are design-disjoint samples of the same
+% construction, so the structural statistics can be read as representative; the label
+% statistics cannot, because which designs land in a split changes them substantially
+% (\ref{sec:method:data:statistics:splits}).
 % TODO: regenerate media/tables/corpus_tiers.tex from the cluster CSV.
 % TODO: report how many tier-0 graphs are distinct after structural hashing.
 
@@ -373,84 +528,160 @@ Graph size spans nearly three orders of magnitude within the evaluation splits a
 median of 15{,}977 nodes against a maximum of 232{,}715
 (\ref{fig:dataset_size_distribution}, \ref{tab:dataset_stats}). This is the distribution
 that forces node-budget batching rather than a fixed graph count per batch
-(\ref{sec:method:experiment:batching}); at a fixed batch size the largest graphs in the
-corpus are four orders of magnitude more expensive than the smallest.
+(\ref{sec:method:experiment:batching}): at a fixed batch size the largest graphs are four
+orders of magnitude more expensive than the smallest.
 
 Structurally the graphs are far more uniform than they are in size
 (\ref{fig:dataset_structure}, \ref{tab:dataset_structure}). AND gates and the constant
 account for $82.1\%$ of nodes on average and the primary-input/output interface for the
-remaining $17.9\%$, and the graphs are sparse and near-tree-like at $1.75$ edges per node.
-The AND-gate share is not a descriptive statistic here but a mechanism: the
-\texttt{and\_gate\_only} sparsification of~\ref{sec:method:sparse:andgate} drops exactly the
-interface nodes, so $82.1\%$ \emph{is} its node retention, and the spread on that share
-($63.3\%$ to $99.9\%$ across graphs) is why its compression varies between circuits rather
-than being a dial that can be set.
+remaining $17.9\%$, at $1.75$ edges per node. This AND-gate share is a mechanism, not
+merely a statistic: the \texttt{and\_gate\_only} sparsification
+of~\ref{sec:method:sparse:andgate} drops exactly the interface nodes, so $82.1\%$
+\emph{is} its node retention, and the spread on that share ($63.3\%$ to $99.9\%$ across
+graphs) is why its compression varies between circuits rather than being a dial that can be
+set.
+
+% Original, condensed above:
+% Graph size spans nearly three orders of magnitude within the evaluation splits alone: a
+% median of 15{,}977 nodes against a maximum of 232{,}715
+% (\ref{fig:dataset_size_distribution}, \ref{tab:dataset_stats}). This is the distribution
+% that forces node-budget batching rather than a fixed graph count per batch
+% (\ref{sec:method:experiment:batching}); at a fixed batch size the largest graphs in the
+% corpus are four orders of magnitude more expensive than the smallest.
+%
+% Structurally the graphs are far more uniform than they are in size
+% (\ref{fig:dataset_structure}, \ref{tab:dataset_structure}). AND gates and the constant
+% account for $82.1\%$ of nodes on average and the primary-input/output interface for the
+% remaining $17.9\%$, and the graphs are sparse and near-tree-like at $1.75$ edges per node.
+% The AND-gate share is not a descriptive statistic here but a mechanism: the
+% \texttt{and\_gate\_only} sparsification of~\ref{sec:method:sparse:andgate} drops exactly the
+% interface nodes, so $82.1\%$ \emph{is} its node retention, and the spread on that share
+% ($63.3\%$ to $99.9\%$ across graphs) is why its compression varies between circuits rather
+% than being a dial that can be set.
 
 \subsubsection{Measured Target Distribution}
 \label{sec:method:data:statistics:label}
-The target is extremely concentrated near zero
-(\ref{fig:dataset_label_distribution}, \ref{tab:dataset_stats}). Pooled over the test split
-the mean optimizability is $0.020$ with a standard deviation of $0.053$, and $73.4\%$ of
-graphs sit below $y = 0.005$. Just under half, $48.8\%$, are \emph{exactly} zero: Orchestrate
-removes nothing at all.
+The target is extremely concentrated near zero (\ref{fig:dataset_label_distribution},
+\ref{tab:dataset_stats}). Pooled over the test split, mean optimizability is $0.020$
+(standard deviation $0.053$), $73.4\%$ of graphs sit below $y = 0.005$, and $48.8\%$ are
+\emph{exactly} zero: Orchestrate removes nothing at all.
 
-Two consequences follow, and both shape how the results chapter can be read. First, $R^2$ is
-a ratio against the target's own variance, and that variance is small, so a respectable RMSE
-is entirely compatible with a near-zero or negative $R^2$; the baseline diagnosis
-of~\ref{sec:method:architecture:baselines} turns on precisely this. Second, with a point mass
-of this size at zero, a constant predictor is a strong baseline, and any model has to beat it
-on the minority of graphs where something is actually removable.
+Two consequences follow. $R^2$ is a ratio against the target's own variance, which is
+small, so a respectable RMSE is compatible with a near-zero or negative $R^2$, exactly the
+baseline diagnosis of~\ref{sec:method:architecture:baselines}. And with a point mass this
+large at zero, a constant predictor is a strong baseline: any model must beat it on the
+minority of graphs where something is actually removable.
 
-Where that point mass sits is not uniform (\ref{fig:dataset_zero_inflation}). It concentrates
-in the smallest circuits, which are already minimal, and in the synthetic designs: the design
-\texttt{16384} contributes $16{,}080$ test graphs, a sixth of the split, with a mean
-target of $0.0000$, a maximum of $0.0003$ and $92.4\%$ of graphs at exactly zero. Orchestrate
-is at a fixed point on it, for the reasons given
-in~\ref{sec:method:data:sources}. The joint distribution of size and label
-(\ref{fig:dataset_size_vs_label}) is the entire signal available to the size-only baseline
-of~\ref{sec:results:rq1:baselines}, and it shows why that baseline is not trivial: graph size
-is largely a proxy for ``is this optimizable at all''.
+% Original, condensed above:
+% The target is extremely concentrated near zero
+% (\ref{fig:dataset_label_distribution}, \ref{tab:dataset_stats}). Pooled over the test split
+% the mean optimizability is $0.020$ with a standard deviation of $0.053$, and $73.4\%$ of
+% graphs sit below $y = 0.005$. Just under half, $48.8\%$, are \emph{exactly} zero: Orchestrate
+% removes nothing at all.
+%
+% Two consequences follow, and both shape how the results chapter can be read. First, $R^2$ is
+% a ratio against the target's own variance, and that variance is small, so a respectable RMSE
+% is entirely compatible with a near-zero or negative $R^2$; the baseline diagnosis
+% of~\ref{sec:method:architecture:baselines} turns on precisely this. Second, with a point mass
+% of this size at zero, a constant predictor is a strong baseline, and any model has to beat it
+% on the minority of graphs where something is actually removable.
+
+This point mass is not uniform (\ref{fig:dataset_zero_inflation}): it concentrates in the
+smallest circuits, already minimal, and in the synthetic designs. Design \texttt{16384}
+alone contributes $16{,}080$ test graphs, a sixth of the split, with a mean target of
+$0.0000$, a maximum of $0.0003$, and $92.4\%$ of graphs at exactly zero. Orchestrate is at a
+fixed point on it, for the reasons given in~\ref{sec:method:data:sources}. The joint
+distribution of size and label (\ref{fig:dataset_size_vs_label}) is the entire signal
+available to the size-only baseline of~\ref{sec:results:rq1:baselines}: graph size is
+largely a proxy for whether a graph is optimizable at all.
+
+% Original, condensed above:
+% Where that point mass sits is not uniform (\ref{fig:dataset_zero_inflation}). It concentrates
+% in the smallest circuits, which are already minimal, and in the synthetic designs: the design
+% \texttt{16384} contributes $16{,}080$ test graphs, a sixth of the split, with a mean
+% target of $0.0000$, a maximum of $0.0003$ and $92.4\%$ of graphs at exactly zero. Orchestrate
+% is at a fixed point on it, for the reasons given
+% in~\ref{sec:method:data:sources}. The joint distribution of size and label
+% (\ref{fig:dataset_size_vs_label}) is the entire signal available to the size-only baseline
+% of~\ref{sec:results:rq1:baselines}, and it shows why that baseline is not trivial: graph size
+% is largely a proxy for ``is this optimizable at all''.
 
 \subsubsection{Determinants of the Target}
 \label{sec:method:data:statistics:source}
 The strongest single determinant of the target is not the circuit but the synthesis script
-that produced the graph (\ref{fig:dataset_label_by_source}). A tier-1 graph has already been
-optimized once, and how much Orchestrate can still remove depends overwhelmingly on which
-script ran first. Pooled over both evaluation splits, Syn4-derived graphs have a mean
-optimizability of $0.046$ with only $11.7\%$ at exactly zero, while Deepsyn- and
-C2RS-derived graphs average $0.0022$ and $0.0011$ with $54.4\%$ and $52.1\%$ at zero. That is
-a twenty- to forty-fold difference in the target, driven by a property of the label pipeline
-rather than of the circuit.
+that produced the graph (\ref{fig:dataset_label_by_source}): how much Orchestrate can still
+remove depends overwhelmingly on which script ran first. Pooled over both evaluation
+splits, Syn4-derived graphs have a mean optimizability of $0.046$ with only $11.7\%$ at
+exactly zero, while Deepsyn- and C2RS-derived graphs average $0.0022$ and $0.0011$ with
+$54.4\%$ and $52.1\%$ at zero, a twenty- to forty-fold difference driven by the label
+pipeline rather than the circuit.
 
-This is also what explains an apparent anomaly in~\ref{tab:dataset_stats}: tier-1 graphs have
-a \emph{higher} mean target ($0.023$) than tier-0 graphs ($0.010$), although
-\ref{sec:method:data:tiers:labelling} argues that a graph which has already been through a
-full synthesis script should have less left to remove. The elevation is entirely attributable
-to one of tier 1's three sources. On the test split the three source means are $0.0015$
-(C2RS), $0.0025$ (Deepsyn) and $0.0654$ (Syn4), whose average is $0.023$, exactly the
-tier-1 figure. Excluding the Syn4 third, tier 1 averages $0.0020$, five times \emph{below}
-tier 0. The tier is therefore the weaker cut of the data, and the source script should be
-reported alongside it wherever tier-wise results appear.
+This also explains an apparent anomaly in~\ref{tab:dataset_stats}: tier-1 graphs have a
+\emph{higher} mean target ($0.023$) than tier-0 graphs ($0.010$), although
+\ref{sec:method:data:tiers:labelling} argues the opposite should hold. The elevation traces
+entirely to one of tier 1's three sources: on the test split the source means are $0.0015$
+(C2RS), $0.0025$ (Deepsyn) and $0.0654$ (Syn4), averaging to $0.023$, exactly the tier-1
+figure. Excluding Syn4, tier 1 averages $0.0020$, five times \emph{below} tier 0, so the
+tier is the weaker cut of the data and the source script should be reported alongside it
+wherever tier-wise results appear.
+
+% Original, condensed above:
+% The strongest single determinant of the target is not the circuit but the synthesis script
+% that produced the graph (\ref{fig:dataset_label_by_source}). A tier-1 graph has already been
+% optimized once, and how much Orchestrate can still remove depends overwhelmingly on which
+% script ran first. Pooled over both evaluation splits, Syn4-derived graphs have a mean
+% optimizability of $0.046$ with only $11.7\%$ at exactly zero, while Deepsyn- and
+% C2RS-derived graphs average $0.0022$ and $0.0011$ with $54.4\%$ and $52.1\%$ at zero. That is
+% a twenty- to forty-fold difference in the target, driven by a property of the label pipeline
+% rather than of the circuit.
+%
+% This is also what explains an apparent anomaly in~\ref{tab:dataset_stats}: tier-1 graphs have
+% a \emph{higher} mean target ($0.023$) than tier-0 graphs ($0.010$), although
+% \ref{sec:method:data:tiers:labelling} argues that a graph which has already been through a
+% full synthesis script should have less left to remove. The elevation is entirely attributable
+% to one of tier 1's three sources. On the test split the three source means are $0.0015$
+% (C2RS), $0.0025$ (Deepsyn) and $0.0654$ (Syn4), whose average is $0.023$, exactly the
+% tier-1 figure. Excluding the Syn4 third, tier 1 averages $0.0020$, five times \emph{below}
+% tier 0. The tier is therefore the weaker cut of the data, and the source script should be
+% reported alongside it wherever tier-wise results appear.
 
 \subsubsection{Composition of the Evaluation Splits}
 \label{sec:method:data:statistics:splits}
 Under a design-level split the test set is a handful of whole circuits rather than a random
-sample (\ref{fig:dataset_design_composition}), so every pooled test metric is an average over
-six designs and their particular mix. With one of those six contributing a sixth of the
-graphs at a constant-zero target, the pooled figures are sensitive to composition in a way
-that a random split would have hidden.
+sample (\ref{fig:dataset_design_composition}), so every pooled test metric averages over six
+designs and their particular mix. With one of those six contributing a sixth of the graphs
+at a constant-zero target, pooled figures are sensitive to composition in a way a random
+split would have hidden.
 
 Validation and test are correspondingly not exchangeable
-(\ref{fig:dataset_split_comparison}, \ref{tab:dataset_composition}). They are disjoint
-circuit sets, and they differ on every axis that matters: $26.2\%$ of validation graphs sit
-at $y = 0$ against $48.8\%$ of test, the test maximum target is more than twice the
-validation maximum ($0.274$ against $0.114$), and the validation graphs are larger at the
-median ($29{,}399$ nodes against $15{,}977$). The divergence is sharpest for the Syn4 subset,
-where not one validation graph has a target of exactly zero against $21.4\%$ of the
-corresponding test graphs. This is expected under a design-level split rather than a defect,
-but it is the direct explanation for the validation-to-test gap
-in~\ref{fig:rq3_val_test_gap}, and it bounds how far validation-based model selection can be
-assumed to transfer.
+(\ref{fig:dataset_split_comparison}, \ref{tab:dataset_composition}): disjoint circuit sets
+that differ on every axis that matters. $26.2\%$ of validation graphs sit at $y = 0$ against
+$48.8\%$ of test, the test maximum target is more than twice the validation maximum ($0.274$
+against $0.114$), and validation graphs are larger at the median ($29{,}399$ nodes against
+$15{,}977$). The divergence is sharpest for the Syn4 subset, where not one validation graph
+has a target of exactly zero against $21.4\%$ of the corresponding test graphs. This is
+expected under a design-level split rather than a defect, but it directly explains the
+validation-to-test gap in~\ref{fig:rq3_val_test_gap} and bounds how far validation-based
+model selection can be assumed to transfer.
+
+% Original, condensed above:
+% Under a design-level split the test set is a handful of whole circuits rather than a random
+% sample (\ref{fig:dataset_design_composition}), so every pooled test metric is an average over
+% six designs and their particular mix. With one of those six contributing a sixth of the
+% graphs at a constant-zero target, the pooled figures are sensitive to composition in a way
+% that a random split would have hidden.
+%
+% Validation and test are correspondingly not exchangeable
+% (\ref{fig:dataset_split_comparison}, \ref{tab:dataset_composition}). They are disjoint
+% circuit sets, and they differ on every axis that matters: $26.2\%$ of validation graphs sit
+% at $y = 0$ against $48.8\%$ of test, the test maximum target is more than twice the
+% validation maximum ($0.274$ against $0.114$), and the validation graphs are larger at the
+% median ($29{,}399$ nodes against $15{,}977$). The divergence is sharpest for the Syn4 subset,
+% where not one validation graph has a target of exactly zero against $21.4\%$ of the
+% corresponding test graphs. This is expected under a design-level split rather than a defect,
+% but it is the direct explanation for the validation-to-test gap
+% in~\ref{fig:rq3_val_test_gap}, and it bounds how far validation-based model selection can be
+% assumed to transfer.
 
 \begin{figure*}[htbp]
     \centering
@@ -466,11 +697,17 @@ assumed to transfer.
     \centering
     \includegraphics[width=\textwidth]{\resultsfigs/dataset_structure}
     \caption[Structural corpus statistics]{Structural statistics recoverable without a pass
-    over the graph cache. The AND-gate share is read off the AND-gate-only node masks, which
-    drop exactly the primary inputs and outputs: $82.1\%$ of nodes are AND gates or constants
-    and $17.9\%$ are interface. That figure \emph{explains} that method's compression rather
-    than merely accompanying it (\ref{sec:method:sparse:andgate}). The right panel checks
-    that the evaluation splits are representative of the wider corpus sample on size.}
+    over the graph cache. AND gates and constants account for $82.1\%$ of nodes, exactly the
+    node retention of \texttt{and\_gate\_only} sparsification
+    (\ref{sec:method:sparse:andgate}). The right panel checks that the evaluation splits are
+    representative of the wider corpus on size.}
+    % Original caption, condensed above:
+    % Structural statistics recoverable without a pass over the graph cache. The AND-gate
+    % share is read off the AND-gate-only node masks, which drop exactly the primary inputs
+    % and outputs: $82.1\%$ of nodes are AND gates or constants and $17.9\%$ are interface.
+    % That figure \emph{explains} that method's compression rather than merely accompanying
+    % it (\ref{sec:method:sparse:andgate}). The right panel checks that the evaluation splits
+    % are representative of the wider corpus sample on size.
     \label{fig:dataset_structure}
 \end{figure*}
 \clearpage
@@ -480,21 +717,33 @@ assumed to transfer.
     \includegraphics[width=\textwidth]{\resultsfigs/dataset_label_distribution}
     \caption[Optimizability label distribution]{Distribution of the optimizability target on
     the held-out test corpus, pooled (log counts) and per tier. The label is concentrated
-    near zero: the great majority of graphs sit below $y = 0.005$. This is the variance every
-    $R^2$ in~\ref{sec:results} is measured against, and it is why a respectable RMSE is
-    compatible with a near-zero or negative $R^2$.}
+    near zero, the variance every $R^2$ in~\ref{sec:results} is measured against, which is
+    why a respectable RMSE is compatible with a near-zero or negative $R^2$.}
+    % Original caption, condensed above:
+    % Distribution of the optimizability target on the held-out test corpus, pooled (log
+    % counts) and per tier. The label is concentrated near zero: the great majority of graphs
+    % sit below $y = 0.005$. This is the variance every $R^2$ in~\ref{sec:results} is measured
+    % against, and it is why a respectable RMSE is compatible with a near-zero or negative
+    % $R^2$.
     \label{fig:dataset_label_distribution}
 \end{figure*}
 
 \begin{figure*}[htbp]
     \centering
     \includegraphics[width=\textwidth]{\resultsfigs/dataset_zero_inflation}
-    \caption[Zero inflation by design and scale]{Where the point mass at exactly zero sits.
-    Roughly half the test split has an optimizability of exactly zero, concentrated in
-    particular designs (\texttt{16384} and \texttt{8192} reach a maximum $y$ of $0.0003$) and
-    in the smallest circuits, which are already minimal. This is the figure the size-only
-    baseline of~\ref{sec:results:rq1:baselines} has to be read against: graph size is largely
-    a proxy for ``is this optimizable at all''.}
+    \caption[Zero inflation by design and scale]{Where the point mass at exactly zero sits:
+    roughly half the test split, concentrated in particular designs (\texttt{16384} and
+    \texttt{8192} reach a maximum $y$ of $0.0003$) and in the smallest circuits, already
+    minimal. This is the figure the size-only baseline of~\ref{sec:results:rq1:baselines}
+    must be read against: graph size is largely a proxy for whether a graph is optimizable
+    at all.}
+    % Original caption, condensed above:
+    % Where the point mass at exactly zero sits. Roughly half the test split has an
+    % optimizability of exactly zero, concentrated in particular designs (\texttt{16384} and
+    % \texttt{8192} reach a maximum $y$ of $0.0003$) and in the smallest circuits, which are
+    % already minimal. This is the figure the size-only baseline
+    % of~\ref{sec:results:rq1:baselines} has to be read against: graph size is largely a proxy
+    % for ``is this optimizable at all''.
     \label{fig:dataset_zero_inflation}
 \end{figure*}
 \clearpage
@@ -513,10 +762,16 @@ assumed to transfer.
     \includegraphics[width=\textwidth]{\resultsfigs/dataset_label_by_source}
     \caption[Label by source synthesis script]{What the target mostly measures. A tier-1
     graph is a base circuit already optimized by one of three scripts, and the label is what
-    Orchestrate can still remove after that. Orchestrate finds almost nothing left on a
-    C2RS- or Deepsyn-derived graph ($52$--$54\%$ score exactly zero) and a great deal on a
-    Syn4 one ($11.7\%$ zero, mean $y$ $0.046$). The source script, not the circuit, is the
-    strongest single determinant of the target.}
+    Orchestrate can still remove after that: almost nothing on a C2RS- or Deepsyn-derived
+    graph ($52$--$54\%$ score exactly zero) and a great deal on a Syn4 one ($11.7\%$ zero,
+    mean $y$ $0.046$). The source script, not the circuit, is the strongest single
+    determinant of the target.}
+    % Original caption, condensed above:
+    % What the target mostly measures. A tier-1 graph is a base circuit already optimized by
+    % one of three scripts, and the label is what Orchestrate can still remove after that.
+    % Orchestrate finds almost nothing left on a C2RS- or Deepsyn-derived graph ($52$--$54\%$
+    % score exactly zero) and a great deal on a Syn4 one ($11.7\%$ zero, mean $y$ $0.046$).
+    % The source script, not the circuit, is the strongest single determinant of the target.
     \label{fig:dataset_label_by_source}
 \end{figure*}
 \clearpage
@@ -524,10 +779,13 @@ assumed to transfer.
 \begin{figure*}[htbp]
     \centering
     \includegraphics[width=\textwidth]{\resultsfigs/dataset_design_composition}
-    \caption[Test-set composition by design]{How the design-disjoint test set is composed.
-    Under a design-level split the test set is a handful of whole circuits rather than a
-    random sample, so every pooled test metric is an average over these designs and their
-    mix.}
+    \caption[Test-set composition by design]{How the design-disjoint test set is composed:
+    under a design-level split it is a handful of whole circuits rather than a random
+    sample, so every pooled test metric averages over these designs and their mix.}
+    % Original caption, condensed above:
+    % How the design-disjoint test set is composed. Under a design-level split the test set
+    % is a handful of whole circuits rather than a random sample, so every pooled test metric
+    % is an average over these designs and their mix.
     \label{fig:dataset_design_composition}
 \end{figure*}
 
@@ -536,10 +794,17 @@ assumed to transfer.
     \includegraphics[width=\textwidth]{\resultsfigs/dataset_split_comparison}
     \caption[Validation against test distribution]{Validation and test are disjoint circuit
     sets, not exchangeable samples: $26\%$ of validation graphs sit at $y = 0$ against $49\%$
-    of test, and the test maximum $y$ is more than twice the validation maximum. This is
-    expected under a design-level split (\ref{sec:method:experiment:splitting}) and is the
-    direct explanation for the validation-to-test gap in~\ref{fig:rq3_val_test_gap}; it also
-    bounds how much validation-based model selection can be assumed to transfer.}
+    of test, and the test maximum $y$ is more than twice the validation maximum. Expected
+    under a design-level split (\ref{sec:method:experiment:splitting}), this directly
+    explains the validation-to-test gap in~\ref{fig:rq3_val_test_gap} and bounds how far
+    validation-based model selection can be assumed to transfer.}
+    % Original caption, condensed above:
+    % Validation and test are disjoint circuit sets, not exchangeable samples: $26\%$ of
+    % validation graphs sit at $y = 0$ against $49\%$ of test, and the test maximum $y$ is
+    % more than twice the validation maximum. This is expected under a design-level split
+    % (\ref{sec:method:experiment:splitting}) and is the direct explanation for the
+    % validation-to-test gap in~\ref{fig:rq3_val_test_gap}; it also bounds how much
+    % validation-based model selection can be assumed to transfer.
     \label{fig:dataset_split_comparison}
 \end{figure*}
 \clearpage

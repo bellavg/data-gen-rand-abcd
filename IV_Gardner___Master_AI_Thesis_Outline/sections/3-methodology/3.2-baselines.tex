@@ -6,8 +6,8 @@ ported to this task.
 
 \subsubsection{Trivial Predictors}
 \label{sec:method:baselines:trivial}
-Three predictors, each fitted on the validation split and scored on test, so that every
-baseline is scored on data it has not seen. Two are constant,
+Three predictors, fitted on validation and scored on test, so every baseline is scored on
+unseen data. Two are constant,
 \begin{equation}
     \hat{y}^{\text{mean}}_i = \bar{y}_{\text{val}},
     \qquad
@@ -23,21 +23,31 @@ and the third is an ordinary least squares fit on graph size alone,
     \label{eq:method:baseline-size}
 \end{equation}
 Equation~\eqref{eq:method:baseline-constant} fixes the zero point of~\eqref{eq:method:r2}:
-the test-set mean is the least-squares optimal constant, so any other constant scores
-$R^2 \leq 0$, with equality only at $\bar{y}_{\text{val}} = \bar{y}_{\text{test}}$. The
-median is the corresponding optimal constant under absolute error, so the pair together
-lower-bounds both error metrics reported below. Equation~\eqref{eq:method:baseline-size} is
-the weakest non-trivial hypothesis about the task, that optimizability is a function of size
-alone, and any claim that the encoder reads circuit \emph{structure} has to clear it.
+the test mean is the least-squares optimum, so any other constant scores $R^2 \leq 0$, and
+the median lower-bounds absolute error likewise. Equation~\eqref{eq:method:baseline-size} is
+the weakest non-trivial hypothesis, optimizability as a function of size alone, which any
+structural claim has to clear.
+% Original: Equation~\eqref{eq:method:baseline-constant} fixes the zero point of~\eqref{eq:method:r2}:
+% the test-set mean is the least-squares optimal constant, so any other constant scores
+% $R^2 \leq 0$, with equality only at $\bar{y}_{\text{val}} = \bar{y}_{\text{test}}$. The
+% median is the corresponding optimal constant under absolute error, so the pair together
+% lower-bounds both error metrics reported below. Equation~\eqref{eq:method:baseline-size} is
+% the weakest non-trivial hypothesis about the task, that optimizability is a function of size
+% alone, and any claim that the encoder reads circuit \emph{structure} has to clear it.
 
 \paragraph{Random-encoder control.}
-A fourth reference point is architectural rather than statistical: the edge-aware encoder of
-\ref{sec:method:architecture} with its message-passing weights left at initialisation and
-only the regression head of~\eqref{eq:method:readout} trained. Randomly initialised graph
-convolutions of this kind are known to encode usable structure without training the
-convolution itself \citep{gallicchio2020fastdeep}. Comparing a trained encoder against this
-frozen control isolates how much of a score is owed to architectural inductive bias rather
-than to learning.
+A fourth reference point is architectural, not statistical: the edge-aware encoder of
+\ref{sec:method:architecture} at initialisation, with only the regression
+head~\eqref{eq:method:readout} trained. Randomly initialised graph convolutions are known
+to encode usable structure untrained \citep{gallicchio2020fastdeep}, isolating architectural
+bias from learning.
+% Original: A fourth reference point is architectural rather than statistical: the edge-aware encoder of
+% \ref{sec:method:architecture} with its message-passing weights left at initialisation and
+% only the regression head of~\eqref{eq:method:readout} trained. Randomly initialised graph
+% convolutions of this kind are known to encode usable structure without training the
+% convolution itself \citep{gallicchio2020fastdeep}. Comparing a trained encoder against this
+% frozen control isolates how much of a score is owed to architectural inductive bias rather
+% than to learning.
 
 Every score reported for these baselines carries the $95\%$ bootstrap interval
 of~\ref{sec:method:experiment:metrics:stats}.
@@ -46,14 +56,16 @@ of~\ref{sec:method:experiment:metrics:stats}.
 \label{sec:method:baselines:published}
 SynthNet \citep{chowdhury2021openabc}, HOGA \citep{deng2024hoga} and DeepGate4
 \citep{deepgate4_2025} are introduced in~\ref{sec:relwork:ml4eda:baselines}. None was
-published for this task, so each had to be adapted, and what follows states those
-adaptations rather than the models.
+published for this task, so what follows states only the adaptations, not the models.
+% Original: SynthNet \citep{chowdhury2021openabc}, HOGA \citep{deng2024hoga} and DeepGate4
+% \citep{deepgate4_2025} are introduced in~\ref{sec:relwork:ml4eda:baselines}. None was
+% published for this task, so each had to be adapted, and what follows states those
+% adaptations rather than the models.
 
 \paragraph{Shared porting procedure.}
-Each paper supplies an encoder $g_\phi$ carrying an AIG to node states
-$\{ h_v \}_{v \in \mathcal{V}(G)}$, together with a head supervising that paper's own
-target. The encoder is reused unmodified and the head is replaced, so every port has the
-form
+Each paper supplies an encoder $g_\phi$ mapping an AIG to node states
+$\{ h_v \}_{v \in \mathcal{V}(G)}$; reusing it unmodified and replacing the head, every port
+has the form
 \begin{equation}
     \hat{y}(G) = \operatorname{Sigmoid}\!\left(
         \operatorname{MLP}\!\left(
@@ -61,58 +73,93 @@ form
         \right) \right),
     \label{eq:method:baseline-port}
 \end{equation}
-with $\pi$ a permutation-invariant readout and the terminal sigmoid matching the $[0,1]$
-range of the target of~\ref{sec:prelim:formalization}. Only $\pi$, the head and the input
-adapter differ across the three, and the trunk of~\eqref{eq:method:baseline-port} is in
-every case the published one.
+with $\pi$ a permutation-invariant readout and a terminal sigmoid matching the target range
+(\ref{sec:prelim:formalization}).
+% Original lead-in and trailer: Each paper supplies an encoder $g_\phi$ carrying an AIG to node states
+% $\{ h_v \}_{v \in \mathcal{V}(G)}$, together with a head supervising that paper's own
+% target. The encoder is reused unmodified and the head is replaced, so every port has the
+% form
+% [[equation unchanged, see above]]
+% with $\pi$ a permutation-invariant readout and the terminal sigmoid matching the $[0,1]$
+% range of the target of~\ref{sec:prelim:formalization}. Only $\pi$, the head and the input
+% adapter differ across the three, and the trunk of~\eqref{eq:method:baseline-port} is in
+% every case the published one.
 
-Whether $\pi$ is inherited or chosen differs by model, and the distinction bears on what
-each comparison licenses. SynthNet already predicts a graph-level quantity, so $\pi$ is its
-own concatenated maximum and mean pooling. HOGA classifies nodes and DeepGate4 pools over
-cones; neither defines a whole-circuit readout, so for both $\pi$ is mean pooling and is
-this work's choice, not the paper's.
+Whether $\pi$ is inherited or chosen differs by model: SynthNet's own concatenated max/mean
+pooling already predicts a graph-level quantity; HOGA and DeepGate4 do not, so both instead
+use mean pooling, this work's choice.
+% Original: Whether $\pi$ is inherited or chosen differs by model, and the distinction bears on what
+% each comparison licenses. SynthNet already predicts a graph-level quantity, so $\pi$ is its
+% own concatenated maximum and mean pooling. HOGA classifies nodes and DeepGate4 pools over
+% cones; neither defines a whole-circuit readout, so for both $\pi$ is mean pooling and is
+% this work's choice, not the paper's.
 
 \paragraph{Adaptations required by a graph-level target.}
 Three, each a consequence of the target being one scalar per circuit under one fixed script:
 
 \begin{itemize}
     \item \textbf{The recipe branch is removed.} SynthNet predicts $\hat{y}(G, s)$,
-    conditioning on a synthesis recipe $s$ through a separate encoder. Training here fixes
-    the script, so $s$ is constant across the corpus and that branch emits one vector for
-    every sample, contributing a bias to the head and nothing else. It is dropped rather
-    than left to learn that constant.
-    \item \textbf{Batches are bounded by nodes, not graphs.} A graph-level readout requires
-    all of $\mathcal{V}(G)$ in one forward pass, so a graph cannot be split across batches,
-    and neither published batch size transfers: HOGA minibatches nodes drawn from one
-    graph, DeepGate4 minibatches cones. Batches are assembled to a node budget $B$ and
-    paired with an accumulation count $a$, and it is the product that matters. One graph
-    contributes one label regardless of its size, so the number of losses averaged per
-    update is $a \cdot \mathbb{E}[\,B / |\mathcal{V}(G)|\,]$, held near the primary
-    model's value.
-    Budget and accumulation are tuned and reported as a pair.
-    \item \textbf{Activations are recomputed rather than retained.} DeepGate4 attends over a
-    virtual edge set $\bar{\mathcal{E}}_k = \{(u,v) : \operatorname{dist}(u,v) \leq k\}$,
-    which at the published radius $k = 8$ measures roughly $180$ edges per circuit node
-    against an AIG fanin of at most two. Each of its attention layers materialises a message
-    tensor over $\bar{\mathcal{E}}_k$, so recomputing them during the backward pass, which
-    leaves outputs and gradients unchanged, is what makes the baseline runnable at all.
+    conditioning on a synthesis recipe $s$ through a separate encoder; with the script fixed
+    here, $s$ is constant across the corpus, so the branch would only emit a constant bias
+    and is dropped rather than learned.
+    \item \textbf{Batches are bounded by nodes, not graphs.} A graph-level readout needs all
+    of $\mathcal{V}(G)$ in one pass, so no published batch size transfers; batches are
+    assembled instead to a node budget $B$ and accumulation $a$, tuned as a pair so the
+    product $a \cdot \mathbb{E}[\,B / |\mathcal{V}(G)|\,]$ stays near the primary model's
+    value.
+    \item \textbf{Activations are recomputed rather than retained.} DeepGate4's virtual edge
+    set $\bar{\mathcal{E}}_k$ (\eqref{eq:relwork:deepgate4}) measures roughly $180$ edges per
+    circuit node at radius $k = 8$, against an AIG fanin of at most two; gradient
+    checkpointing (\ref{sec:prelim:gnn:cost}) on its attention layers makes the baseline
+    runnable.
 \end{itemize}
+% Original itemize:
+% \begin{itemize}
+%     \item \textbf{The recipe branch is removed.} SynthNet predicts $\hat{y}(G, s)$,
+%     conditioning on a synthesis recipe $s$ through a separate encoder. Training here fixes
+%     the script, so $s$ is constant across the corpus and that branch emits one vector for
+%     every sample, contributing a bias to the head and nothing else. It is dropped rather
+%     than left to learn that constant.
+%     \item \textbf{Batches are bounded by nodes, not graphs.} A graph-level readout requires
+%     all of $\mathcal{V}(G)$ in one forward pass, so a graph cannot be split across batches,
+%     and neither published batch size transfers: HOGA minibatches nodes drawn from one
+%     graph, DeepGate4 minibatches cones. Batches are assembled to a node budget $B$ and
+%     paired with an accumulation count $a$, and it is the product that matters. One graph
+%     contributes one label regardless of its size, so the number of losses averaged per
+%     update is $a \cdot \mathbb{E}[\,B / |\mathcal{V}(G)|\,]$, held near the primary
+%     model's value.
+%     Budget and accumulation are tuned and reported as a pair.
+%     \item \textbf{Activations are recomputed rather than retained.} DeepGate4 attends over a
+%     virtual edge set $\bar{\mathcal{E}}_k = \{(u,v) : \operatorname{dist}(u,v) \leq k\}$,
+%     which at the published radius $k = 8$ measures roughly $180$ edges per circuit node
+%     against an AIG fanin of at most two. Each of its attention layers materialises a message
+%     tensor over $\bar{\mathcal{E}}_k$, so recomputing them during the backward pass, which
+%     leaves outputs and gradients unchanged, is what makes the baseline runnable at all.
+% \end{itemize}
 
 \paragraph{Corrections to the released implementations.}
-Two departures are corrections rather than adaptations, and are stated because they change
-published behaviour. HOGA's released attention normalises its scores over the head axis
-rather than the key axis, so the weights never form a distribution over hop neighbours; the
-port normalises over keys, following Eq.~5 of the paper. Its optional reverse-propagation
-branch applies the forward adjacency to the reverse features, which duplicates the forward
-branch rather than reversing it, and the port applies the reverse adjacency. A third
-difference is a convention, not an error: OpenABC-D orients edges toward the primary
-inputs and this corpus orients them the other way, so a node's aggregated neighbourhood is
-its fanout cone under one convention and its fanin cone under the other. The port keeps
-OpenABC-D's orientation, the one the published model was fit under, and reports that score
-alone.
+Two departures correct rather than adapt the released code: HOGA's attention normalises
+scores over the head axis instead of the key axis, and its reverse-propagation branch
+duplicates the forward branch instead of reversing it; the port fixes both, following Eq.~5.
+A third is a convention: OpenABC-D orients edges toward the primary inputs, this corpus the
+other way; the port keeps OpenABC-D's orientation and reports that score alone.
+% Original: Two departures are corrections rather than adaptations, and are stated because they change
+% published behaviour. HOGA's released attention normalises its scores over the head axis
+% rather than the key axis, so the weights never form a distribution over hop neighbours; the
+% port normalises over keys, following Eq.~5 of the paper. Its optional reverse-propagation
+% branch applies the forward adjacency to the reverse features, which duplicates the forward
+% branch rather than reversing it, and the port applies the reverse adjacency. A third
+% difference is a convention, not an error: OpenABC-D orients edges toward the primary
+% inputs and this corpus orients them the other way, so a node's aggregated neighbourhood is
+% its fanout cone under one convention and its fanin cone under the other. The port keeps
+% OpenABC-D's orientation, the one the published model was fit under, and reports that score
+% alone.
 
 \paragraph{Comparability.}
-Only the data pipeline is shared, since a different split would make the comparison
-meaningless. Hyperparameters, optimizer, loss and schedule take each paper's published
-values. Settings a paper leaves unpublished are recorded as assumptions
-in~\ref{sec:apx:baselines}.
+Only the data pipeline is shared; a different split would make the comparison meaningless.
+Hyperparameters, optimizer, loss and schedule take each paper's published values, with
+settings a paper leaves unpublished recorded as assumptions in~\ref{sec:apx:baselines}.
+% Original: Only the data pipeline is shared, since a different split would make the comparison
+% meaningless. Hyperparameters, optimizer, loss and schedule take each paper's published
+% values. Settings a paper leaves unpublished are recorded as assumptions
+% in~\ref{sec:apx:baselines}.
