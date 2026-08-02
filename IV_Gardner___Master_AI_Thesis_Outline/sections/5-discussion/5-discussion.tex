@@ -220,6 +220,17 @@ concentrated in a few designs rather than uniform, a second design fold separate
 difficulty from model error, at the cost of one further training run.
 % TODO: quote the measured inflation factor once the RQ1a runs land.
 
+\emph{Label validity on the choice-network outputs.} The step-21 output of every recipe is a
+choice network rather than a plain AIG, so the node count the tool reports covers only the
+chosen representative and understates $|\mathcal{V}(G)|$, in 43 of the 200 recipes. The
+recorded $y(G)$ for those graphs therefore divides by the wrong denominator. They amount to
+roughly $4.8\%$ of the corpus and were left in every training split, since the mismatch
+surfaced after training and recomputing the labels would require retraining every
+configuration. The intended correction is to drop step-21 graphs from the reported inference
+scores rather than to relabel and retrain, which bounds the cost at one evaluation pass
+(\ref{sec:method:data:generation}).
+% TODO: exclude step-21 graphs from the reported accuracy figures.
+
 \emph{Construct validity of the comparison itself.} Hyperparameters were tuned once on the
 full-graph configuration and held fixed. This protects the comparison from confounding
 retention with tuning effort, but it means reduced configurations run at settings chosen for

@@ -22,6 +22,17 @@ terminological collision is worth heading off: LOSTIN \citep{wu2022lostin} attac
 super-node that encodes the synthesis \emph{sequence}, a temporal use of the same device
 this thesis uses structurally, and the two share nothing beyond the name.
 
+\subsubsection{Circuit Generation}
+\label{sec:relwork:ml4eda:generation}
+A third line generates AIGs rather than scoring them. The motivation is structural bias: how
+far an optimizer can get is bounded by the structure of the circuit it is handed, so a corpus
+drawn from a handful of source designs explores a correspondingly narrow space
+\citep{gardner2025bias}. Generative models widen that space by producing structurally novel
+circuits, which matters here for one reason only, namely that the corpus of
+\ref{sec:method:data} inherits exactly this bound, and it is why the eight synthetic designs
+sit beside the benchmark circuits.
+% TODO: cite AIG2PT here once it leaves anonymous submission.
+
 \subsubsection{Learned Synthesis Script Generation}
 \label{sec:relwork:ml4eda:scripts}
 A separate line learns to construct or select synthesis scripts, by reinforcement
