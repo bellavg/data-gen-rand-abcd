@@ -1,10 +1,9 @@
 \subsection{Evaluation Metrics}
 \label{sec:method:experiment:metrics}
-Four groups of metrics are reported. Accuracy and ranking are reported together and never
-separately: on a coarsened EDA graph, CTS-Bench \citep{cts_bench2026} observed the mean
-absolute error barely moving while $R^2$ fell below zero. Absolute error alone can look
-healthy after the model has lost all discriminative power, which is exactly the failure a
-reduction study is most at risk of missing.
+Four groups of metrics are reported. Accuracy and ranking are always reported together: on
+a coarsened EDA graph, CTS-Bench \citep{cts_bench2026} observed mean absolute error barely
+moving while $R^2$ fell below zero, exactly the failure a reduction study risks missing if
+it reports error alone.
 
 \paragraph{Notation.}
 Let $\mathcal{D} = \{G_i\}_{i=1}^{N}$ be an evaluation set, $y_i = y(G_i) \in [0, 1]$ the
@@ -15,32 +14,52 @@ target mean over $\mathcal{D}$.
 
 \paragraph{Evaluation protocol.}
 Each trained configuration is evaluated in two passes over the test set, differing only in
-what the same weights are given as input:
+the input given the same weights:
 \begin{align}
     \hat{y}_i^{\text{match}} &= f_\theta\!\left( R(G_i) \right),
     \label{eq:method:pass-matched} \\
     \hat{y}_i^{\text{full}} &= f_\theta\!\left( G_i \right).
     \label{eq:method:pass-full}
 \end{align}
-The matched pass~\eqref{eq:method:pass-matched} sees graphs under the reduction the model
-was trained with, and the full-graph pass~\eqref{eq:method:pass-full} sees unreduced graphs.
-The difference between the passes isolates the cost of the structural shift from the cost of
-the reduction itself.
+The matched pass~\eqref{eq:method:pass-matched} sees reduced graphs, the full-graph
+pass~\eqref{eq:method:pass-full} unreduced ones, and their difference isolates the cost of
+the structural shift from the cost of the reduction itself.
 
 \paragraph{Which measurement answers which question.}
-Accuracy and ranking on the matched pass answer RQ1 for the unreduced configuration and RQ3
-for the reduced ones, and the same figures recomputed under each split protocol answer
-RQ1a. Retention~\eqref{eq:prelim:retention}, offline cost and the amortisation
-threshold~\eqref{eq:method:amortisation}, together with peak memory, per-graph step time and
-throughput~\eqref{eq:method:throughput}, answer RQ2. RQ4 is the paired
-gap~\eqref{eq:method:paired-gap} between a domain-informed configuration and its
-matched generic control, with the receptive field~\eqref{eq:method:receptive} as the
-mechanism test H1 requires. RQ5 is the cross-state drop-off~\eqref{eq:method:dropoff}
-between the two passes.
+Accuracy and ranking on the matched pass answer RQ1 (unreduced) and RQ3 (reduced), recomputed
+under each split protocol for RQ1a. Retention~\eqref{eq:prelim:retention}, offline cost, the
+amortisation threshold~\eqref{eq:method:amortisation}, peak memory, step time and
+throughput~\eqref{eq:method:throughput} answer RQ2. RQ4 is the paired
+gap~\eqref{eq:method:paired-gap} between a domain-informed configuration and its generic
+control, with the receptive field~\eqref{eq:method:receptive} as the mechanism test H1
+requires. RQ5 is the cross-state drop-off~\eqref{eq:method:dropoff} between the two passes.
+
+% Original, condensed above:
+% Four groups of metrics are reported. Accuracy and ranking are reported together and never
+% separately: on a coarsened EDA graph, CTS-Bench \citep{cts_bench2026} observed the mean
+% absolute error barely moving while $R^2$ fell below zero. Absolute error alone can look
+% healthy after the model has lost all discriminative power, which is exactly the failure a
+% reduction study is most at risk of missing.
+%
+% Each trained configuration is evaluated in two passes over the test set, differing only in
+% what the same weights are given as input. The matched pass~\eqref{eq:method:pass-matched}
+% sees graphs under the reduction the model was trained with, and the full-graph
+% pass~\eqref{eq:method:pass-full} sees unreduced graphs. The difference between the passes
+% isolates the cost of the structural shift from the cost of the reduction itself.
+%
+% Accuracy and ranking on the matched pass answer RQ1 for the unreduced configuration and RQ3
+% for the reduced ones, and the same figures recomputed under each split protocol answer
+% RQ1a. Retention~\eqref{eq:prelim:retention}, offline cost and the amortisation
+% threshold~\eqref{eq:method:amortisation}, together with peak memory, per-graph step time and
+% throughput~\eqref{eq:method:throughput}, answer RQ2. RQ4 is the paired
+% gap~\eqref{eq:method:paired-gap} between a domain-informed configuration and its
+% matched generic control, with the receptive field~\eqref{eq:method:receptive} as the
+% mechanism test H1 requires. RQ5 is the cross-state drop-off~\eqref{eq:method:dropoff}
+% between the two passes.
 
 \subsubsection{Predictive Accuracy}
 \label{sec:method:experiment:metrics:accuracy}
-The training objective is the smooth L1 loss with transition point $\beta = 0.01$,
+The training objective is the smooth L1 loss, transition point $\beta = 0.01$,
 \begin{equation}
     \ell_\beta(r) = \begin{cases}
         r^{2} / (2\beta), & |r| < \beta, \\
@@ -49,9 +68,9 @@ The training objective is the smooth L1 loss with transition point $\beta = 0.01
     \label{eq:method:smoothl1}
 \end{equation}
 reported on validation and test for comparability with the training curves. Since the
-target occupies $[0, 1]$ while $\beta = 0.01$, all but the smallest residuals fall in the
-linear branch of~\eqref{eq:method:smoothl1}: outside a band of one percentage point the
-objective behaves as a mean absolute error. Accuracy proper is reported as
+target occupies $[0, 1]$, all but the smallest residuals fall in the linear branch
+of~\eqref{eq:method:smoothl1}: outside one percentage point the objective behaves as a mean
+absolute error. Accuracy proper is reported as
 \begin{align}
     \mathrm{MAE} &= \frac{1}{N} \sum_{i=1}^{N} \left| r_i \right|,
     \label{eq:method:mae} \\
@@ -62,19 +81,34 @@ objective behaves as a mean absolute error. Accuracy proper is reported as
     \label{eq:method:r2}
 \end{align}
 MAE and RMSE are on the label's own scale, so $\mathrm{RMSE} = 0.05$ is five percentage
-points of optimizability. By the power mean inequality $\mathrm{MAE} \leq \mathrm{RMSE}$,
-with equality exactly when every $\left| r_i \right|$ is identical, so the ratio
+points of optimizability. By the power mean inequality $\mathrm{MAE} \leq \mathrm{RMSE}$, so
 $\mathrm{RMSE} / \mathrm{MAE}$ measures how much a few large errors carry the average.
 Equation~\eqref{eq:method:r2} divides the same squared error by the target's own spread:
-$R^{2} = 0$ is the score of the constant predictor $\hat{y}_i = \bar{y}$, and $R^{2} < 0$ a
-model worse than that constant. Because the denominator is $N$ times the sample variance of
-$y$ within $\mathcal{D}$, $R^{2}$ is computed for validation and test only, never per
-training batch, whose variance is not a meaningful reference for the spread of the target.
+$R^{2} = 0$ is the constant predictor $\hat{y}_i = \bar{y}$, and $R^{2} < 0$ is worse than
+that. $R^{2}$ is computed for validation and test only, never per training batch, since a
+batch's variance is not a meaningful reference for the target's spread.
+
+% Original, condensed above:
+% The training objective is the smooth L1 loss with transition point $\beta = 0.01$, reported
+% on validation and test for comparability with the training curves. Since the target occupies
+% $[0, 1]$ while $\beta = 0.01$, all but the smallest residuals fall in the linear branch
+% of~\eqref{eq:method:smoothl1}: outside a band of one percentage point the objective behaves
+% as a mean absolute error.
+%
+% MAE and RMSE are on the label's own scale, so $\mathrm{RMSE} = 0.05$ is five percentage
+% points of optimizability. By the power mean inequality $\mathrm{MAE} \leq \mathrm{RMSE}$,
+% with equality exactly when every $\left| r_i \right|$ is identical, so the ratio
+% $\mathrm{RMSE} / \mathrm{MAE}$ measures how much a few large errors carry the average.
+% Equation~\eqref{eq:method:r2} divides the same squared error by the target's own spread:
+% $R^{2} = 0$ is the score of the constant predictor $\hat{y}_i = \bar{y}$, and $R^{2} < 0$ a
+% model worse than that constant. Because the denominator is $N$ times the sample variance of
+% $y$ within $\mathcal{D}$, $R^{2}$ is computed for validation and test only, never per
+% training batch, whose variance is not a meaningful reference for the spread of the target.
 
 \paragraph{Comparisons derived from these metrics.}
 Let $M(c)$ be any of~\eqref{eq:method:mae}, \eqref{eq:method:rmse}, \eqref{eq:method:r2}
-or~\eqref{eq:method:spearman} evaluated for configuration $c$, and $\operatorname{id}$ the
-full-graph baseline. Every relative accuracy figure in the results is one of
+or~\eqref{eq:method:spearman} for configuration $c$, and $\operatorname{id}$ the full-graph
+baseline. Every relative accuracy figure is one of
 \begin{align}
     \varrho(c) &= \frac{M(c)}{M(\operatorname{id})},
     \label{eq:method:retained} \\
@@ -85,47 +119,73 @@ full-graph baseline. Every relative accuracy figure in the results is one of
         - M(c_{\mathrm{g}}),
     \label{eq:method:paired-gap}
 \end{align}
-the fraction of the baseline a reduction retains, the cross-state drop-off between the two
-passes of~\eqref{eq:method:pass-matched} and~\eqref{eq:method:pass-full}, and the gap within
-a matched pairing of a domain-informed configuration $c_{\mathrm{d}}$ against its generic
-control $c_{\mathrm{g}}$. Equation~\eqref{eq:method:paired-gap} is also what RQ1a reports as
-protocol inflation, taken between two split protocols at one fixed configuration rather than
-between two reductions. A ratio is used for retention and a difference for the other two
-because $R^{2}$ crosses zero, where a ratio is meaningless.
+the fraction of baseline retained, the cross-state drop-off between the passes
+of~\eqref{eq:method:pass-matched} and~\eqref{eq:method:pass-full}, and the gap between a
+domain-informed configuration $c_{\mathrm{d}}$ and its generic control $c_{\mathrm{g}}$
+(also RQ1a's protocol inflation, taken between split protocols rather than reductions).
+Retention uses a ratio, the other two a difference, since $R^{2}$ crosses zero, where a
+ratio is meaningless.
 
 \paragraph{Variance already carried by the corpus.}
-A score is only evidence of structural reading to the extent it exceeds what the corpus
-gives away for free. For a partition of $\mathcal{D}$ into groups $g$, the group-mean
-predictor $\hat{y}_i = \bar{y}_{g(i)}$ scores
+A score is evidence of structural reading only beyond what the corpus gives away free. For
+a partition of $\mathcal{D}$ into groups $g$, the group-mean predictor
+$\hat{y}_i = \bar{y}_{g(i)}$ scores
 \begin{equation}
     R^{2}_{\mathrm{grp}} = 1 - \frac{\sum_{i} \left( y_i - \bar{y}_{g(i)} \right)^{2}}
         {\sum_{i} \left( y_i - \bar{y} \right)^{2}},
     \label{eq:method:group-r2}
 \end{equation}
 the share of label variance explained by group membership alone. Reporting
-\eqref{eq:method:r2} beside~\eqref{eq:method:group-r2} for the source script and the
-optimization tier separates the part of a score attributable to the circuit from the part a
-lookup table would reach.
+\eqref{eq:method:r2} beside~\eqref{eq:method:group-r2} for the source script and tier
+separates a score's circuit-attributable part from what a lookup table would reach.
+
+% Original, condensed above:
+% Let $M(c)$ be any of~\eqref{eq:method:mae}, \eqref{eq:method:rmse}, \eqref{eq:method:r2}
+% or~\eqref{eq:method:spearman} evaluated for configuration $c$, and $\operatorname{id}$ the
+% full-graph baseline. Every relative accuracy figure in the results is one of the fraction of
+% the baseline a reduction retains, the cross-state drop-off between the two
+% passes of~\eqref{eq:method:pass-matched} and~\eqref{eq:method:pass-full}, and the gap within
+% a matched pairing of a domain-informed configuration $c_{\mathrm{d}}$ against its generic
+% control $c_{\mathrm{g}}$. Equation~\eqref{eq:method:paired-gap} is also what RQ1a reports as
+% protocol inflation, taken between two split protocols at one fixed configuration rather than
+% between two reductions. A ratio is used for retention and a difference for the other two
+% because $R^{2}$ crosses zero, where a ratio is meaningless.
+%
+% A score is only evidence of structural reading to the extent it exceeds what the corpus
+% gives away for free. For a partition of $\mathcal{D}$ into groups $g$, the group-mean
+% predictor $\hat{y}_i = \bar{y}_{g(i)}$ scores the share of label variance explained by group
+% membership alone. Reporting \eqref{eq:method:r2} beside~\eqref{eq:method:group-r2} for the
+% source script and the optimization tier separates the part of a score attributable to the
+% circuit from the part a lookup table would reach.
 
 \paragraph{Persisted predictions and stratified re-scoring.}
-The evaluation sweep writes every per-graph prediction to disk, not only the aggregates, so
-every metric above can be recomputed on any subset of the test set from the same forward
-pass. This matters because the pooled label is severely skewed: roughly half the test
-graphs have $y_i = 0$ exactly and about three quarters have $y_i < 0.005$, so a pooled
-$R^2$ is dominated by a mass of near-identical labels and can look respectable while saying
-nothing about the graphs a practitioner would ask about. Each accuracy claim is therefore
-repeated on three subsets beside the pooled figure: graphs from designs the synthesis
-script can still change (two designs sit at a fixed point, with largest observed
-optimizability $0.0003$, so they contribute no variance for $R^2$ to explain, only noise
-for it to divide by); graphs with $y_i > 0$; and graphs derived from a single upstream
-script, which holds constant how much optimization the input received before Orchestrate
-saw it. The strata are applied uniformly to every configuration rather than invoked where
-they happen to help.
+The evaluation sweep writes every per-graph prediction to disk, so every metric above can be
+recomputed on any test subset from the same forward pass. This matters since the pooled
+label is severely skewed (roughly half the test graphs at $y_i = 0$), so a pooled $R^2$ is
+dominated by near-identical labels and can look respectable while saying nothing about the
+graphs that matter in practice. Each accuracy claim is therefore also reported on three
+subsets: designs the script can still change, graphs with $y_i > 0$, and graphs from a
+single upstream script, applied uniformly to every configuration.
+
+% Original, condensed above:
+% The evaluation sweep writes every per-graph prediction to disk, not only the aggregates, so
+% every metric above can be recomputed on any subset of the test set from the same forward
+% pass. This matters because the pooled label is severely skewed: roughly half the test
+% graphs have $y_i = 0$ exactly and about three quarters have $y_i < 0.005$, so a pooled
+% $R^2$ is dominated by a mass of near-identical labels and can look respectable while saying
+% nothing about the graphs a practitioner would ask about. Each accuracy claim is therefore
+% repeated on three subsets beside the pooled figure: graphs from designs the synthesis
+% script can still change (two designs sit at a fixed point, with largest observed
+% optimizability $0.0003$, so they contribute no variance for $R^2$ to explain, only noise
+% for it to divide by); graphs with $y_i > 0$; and graphs derived from a single upstream
+% script, which holds constant how much optimization the input received before Orchestrate
+% saw it. The strata are applied uniformly to every configuration rather than invoked where
+% they happen to help.
 
 \subsubsection{Ranking Quality}
 \label{sec:method:experiment:metrics:ranking}
-Spearman rank correlation between predicted and true optimizability across the test set,
-that is the Pearson correlation of the midrank vectors,
+Spearman rank correlation between predicted and true optimizability, the Pearson
+correlation of the midrank vectors,
 \begin{equation}
     \rho = \frac{\operatorname{cov}\!\left( \operatorname{rk}(\hat{y}),
         \operatorname{rk}(y) \right)}
@@ -133,15 +193,27 @@ that is the Pearson correlation of the midrank vectors,
     \label{eq:method:spearman}
 \end{equation}
 Equation~\eqref{eq:method:spearman} is unchanged by any strictly increasing map applied to
-$\hat{y}$, which is why it is reported alongside the error metrics rather than in place of
-them: a model whose predictions have collapsed toward $\bar{y}$, the failure mode a
-reduction study should expect, holds $\rho$ while $\mathrm{RMSE}$ and $R^2$ degrade.
-Ranking is also closer to use. A practitioner deciding where to spend synthesis effort
-needs the ordering of circuits, not calibrated values.
+$\hat{y}$, so it is reported alongside the error metrics, not in place of them: a model
+whose predictions have collapsed toward $\bar{y}$, the failure mode a reduction study
+should expect, holds $\rho$ while $\mathrm{RMSE}$ and $R^2$ degrade. Ranking is also closer
+to use: a practitioner deciding where to spend synthesis effort needs circuit ordering, not
+calibrated values.
 
 The metric ranks \emph{circuits} under one fixed script, not \emph{scripts} for one
-circuit. The latter is the script-selection task the motivation invokes and this thesis
-does not attempt (\ref{sec:intro:scope:prediction}).
+circuit, the script-selection task the motivation invokes and this thesis does not attempt
+(\ref{sec:intro:scope:prediction}).
+
+% Original, condensed above:
+% Equation~\eqref{eq:method:spearman} is unchanged by any strictly increasing map applied to
+% $\hat{y}$, which is why it is reported alongside the error metrics rather than in place of
+% them: a model whose predictions have collapsed toward $\bar{y}$, the failure mode a
+% reduction study should expect, holds $\rho$ while $\mathrm{RMSE}$ and $R^2$ degrade.
+% Ranking is also closer to use. A practitioner deciding where to spend synthesis effort
+% needs the ordering of circuits, not calibrated values.
+%
+% The metric ranks \emph{circuits} under one fixed script, not \emph{scripts} for one
+% circuit. The latter is the script-selection task the motivation invokes and this thesis
+% does not attempt (\ref{sec:intro:scope:prediction}).
 
 \subsubsection{Efficiency and Resource Metrics}
 \label{sec:method:experiment:metrics:efficiency}
@@ -151,142 +223,230 @@ inference throughput
     \tau = \frac{\left| \mathcal{D} \right|}{T(\mathcal{D})},
     \label{eq:method:throughput}
 \end{equation}
-graphs scored per second over an evaluation pass of wall-clock duration $T$. Epoch time is
-logged but not compared: the budget each run actually consumed varied, so an epoch carries
-the training schedule as much as the reduction, and $t$ and $\tau$ are the timing
-quantities that compare. The per-graph step cost $t$ is also what
-enters~\eqref{eq:method:amortisation}.
+graphs scored per second over an evaluation pass of duration $T$. Epoch time is logged but
+not compared, since the budget each run consumed varied and an epoch carries the training
+schedule as much as the reduction. $t$ and $\tau$ are the timing quantities that compare,
+and $t$ also enters~\eqref{eq:method:amortisation}.
 
-Two instruments produce these numbers, under different batching regimes, and which one
-produced a figure fixes what it may be compared against. Throughput and inference peak
-memory come from the evaluation sweep under the fixed evaluation node budget
-of~\ref{sec:method:experiment:batching}, identical across configurations; comparing
-configurations evaluated at different budgets would be invalid rather than merely noisy.
-Step time and step memory come from a separate benchmark at one graph per batch and no
-budget at all. A node budget packs a different number of graphs into a batch for every
-configuration, so per-batch aggregates would average over incomparable batch compositions,
-whereas one graph per batch matches each reduced graph to its unreduced counterpart by
-graph identity, which is what the paired statistics
-of~\ref{sec:method:experiment:metrics:stats} require. The price is a controlled per-graph
-cost rather than an estimate of wall-clock training cost.
+Two instruments produce these numbers, and which one produced a figure fixes what it may be
+compared against. Throughput and inference peak memory come from the evaluation sweep under
+the fixed node budget of~\ref{sec:method:experiment:batching}, identical across
+configurations. Step time and step memory instead come from a separate benchmark at one
+graph per batch and no budget, since a node budget packs a different number of graphs per
+batch for every configuration and would make per-batch aggregates incomparable. One graph
+per batch matches each reduced graph to its unreduced counterpart by identity, as the
+paired statistics of~\ref{sec:method:experiment:metrics:stats} require, at the price of a
+controlled per-graph cost rather than an estimate of wall-clock training cost.
 
 \paragraph{Memory quantities reported.}
-Peak \emph{allocated} memory is the high-water mark of live tensors and the closest measure
-of the model's actual demand. Peak \emph{reserved} memory is what the caching allocator has
-taken from the driver, is never smaller, and reflects allocation history and fragmentation
-as much as demand. Allocated is the primary figure, but reserved sets the out-of-memory
-boundary and is recorded alongside it. Both are taken against a \emph{memory floor}
-$m_{\mathrm{floor}}$ (parameters, optimizer state and device context, measured after warmup
-with no graph resident), so the marginal cost of the graph itself is
+Peak \emph{allocated} memory, the high-water mark of live tensors, is the closest measure of
+actual demand. Peak \emph{reserved} memory, what the caching allocator has taken from the
+driver, is never smaller and reflects allocation history as much as demand. Allocated is the
+primary figure; reserved sets the out-of-memory boundary and is recorded alongside it. Both
+are taken against a \emph{memory floor} $m_{\mathrm{floor}}$ (parameters, optimizer state
+and device context, measured after warmup with no graph resident), so the marginal cost of
+the graph itself is
 \begin{equation}
     \Delta m = m_{\mathrm{peak}} - m_{\mathrm{floor}}.
     \label{eq:method:marginal-memory}
 \end{equation}
-$\Delta m$ rather than $m_{\mathrm{peak}}$ is the quantity a reduction can move:
-$m_{\mathrm{floor}}$ is fixed by the architecture and identical across configurations, so
-savings quoted against $m_{\mathrm{peak}}$ are diluted toward zero by an additive constant
-having nothing to do with the reduction. The paired savings
+$\Delta m$, not $m_{\mathrm{peak}}$, is the quantity a reduction can move, since
+$m_{\mathrm{floor}}$ is fixed and identical across configurations, and savings quoted
+against $m_{\mathrm{peak}}$ are diluted by that additive constant. The paired savings
 of~\eqref{eq:method:paired-saving} are taken on $m_{\mathrm{peak}}$, so every reported
-memory saving is a lower bound on the saving in~\eqref{eq:method:marginal-memory}.
+saving is a lower bound on~\eqref{eq:method:marginal-memory}.
 % TODO: paired savings currently divide raw peak memory, not \eqref{eq:method:marginal-memory}.
+
+% Original, condensed above:
+% Three quantities are reported: peak device memory, per-graph step time $t(G_i)$, and
+% inference throughput, graphs scored per second over an evaluation pass of wall-clock
+% duration $T$. Epoch time is logged but not compared: the budget each run actually consumed
+% varied, so an epoch carries the training schedule as much as the reduction, and $t$ and
+% $\tau$ are the timing quantities that compare. The per-graph step cost $t$ is also what
+% enters~\eqref{eq:method:amortisation}.
+%
+% Two instruments produce these numbers, under different batching regimes, and which one
+% produced a figure fixes what it may be compared against. Throughput and inference peak
+% memory come from the evaluation sweep under the fixed evaluation node budget
+% of~\ref{sec:method:experiment:batching}, identical across configurations; comparing
+% configurations evaluated at different budgets would be invalid rather than merely noisy.
+% Step time and step memory come from a separate benchmark at one graph per batch and no
+% budget at all. A node budget packs a different number of graphs into a batch for every
+% configuration, so per-batch aggregates would average over incomparable batch compositions,
+% whereas one graph per batch matches each reduced graph to its unreduced counterpart by
+% graph identity, which is what the paired statistics
+% of~\ref{sec:method:experiment:metrics:stats} require. The price is a controlled per-graph
+% cost rather than an estimate of wall-clock training cost.
+%
+% Peak \emph{allocated} memory is the high-water mark of live tensors and the closest measure
+% of the model's actual demand. Peak \emph{reserved} memory is what the caching allocator has
+% taken from the driver, is never smaller, and reflects allocation history and fragmentation
+% as much as demand. Allocated is the primary figure, but reserved sets the out-of-memory
+% boundary and is recorded alongside it. Both are taken against a \emph{memory floor}
+% $m_{\mathrm{floor}}$ (parameters, optimizer state and device context, measured after warmup
+% with no graph resident), so the marginal cost of the graph itself is $\Delta m$.
+% $\Delta m$ rather than $m_{\mathrm{peak}}$ is the quantity a reduction can move:
+% $m_{\mathrm{floor}}$ is fixed by the architecture and identical across configurations, so
+% savings quoted against $m_{\mathrm{peak}}$ are diluted toward zero by an additive constant
+% having nothing to do with the reduction. The paired savings
+% of~\eqref{eq:method:paired-saving} are taken on $m_{\mathrm{peak}}$, so every reported
+% memory saving is a lower bound on the saving in~\eqref{eq:method:marginal-memory}.
 
 \subsubsection{Reduction Quality Metrics}
 \label{sec:method:experiment:metrics:reduction}
 The node and edge retention ratios $\eta_{\mathcal{V}}$ and $\eta_{\mathcal{E}}$
-of~\eqref{eq:prelim:retention} are reported separately rather than collapsed into one
-compression figure, together with the offline wall-clock cost of computing the reduction.
+of~\eqref{eq:prelim:retention} are reported separately, not collapsed into one compression
+figure, together with the offline wall-clock cost of computing the reduction.
 
 The offline cost matters independently of the training saving. Let $c_R$ be the cost of
-computing and storing one graph's reduction, and $t_{\operatorname{id}}$ and $t_R$ the
-per-graph step cost on the unreduced and the reduced graph. One epoch visits each graph
-once, so over $n$ epochs reducing is cheaper than not reducing once
+computing and storing one graph's reduction, and $t_{\operatorname{id}}$, $t_R$ the
+per-graph step cost on the unreduced and reduced graph. One epoch visits each graph once, so
+over $n$ epochs reducing is cheaper than not reducing once
 \begin{equation}
     n > n^{\star} = \frac{c_R}{t_{\operatorname{id}} - t_R}.
     \label{eq:method:amortisation}
 \end{equation}
 Reporting the amortisation threshold $n^{\star}$ rather than a raw offline cost states the
-trade-off in the terms that decide it, and makes the failure case explicit:
-\eqref{eq:method:amortisation} is undefined for $t_R \geq t_{\operatorname{id}}$, so a
-reduction that does not shorten a step never amortises, however cheap it is to compute.
-The reduced graph is stored once and reloaded, so $n$ accumulates over every epoch of every
-run that reuses the artifact.
+trade-off in the terms that decide it: \eqref{eq:method:amortisation} is undefined for
+$t_R \geq t_{\operatorname{id}}$, so a reduction that does not shorten a step never
+amortises, however cheap to compute. The reduced graph is stored once and reloaded, so $n$
+accumulates over every epoch of every run that reuses it.
 
 \paragraph{Effective receptive field.}
-Hypothesis H1 claims that coarsening helps by contracting paths, and that claim needs a
-measurement of its own. For a node $v$, let
+Hypothesis H1 claims coarsening helps by contracting paths, a claim needing its own
+measurement. For a node $v$, let
 \begin{equation}
     \mathcal{C}_k(v) = \left\{ u \in \mathcal{V} : u \rightsquigarrow v
         \text{ along a directed path of length at most } k \right\}
     \label{eq:method:cone}
 \end{equation}
-be its $k$-hop fanin cone, and let $m_u = \mathbf{1}^{\top} x_u$ be the member count of
-node $u$, supplied directly by the count-based feature schema
-of~\ref{sec:method:architecture} and equal to $1$ on an unreduced graph. The metric is the
-member-weighted mean cone size over a node set $\mathcal{S}$ sampled from $\mathcal{V}(G)$,
+be its $k$-hop fanin cone, and $m_u = \mathbf{1}^{\top} x_u$ the member count of node $u$
+(from the count-based feature schema of~\ref{sec:method:architecture}, equal to $1$ on an
+unreduced graph). The metric is the member-weighted mean cone size over a sampled node set
+$\mathcal{S} \subset \mathcal{V}(G)$,
 \begin{equation}
     \bar{c}_k(G) = \frac{1}{\left| \mathcal{S} \right|} \sum_{v \in \mathcal{S}}
         \; \sum_{u \in \mathcal{C}_k(v)} m_u,
     \label{eq:method:receptive}
 \end{equation}
-evaluated at $k = L$, the number of encoder layers, before and after reduction. The
-weighting is what makes the comparison meaningful: counting super-nodes rather than their
-members would make $\bar{c}_L$ fall under every coarsening by construction, while weighting
-by $m_u$ counts original gates in both states. H1 predicts
-$\bar{c}_L(R(G)) > \bar{c}_L(G)$ under summarization and
-$\bar{c}_L(R(G)) \leq \bar{c}_L(G)$ under sparsification. Unlike a DAG longest-path metric,
-\eqref{eq:method:receptive} is well defined for every method, not only for those that
-guarantee an acyclic quotient.
+evaluated at $k = L$ encoder layers, before and after reduction. Weighting by $m_u$ rather
+than counting super-nodes is what makes the comparison meaningful, since it counts original
+gates in both states. H1 predicts $\bar{c}_L(R(G)) > \bar{c}_L(G)$ under summarization and
+$\bar{c}_L(R(G)) \leq \bar{c}_L(G)$ under sparsification, and unlike a DAG longest-path
+metric, \eqref{eq:method:receptive} is well defined for every method.
 % TODO: not implemented, so H1 is currently asserted rather than evidenced.
+
+% Original, condensed above:
+% The offline cost matters independently of the training saving. Let $c_R$ be the cost of
+% computing and storing one graph's reduction, and $t_{\operatorname{id}}$ and $t_R$ the
+% per-graph step cost on the unreduced and the reduced graph. One epoch visits each graph
+% once, so over $n$ epochs reducing is cheaper than not reducing once $n > n^{\star}$.
+% Reporting the amortisation threshold $n^{\star}$ rather than a raw offline cost states the
+% trade-off in the terms that decide it, and makes the failure case explicit:
+% \eqref{eq:method:amortisation} is undefined for $t_R \geq t_{\operatorname{id}}$, so a
+% reduction that does not shorten a step never amortises, however cheap it is to compute.
+% The reduced graph is stored once and reloaded, so $n$ accumulates over every epoch of every
+% run that reuses the artifact.
+%
+% Hypothesis H1 claims that coarsening helps by contracting paths, and that claim needs a
+% measurement of its own. For a node $v$, let $\mathcal{C}_k(v)$ be its $k$-hop fanin cone,
+% and let $m_u = \mathbf{1}^{\top} x_u$ be the member count of node $u$, supplied directly by
+% the count-based feature schema of~\ref{sec:method:architecture} and equal to $1$ on an
+% unreduced graph. The metric is the member-weighted mean cone size over a node set
+% $\mathcal{S}$ sampled from $\mathcal{V}(G)$, evaluated at $k = L$, the number of encoder
+% layers, before and after reduction. The weighting is what makes the comparison meaningful:
+% counting super-nodes rather than their members would make $\bar{c}_L$ fall under every
+% coarsening by construction, while weighting by $m_u$ counts original gates in both states.
+% H1 predicts $\bar{c}_L(R(G)) > \bar{c}_L(G)$ under summarization and
+% $\bar{c}_L(R(G)) \leq \bar{c}_L(G)$ under sparsification. Unlike a DAG longest-path metric,
+% \eqref{eq:method:receptive} is well defined for every method, not only for those that
+% guarantee an acyclic quotient.
 
 \subsubsection{Statistical Treatment}
 \label{sec:method:experiment:metrics:stats}
-Every reported figure is an estimate over a finite set of test circuits and is given with a
-$95\%$ percentile bootstrap interval over that set. For a statistic $\hat{\theta}$ computed
-on $\mathcal{D}$, with $\hat{\theta}^{*(1)}, \dots, \hat{\theta}^{*(B)}$ its values on
-$B = 2000$ resamples of $\mathcal{D}$ drawn with replacement, the interval is the pair of
-empirical quantiles
+Every reported figure is an estimate over a finite set of test circuits, given with a
+$95\%$ percentile bootstrap interval. For a statistic $\hat{\theta}$ computed on
+$\mathcal{D}$, with $\hat{\theta}^{*(1)}, \dots, \hat{\theta}^{*(B)}$ its values on
+$B = 2000$ resamples drawn with replacement, the interval is the pair of empirical
+quantiles
 \begin{equation}
     \left[ \hat{\theta}^{*}_{(\alpha / 2)}, \;
         \hat{\theta}^{*}_{(1 - \alpha / 2)} \right],
     \qquad \alpha = 0.05,
     \label{eq:method:bootstrap}
 \end{equation}
-and $\alpha$ is fixed at that value everywhere. The percentile form is used rather than a
-normal approximation because neither statistic it is applied to is close to normal.
-Equation~\eqref{eq:method:r2} is a ratio of sums of squares over a label with a point mass
-at zero, and the per-graph savings below are skewed across a corpus whose graph sizes span
-orders of magnitude.
+with $\alpha$ fixed at that value everywhere. The percentile form is used rather than a
+normal approximation, since neither statistic it is applied to is close to normal:
+\eqref{eq:method:r2} is a ratio of sums of squares over a label with a point mass at zero,
+and the per-graph savings below are skewed across graph sizes spanning orders of magnitude.
 
-Efficiency comparisons are additionally paired per graph against the full-graph baseline.
-For each test graph the saving in an efficiency quantity $q$, either peak memory or step
-time, is taken relative to that graph's own baseline measurement,
+Efficiency comparisons are additionally paired per graph against the full-graph baseline:
+for each test graph, the saving in an efficiency quantity $q$ (peak memory or step time) is
+taken relative to that graph's own baseline measurement,
 \begin{equation}
     \delta_i = 100 \left( 1 - \frac{q_R(G_i)}{q_{\operatorname{id}}(G_i)} \right),
     \label{eq:method:paired-saving}
 \end{equation}
 and $\{\delta_i\}$ is summarised by its mean with~\eqref{eq:method:bootstrap} and a
-two-sided Wilcoxon signed-rank test of $H_0 \colon \operatorname{med}(\delta) = 0$. Both
-configurations are measured on the same graph, so the pairing
-in~\eqref{eq:method:paired-saving} is by construction, and the skew is why a rank test
-replaces a paired $t$-test \citep{demsar2006statistical}.
+two-sided Wilcoxon signed-rank test of $H_0 \colon \operatorname{med}(\delta) = 0$. The
+pairing is by construction, since both configurations are measured on the same graph, and
+the skew is why a rank test replaces a paired $t$-test \citep{demsar2006statistical}.
 
-Accuracy is reported with the same interval, and what that interval covers has to be said
-plainly, because it is narrower than it appears. Resampling $\mathcal{D}$ quantifies
-sampling error over circuits, which is the error a single training run does allow to be
-estimated. It does not cover run-to-run variance from initialisation, data order and
-nondeterministic kernels, since each configuration here is trained exactly once
-(\ref{sec:method:experiment:reproducibility}). Single-run comparisons of this kind have
-been shown to reverse under reseeding
+Accuracy is reported with the same interval, and what it covers must be said plainly: it is
+narrower than it appears. Resampling $\mathcal{D}$ quantifies sampling error over circuits,
+the error a single training run does allow to be estimated. It does not cover run-to-run
+variance from initialisation, data order and nondeterministic kernels, since each
+configuration here is trained exactly once (\ref{sec:method:experiment:reproducibility}).
+Single-run comparisons of this kind have been shown to reverse under reseeding
 \citep{reimers2017scoredistributions,bouthillier2021variance}, so a difference smaller than
-the training variance this design leaves unmeasured cannot be called real. RQ4 is where
-that bites, its expected effect being the smallest in the thesis: the defensible report
-there is the paired gap~\eqref{eq:method:paired-gap} with its sampling interval and an
-explicit statement that the seed variance is missing
-(\ref{sec:discussion:limitations:reproducibility}).
+this unmeasured training variance cannot be called real. RQ4 is where that bites hardest,
+its expected effect being the smallest in the thesis: the defensible report is the paired
+gap~\eqref{eq:method:paired-gap} with its sampling interval and an explicit statement that
+seed variance is missing (\ref{sec:discussion:limitations:reproducibility}).
 
-Intervals are the primary report and $p$-values are not. An interval carries both the size
-of an effect and the precision of the estimate, whereas a significance verdict carries
-neither and is routinely read as though it carried both. The one test retained is the
-Wilcoxon test above, where the pairing is by construction and the null of no saving is a
-question a reader asks directly. Its $p$-value is reported as a number against the single
-$\alpha$ of~\eqref{eq:method:bootstrap} rather than as a row of stars.
+Intervals are the primary report, not $p$-values: an interval carries both effect size and
+estimate precision, while a significance verdict carries neither yet is routinely read as
+though it did. The one test retained is the Wilcoxon test above, where pairing is by
+construction and the null of no saving is a question worth asking directly. Its $p$-value
+is reported as a number against the single $\alpha$ of~\eqref{eq:method:bootstrap}, not as
+a row of stars.
+
+% Original, condensed above:
+% Every reported figure is an estimate over a finite set of test circuits and is given with a
+% $95\%$ percentile bootstrap interval over that set. For a statistic $\hat{\theta}$ computed
+% on $\mathcal{D}$, with $\hat{\theta}^{*(1)}, \dots, \hat{\theta}^{*(B)}$ its values on
+% $B = 2000$ resamples of $\mathcal{D}$ drawn with replacement, the interval is the pair of
+% empirical quantiles, and $\alpha$ is fixed at that value everywhere. The percentile form is
+% used rather than a normal approximation because neither statistic it is applied to is close
+% to normal. Equation~\eqref{eq:method:r2} is a ratio of sums of squares over a label with a
+% point mass at zero, and the per-graph savings below are skewed across a corpus whose graph
+% sizes span orders of magnitude.
+%
+% Efficiency comparisons are additionally paired per graph against the full-graph baseline.
+% For each test graph the saving in an efficiency quantity $q$, either peak memory or step
+% time, is taken relative to that graph's own baseline measurement, and $\{\delta_i\}$ is
+% summarised by its mean with~\eqref{eq:method:bootstrap} and a two-sided Wilcoxon signed-rank
+% test of $H_0 \colon \operatorname{med}(\delta) = 0$. Both configurations are measured on the
+% same graph, so the pairing in~\eqref{eq:method:paired-saving} is by construction, and the
+% skew is why a rank test replaces a paired $t$-test \citep{demsar2006statistical}.
+%
+% Accuracy is reported with the same interval, and what that interval covers has to be said
+% plainly, because it is narrower than it appears. Resampling $\mathcal{D}$ quantifies
+% sampling error over circuits, which is the error a single training run does allow to be
+% estimated. It does not cover run-to-run variance from initialisation, data order and
+% nondeterministic kernels, since each configuration here is trained exactly once
+% (\ref{sec:method:experiment:reproducibility}). Single-run comparisons of this kind have
+% been shown to reverse under reseeding
+% \citep{reimers2017scoredistributions,bouthillier2021variance}, so a difference smaller than
+% the training variance this design leaves unmeasured cannot be called real. RQ4 is where
+% that bites, its expected effect being the smallest in the thesis: the defensible report
+% there is the paired gap~\eqref{eq:method:paired-gap} with its sampling interval and an
+% explicit statement that the seed variance is missing
+% (\ref{sec:discussion:limitations:reproducibility}).
+%
+% Intervals are the primary report and $p$-values are not. An interval carries both the size
+% of an effect and the precision of the estimate, whereas a significance verdict carries
+% neither and is routinely read as though it carried both. The one test retained is the
+% Wilcoxon test above, where the pairing is by construction and the null of no saving is a
+% question a reader asks directly. Its $p$-value is reported as a number against the single
+% $\alpha$ of~\eqref{eq:method:bootstrap} rather than as a row of stars.
