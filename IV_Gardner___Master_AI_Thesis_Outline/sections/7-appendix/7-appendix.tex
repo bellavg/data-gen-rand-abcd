@@ -3,7 +3,9 @@
 \chapter{First Appendix}
 \label{sec:apx:first_appendix}
 
-% Reference material the main text points at; the thesis stays readable without it.
+This appendix collects the reference material the main text points to: exact
+configurations, tool versions and results too detailed for the body chapters. Sections are
+ordered by how likely each is to hold real content before submission.
 
 \section{Synthesis Algorithm Configurations}
 \label{sec:apx:algorithms}
@@ -65,26 +67,40 @@ reported in~\ref{sec:prelim:algorithms:others}.
 number generator once per input graph, is interpolated into the command, and is written
 neither to the run log nor to the metadata tables, so those graphs cannot be regenerated
 (\ref{sec:discussion:limitations:reproducibility}).
-% TODO: pin the abc version here; the labels depend on it and it is unrecorded.
 
-\section{Reduction Method Parameters}
-\label{sec:apx:params}
-% One table: every reduction method, its configured parameters, and whether each was
-% calibrated against measured retention or left at a default. An uncalibrated knob is a
-% confound in a matched-compression comparison (\ref{sec:results:rq4:gap}).
+The \texttt{abc} binary is built from source on the cluster, not installed through a
+versioned module. The caller supplies its path (\texttt{\$HOME/abc/abc} by default), and no
+submodule pin, lockfile entry or recorded commit hash fixes which revision that is. No
+invocation in the generation pipeline captures a version string, so the exact tool behind
+every command in Table~\ref{tab:apx:algorithms} is unrecorded and unrecoverable, a standing
+bound on reproducibility (\ref{sec:discussion:limitations:reproducibility}): the commands are
+exact, but the version that ran them is not.
+% TODO: pin the abc commit or version if it is ever recovered from the build host.
 
-\section{Baseline Hyperparameters}
-\label{sec:apx:baselines}
-% For SynthNet, HOGA and DeepGate4: which hyperparameters are the papers' published
-% values and which were assumed, with the reason for each deviation. Source:
-% src/train_baseline.py and src/baselines/*/regressor.py.
+\section{Supplementary Figures}
+\label{sec:apx:figures}
+% TODO: figures and tables moved from the results chapter as diagnostic rather than load-bearing, starting with the hyperparameter sweep and sensitivity figures.
 
 \section{Experimental Configuration}
 \label{sec:apx:config}
-% Full run configuration in one table: seeds, split settings, batch budget, optimizer
-% settings and precision, as configuration values rather than source listings.
+% TODO: full run configuration table: seeds, split settings, batch budget, optimizer settings and precision.
+
+\section{Hyperparameter Search Space}
+\label{sec:apx:hpspace}
+% TODO: full table of the swept hyperparameter dimensions and ranges.
+
+\section{Library and Tool Versions}
+\label{sec:apx:versions}
+% TODO: table of every library and tool version behind a reported result: Python toolchain, GNN framework, aigverse, mockturtle, Optuna.
+
+\section{Reduction Method Parameters}
+\label{sec:apx:params}
+% TODO: table of every reduction method's parameters and whether each was calibrated against measured retention or left at a default.
+
+\section{Baseline Hyperparameters}
+\label{sec:apx:baselines}
+% TODO: SynthNet, HOGA and DeepGate4 hyperparameters as used versus each paper's published values, with the reason for every deviation (src/train_baseline.py, src/baselines/*/regressor.py).
 
 \section{Extended Results}
 \label{sec:apx:results}
-% Per-configuration tables too detailed for \ref{sec:results}: full metric sets per
-% method, per-tier error breakdowns, and offline retention per method and shard.
+% TODO: per-configuration tables too detailed for the results chapter: full metric sets per method, per-tier and per-design error breakdowns, and offline retention per method and shard.

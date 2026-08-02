@@ -16,8 +16,10 @@ require re-running the reduction stage.
 
 \subsubsection{Numerical Determinism}
 \label{sec:method:reproducibility:determinism}
-% TODO: order-dependent scatter aggregation and mixed precision perturb the last digits, not the ranking.
-\todo{this seems like overkill. never seen it in another paper feel free to prove me wrong}
+Order-dependent scatter aggregation in the message-passing layers and mixed-precision
+arithmetic both perturb a rerun's last few digits without changing which configuration ranks
+above another. A seeded run is reproducible in that sense: every comparison
+in~\ref{sec:results} reads a ranking, not a specific decimal value.
 
 \subsubsection{Code and Data Availability}
 \label{sec:method:reproducibility:availability}
