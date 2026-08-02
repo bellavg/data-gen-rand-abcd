@@ -14,6 +14,8 @@
 \usepackage{natbib}
 \usepackage{booktabs}
 \usepackage{graphicx}
+\usepackage{tikz}
+\usepackage{xcolor}
 
 \providecommand{\todo}[1]{\textbf{[TODO: #1]}}
 \providecommand{\resultstables}{results/tables}
@@ -48,22 +50,7 @@
 \maketitle
 
 \frontmatter
-        \chapter*{Abstract}
-                \begin{adjustwidth}{4cm}{4cm}
-                        % TODO(abstract): write last, once RQ2/RQ3 numbers exist.
-                        % Skeleton, one sentence each: (1) logic synthesis script design is
-                        % expensive trial-and-error; (2) ML on AIGs could predict optimizability
-                        % and skip it, but industrial AIGs do not fit in GPU memory; (3) generic
-                        % graph reduction is the standard workaround and has never been evaluated
-                        % on AIGs, where it may sever causal cones and destroy the predictive
-                        % signal; (4) this thesis benchmarks partitioning, sparsification and
-                        % summarization -- generic and AIG-adapted -- for optimizability
-                        % regression, including a provably lossless coarsening; (5) headline
-                        % result: X\% memory reduction at Y\% accuracy retention; (6) models
-                        % trained on reduced graphs do/do not transfer to full graphs at
-                        % inference time.
-                        Placeholder.
-                \end{adjustwidth}
+        \input{sections/0-frontmatter/0.1-abstract.tex}
 
 \tableofcontents
 
@@ -73,17 +60,17 @@
 
 \setlength{\parskip}{5pt}
 
-\include{sections/0-list-symbols}
+\include{sections/0-frontmatter/0.2-list-symbols}
 
 
 \twocolumn
 \mainmatter{}
-        \include{sections/1-introduction}
-        \include{sections/2-related-work}
-        \include{sections/3-methodology}
-        \include{sections/4-results}
-        \include{sections/5-discussion}
-        \include{sections/6-conclusion}
+        \include{sections/1-introduction/1-introduction}
+        \include{sections/2-related-work/2-related-work}
+        \include{sections/3-methodology/3-methodology}
+        \include{sections/4-results/4-results}
+        \include{sections/5-discussion/5-discussion}
+        \include{sections/6-conclusion/6-conclusion}
 
 % ACM-Reference-Format needs the acmart package (not in BasicTeX).
 % To go back: sudo tlmgr install acmart, then restore the line below.
@@ -92,7 +79,7 @@
 
 % \newpage
 \appendix
-        \include{sections/7-appendix}
+        \include{sections/7-appendix/7-appendix}
 
 \end{document}
 
