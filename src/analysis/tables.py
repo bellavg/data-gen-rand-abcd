@@ -5,9 +5,11 @@ Every table is written to ``media/results/tables`` and pulled in with
 number typed into the .tex drifts from the run that produced it the first time
 anything is re-run.
 
-Tables carrying fabricated rows get a ``note`` saying so, and the fabricated
-rows are prefixed ``[TODO/FAKE]`` in their first column, so the marking
-survives being read as plain text.
+Tables carrying fabricated rows get a ``note`` saying so, the fabricated rows
+are prefixed ``[TODO/FAKE]`` in their first column, and every number in them is
+replaced by an absurd sentinel and typeset in red
+(:func:`analysis.results_to_latex.write_booktabs_table`), so no single loss of
+context can turn a placeholder into a result.
 """
 
 from __future__ import annotations
@@ -27,16 +29,38 @@ from analysis.fake_data import (
     TODO_SPLIT_PROTOCOL,
     TODO_SUMMARIZATION,
 )
-from analysis.results_to_latex import write_booktabs_table
+from analysis.results_to_latex import BETTER, write_booktabs_table
 from analysis.style import label_for, meta, sort_key
 
 FAKE_TAG = "[TODO/FAKE] "
 
 
+def _fake(methods) -> list[bool]:
+    """Which rows are fabricated, read off the method registry rather than off a
+    second list kept in step by hand."""
+    return [not meta(m)["measured"] for m in methods]
+
+
+def _fake_flags(measured: pd.Series) -> list[bool]:
+    """Fabricated-row mask for the tables whose rows are models or protocols
+    rather than reduction methods, so the registry does not know them. An
+    unrecorded flag counts as fabricated."""
+    return (~measured.fillna(False).astype(bool)).tolist()
+
+
+def _best(df: pd.DataFrame, extra: dict[str, str] | None = None) -> dict[str, str]:
+    """Bold/underline spec: every column of ``df`` with a known direction, plus
+    any generated column header named explicitly."""
+    spec = {c: BETTER[c] for c in df.columns if c in BETTER}
+    if extra:
+        spec.update(extra)
+    return spec
+
+
 def _method_column(methods, *, tag_fake: bool = True) -> list[str]:
     return [
-        (FAKE_TAG if tag_fake and not meta(m)["measured"] else "") + label_for(m)
-        for m in methods
+        (FAKE_TAG if tag_fake and fake else "") + label_for(m)
+        for m, fake in zip(methods, _fake(methods))
     ]
 
 
@@ -108,6 +132,7 @@ def corpus_stats(path: Path) -> None:  # noqa: ERA001  (kept for reference; not 
         ),
         label="tab:corpus_stats",
         note="EVERY NUMBER IN THIS TABLE IS FABRICATED. " + TODO_CORPUS_STATS,
+        fake=_fake_flags(CORPUS_STATS["measured"]),
     )
 
 
@@ -203,7 +228,7 @@ def rq1_baselines(tier1: pd.DataFrame, path: Path) -> None:
         out,
         path / "rq1_baselines.tex",
         caption=(
-            "RQ1 three-tier baseline comparison on the design-disjoint test split. "
+            "RQ1 baseline comparison on the design-disjoint test split. "
             "Trivial predictors are fitted on validation and scored on test. "
             "Upstream $R^2$ figures are NOT comparable: OpenABC-D z-scores its "
             "targets per design, which removes between-design variance from the "
@@ -212,6 +237,8 @@ def rq1_baselines(tier1: pd.DataFrame, path: Path) -> None:
         label="tab:rq1_baselines",
         wide=True,
         note="Rows marked [TODO/FAKE] are invented. " + TODO_BASELINE_MODELS,
+        fake=_fake_flags(combined["measured"]),
+        best=_best(out),
     )
 
 
@@ -261,6 +288,7 @@ def rq1a_protocol(path: Path) -> None:
         ),
         label="tab:rq1a_protocol",
         note="Rows marked [TODO/FAKE] are invented. " + TODO_SPLIT_PROTOCOL,
+        fake=_fake_flags(df["measured"]),
     )
 
 
@@ -351,6 +379,8 @@ def rq2_efficiency(offline: pd.DataFrame, bench: pd.DataFrame, savings: pd.DataF
         label="tab:rq2_efficiency",
         wide=True,
         note="Rows marked [TODO/FAKE] are invented. " + TODO_SUMMARIZATION,
+        fake=_fake(df["reduction_method"]),
+        best=_best(out),
     )
 
 
@@ -380,6 +410,7 @@ def rq2_paired_savings(savings: pd.DataFrame, path: Path) -> None:
         ),
         label="tab:rq2_paired_savings",
         wide=True,
+        best=_best(out),
     )
 
 
@@ -420,6 +451,8 @@ def rq2_partition_balance(measurements_dir: Path, path: Path) -> None:
         ),
         label="tab:rq2_partition_balance",
         wide=True,
+        fake=_fake(agg["reduction_method"]),
+        best=_best(out),
     )
 
 
@@ -447,12 +480,15 @@ def rq3_retention(matched: pd.DataFrame, path: Path) -> None:
         path / "rq3_retention.tex",
         caption=(
             "RQ3 matched-state accuracy: models trained and tested under the same "
-            "reduction. RMSE, $R^2$ and Spearman are reported together throughout -- a "
-            "reduction can hold mean error steady while destroying explained variance."
+            "reduction. RMSE, $R^2$ and Spearman are reported together throughout, "
+            "because a reduction can hold mean error steady while destroying "
+            "explained variance."
         ),
         label="tab:rq3_retention",
         wide=True,
         note="Rows marked [TODO/FAKE] are invented. " + TODO_SUMMARIZATION,
+        fake=_fake(df["reduction_method"]),
+        best=_best(out),
     )
 
 
@@ -474,6 +510,7 @@ def rq3_pareto(matched: pd.DataFrame, savings: pd.DataFrame, path: Path) -> None
         path / "rq3_pareto.tex",
         caption="Accuracy against efficiency, ranked by matched-state $R^2$.",
         label="tab:rq3_pareto",
+        best=_best(out),
     )
 
 
@@ -501,6 +538,7 @@ def rq3_stratified(strata: pd.DataFrame, path: Path) -> None:
         ),
         label="tab:rq3_stratified",
         wide=True,
+        best=_best(out, {c: "max" for c in out.columns if c != "Method"}),
         note=(
             "Strata: all test graphs; excluding the two designs on which Orchestrate is "
             "at a fixed point (16384, 8192, max y = 0.0003 over ~32,000 graphs); graphs "
@@ -552,6 +590,7 @@ def rq3_by_subgroup(by_tier: pd.DataFrame, by_source: pd.DataFrame, path: Path) 
         ),
         label="tab:rq3_by_subgroup",
         wide=True,
+        best=_best(out, {c: "max" for c in out.columns if c != "Method"}),
     )
 
 
@@ -651,11 +690,17 @@ def rq5_cross_state(cross: pd.DataFrame, path: Path) -> None:
         caption=(
             "RQ5: the same weights evaluated under the reduction they were trained with "
             "and on unreduced graphs. For every method here a full graph needs no "
-            "conversion -- it already is a valid input. The exact colour-refinement "
+            "conversion, it already is a valid input. The exact colour-refinement "
             "track is the exception and has not been run."
         ),
         label="tab:rq5_cross_state",
         wide=True,
+        best=_best(out, {
+            "$R^2$ matched": "max",
+            "$R^2$ full": "max",
+            "$\\rho$ matched": "max",
+            "$\\rho$ full": "max",
+        }),
     )
 
 
@@ -702,6 +747,8 @@ def summary(offline, matched, cross, savings, bench, path: Path) -> None:
         label="tab:summary_all",
         wide=True,
         note="Rows marked [TODO/FAKE] are invented. " + TODO_SUMMARIZATION,
+        fake=_fake(df["reduction_method"]),
+        best=_best(out),
     )
 
 

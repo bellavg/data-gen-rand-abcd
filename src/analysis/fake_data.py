@@ -12,7 +12,11 @@ Invariants, so that a placeholder can never be mistaken for a result:
 * the numbers are deliberately round and implausibly regular (0.900, 0.850,
   0.800 ...) rather than realistic-looking;
 * the plotting side reads ``measured`` and hatches, reddens and watermarks
-  accordingly (:func:`analysis.style.mark_fake`).
+  accordingly (:func:`analysis.style.mark_fake`);
+* the table side discards these numbers outright and prints an absurd sentinel
+  in red instead (:func:`analysis.results_to_latex.write_booktabs_table`). The
+  values here stay plausible only because a sentinel would wreck the axes of
+  every figure that draws them.
 
 Delete a block from this file as soon as the corresponding run lands.
 """
@@ -22,30 +26,26 @@ from __future__ import annotations
 import pandas as pd
 
 # ---------------------------------------------------------------------------
-# RQ1 — baseline models, tiers 2 and 3
+# RQ1 — published circuit models used as baselines
 # ---------------------------------------------------------------------------
 TODO_BASELINE_MODELS = (
-    "Train GCN / GraphSAGE / GIN under the headline pooling, head and budget "
-    "(src/shell/train.sh with --encoder_name), and finish the DeepGate4 and "
-    "HOGA ports on the baselines/openabc-synthnet-hoga branch. SynthNet is the "
-    "only published baseline that has produced a number "
+    "Finish the DeepGate4 and HOGA ports on the "
+    "baselines/openabc-synthnet-hoga branch. SynthNet is the only published "
+    "baseline that has produced a number "
     "(train_baseline_synthnet_Orchestrate, val R2 = -0.168); the HOGA run "
     "crashed at epoch 0."
 )
 
 BASELINE_MODELS = pd.DataFrame(
     [
-        # tier 2 — standard encoders, identical pooling/head/training
-        ("GCN (mean pool)", "2: standard encoders", 0.050, 0.030, 0.100, 0.150, False),
-        ("GraphSAGE", "2: standard encoders", 0.048, 0.029, 0.150, 0.200, False),
-        ("GIN", "2: standard encoders", 0.046, 0.028, 0.200, 0.250, False),
-        # tier 3 — published circuit models
-        ("SynthNet", "3: published models", 0.021, 0.012, -0.168, 0.000, False),
-        ("HOGA", "3: published models", 0.050, 0.030, 0.100, 0.100, False),
-        ("DeepGate4", "3: published models", 0.045, 0.027, 0.250, 0.300, False),
+        ("SynthNet", "2: published models", 0.021, 0.012, -0.168, 0.000, False),
+        ("HOGA", "2: published models", 0.050, 0.030, 0.100, 0.100, False),
+        ("DeepGate4", "2: published models", 0.045, 0.027, 0.250, 0.300, False),
     ],
     columns=["model", "tier", "rmse", "mae", "r2", "spearman", "measured"],
 )
+# The standard graph-level encoders (GCN, GraphSAGE, GIN) that stood as a
+# second tier here have been cut from the baseline comparison.
 # SynthNet's val R2 is real; its RMSE/MAE/Spearman on the test split are not,
 # so the whole row stays flagged.
 

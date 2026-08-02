@@ -8,16 +8,16 @@
 \toprule
 \textbf{Method} & \textbf{$R^2$ All test graphs} & \textbf{$R^2$ Designs Orchestrate can touch} & \textbf{$R^2$ Graphs with $y > 0$} & \textbf{$R^2$ Syn4-derived graphs only} & \textbf{$\rho$ All test graphs} & \textbf{$\rho$ Designs Orchestrate can touch} & \textbf{$\rho$ Graphs with $y > 0$} & \textbf{$\rho$ Syn4-derived graphs only} \\
 \midrule
-Random edge dropout & 0.215 & 0.192 & 0.097 & -0.045 & 0.194 & 0.225 & 0.427 & 0.610 \\
-Spanning forest & 0.138 & 0.113 & 0.007 & -0.153 & 0.282 & 0.300 & 0.524 & 0.786 \\
-Span-weighted METIS & 0.008 & -0.021 & 0.125 & 0.074 & 0.263 & 0.040 & 0.364 & 0.643 \\
-PageRank pruning & -0.018 & -0.047 & -0.155 & -0.390 & 0.367 & 0.179 & 0.305 & 0.496 \\
+Random edge dropout & \textbf{0.215} & \textbf{0.192} & \underline{0.097} & -0.045 & 0.194 & 0.225 & 0.427 & 0.610 \\
+Spanning forest & \underline{0.138} & \underline{0.113} & 0.007 & -0.153 & \underline{0.282} & \underline{0.300} & \textbf{0.524} & \textbf{0.786} \\
+Span-weighted METIS & 0.008 & -0.021 & \textbf{0.125} & \underline{0.074} & 0.263 & 0.040 & 0.364 & 0.643 \\
+PageRank pruning & -0.018 & -0.047 & -0.155 & -0.390 & \textbf{0.367} & 0.179 & 0.305 & 0.496 \\
 AND-gate only & -0.064 & -0.095 & -0.230 & -0.444 & -0.025 & 0.179 & 0.312 & 0.506 \\
-Level slicing & -0.142 & -0.175 & -0.320 & -0.558 & 0.119 & 0.548 & 0.484 & 0.140 \\
+Level slicing & -0.142 & -0.175 & -0.320 & -0.558 & 0.119 & \textbf{0.548} & \underline{0.484} & 0.140 \\
 Random hashing & -0.981 & -0.061 & -0.276 & -0.766 & -0.183 & 0.134 & 0.433 & 0.024 \\
-METIS & -3.062 & -3.181 & -1.997 & 0.954 & 0.237 & 0.086 & 0.276 & 0.758 \\
+METIS & -3.062 & -3.181 & -1.997 & \textbf{0.954} & 0.237 & 0.086 & 0.276 & \underline{0.758} \\
 \bottomrule
 \end{tabular}
 }
-\\[4pt]\begin{minipage}{\linewidth}\footnotesize\emph{Strata: all test graphs; excluding the two designs on which Orchestrate is at a fixed point (16384, 8192, max y = 0.0003 over ~32,000 graphs); graphs with a non-zero target; and graphs derived from Syn4, the one source script that leaves substantial optimizability behind.}\end{minipage}
+\\[4pt]\begin{minipage}{\linewidth}\footnotesize\emph{\textbf{Bold} marks the best value in a column and \underline{underline} the second best, over measured rows only. Lower is better for error, memory, time and offline cost; higher is better for $R^2$, correlation and savings. Strata: all test graphs; excluding the two designs on which Orchestrate is at a fixed point (16384, 8192, max y = 0.0003 over ~32,000 graphs); graphs with a non-zero target; and graphs derived from Syn4, the one source script that leaves substantial optimizability behind.}\end{minipage}
 \end{table*}

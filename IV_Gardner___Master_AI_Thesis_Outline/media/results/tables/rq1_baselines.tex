@@ -1,6 +1,6 @@
 \begin{table*}[htbp]
 \centering
-\caption{RQ1 three-tier baseline comparison on the design-disjoint test split. Trivial predictors are fitted on validation and scored on test. Upstream $R^2$ figures are NOT comparable: OpenABC-D z-scores its targets per design, which removes between-design variance from the denominator. Only the sign transfers.}
+\caption{RQ1 baseline comparison on the design-disjoint test split. Trivial predictors are fitted on validation and scored on test. Upstream $R^2$ figures are NOT comparable: OpenABC-D z-scores its targets per design, which removes between-design variance from the denominator. Only the sign transfers.}
 \label{tab:rq1_baselines}
 \small
 \begin{tabular}{llrrrr}
@@ -8,16 +8,13 @@
 \textbf{Model} & \textbf{Tier} & \textbf{RMSE} & \textbf{MAE} & \textbf{$R^2$} & \textbf{Spearman} \\
 \midrule
 Predict validation mean & 1: trivial & 0.054 & 0.023 & -0.052 & -- \\
-Predict validation median & 1: trivial & 0.056 & 0.020 & -0.131 & -- \\
-Graph size only (OLS) & 1: trivial & 0.050 & 0.024 & 0.101 & 0.348 \\
-Edge-aware GCN+ (ours) & This work & 0.043 & 0.017 & 0.343 & 0.185 \\
-{[TODO/FAKE] GCN (mean pool)} & 2: standard encoders & 0.050 & 0.030 & 0.100 & 0.150 \\
-{[TODO/FAKE] GraphSAGE} & 2: standard encoders & 0.048 & 0.029 & 0.150 & 0.200 \\
-{[TODO/FAKE] GIN} & 2: standard encoders & 0.046 & 0.028 & 0.200 & 0.250 \\
-{[TODO/FAKE] SynthNet} & 3: published models & 0.021 & 0.012 & -0.168 & 0.000 \\
-{[TODO/FAKE] HOGA} & 3: published models & 0.050 & 0.030 & 0.100 & 0.100 \\
-{[TODO/FAKE] DeepGate4} & 3: published models & 0.045 & 0.027 & 0.250 & 0.300 \\
+Predict validation median & 1: trivial & 0.056 & \underline{0.020} & -0.131 & -- \\
+Graph size only (OLS) & 1: trivial & \underline{0.050} & 0.024 & \underline{0.101} & \textbf{0.348} \\
+Edge-aware GCN+ (ours) & This work & \textbf{0.043} & \textbf{0.017} & \textbf{0.343} & \underline{0.185} \\
+\textcolor{red}{{[TODO/FAKE] SynthNet}} & \textcolor{red}{2: published models} & \textcolor{red}{999999} & \textcolor{red}{999999} & \textcolor{red}{-999999} & \textcolor{red}{-999999} \\
+\textcolor{red}{{[TODO/FAKE] HOGA}} & \textcolor{red}{2: published models} & \textcolor{red}{999999} & \textcolor{red}{999999} & \textcolor{red}{-999999} & \textcolor{red}{-999999} \\
+\textcolor{red}{{[TODO/FAKE] DeepGate4}} & \textcolor{red}{2: published models} & \textcolor{red}{999999} & \textcolor{red}{999999} & \textcolor{red}{-999999} & \textcolor{red}{-999999} \\
 \bottomrule
 \end{tabular}
-\\[4pt]\begin{minipage}{\linewidth}\footnotesize\emph{Rows marked [TODO/FAKE] are invented. Train GCN / GraphSAGE / GIN under the headline pooling, head and budget (src/shell/train.sh with --encoder\_name), and finish the DeepGate4 and HOGA ports on the baselines/openabc-synthnet-hoga branch. SynthNet is the only published baseline that has produced a number (train\_baseline\_synthnet\_Orchestrate, val R2 = -0.168); the HOGA run crashed at epoch 0.}\end{minipage}
+\\[4pt]\begin{minipage}{\linewidth}\footnotesize\emph{\textcolor{red}{Rows in red are FABRICATED PLACEHOLDERS, not measurements: every number in them has been replaced by the sentinel $\pm$999999.} \textbf{Bold} marks the best value in a column and \underline{underline} the second best, over measured rows only. Lower is better for error, memory, time and offline cost; higher is better for $R^2$, correlation and savings. Rows marked [TODO/FAKE] are invented. Finish the DeepGate4 and HOGA ports on the baselines/openabc-synthnet-hoga branch. SynthNet is the only published baseline that has produced a number (train\_baseline\_synthnet\_Orchestrate, val R2 = -0.168); the HOGA run crashed at epoch 0.}\end{minipage}
 \end{table*}

@@ -55,7 +55,7 @@ and direct labels. Domain-informed methods are hatched rather than recoloured,
 because generic-vs-domain is an attribute of a method rather than a second
 colour axis.
 
-**Fabricated data is marked four ways**, so that no single loss of context can
+**Fabricated data is marked five ways**, so that no single loss of context can
 turn a placeholder into a result:
 
 1. the bar or point is red and cross-hatched;
@@ -64,7 +64,11 @@ turn a placeholder into a result:
    (omitted when only some rows are invented — the rest are real), and a footer
    naming the run that would replace it;
 4. `fake_data.py` holds the numbers, so `grep TODO_ src/analysis/fake_data.py`
-   lists everything outstanding.
+   lists everything outstanding;
+5. in tables only, the whole row is typeset red and every number in it is
+   replaced by the sentinel `999999` (negated where higher is better), so a
+   placeholder cannot be read as a result at all. Figures keep the plausible
+   values, because a sentinel destroys every axis it lands on.
 
 Delete the block from `fake_data.py` as soon as the corresponding run lands.
 
@@ -73,7 +77,7 @@ Delete the block from `fake_data.py` as soon as the corresponding run lands.
 | Block | Waiting on |
 | --- | --- |
 | `SUMMARIZATION` | the entire summarization family — no method has been trained or measured |
-| `BASELINE_MODELS` | tier-2 encoders (GCN/GraphSAGE/GIN) and the DeepGate4 / HOGA ports |
+| `BASELINE_MODELS` | the DeepGate4 / HOGA ports |
 | `SPLIT_PROTOCOL` | RQ1a: `--split_by random` and `--split_by recipe` training runs |
 | `RECEPTIVE_FIELD` | the $k$-hop fanin-cone metric, which is specified but not implemented |
 | `WL_DEPTH` | the colour-refinement depth probe |

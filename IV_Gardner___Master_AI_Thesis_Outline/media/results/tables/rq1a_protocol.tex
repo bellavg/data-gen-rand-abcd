@@ -7,10 +7,10 @@
 \toprule
 \textbf{Protocol} & \textbf{RMSE} & \textbf{$R^2$} & \textbf{Spearman} & \textbf{Inflation vs. design-disjoint} \\
 \midrule
-{[TODO/FAKE] Random (per-row)} & 0.020 & 0.900 & 0.900 & 0.557 \\
-{[TODO/FAKE] Recipe-disjoint} & 0.030 & 0.700 & 0.750 & 0.357 \\
+\textcolor{red}{{[TODO/FAKE] Random (per-row)}} & \textcolor{red}{999999} & \textcolor{red}{-999999} & \textcolor{red}{-999999} & \textcolor{red}{999999} \\
+\textcolor{red}{{[TODO/FAKE] Recipe-disjoint}} & \textcolor{red}{999999} & \textcolor{red}{-999999} & \textcolor{red}{-999999} & \textcolor{red}{999999} \\
 Design-disjoint (ours) & 0.043 & 0.343 & 0.185 & 0.000 \\
 \bottomrule
 \end{tabular}
-\\[4pt]\begin{minipage}{\linewidth}\footnotesize\emph{Rows marked [TODO/FAKE] are invented. IN FLIGHT: the --split\_by random and --split\_by recipe training runs are on the cluster now (the design-disjoint run already exists). Identical encoder, budget and seed; only the split changes. When they land, run src/test.py for each, delete this block and rerun analysis.make\_all.}\end{minipage}
+\\[4pt]\begin{minipage}{\linewidth}\footnotesize\emph{\textcolor{red}{Rows in red are FABRICATED PLACEHOLDERS, not measurements: every number in them has been replaced by the sentinel $\pm$999999.} Rows marked [TODO/FAKE] are invented. IN FLIGHT: the --split\_by random and --split\_by recipe training runs are on the cluster now (the design-disjoint run already exists). Identical encoder, budget and seed; only the split changes. When they land, run src/test.py for each, delete this block and rerun analysis.make\_all.}\end{minipage}
 \end{table}

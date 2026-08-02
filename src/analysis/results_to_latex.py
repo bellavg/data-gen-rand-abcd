@@ -19,6 +19,44 @@ import pandas as pd
 from scipy.stats import wilcoxon
 
 
+FAKE_SENTINEL = 999999
+"""Value written into every numeric cell of a fabricated row.
+
+Six orders of magnitude outside the range of any metric reported here, so a
+placeholder cannot be read as a result even if the red typesetting and the
+``[TODO/FAKE]`` tag are both lost to a greyscale print or a copy-paste. It is
+signed against the metric's direction, negative where higher is better, so that
+it always reads as absurdly bad rather than as a win.
+"""
+
+BETTER: dict[str, str] = {
+    "Smooth L1": "min",
+    "RMSE": "min",
+    "MAE": "min",
+    "Offline (s)": "min",
+    "Offline (s/graph)": "min",
+    "Step time (s)": "min",
+    "VRAM mean (MB)": "min",
+    "Edge cut": "min",
+    "Imbalance (sd nodes)": "min",
+    "$R^2$": "max",
+    "$R^2$ retained": "max",
+    "$R^2$ cross-state": "max",
+    "Spearman": "max",
+    "$\\rho$": "max",
+    "VRAM saving (%)": "max",
+    "VRAM sav. (%)": "max",
+    "Time saving (%)": "max",
+    "Time sav. (%)": "max",
+}
+"""Which direction counts as better, per column header.
+
+A header absent from this map is descriptive rather than comparable (a
+retention ratio, a count, a confidence bound, a group mean) and is never
+ranked.
+"""
+
+
 def _escape_latex(value) -> str:
     s = str(value)
     return s.replace("_", r"\_").replace("%", r"\%")
@@ -38,6 +76,26 @@ def _format_cell(value) -> str:
     return str(value)
 
 
+def _column_marks(values: list, direction: str, eligible: list[bool]) -> dict[int, str]:
+    """Positional row index to ``"best"`` or ``"second"`` for one ranked column.
+
+    Ranking is over the distinct values, so a tie for first bolds every tied row
+    and moves the underline down to the next distinct value rather than onto the
+    other half of the tie. Fabricated rows are never eligible: a placeholder must
+    not be able to win a bold.
+    """
+    pool = {
+        i: float(v) for i, v in enumerate(values) if eligible[i] and not pd.isna(v)
+    }
+    if not pool:
+        return {}
+    ordered = sorted(set(pool.values()), reverse=direction == "max")
+    marks = {i: "best" for i, v in pool.items() if v == ordered[0]}
+    if len(ordered) > 1:
+        marks.update({i: "second" for i, v in pool.items() if v == ordered[1]})
+    return marks
+
+
 def write_booktabs_table(
     df: pd.DataFrame,
     path: Path,
@@ -47,6 +105,8 @@ def write_booktabs_table(
     wide: bool = False,
     small: bool = True,
     note: str | None = None,
+    fake: list[bool] | None = None,
+    best: dict[str, str] | None = None,
 ) -> None:
     """Write ``df`` as a booktabs table.
 
@@ -54,15 +114,28 @@ def write_booktabs_table(
     more than about four columns needs in the two-column thesis layout; ``note``
     adds an italic line under the rule, used to carry the TODO on any table
     holding placeholder rows.
+
+    ``fake`` is a per-row mask of configurations that have not been run. Those
+    rows are typeset in red and every number in them is replaced by
+    :data:`FAKE_SENTINEL`, because a plausible-looking placeholder is the one
+    that survives long enough to be read as a result. ``best`` maps a column
+    header to ``"min"`` or ``"max"`` and marks the best and second-best measured
+    value in that column; :data:`BETTER` holds the standard directions.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     if df.empty:
         print(f"[results_to_latex] Skipping {path.name} — no rows to write.")
         return
 
-    col_spec = "".join(
-        "l" if not pd.api.types.is_numeric_dtype(df[c]) else "r" for c in df.columns
-    )
+    numeric = {c: pd.api.types.is_numeric_dtype(df[c]) for c in df.columns}
+    fake_rows = list(fake) if fake is not None else [False] * len(df)
+    measured_rows = [not f for f in fake_rows]
+    marks = {
+        c: _column_marks(df[c].tolist(), d, measured_rows)
+        for c, d in (best or {}).items()
+    }
+
+    col_spec = "".join("r" if numeric[c] else "l" for c in df.columns)
     header = " & ".join(f"\\textbf{{{_escape_latex(c)}}}" for c in df.columns) + " \\\\"
     env = "table*" if wide else "table"
     # A wide table still overflows \textwidth once it carries ten or more
@@ -86,17 +159,50 @@ def write_booktabs_table(
         header,
         "\\midrule",
     ]
-    for _, row in df.iterrows():
-        lines.append(" & ".join(_format_cell(v) for v in row) + " \\\\")
+    for i in range(len(df)):
+        cells = []
+        for c, value in zip(df.columns, df.iloc[i]):
+            if fake_rows[i] and numeric[c] and not pd.isna(value):
+                direction = (best or {}).get(c) or BETTER.get(c)
+                text = str(-FAKE_SENTINEL if direction == "max" else FAKE_SENTINEL)
+            else:
+                text = _format_cell(value)
+            mark = marks.get(c, {}).get(i)
+            if mark == "best":
+                text = f"\\textbf{{{text}}}"
+            elif mark == "second":
+                text = f"\\underline{{{text}}}"
+            if fake_rows[i]:
+                text = f"\\textcolor{{red}}{{{text}}}"
+            cells.append(text)
+        lines.append(" & ".join(cells) + " \\\\")
     lines += ["\\bottomrule", "\\end{tabular}"]
     if resize:
         lines.append("}")
+
+    footnotes = []
+    if any(fake_rows):
+        footnotes.append(
+            "\\textcolor{red}{Rows in red are FABRICATED PLACEHOLDERS, not "
+            "measurements: every number in them has been replaced by the "
+            f"sentinel $\\pm${FAKE_SENTINEL}.}}"
+        )
+    if marks:
+        footnotes.append(
+            "\\textbf{Bold} marks the best value in a column and "
+            "\\underline{underline} the second best, over measured rows only. "
+            "Lower is better for error, memory, time and offline cost; higher "
+            "is better for $R^2$, correlation and savings."
+        )
     if note:
         # Notes are plain prose, so they are escaped: an unescaped underscore
         # from a filename or a flag name is a fatal error outside math mode.
+        footnotes.append(_escape_latex(note))
+    if footnotes:
         lines.append(
-            f"\\\\[4pt]\\begin{{minipage}}{{\\linewidth}}\\footnotesize\\emph{{"
-            f"{_escape_latex(note)}}}\\end{{minipage}}"
+            "\\\\[4pt]\\begin{minipage}{\\linewidth}\\footnotesize\\emph{"
+            + " ".join(footnotes)
+            + "}\\end{minipage}"
         )
     lines += [f"\\end{{{env}}}", ""]
 

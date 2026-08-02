@@ -8,11 +8,12 @@
 \toprule
 \textbf{Partitioner} & \textbf{Kind} & \textbf{Mean $k$} & \textbf{Edge cut} & \textbf{Edge cut sd} & \textbf{Imbalance (sd nodes)} & \textbf{Max part. nodes} & \textbf{Offline (s)} \\
 \midrule
-Random hashing & Generic & 4.662 & 0.598 & 0.162 & 37.891 & 6382 & 0.004 \\
-METIS & Generic & 4.662 & 0.063 & 0.053 & 30.433 & 6370 & 3.196 \\
-Level slicing & Domain & 4.662 & 0.295 & 0.236 & 0.378 & 6334 & 1.151 \\
-Span-weighted METIS & Domain & 4.662 & 0.077 & 0.060 & 30.616 & 6371 & 3.701 \\
+Random hashing & Generic & 4.662 & 0.598 & 0.162 & 37.891 & 6382 & \textbf{0.004} \\
+METIS & Generic & 4.662 & \textbf{0.063} & 0.053 & \underline{30.433} & 6370 & 3.196 \\
+Level slicing & Domain & 4.662 & 0.295 & 0.236 & \textbf{0.378} & 6334 & \underline{1.151} \\
+Span-weighted METIS & Domain & 4.662 & \underline{0.077} & 0.060 & 30.616 & 6371 & 3.701 \\
 \bottomrule
 \end{tabular}
 }
+\\[4pt]\begin{minipage}{\linewidth}\footnotesize\emph{\textbf{Bold} marks the best value in a column and \underline{underline} the second best, over measured rows only. Lower is better for error, memory, time and offline cost; higher is better for $R^2$, correlation and savings.}\end{minipage}
 \end{table*}

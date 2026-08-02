@@ -7,15 +7,16 @@
 \toprule
 \textbf{Method} & \textbf{$R^2$} & \textbf{Spearman} & \textbf{VRAM saving (\%)} & \textbf{Time saving (\%)} \\
 \midrule
-Full graph & 0.343 & 0.185 & 0.000 & 0.000 \\
-Random edge dropout & 0.215 & 0.194 & 1.489 & 0.229 \\
-Spanning forest & 0.138 & 0.282 & 2.142 & -0.101 \\
+Full graph & \textbf{0.343} & 0.185 & 0.000 & 0.000 \\
+Random edge dropout & \underline{0.215} & 0.194 & 1.489 & 0.229 \\
+Spanning forest & 0.138 & \underline{0.282} & 2.142 & -0.101 \\
 Span-weighted METIS & 0.008 & 0.263 & 0.357 & 22.412 \\
-PageRank pruning & -0.018 & 0.367 & 14.492 & 19.145 \\
-AND-gate only & -0.064 & -0.025 & 11.257 & 28.893 \\
+PageRank pruning & -0.018 & \textbf{0.367} & \textbf{14.492} & 19.145 \\
+AND-gate only & -0.064 & -0.025 & \underline{11.257} & \textbf{28.893} \\
 Level slicing & -0.142 & 0.119 & 1.487 & 18.291 \\
 Random hashing & -0.981 & -0.183 & 3.100 & 20.996 \\
-METIS & -3.062 & 0.237 & 0.279 & 24.284 \\
+METIS & -3.062 & 0.237 & 0.279 & \underline{24.284} \\
 \bottomrule
 \end{tabular}
+\\[4pt]\begin{minipage}{\linewidth}\footnotesize\emph{\textbf{Bold} marks the best value in a column and \underline{underline} the second best, over measured rows only. Lower is better for error, memory, time and offline cost; higher is better for $R^2$, correlation and savings.}\end{minipage}
 \end{table}
