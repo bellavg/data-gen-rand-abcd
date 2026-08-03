@@ -1,5 +1,26 @@
 \section{Contributions}
 \label{sec:intro:contributions}
+This thesis reduces the input rather than the model. It makes six contributions. (i) A
+corpus of AIGs tiered by \emph{optimization state} (whether a target synthesis algorithm has
+already been applied), extending OpenABC-D \citep{chowdhury2021openabc}
+(\ref{sec:method:data}). (ii) A systematic benchmark of partitioning, sparsification and
+summarization as a preprocessing step for GNN training on AIGs, measured on shrinkage, peak
+memory, speed and predictive retention. (iii) AIG-specific adaptations of each family, built
+from topological level, reconvergence structure and gate role, compared against their generic
+counterparts at equal compression. (iv) A coarsening that is provably lossless for this
+encoder \citep{bollen2023exact}, fixing a point of zero accuracy cost against which every
+lossy method is measured (\ref{sec:method:architecture:exact}), together with the
+architectural cost it imposes: normalisation and, where designs run to many levels,
+node-level positional information (\ref{sec:method:summary:level}). (v) An evaluation of
+cross-state inference, in which one set of weights is trained on reduced graphs and queried
+on full ones. (vi) A controlled comparison of three train/test protocols, random,
+recipe-disjoint and design-disjoint, ordered by the information each admits into the test set
+(\ref{sec:method:experiment:splitting}). The hypothesis under test is that the design-disjoint
+split alone measures structural inference, and that the excess accuracy of the other two is
+recognition of circuits already seen in training.
 
-\subsection{Summary of Results}
-\label{sec:intro:contributions:results}
+The corpus is the enabling contribution: it draws on 55 source designs against OpenABC-D's 29,
+and where OpenABC-D varies only the script applied to one starting circuit, it also varies the
+optimization state that script is applied to. RQ3 and RQ5 depend on that distinction
+(\ref{sec:relwork:ml4eda:datasets}).
+

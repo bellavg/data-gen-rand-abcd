@@ -1,27 +1,832 @@
-@article{Gruber1995,
-    title = {{Toward principles for the design of ontologies used for knowledge sharing?}},
-    year = {1995},
-    journal = {International Journal of Human-Computer Studies},
-    author = {Gruber, Thomas R.},
-    number = {5-6},
-    pages = {907--928},
-    volume = {43},
-    url = {http://linkinghub.elsevier.com/retrieve/pii/S1071581985710816},
-    isbn = {10715819},
-    doi = {10.1006/ijhc.1995.1081},
-    issn = {10715819},
-    pmid = {15648861},
-    arxivId = {math/0701907v3},
-    keywords = {knowledge interchange format, knowledge sharing, measurement theory, ontological commitment, ontology, ontology design}
+% =====================================================================
+% VERIFICATION NOTICE
+%
+% Every entry has been checked against DBLP field by field: authors,
+% title, venue, year and entry type. Where DBLP lists both a preprint
+% and a published record, the published record is used.
+%
+% Four entries have no DBLP record and say so in a trailing comment:
+% dickens2024convmatch (WWW 2024), mishchenko2005fraig (an unnumbered
+% Berkeley ERL technical report), and the two software entries, abc and
+% walter2025aigverse. Their metadata comes from the publisher or project
+% record, not from a guess.
+%
+% Three entries exist only as preprints and are marked as such:
+% chen2022coarsening, qor_transformer2022 and zhou2024seadag.
+%
+% One open item remains, and it is not a metadata question: the exact
+% version of the synthesis tool used for dataset generation was never
+% recorded. See the marker on the abc entry.
+% =====================================================================
+
+
+% ---------------------------------------------------------------------
+% Graph reduction: coarsening, summarization, sparsification
+% ---------------------------------------------------------------------
+
+@inproceedings{bollen2023exact,
+  title     = {Learning Graph Neural Networks using Exact Compression},
+  author    = {Bollen, Jeroen and Steegmans, Jasper and Van den Bussche, Jan and Vansummeren, Stijn},
+  booktitle = {Proceedings of the 6th Joint Workshop on Graph Data Management Experiences \& Systems (GRADES) and Network Data Analytics (NDA)},
+  pages     = {8:1--8:9},
+  publisher = {ACM},
+  year      = {2023},
+  doi       = {10.1145/3594778.3594878},
+  note      = {Collapses nodes in the same $d$-step colour-refinement class; provably identical GNN output. Graded variant $cr_c$ with $c=\infty$ (colour refinement) and $c=1$ (bisimulation)}
+}
+% Verified against DBLP conf/grades/BollenSBV23.
+
+@inproceedings{generale2022scaling,
+  title     = {Scaling {R-GCN} Training with Graph Summarization},
+  author    = {Generale, Alessandro and Blume, Till and Cochez, Michael},
+  booktitle = {Companion Proceedings of the Web Conference (WWW)},
+  pages     = {1073--1082},
+  publisher = {ACM},
+  year      = {2022},
+  doi       = {10.1145/3487553.3524719},
+  note      = {Trains on a summary graph and transfers weights back through a node-to-super-node mapping; ablation finds retaining super-node content critical}
+}
+% Verified against DBLP conf/www/GeneraleBC22.
+
+@inproceedings{hashemi2024survey,
+  title     = {A Comprehensive Survey on Graph Reduction: Sparsification, Coarsening, and Condensation},
+  author    = {Hashemi, Mohammad and Gong, Shengbo and Ni, Juntong and Fan, Wenqi and Prakash, B. Aditya and Jin, Wei},
+  booktitle = {Proceedings of the Thirty-Third International Joint Conference on Artificial Intelligence (IJCAI)},
+  pages     = {8058--8066},
+  year      = {2024}
+}
+% Verified against DBLP conf/ijcai/HashemiGNFP024 (published record, supersedes the arXiv preprint).
+
+@misc{chen2022coarsening,
+  title        = {Graph Coarsening: From Scientific Computing to Machine Learning},
+  author       = {Chen, Jie and Saad, Yousef and Zhang, Zechen},
+  year         = {2021},
+  eprint       = {2106.11863},
+  archivePrefix = {arXiv},
+  note         = {DBLP indexes only the preprint, journals/corr/abs-2106-11863; no published record}
+}
+% Verified against DBLP journals/corr/abs-2106-11863 (preprint only; year corrected from 2022).
+
+@article{shabani2023summarization,
+  title   = {A Comprehensive Survey on Graph Summarization With Graph Neural Networks},
+  author  = {Shabani, Nasrin and Wu, Jia and Beheshti, Amin and Sheng, Quan Z. and Foo, Jin and Haghighi, Venus and Hanif, Ambreen and Shahabikargar, Maryam},
+  journal = {IEEE Transactions on Artificial Intelligence},
+  volume  = {5},
+  number  = {8},
+  pages   = {3780--3800},
+  year    = {2024},
+  doi     = {10.1109/TAI.2024.3350545}
+}
+% Verified against DBLP journals/tai/ShabaniWBSFHHS24 (published record supersedes the preprint).
+
+@inproceedings{dickens2024convmatch,
+  title     = {Convolution Matching for Efficient Graph Neural Network Training},
+  author    = {Dickens, Charles and Huang, Eddie and Reganti, Aishwarya and Zhu, Jiong and Subbian, Karthik and Getoor, Lise},
+  booktitle = {Proceedings of the ACM Web Conference (WWW)},
+  year      = {2024},
+  note      = {ConvMatch and A-ConvMatch. Reference implementation: \url{https://github.com/amazon-science/convolution-matching}}
+}
+% Not indexed in DBLP; metadata taken from the publisher record.
+
+@inproceedings{ugc2024,
+  title     = {{UGC}: Universal Graph Coarsening},
+  author    = {Kataria, Mohit and Kumar, Sandeep and Jayadeva},
+  booktitle = {Advances in Neural Information Processing Systems (NeurIPS)},
+  year      = {2024},
+  note      = {Locality-sensitive hashing gives linear-time coarsening}
+}
+% Verified against DBLP conf/nips/KatariaKJ24.
+
+@article{loukas2019localvariation,
+  title     = {Graph Reduction with Spectral and Cut Guarantees},
+  author    = {Loukas, Andreas},
+  journal   = {Journal of Machine Learning Research},
+  volume    = {20},
+  pages     = {116:1--116:42},
+  year      = {2019},
+  note      = {Local Variation coarsening; restricted spectral approximation guarantee}
+}
+% Verified against DBLP journals/jmlr/Loukas19.
+
+@article{sugiyama2023kron,
+  title   = {Kron Reduction and Effective Resistance of Directed Graphs},
+  author  = {Sugiyama, Tomohiro and Sato, Kazuhiro},
+  journal = {SIAM Journal on Matrix Analysis and Applications},
+  volume  = {44},
+  number  = {1},
+  pages   = {270--292},
+  year    = {2023},
+  doi     = {10.1137/22M1480823}
+}
+% Verified against DBLP journals/siammax/SugiyamaS23 (title and both author given names were wrong).
+
+@article{karypis1997metis,
+  title     = {A Fast and High Quality Multilevel Scheme for Partitioning Irregular Graphs},
+  author    = {Karypis, George and Kumar, Vipin},
+  journal   = {SIAM Journal on Scientific Computing},
+  volume    = {20},
+  number    = {1},
+  pages     = {359--392},
+  year      = {1998},
+  doi       = {10.1137/S1064827595287997}
+}
+% Verified against DBLP journals/siamsc/KarypisK98.
+
+@inproceedings{tian2008ksnap,
+  title     = {Efficient Aggregation for Graph Summarization},
+  author    = {Tian, Yuanyuan and Hankins, Richard A. and Patel, Jignesh M.},
+  booktitle = {Proceedings of the ACM SIGMOD International Conference on Management of Data},
+  year      = {2008},
+  note      = {k-SNAP. Subsumed here by graded colour refinement at $d=1$; cited, not run}
 }
 
-@article{viola1997alignment,
-  title={Alignment by maximization of mutual information},
-  author={Viola, Paul and Wells III, William M},
-  journal={International journal of computer vision},
-  volume={24},
-  number={2},
-  pages={137--154},
-  year={1997},
-  publisher={Springer}
+@inproceedings{grohe2014colourrefinement,
+  title     = {Dimension Reduction via Colour Refinement},
+  author    = {Grohe, Martin and Kersting, Kristian and Mladenov, Martin and Selman, Erkal},
+  booktitle = {Algorithms -- ESA 2014, 22th Annual European Symposium},
+  series    = {Lecture Notes in Computer Science},
+  volume    = {8737},
+  pages     = {505--516},
+  publisher = {Springer},
+  year      = {2014},
+  doi       = {10.1007/978-3-662-44777-2_42},
+  note      = {Colour refinement computes the coarsest equitable partition -- the formal basis for losslessness under a permutation-equivariant GNN}
+}
+% Verified against DBLP conf/esa/GroheKMS14.
+
+% ---------------------------------------------------------------------
+% Sparsification: methods cited in sec:method:reduction:sparsification
+% (all verified against DBLP except kruskal1956mst, see its note)
+% ---------------------------------------------------------------------
+
+@inproceedings{rong2020dropedge,
+  title     = {DropEdge: Towards Deep Graph Convolutional Networks on Node Classification},
+  author    = {Rong, Yu and Huang, Wenbing and Xu, Tingyang and Huang, Junzhou},
+  booktitle = {International Conference on Learning Representations (ICLR)},
+  year      = {2020}
+}
+% Verified against DBLP conf/iclr/RongHXH20.
+
+@article{kruskal1956mst,
+  title   = {On the Shortest Spanning Subtree of a Graph and the Traveling Salesman Problem},
+  author  = {Kruskal, Joseph B.},
+  journal = {Proceedings of the American Mathematical Society},
+  volume  = {7},
+  number  = {1},
+  pages   = {48--50},
+  year    = {1956},
+  doi     = {10.1090/S0002-9939-1956-0078686-7},
+  note    = {Not indexed in DBLP; metadata taken from the publisher record}
+}
+
+@article{peleg1989spanners,
+  title   = {Graph Spanners},
+  author  = {Peleg, David and Sch{\"a}ffer, Alejandro A.},
+  journal = {Journal of Graph Theory},
+  volume  = {13},
+  number  = {1},
+  pages   = {99--116},
+  year    = {1989},
+  doi     = {10.1002/jgt.3190130114}
+}
+% Verified against DBLP journals/jgt/PelegS89.
+
+@article{baswana2007spanners,
+  title   = {A Simple and Linear Time Randomized Algorithm for Computing Sparse Spanners in Weighted Graphs},
+  author  = {Baswana, Surender and Sen, Sandeep},
+  journal = {Random Structures \& Algorithms},
+  volume  = {30},
+  number  = {4},
+  pages   = {532--563},
+  year    = {2007},
+  doi     = {10.1002/rsa.20130}
+}
+% Verified against DBLP journals/rsa/BaswanaS07.
+
+@article{brin1998anatomy,
+  title   = {The Anatomy of a Large-Scale Hypertextual Web Search Engine},
+  author  = {Brin, Sergey and Page, Lawrence},
+  journal = {Computer Networks},
+  volume  = {30},
+  number  = {1-7},
+  pages   = {107--117},
+  year    = {1998},
+  doi     = {10.1016/S0169-7552(98)00110-X}
+}
+% Verified against DBLP journals/cn/BrinP98.
+
+@article{langville2003pagerank,
+  title   = {Deeper Inside PageRank},
+  author  = {Langville, Amy Nicole and Meyer, Carl Dean},
+  journal = {Internet Mathematics},
+  volume  = {1},
+  number  = {3},
+  pages   = {335--380},
+  year    = {2003},
+  doi     = {10.1080/15427951.2004.10129091}
+}
+% Verified against DBLP journals/im/LangvilleM03 (DBLP year 2003; the issue itself is dated 2004).
+
+% ---------------------------------------------------------------------
+% Coarsening as preprocessing for GNN training
+% ---------------------------------------------------------------------
+
+@inproceedings{huang2021scal,
+  title  = {Scaling Up Graph Neural Networks Via Graph Coarsening},
+  author = {Huang, Zengfeng and Zhang, Shengzhong and Xi, Chong and Liu, Tang and Zhou, Min},
+  booktitle = {Proceedings of the ACM SIGKDD Conference on Knowledge Discovery and Data Mining},
+  year   = {2021},
+  note   = {SCAL. Trains on the coarsened graph and infers directly with the same weights -- the shared-weights precedent for RQ5}
+}
+
+@inproceedings{buffelli2022sizeshift,
+  title  = {SizeShiftReg: a Regularization Method for Improving Size-Generalization in Graph Neural Networks},
+  author = {Buffelli, Davide and Li{\'o}, Pietro and Vandin, Fabio},
+  booktitle = {Advances in Neural Information Processing Systems (NeurIPS)},
+  year   = {2022},
+  note   = {Trains so embeddings stay consistent across coarsening ratios; the size-shift framing behind RQ5}
+}
+
+@inproceedings{jin2022gcond,
+  title  = {Graph Condensation for Graph Neural Networks},
+  author = {Jin, Wei and Zhao, Lingxiao and Zhang, Shichang and Liu, Yozen and Tang, Jiliang and Shah, Neil},
+  booktitle = {International Conference on Learning Representations (ICLR)},
+  year   = {2022},
+  note   = {GCond. Excluded here: no node correspondence, label-dependent, architecture-tied}
+}
+
+@article{cts_bench2026,
+  title   = {CTS-Bench: Benchmarking Graph Coarsening Trade-offs for GNNs in Clock Tree Synthesis},
+  author  = {Khadka, Barsat and Roxy, Kawsher A. and Ahmed, Md Rubel},
+  year    = {2026},
+  journal = {arXiv preprint arXiv:2602.19330},
+  doi     = {10.48550/arXiv.2602.19330},
+  note    = {Nearest competitor. Post-placement gate-level netlists, clock-skew prediction; one bespoke spatial clustering heuristic. 17.2x memory / 3x speed at negative zero-shot $R^2$; calls for domain-aware coarsening. DBLP: journals/corr/abs-2602-19330, preprint only, no published venue as of verification}
+}
+
+% ---------------------------------------------------------------------
+% Logic synthesis, AIGs, and ABC
+% ---------------------------------------------------------------------
+
+@misc{mishchenko2005fraig,
+  title  = {FRAIGs: A Unifying Representation for Logic Synthesis and Verification},
+  author = {Mishchenko, Alan and Chatterjee, Satrajit and Jiang, Roland and Brayton, Robert K.},
+  year   = {2005},
+  note   = {ERL Technical Report, UC Berkeley. Functionally reduced AIGs via SAT sweeping, the functional end of the equivalence spectrum, used here only as a leakage control}
+}
+% Not indexed in DBLP; it is an unnumbered ERL technical report.
+
+@inproceedings{mishchenko2006rewriting,
+  title     = {DAG-Aware AIG Rewriting: A Fresh Look at Combinational Logic Synthesis},
+  author    = {Mishchenko, Alan and Chatterjee, Satrajit and Brayton, Robert K.},
+  booktitle = {Proceedings of the 43rd Design Automation Conference (DAC)},
+  pages     = {532--535},
+  publisher = {ACM},
+  year      = {2006},
+  doi       = {10.1145/1146909.1147048},
+  note      = {Defines the rewrite/refactor primitives and the MFFC as the unit refactoring operates on -- the basis for the S6 domain argument}
+}
+% Verified against DBLP conf/dac/MishchenkoCB06.
+
+@inproceedings{bjesse2004compression,
+  title     = {DAG-Aware Circuit Compression for Formal Verification},
+  author    = {Bjesse, Per and Bor{\"a}lv, Arne},
+  booktitle = {Proceedings of the International Conference on Computer-Aided Design (ICCAD)},
+  pages     = {42--49},
+  publisher = {IEEE Computer Society / ACM},
+  year      = {2004},
+  doi       = {10.1109/ICCAD.2004.1382541},
+  note      = {Origin of DAG-aware rewriting over precomputed equivalents}
+}
+% Verified against DBLP conf/iccad/BjesseB04.
+
+@article{kuehlmann2002robust,
+  title   = {Robust Boolean Reasoning for Equivalence Checking and Functional Property Verification},
+  author  = {Kuehlmann, Andreas and Paruthi, Viresh and Krohm, Florian and Ganai, Malay K.},
+  journal = {IEEE Transactions on Computer-Aided Design of Integrated Circuits and Systems},
+  volume  = {21},
+  number  = {12},
+  pages   = {1377--1394},
+  year    = {2002},
+  doi     = {10.1109/TCAD.2002.804386},
+  note    = {Structural hashing (one-level lookup on construction) for AIGs}
+}
+% Verified against DBLP journals/tcad/KuehlmannPKG02.
+
+@article{chatterjee2006structuralbias,
+  title   = {Reducing Structural Bias in Technology Mapping},
+  author  = {Chatterjee, Satrajit and Mishchenko, Alan and Brayton, Robert K. and Wang, Xinning and Kam, Timothy},
+  journal = {IEEE Transactions on Computer-Aided Design of Integrated Circuits and Systems},
+  volume  = {25},
+  number  = {12},
+  pages   = {2894--2903},
+  year    = {2006},
+  doi     = {10.1109/TCAD.2006.882484},
+  note    = {Names structural bias: the structure a circuit arrives in bounds what the optimizer can reach}
+}
+% Verified against DBLP journals/tcad/ChatterjeeMBWK06 (journal version supersedes conf/iccad/ChatterjeeMBWK05).
+
+@inproceedings{gardner2025bias,
+  title     = {Bias by Design: Diversity Quantification to Mitigate Structural Bias Effects in {AIG} Logic Optimization},
+  author    = {Gardner, Isabella Venancia and Walter, Marcel and Miyasaka, Yukio and Wille, Robert and Cochez, Michael},
+  booktitle = {Design, Automation \& Test in Europe Conference (DATE)},
+  pages     = {1--7},
+  publisher = {IEEE},
+  year      = {2025},
+  doi       = {10.23919/DATE64628.2025.10993009},
+  note      = {Structural bias: an optimizer's outcome is bounded by the structure of the AIG it is handed. Proposes AIG-specific similarity scores to quantify the diversity of a starting set}
+}
+% Verified against DBLP conf/date/GardnerWMWC25.
+
+@inproceedings{mishchenko2006scalable,
+  title     = {Scalable Logic Synthesis Using a Simple Circuit Structure},
+  author    = {Mishchenko, Alan and Brayton, Robert K.},
+  booktitle = {Proceedings of the 15th International Workshop on Logic \& Synthesis (IWLS)},
+  pages     = {15--22},
+  year      = {2006},
+  note      = {Not indexed in DBLP; metadata taken from the paper. Source of the resubstitution command and the compress2rs script that C2RS aliases}
+}
+
+@inproceedings{brayton2010abc,
+  title     = {{ABC}: An Academic Industrial-Strength Verification Tool},
+  author    = {Brayton, Robert K. and Mishchenko, Alan},
+  booktitle = {Computer Aided Verification (CAV)},
+  series    = {Lecture Notes in Computer Science},
+  volume    = {6174},
+  pages     = {24--40},
+  publisher = {Springer},
+  year      = {2010},
+  doi       = {10.1007/978-3-642-14295-6\_5},
+  note      = {The citable record for the ABC system. The software itself is at \url{https://github.com/berkeley-abc/abc}}
+}
+% Verified against DBLP conf/cav/BraytonM10.
+
+@article{li2024orchestration,
+  title   = {DAG-Aware Synthesis Orchestration},
+  author  = {Li, Yingjie and Liu, Mingju and Ren, Haoxing and Mishchenko, Alan and Yu, Cunxi},
+  journal = {IEEE Transactions on Computer-Aided Design of Integrated Circuits and Systems},
+  volume  = {43},
+  number  = {12},
+  pages   = {4666--4675},
+  year    = {2024},
+  doi     = {10.1109/TCAD.2024.3397052},
+  note    = {The orchestration policy behind the target algorithm: per-node selection among rewrite, refactor and resubstitution instead of a fixed command sequence}
+}
+% Verified against DBLP journals/tcad/LiLRMY24 (published record, supersedes arXiv 2310.07846).
+
+@article{lengauer1979dominators,
+  title   = {A Fast Algorithm for Finding Dominators in a Flowgraph},
+  author  = {Lengauer, Thomas and Tarjan, Robert Endre},
+  journal = {ACM Transactions on Programming Languages and Systems},
+  volume  = {1},
+  number  = {1},
+  pages   = {121--141},
+  year    = {1979},
+  doi     = {10.1145/357062.357071}
+}
+% Verified against DBLP journals/toplas/LengauerT79.
+
+@book{demicheli1994synthesis,
+  title     = {Synthesis and Optimization of Digital Circuits},
+  author    = {De Micheli, Giovanni},
+  publisher = {McGraw-Hill},
+  year      = {1994},
+  note      = {Not indexed in DBLP; metadata taken from the publisher record}
+}
+
+@misc{abc,
+  title  = {ABC: A System for Sequential Synthesis and Verification},
+  author = {{Berkeley Logic Synthesis and Verification Group}},
+  note   = {\url{https://github.com/berkeley-abc/abc}}
+}
+% TODO: pin the commit/version actually used for dataset generation
+
+@misc{walter2025aigverse,
+  title  = {aigverse: A Python Library for Working with Logic Networks, Synthesis, and Optimization},
+  author = {Walter, Marcel},
+  year   = {2025},
+  note   = {MIT licensed. \url{https://github.com/marcelwa/aigverse}. Not indexed in DBLP; the version used is recorded in the reproducibility subsection}
+}
+% NOT the source of the eight synthetic designs, despite the naming coincidence: aigverse
+% gained a random AIG generator only on 2026-03-09 (v0.1.0), five weeks after those files
+% were committed. See the TODO in sections/methodology/data.tex.
+
+@misc{soeken2018epfl,
+  title  = {The EPFL Logic Synthesis Libraries},
+  author = {Soeken, Mathias and Riener, Heinz and Haaswijk, Winston and Testa, Eleonora and Schmitt, Bruno and Meuli, Giulia and Mozafari, Fereshte and Lee, Siang-Yun and Tempia Calvino, Alessandro and Marakkalage, Dewmini Sudara and De Micheli, Giovanni},
+  year   = {2018},
+  note   = {arXiv:1805.05121. mockturtle/kitty/lorina. Defines the random AIG sampling procedure behind the eight synthetic designs}
+}
+
+% ---------------------------------------------------------------------
+% Benchmark suites contributing source circuits
+% ---------------------------------------------------------------------
+
+@inproceedings{amaru2015epfl,
+  title     = {The EPFL Combinational Benchmark Suite},
+  author    = {Amar{\'u}, Luca and Gaillardon, Pierre-Emmanuel and De Micheli, Giovanni},
+  booktitle = {Proceedings of the 24th International Workshop on Logic \& Synthesis (IWLS)},
+  year      = {2015},
+  note      = {MIT licensed. Source of the eight arithmetic circuits in the corpus}
+}
+
+@inproceedings{brglez1985iscas,
+  title     = {A Neutral Netlist of 10 Combinational Benchmark Circuits and a Target Translator in Fortran},
+  author    = {Brglez, Franc and Fujiwara, Hideo},
+  booktitle = {Proceedings of the IEEE International Symposium on Circuits and Systems (ISCAS)},
+  pages     = {677--692},
+  year      = {1985}
+}
+
+@techreport{yang1991mcnc,
+  title       = {Logic Synthesis and Optimization Benchmarks User Guide: Version 3.0},
+  author      = {Yang, Saeyang},
+  institution = {Microelectronics Center of North Carolina (MCNC)},
+  year        = {1991}
+}
+
+% ---------------------------------------------------------------------
+% Machine learning for logic synthesis
+% ---------------------------------------------------------------------
+
+@article{chowdhury2021openabc,
+  title   = {OpenABC-D: A Large-Scale Dataset For Machine Learning Guided Integrated Circuit Synthesis},
+  author  = {Chowdhury, Animesh Basak and Tan, Benjamin and Karri, Ramesh and Garg, Siddharth},
+  year    = {2021},
+  journal = {arXiv preprint arXiv:2110.11292},
+  note    = {SynthNet. Graph-level labels including percentage of nodes optimized -- the closest published analogue of the optimizability label used here}
+}
+
+@inproceedings{deng2024hoga,
+  title     = {Less is More: Hop-Wise Graph Attention for Scalable and Generalizable Learning on Circuits},
+  author    = {Deng, Chenhui and Yue, Zichao and Yu, Cunxi and Sarar, Gokce and Carey, Ryan and Jain, Rajeev and Zhang, Zhiru},
+  booktitle = {Proceedings of the Design Automation Conference (DAC)},
+  year      = {2024},
+  note      = {HOGA. Hop-wise attention over precomputed features; no message passing at training time}
+}
+% Verified against DBLP conf/dac/DengYYSCJZ24.
+
+@inproceedings{li2022deepgate,
+  title     = {DeepGate: Learning Neural Representations of Logic Gates},
+  author    = {Li, Min and Khan, Sadaf and Shi, Zhengyuan and Wang, Naixing and Yu, Huang and Xu, Qiang},
+  booktitle = {Proceedings of the Design Automation Conference (DAC)},
+  year      = {2022}
+}
+% Verified against DBLP conf/dac/0019KSWY022.
+
+@inproceedings{shi2024deepgate3,
+  title     = {DeepGate3: Towards Scalable Circuit Representation Learning},
+  author    = {Shi, Zhengyuan and Zheng, Ziyang and Khan, Sadaf and Zhong, Jianyuan and Li, Min and Xu, Qiang},
+  booktitle = {IEEE/ACM International Conference on Computer-Aided Design (ICCAD)},
+  year      = {2024},
+  note      = {Pooling transformer over subcircuits. Scales the model, not the input}
+}
+% Verified against DBLP conf/iccad/ShiZKZ0024.
+
+@inproceedings{deepgate4_2025,
+  title     = {DeepGate4: Efficient and Effective Representation Learning for Circuit Design at Scale},
+  author    = {Zheng, Ziyang and Huang, Shan and Zhong, Jianyuan and Shi, Zhengyuan and Dai, Guohao and Xu, Ningyi and Xu, Qiang},
+  booktitle = {International Conference on Learning Representations (ICLR)},
+  publisher = {OpenReview.net},
+  year      = {2025},
+  url       = {https://openreview.net/forum?id=b10lRabU9W},
+  note      = {Sparse graph attention transformer, sub-linear memory, virtual edges over $k$-hop cones}
+}
+% Verified against DBLP conf/iclr/ZhengHZSDX025.
+
+@inproceedings{polargate2024,
+  title  = {PolarGate: Breaking the Functionality Representation Bottleneck of And-Inverter Graph Neural Network},
+  author = {Liu, Jiawei and Zhai, Jianwang and Zhao, Mingyu and Lin, Zhe and Yu, Bei and Shi, Chuan},
+  booktitle = {Proceedings of the International Conference on Computer-Aided Design (ICCAD)},
+  year   = {2024},
+  doi    = {10.1145/3676536.3676834},
+  note   = {Polarity/functionality bottleneck in AIG GNNs -- supports treating inverter polarity as a first-class relation}
+}
+% Verified against DBLP conf/iccad/0006ZZLY024. Title corrected: "And-Inverter Graph Neural
+% Network", not "Logic Gate Networks".
+
+@inproceedings{wu2022lostin,
+  title     = {{LOSTIN}: Logic Optimization via Spatio-Temporal Information with Hybrid Graph Models},
+  author    = {Wu, Nan and Lee, Jiwon and Xie, Yuan and Hao, Cong},
+  booktitle = {IEEE International Conference on Application-specific Systems, Architectures and Processors (ASAP)},
+  year      = {2022},
+  note      = {Encodes the synthesis recipe as a super-node, a temporal use of super-nodes orthogonal to the structural super-nodes here}
+}
+% Verified against DBLP conf/asap/WuLXH22.
+
+@misc{qor_transformer2022,
+  title         = {Rethinking Reinforcement Learning based Logic Synthesis},
+  author        = {Wang, Chao and Chen, Chen and Li, Dong and Wang, Bin},
+  year          = {2022},
+  eprint        = {2205.07614},
+  archivePrefix = {arXiv},
+  note          = {Joint recipe transformer and circuit encoder for quality-of-result prediction. DBLP indexes only the preprint, journals/corr/abs-2205-07614}
+}
+% Verified against DBLP journals/corr/abs-2205-07614 (preprint only; arXiv id corrected from 2207.11437).
+
+@inproceedings{hosny2020drills,
+  title     = {DRiLLS: Deep Reinforcement Learning for Logic Synthesis},
+  author    = {Hosny, Abdelrahman and Hashemi, Soheil and Shalan, Mohamed and Reda, Sherief},
+  booktitle = {Proceedings of the Asia and South Pacific Design Automation Conference (ASP-DAC)},
+  year      = {2020},
+  doi       = {10.1109/ASP-DAC47756.2020.9045559},
+  note      = {Representative learned-synthesis-script-generation work: an RL agent selects among the same primitive transformations at each step}
+}
+% Verified against DBLP conf/aspdac/HosnyHSR20 (published record, supersedes arXiv 1911.04021).
+
+@article{karimi2024lsoformer,
+  title   = {Logic Synthesis Optimization with Predictive Self-Supervision via Causal Transformers},
+  author  = {Karimi, Raika and Faez, Faezeh and Zhang, Yingxue and Li, Xing and Chen, Lei and Yuan, Mingxuan and Biparva, Mahdi},
+  year    = {2024},
+  journal = {arXiv preprint arXiv:2409.10653},
+  doi     = {10.48550/arXiv.2409.10653},
+  note    = {LSOformer. One of the four surveyed papers reporting matched seen/unseen-design QoR results}
+}
+% Verified against DBLP journals/corr/abs-2409-10653; no non-preprint venue indexed as of verification.
+
+@inproceedings{jiang2025aigtiming,
+  title     = {ML-Based AIG Timing Prediction to Enhance Logic Optimization},
+  author    = {Jiang, Wenjing and Yan, Jin and Sapatnekar, Sachin S.},
+  booktitle = {Design, Automation and Test in Europe Conference (DATE)},
+  year      = {2025},
+  doi       = {10.23919/DATE64628.2025.10993071},
+  note      = {XGBoost AIG-timing predictor; one of the four surveyed papers reporting matched seen/unseen-design results}
+}
+% Verified against DBLP conf/date/JiangYS25 (published record, supersedes arXiv 2412.02268).
+
+@article{ni2025openlsdgf,
+  title   = {OpenLS-DGF: An Adaptive Open-Source Dataset Generation Framework for Machine-Learning Tasks in Logic Synthesis},
+  author  = {Ni, Liwei and Wang, Rui and Liu, Miao and Meng, Xingyu and Lin, Xiaoze and Liu, Junfeng and Luo, Guojie and Chu, Zhufei and Qian, Weikang and Yang, Xiaoyan and Xie, Biwei and Li, Xingquan and Li, Huawei},
+  journal = {IEEE Transactions on Computer-Aided Design of Integrated Circuits and Systems},
+  volume  = {44},
+  number  = {10},
+  pages   = {3830--3843},
+  year    = {2025},
+  doi     = {10.1109/TCAD.2025.3555506},
+  note    = {Adaptive open-source dataset generation framework for ML4EDA, positioned against the dataset built here}
+}
+% Verified against DBLP journals/tcad/NiWLMLLLCQYXLL25 (published record, supersedes arXiv 2411.09422).
+
+@inproceedings{chowdhury2023imagenets,
+  title     = {Towards the Imagenets of ML4EDA},
+  author    = {Chowdhury, Animesh Basak and Thakur, Shailja and Pearce, Hammond and Karri, Ramesh and Garg, Siddharth},
+  booktitle = {Proceedings of the IEEE/ACM International Conference on Computer-Aided Design (ICCAD)},
+  year      = {2023},
+  doi       = {10.1109/ICCAD57390.2023.10323663},
+  note      = {Invited paper. Position piece on benchmark and dataset standards for ML4EDA, motivating the framing used here}
+}
+% Verified against DBLP conf/iccad/ChowdhuryTPKG23 (published record, supersedes arXiv 2310.10560).
+
+@article{liu2026ml4lssurvey,
+  title   = {A Survey of Machine Learning Approaches in Logic Synthesis},
+  author  = {Liu, Miao and Ni, Liwei and Liu, Junfeng and Meng, Xingyu and Wang, Rui and Lin, Xiaoze and Lai, Xinhua and Li, Xingquan and Xu, Jungang},
+  journal = {ACM Transactions on Design Automation of Electronic Systems},
+  volume  = {31},
+  number  = {2},
+  pages   = {38:1--38:43},
+  year    = {2026},
+  doi     = {10.1145/3785362},
+  note    = {Divides the field into methods that predict a synthesis outcome and methods that replace the heuristic choosing it}
+}
+% Verified against DBLP journals/todaes/LiuNLMWLLLX26.
+
+@article{chowdhury2023bullseye,
+  title   = {Bulls-Eye: Active Few-Shot Learning Guided Logic Synthesis},
+  author  = {Chowdhury, Animesh Basak and Tan, Benjamin and Carey, Ryan and Jain, Tushit and Karri, Ramesh and Garg, Siddharth},
+  journal = {IEEE Transactions on Computer-Aided Design of Integrated Circuits and Systems},
+  volume  = {42},
+  number  = {8},
+  pages   = {2580--2590},
+  year    = {2023},
+  doi     = {10.1109/TCAD.2022.3226668},
+  note    = {Fine-tunes a pre-trained predictor on past synthesis data to score recipes for an unseen netlist}
+}
+% Verified against DBLP journals/tcad/Chowdhury0CJKG23 (published record, supersedes arXiv 2204.02368,
+% whose preprint title was "Too Big to Fail? Active Few-shot Learning Guided Logic Synthesis").
+
+@inproceedings{li2025circuittransformer,
+  title     = {Circuit Transformer: A Transformer That Preserves Logical Equivalence},
+  author    = {Li, Xihan and Li, Xing and Chen, Lei and Zhang, Xing and Yuan, Mingxuan and Wang, Jun},
+  booktitle = {International Conference on Learning Representations (ICLR)},
+  publisher = {OpenReview.net},
+  year      = {2025},
+  url       = {https://openreview.net/forum?id=kpnW12Lm9p},
+  note      = {Emits a circuit as a depth-first traversal, one gate at a time, under a decoding constraint that holds equivalence}
+}
+% Verified against DBLP conf/iclr/0001LCZYW25.
+
+@misc{zhou2024seadag,
+  title         = {SeaDAG: Semi-autoregressive Diffusion for Conditional Directed Acyclic Graph Generation},
+  author        = {Zhou, Xinyi and Li, Xing and Lian, Yingzhao and Wang, Yiwen and Chen, Lei and Yuan, Mingxuan and Hao, Jianye and Chen, Guangyong and Heng, Pheng-Ann},
+  year          = {2024},
+  eprint        = {2410.16119},
+  archivePrefix = {arXiv},
+  doi           = {10.48550/arXiv.2410.16119},
+  note          = {Layer-wise denoising for DAG generation under a property condition. DBLP indexes only the preprint, journals/corr/abs-2410-16119}
+}
+% Verified against DBLP journals/corr/abs-2410-16119 (preprint only; no published venue indexed as of verification).
+
+@inproceedings{lv2023gptls,
+  title     = {{GPT-LS}: Generative Pre-Trained Transformer with Offline Reinforcement Learning for Logic Synthesis},
+  author    = {Lv, Chenyang and Wei, Ziling and Qian, Weikang and Ye, Junjie and Feng, Chang and He, Zhezhi},
+  booktitle = {Proceedings of the IEEE International Conference on Computer Design (ICCD)},
+  pages     = {320--326},
+  year      = {2023},
+  doi       = {10.1109/ICCD58817.2023.00056},
+  note      = {Recasts script construction as sequence generation, pre-trained across circuits by offline reinforcement learning}
+}
+% Verified against DBLP conf/iccd/LvWQYFH23.
+
+@inproceedings{shi2023deepgate2,
+  title     = {DeepGate2: Functionality-Aware Circuit Representation Learning},
+  author    = {Shi, Zhengyuan and Pan, Hongyang and Khan, Sadaf and Li, Min and Liu, Yi and Huang, Junhua and Zhen, Hui-Ling and Yuan, Mingxuan and Chu, Zhufei and Xu, Qiang},
+  booktitle = {IEEE/ACM International Conference on Computer-Aided Design (ICCAD)},
+  pages     = {1--9},
+  year      = {2023},
+  doi       = {10.1109/ICCAD57390.2023.10323798},
+  note      = {Supervises gate embeddings with pairwise truth-table differences instead of structure alone}
+}
+% Verified against DBLP conf/iccad/ShiPKLLHZYCX23 (published record, supersedes arXiv 2305.16373).
+
+@inproceedings{wu2023gamora,
+  title     = {Gamora: Graph Learning based Symbolic Reasoning for Large-Scale Boolean Networks},
+  author    = {Wu, Nan and Li, Yingjie and Hao, Cong and Dai, Steve and Yu, Cunxi and Xie, Yuan},
+  booktitle = {Proceedings of the Design Automation Conference (DAC)},
+  pages     = {1--6},
+  year      = {2023},
+  doi       = {10.1109/DAC56929.2023.10247828},
+  note      = {Node-level functional-block recovery reported on Boolean networks of over 33 million nodes}
+}
+% Verified against DBLP conf/dac/WuLHDYX23 (published record, supersedes arXiv 2303.08256).
+
+@inproceedings{wu2025mgvga,
+  title     = {Circuit Representation Learning with Masked Gate Modeling and Verilog-AIG Alignment},
+  author    = {Wu, Haoyuan and Zheng, Haisheng and Pu, Yuan and Yu, Bei},
+  booktitle = {International Conference on Learning Representations (ICLR)},
+  publisher = {OpenReview.net},
+  year      = {2025},
+  url       = {https://openreview.net/forum?id=US9k5TXVLZ},
+  note      = {MGVGA. Masks gates in latent space so the pretext task does not destroy logical equivalence}
+}
+% Verified against DBLP conf/iclr/WuZ0025 (published record, supersedes arXiv 2502.12732).
+
+% ---------------------------------------------------------------------
+% Graph neural networks: architectures, expressivity, scaling
+% ---------------------------------------------------------------------
+
+@inproceedings{kipf2017gcn,
+  title     = {Semi-Supervised Classification with Graph Convolutional Networks},
+  author    = {Kipf, Thomas N. and Welling, Max},
+  booktitle = {International Conference on Learning Representations (ICLR)},
+  year      = {2017}
+}
+% Verified against DBLP conf/iclr/KipfW17.
+
+@inproceedings{hamilton2017graphsage,
+  title     = {Inductive Representation Learning on Large Graphs},
+  author    = {Hamilton, William L. and Ying, Zhitao and Leskovec, Jure},
+  booktitle = {Advances in Neural Information Processing Systems (NIPS)},
+  pages     = {1024--1034},
+  year      = {2017}
+}
+% Verified against DBLP conf/nips/HamiltonYL17 (author listed there as Zhitao, not Rex, Ying).
+
+@inproceedings{zheng2020distdgl,
+  title     = {DistDGL: Distributed Graph Neural Network Training for Billion-Scale Graphs},
+  author    = {Zheng, Da and Ma, Chao and Wang, Minjie and Zhou, Jinjing and Su, Qidong and Song, Xiang and Gan, Quan and Zhang, Zheng and Karypis, George},
+  booktitle = {IEEE/ACM Workshop on Irregular Applications: Architectures and Algorithms (IA3)},
+  year      = {2020},
+  doi       = {10.1109/IA351965.2020.00011},
+  note      = {Graph partitioning across devices for distributed GNN training -- the setting in which cutting edges is forced rather than chosen}
+}
+% Verified against DBLP conf/sc/Zheng0WZSSGZK20 (published record, supersedes arXiv 2010.05337).
+
+@inproceedings{xu2019gin,
+  title     = {How Powerful are Graph Neural Networks?},
+  author    = {Xu, Keyulu and Hu, Weihua and Leskovec, Jure and Jegelka, Stefanie},
+  booktitle = {International Conference on Learning Representations (ICLR)},
+  year      = {2019}
+}
+% Verified against DBLP conf/iclr/XuHLJ19.
+
+@inproceedings{xu2018jk,
+  title     = {Representation Learning on Graphs with Jumping Knowledge Networks},
+  author    = {Xu, Keyulu and Li, Chengtao and Tian, Yonglong and Sonobe, Tomohiro and Kawarabayashi, Ken-ichi and Jegelka, Stefanie},
+  booktitle = {Proceedings of the International Conference on Machine Learning (ICML)},
+  year      = {2018}
+}
+% Verified against DBLP conf/icml/XuLTSKJ18.
+
+@inproceedings{luo2024gnnplus,
+  title     = {Can Classic GNNs Be Strong Baselines for Graph-level Tasks? Simple Architectures Meet Excellence},
+  author    = {Luo, Yuankai and Shi, Lei and Wu, Xiao-Ming},
+  booktitle = {Proceedings of the International Conference on Machine Learning (ICML)},
+  series    = {PMLR},
+  volume    = {267},
+  year      = {2025},
+  note      = {GNN+ -- the encoder this work builds on. arXiv:2502.09263. Implementation: \url{https://github.com/LUOyk1999/GNNPlus}}
+}
+
+@inproceedings{rampasek2022graphgps,
+  title     = {Recipe for a General, Powerful, Scalable Graph Transformer},
+  author    = {Ramp\'{a}sek, Ladislav and Galkin, Michael and Dwivedi, Vijay Prakash and Luu, Anh Tuan and Wolf, Guy and Beaini, Dominique},
+  booktitle = {Advances in Neural Information Processing Systems (NeurIPS)},
+  year      = {2022},
+  note      = {arXiv:2205.12454}
+}
+% Verified against DBLP conf/nips/RampasekGDLWB22 (Rampásek without the hácek on s; Galkin is Michael there).
+
+@inproceedings{cai2021graphnorm,
+  title     = {GraphNorm: A Principled Approach to Accelerating Graph Neural Network Training},
+  author    = {Cai, Tianle and Luo, Shengjie and Xu, Keyulu and He, Di and Liu, Tie-Yan and Wang, Liwei},
+  booktitle = {Proceedings of the International Conference on Machine Learning (ICML)},
+  year      = {2021}
+}
+
+@inproceedings{alon2021oversquashing,
+  title     = {On the Bottleneck of Graph Neural Networks and its Practical Implications},
+  author    = {Alon, Uri and Yahav, Eran},
+  booktitle = {International Conference on Learning Representations (ICLR)},
+  year      = {2021},
+  note      = {Over-squashing. The mechanism behind the hypothesis that path-contracting coarsening can improve rather than degrade accuracy on deep graphs}
+}
+% Verified against DBLP conf/iclr/0002Y21.
+
+@inproceedings{dwivedi2022lrgb,
+  title     = {Long Range Graph Benchmark},
+  author    = {Dwivedi, Vijay Prakash and Ramp{\'a}sek, Ladislav and Galkin, Michael and Parviz, Ali and Wolf, Guy and Luu, Anh Tuan and Beaini, Dominique},
+  booktitle = {Advances in Neural Information Processing Systems (NeurIPS) Datasets and Benchmarks Track},
+  year      = {2022}
+}
+% Verified against DBLP conf/nips/DwivediRGPWLB22.
+
+@inproceedings{thost2021dagnn,
+  title     = {Directed Acyclic Graph Neural Networks},
+  author    = {Thost, Veronika and Chen, Jie},
+  booktitle = {International Conference on Learning Representations (ICLR)},
+  year      = {2021}
+}
+
+@inproceedings{zhang2019dvae,
+  title     = {D-VAE: A Variational Autoencoder for Directed Acyclic Graphs},
+  author    = {Zhang, Muhan and Jiang, Shali and Cui, Zhicheng and Garnett, Roman and Chen, Yixin},
+  booktitle = {Advances in Neural Information Processing Systems (NeurIPS)},
+  year      = {2019}
+}
+
+@inproceedings{gallicchio2020fastdeep,
+  title     = {Fast and Deep Graph Neural Networks},
+  author    = {Gallicchio, Claudio and Micheli, Alessio},
+  booktitle = {Proceedings of the AAAI Conference on Artificial Intelligence (AAAI)},
+  pages     = {3898--3905},
+  year      = {2020},
+  doi       = {10.1609/aaai.v34i04.5803},
+  note      = {Untrained, randomly initialised graph convolution with only the readout fitted, the precedent for this work's random-encoder control}
+}
+% Verified against DBLP conf/aaai/GallicchioM20.
+
+% ---------------------------------------------------------------------
+% Tooling
+% ---------------------------------------------------------------------
+
+@inproceedings{fey2019pyg,
+  title     = {Fast Graph Representation Learning with PyTorch Geometric},
+  author    = {Fey, Matthias and Lenssen, Jan E.},
+  booktitle = {ICLR Workshop on Representation Learning on Graphs and Manifolds},
+  year      = {2019}
+}
+
+@inproceedings{akiba2019optuna,
+  title     = {Optuna: A Next-generation Hyperparameter Optimization Framework},
+  author    = {Akiba, Takuya and Sano, Shotaro and Yanase, Toshihiko and Ohta, Takeru and Koyama, Masanori},
+  booktitle = {Proceedings of the ACM SIGKDD Conference on Knowledge Discovery and Data Mining},
+  year      = {2019}
+}
+
+% ---------------------------------------------------------------------
+% Statistical reporting
+% ---------------------------------------------------------------------
+
+@article{demsar2006statistical,
+  title     = {Statistical Comparisons of Classifiers over Multiple Data Sets},
+  author    = {Dem{\v{s}}ar, Janez},
+  journal   = {Journal of Machine Learning Research},
+  volume    = {7},
+  pages     = {1--30},
+  year      = {2006}
+}
+
+@inproceedings{reimers2017scoredistributions,
+  title     = {Reporting Score Distributions Makes a Difference: Performance Study of {LSTM}-networks for Sequence Tagging},
+  author    = {Reimers, Nils and Gurevych, Iryna},
+  booktitle = {Proceedings of the Conference on Empirical Methods in Natural Language Processing (EMNLP)},
+  pages     = {338--348},
+  year      = {2017}
+}
+
+@inproceedings{bouthillier2021variance,
+  title     = {Accounting for Variance in Machine Learning Benchmarks},
+  author    = {Bouthillier, Xavier and Delaunay, Pierre and Bronzi, Mirko and Trofimov, Assya and Nichyporuk, Brennan and Szeto, Justin and Mohammadi Sepahvand, Nazanin and Raff, Edward and Madan, Kanika and Voleti, Vikram and Ebrahimi Kahou, Samira and Michalski, Vincent and Arbel, Tal and Pal, Chris and Varoquaux, Ga{\"e}l and Vincent, Pascal},
+  booktitle = {Proceedings of the Conference on Machine Learning and Systems (MLSys)},
+  year      = {2021}
 }

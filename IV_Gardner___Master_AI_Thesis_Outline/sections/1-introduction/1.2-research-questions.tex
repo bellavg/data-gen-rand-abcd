@@ -3,41 +3,137 @@
 
 \subsection{RQ1: Task Feasibility and Baseline}
 \label{sec:intro:rq1}
+How well can a GNN predict the optimizability of a circuit directly from
+its full, unreduced AIG representation, relative to trivial predictors and published
+circuit-representation models?
 
 \subsubsection{RQ1a: Protocol Sensitivity}
+How much of the RQ1 result is attributable to the assignment of graphs to splits rather than
+to the encoder? One model is trained under three protocols differing in nothing but that
+assignment: a random split, a recipe-disjoint split withholding whole transformation recipes,
+and the design-disjoint split withholding whole source circuits, the protocol behind every
+result reported here (\ref{sec:method:experiment:splitting}). The three are nested in what each
+admits into the test set, and the prediction under test is an ordering of the $R^{2}$
+of~\eqref{eq:method:r2},
+\begin{equation}
+    R^{2}_{\mathrm{random}} \;\geq\; R^{2}_{\mathrm{recipe}} \;\geq\; R^{2}_{\mathrm{design}},
+    \label{eq:intro:protocol-ordering}
+\end{equation}
+whose two gaps measure design recognition rather than structural inference
+(\ref{sec:results:rq1:protocol}).
 
 \subsection{RQ2: Reduction Efficiency}
 \label{sec:intro:rq2}
+Applied to AIGs, how do partitioning, sparsification and summarization/coarsening differ in
+retention $\eta_{\mathcal{V}}, \eta_{\mathcal{E}}$ of~\eqref{eq:prelim:retention}, peak memory,
+training and inference throughput, and the offline cost of the reduction itself?
 
 \subsection{RQ3: Predictive Retention and Trade-offs}
 \label{sec:intro:rq3}
+To what extent do models trained on reduced AIGs retain predictive accuracy (Smooth L1 loss,
+RMSE, $R^2$) and circuit-ranking ability (Spearman correlation) relative to the full-graph
+baseline of RQ1, and which methods retain the most accuracy per unit of memory and time saved?
 
 \subsubsection{RQ3a: Exact and Inexact Compression}
 \label{sec:intro:rq3a}
+How much compression do AIGs admit at zero accuracy cost, and what does each further
+increment cost once that bound is passed? The provably lossless coarsening
+of~\ref{sec:method:architecture:exact} fixes that bound at its retention ratios
+$\eta_{\mathcal{V}}$ and $\eta_{\mathcal{E}}$, so every inexact method is quantified by the
+compression it gains beyond that bound and the accuracy it forfeits.
 
 \subsection{RQ4: Value of Domain-Informed Adaptation}
 \label{sec:intro:rq4}
+Do domain-informed reductions, which exploit topological level, reconvergence structure or
+gate role, retain more predictive accuracy than their generic counterparts at matched
+retention?
 
 \subsection{RQ5: Cross-State Inference}
 \label{sec:intro:rq5}
+Can a model trained exclusively on reduced AIGs, whether partitioned, sparsified or
+summarized, be queried on full ones at inference time without losing predictive accuracy?
+
+A \emph{structural state} is the form in which a graph reaches the encoder, the reduced
+$R(G)$ or the unreduced $G$ of~\ref{sec:prelim:formalization}, and cross-state inference
+evaluates weights trained in one state on inputs in the other.
+
+The training and inference costs of~\ref{sec:intro:motivation:scale} differ by a factor of the
+encoder depth $L$. Training on $R(G)$ and querying on $G$ therefore stay inside one memory
+budget when
+\begin{equation}
+    \left| \mathcal{V}(G) \right| + \left| \mathcal{E}(G) \right|
+    \;\leq\; L \left( \left| \mathcal{V}(R(G)) \right|
+        + \left| \mathcal{E}(R(G)) \right| \right),
+    \label{eq:intro:crossstate-budget}
+\end{equation}
+so any reduction retaining more than a fraction $1/L$ of $G$ admits full-graph inference on
+the hardware its own training required.
 
 \subsection{Scope and Delimitations}
 \label{sec:intro:rqs:scope}
+Optimizability prediction is the evaluation task, not the object of study. The delimitations
+below were fixed in advance. Limitations found during the work are reported
+in~\ref{sec:discussion:limitations}.
 
 \paragraph{Target synthesis algorithm.}
 \label{sec:intro:scope:algorithm}
+Training and evaluation target one synthesis algorithm, since variance across algorithms would
+confound the cost attributable to a reduction. The corpus carries three further algorithms, left unused
+(\ref{sec:method:data:tier1}, \ref{sec:conclusion:futurework:algorithms}).
 
 \paragraph{Graph scale.}
 \label{sec:intro:scope:scale}
+RQ1's full-graph baseline must fit in memory, so the corpus is bounded at an intermediate
+rather than an industrial scale (\ref{sec:method:experiment:scale},
+\ref{sec:discussion:limitations:scalability}).
 
 \paragraph{Definition of optimizability.}
 \label{sec:intro:scope:target}
+Optimizability is relative \emph{node} reduction only. Area, delay and power, the objectives
+synthesis actually optimizes for, are not modelled
+(\ref{sec:discussion:limitations:validity}).
 
 \paragraph{Reduction families.}
 \label{sec:intro:scope:reductions}
+Partitioning, sparsification and summarization/coarsening are covered, the taxonomy of
+\citet{hashemi2024survey} with partitioning substituted for condensation, which establishes
+no node correspondence and leaves RQ5 undefined (\ref{sec:relwork:reduction:summarization}).
 
 \paragraph{Model architecture.}
 \label{sec:intro:scope:architecture}
+One encoder, an edge-aware GCN+ (\ref{sec:method:architecture}), held fixed so that outcome
+differences are attributable to the reduction, which leaves transfer to another encoder
+untested.
 
 \paragraph{Prediction rather than script generation.}
 \label{sec:intro:scope:prediction}
+Optimizability is predicted, not synthesis scripts: selecting a script would require ranking
+\emph{algorithms} for one circuit, which a single-algorithm model cannot support
+(\ref{sec:conclusion:futurework:generation}).
+
+\subsection{Problem Formalization}
+\label{sec:prelim:formalization}
+Let $G$ be an AIG with the node roles
+of~\eqref{eq:prelim:role} and edge inversions of~\eqref{eq:prelim:inversion} as its features,
+and let $S$ be a deterministic synthesis algorithm
+(\ref{sec:prelim:algorithms:orchestrate}) mapping $G$ to the function-equivalent,
+optimized $S(G)$. The \emph{optimizability} of $G$ under $S$ is the fraction of nodes the
+algorithm removes,
+\begin{equation}
+    y(G) = 1 - \frac{\left| \mathcal{V}(S(G)) \right|}{\left| \mathcal{V}(G) \right|}
+    \;\in\; [0, 1].
+    \label{eq:prelim:target}
+\end{equation}
+Evaluating~\eqref{eq:prelim:target} requires executing $S$, the cost prediction avoids. An
+encoder $f_\theta$, a GNN in the sense of~\ref{sec:prelim:gnn:mp} with a graph-level readout,
+is fitted to approximate $y$ and takes values in the same interval $[0, 1]$. A reduction
+operator $R$ (\ref{sec:prelim:reduction}) acts ahead of the encoder, so the argument $f_\theta$
+receives is $G$ or $R(G)$.
+
+\emph{Compression} is reported separately as the node and edge retention ratios
+$\eta_{\mathcal{V}}$ and $\eta_{\mathcal{E}}$ of~\eqref{eq:prelim:retention}. The two are not
+interchangeable: several methods hold $\eta_{\mathcal{V}} = 1$ while lowering
+$\eta_{\mathcal{E}}$ alone. Memory and time differences are taken per graph against
+the full-graph baseline and carry a $95\%$ bootstrap interval and a two-sided paired rank test,
+whereas accuracy differences are single-run point estimates
+(\ref{sec:method:experiment:metrics:stats}).

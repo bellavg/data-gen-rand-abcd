@@ -2,15 +2,99 @@
 \label{sec:intro:motivation}
 \subsection{Logic Synthesis and Optimization Script Design}
 \label{sec:intro:motivation:synthesis}
+Electronic Design Automation (EDA) supplies the tools that convert Boolean specifications
+into the integrated circuits underlying nearly every computing device modern life depends on,
+from consumer electronics to the data centers and communication networks behind it. Logic
+synthesis and optimization remain the foundational steps within EDA for translating
+high-level Boolean specifications into efficient, manufacturable hardware. One of the
+central challenges of this field is efficiently representing and manipulating Boolean functions,
+particularly as the complexity of digital circuits increases. Traditional methods such as
+truth tables, sum-of-products (SOP), or binary-decision diagrams (BDD) became impractical for
+large-scale designs due to their potential exponential growth in size. And-Inverter Graphs
+(AIGs) address this issue by providing a more scalable and compact data structure for Boolean
+function representation \citep{kuehlmann2002robust}, and are the state-of-the-art for
+technology-independent logic optimization, supporting a wide range of synthesis and
+optimization tasks fundamental to EDA \citep{mishchenko2006rewriting,brayton2010abc}. Over the
+past few decades, numerous optimization algorithms have been developed for AIGs, each
+targeting a different objective, among them node count, logic depth, area, delay, and power
+consumption \citep{mishchenko2006scalable}.
 
-\subsection{Machine Learning for Optimizability Prediction}
+These algorithms are applied as a sequence, and their order is itself a determinant of the
+outcome: the same set of algorithms yields different results depending on the order in which
+they are applied. Crafting an effective sequence, a synthesis \emph{script}, for a given
+circuit is therefore a heuristic trial-and-error process: each candidate script must run to
+completion before its result is known.
+
+\subsection{Machine Learning for AIGs}
 \label{sec:intro:motivation:ml}
+
+\subsubsection{Machine Learning for Logic Synthesis}
+\label{sec:intro:motivation:ml:field}
+Structural representations such as AIGs provide a foundation for applying machine learning
+(ML) to address a multitude of complex challenges in logic synthesis. These methods divide
+into two classes: those that predict a synthesis outcome, and those that replace the
+heuristic that produces it \citep{liu2026ml4lssurvey}. Progress on both fronts remains
+constrained by the absence of standardized, large-scale AIG datasets and benchmarks
+\citep{chowdhury2023imagenets}.
+
+\subsubsection{Predicting Optimizability}
+\label{sec:intro:motivation:ml:optimizability}
+A model that predicts a circuit's \emph{optimizability}, the fraction of nodes a given
+script removes from it, would circumvent that trial-and-error search by supporting
+data-driven script generation directly, and, arguably, by revealing how much a circuit can
+shrink before an expensive optimization flow completes. \emph{Graph Neural Networks} (GNNs) are the natural
+class of models for the task: an AIG is a graph, and the quantity to be predicted is
+structural. Industrial AIGs reach millions of nodes, at which point training a GNN on them
+exceeds the memory available on a single device and drives training time beyond what is
+practical, actively preventing the field from scaling to more capable models and more complex tasks.
 
 \subsection{The Scale Bottleneck}
 \label{sec:intro:motivation:scale}
+To bypass this bottleneck, the usual responses are to restrict model capacity, adopting a
+weaker architecture than the task warrants, or to rely on multi-GPU clusters and distributed
+training. Neither removes the constraint: a single AIG can still exceed the memory of one
+device, and a distributed setup only makes the problem explicit, since it necessitates
+splitting the graph.
+
+This ceiling applies to training, not inference. Backpropagation retains the node states,
+materialised edge messages, and gradients of every layer, whereas a forward-only pass keeps
+only one layer resident and computes no gradients. Training
+therefore requires several times the memory inference does, scaling with the number of
+layers. A circuit too large to train on may consequently still be queried, motivating the question of whether reducing the training
+input alone suffices.
 
 \subsection{Limitations of Generic Graph Reduction}
 \label{sec:intro:motivation:reduction}
+Graph reduction, applied as a preprocessing step before training, is standard practice on
+citation and social graphs, but AIGs differ structurally: an edge encodes a term of
+the Boolean function the circuit computes, and logic depth, the length of the longest path
+from primary inputs to primary outputs, correlates with the circuit delay a synthesis pass
+optimizes for. A cut that balances partition sizes, or a sparsification that preserves the
+graph's spectrum, can blindly sever causal cones, obscure logic depth, and break the longest
+paths, thereby altering the underlying logic function and destroying the structural
+features accurate prediction depends on.
+
+Merging rather than cutting fails differently. A coarsening that collapses gates into one
+super-node loses the level separation between them unless its merge criterion reads or understands level, and
+a criterion that merges gates by logical equivalence carries out part of the optimization a
+synthesis pass would have carried out, shrinking the very quantity a predictor is asked to
+estimate.
 
 \subsection{Problem Statement and Research Gap}
 \label{sec:intro:gap}
+The field scales GNNs on AIGs in two ways today. The first is to train on extracted
+subcircuits of at most a few thousand gates, a crude sampling that discards global structure
+and is the de-facto reduction in most circuit-GNN work, including the DeepGate line
+\citep{li2022deepgate}. The second is to scale the \emph{architecture}: DeepGate3
+\citep{shi2024deepgate3} pools over subcircuits with a transformer, and DeepGate4
+\citep{deepgate4_2025} uses sparse attention for sub-linear memory. Both change the model,
+not the input.
+
+Graph reduction shrinks the \emph{input} instead, and is well studied on citation, social
+and knowledge graphs \citep{hashemi2024survey}. It has never been systematically applied to
+whole AIGs as a preprocessing step for GNN training, and no work measures which reduction
+preserves a downstream synthesis label.
+
+The gap this thesis addresses is therefore twofold: (i) there is no systematic evaluation
+of graph reduction for AIGs, and (ii) there is no evidence on whether AIG-specific
+adaptation of those reductions is worth its cost.
