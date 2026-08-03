@@ -91,10 +91,11 @@ during the work are separated out into~\ref{sec:discussion:limitations}.
 
 \paragraph{Target synthesis algorithm.}
 \label{sec:intro:scope:algorithm}
-Training and evaluation target \texttt{Orchestrate} alone, since cross-algorithm variance
-would not isolate what a reduction costs, leaving the \texttt{Deepsyn}, \texttt{Syn4} and
-\texttt{C2RS} graphs of the same corpus unused (\ref{sec:conclusion:futurework:algorithms}).
-%TODO why mention the unsued graphs they wouldnt know... 
+Training and evaluation target one synthesis algorithm, since cross-algorithm variance would
+not isolate what a reduction costs. The corpus also carries graphs produced by three further
+algorithms, described with it in~\ref{sec:method:data:tier1}, and those are left unused
+(\ref{sec:conclusion:futurework:algorithms}).
+
 \paragraph{Graph scale.}
 \label{sec:intro:scope:scale}
 The corpus is bounded at an intermediate rather than industrial scale: RQ1's full-graph
@@ -102,7 +103,6 @@ baseline has to fit in memory (\ref{sec:method:experiment:scale}), so the millio
 billion-node AIGs the motivation invokes are out of reach here
 (\ref{sec:discussion:limitations:scalability}).
 
-%TODO what is held fixed is not a proper title for an ancademic work this is a thesis!
 \paragraph{Definition of optimizability.}
 \label{sec:intro:scope:target}
 Optimizability is relative \emph{node} reduction only. Area, delay and power, the objectives
