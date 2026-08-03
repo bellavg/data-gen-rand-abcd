@@ -5,6 +5,8 @@ A coarsening is a quotient under a merge map $\mu \colon \mathcal{V} \rightarrow
 delete, must also decide what a super-node \emph{is}. The rewrite that does so is fixed once
 (\ref{sec:method:summary:mergemap}), and every candidate below reduces to its choice of
 $\mu$.
+
+
 % Original: A coarsening is a quotient. A merge map $\mu \colon \mathcal{V} \rightarrow \mathcal{V}'$
 % sends each node to the super-node containing it, and the reduced graph is the quotient of $G$
 % under $\mu$ (\ref{sec:prelim:reduction:summarization}). Unlike the other two families, which
@@ -199,12 +201,23 @@ a parameter that changes both how much compresses and which structure survives.
 % which structure survives.
 
 The subscript in~\eqref{eq:method:summary-refine} is the count cap
-of~\ref{sec:prelim:gnn:expressivity}. Only its two named endpoints, $c = \infty$ and
-$c = 1$, are run, since intermediate caps are bracketed by them and each value costs a
-training run. The depth is set to $d = L$, the encoder's message-passing depth, and that
-equality is the justification, not a convenience: a smaller $d$ merges less and gains
-nothing, while a larger one merges nodes the encoder can separate, and the losslessness
-argument fails.
+of~\ref{sec:prelim:gnn:expressivity}.
+%TODO decide the count-cap arm. Measured on seed designs the cap is inert on AIGs, since
+%fan-in is fixed by node type, so $c = 1$ and $c = \infty$ give the same partition and the
+%planned two-point sweep would measure it twice. Re-measure on the corpus before writing this.
+The depth is set to $d = L$, the encoder's message-passing depth, and that equality is the
+justification, not a convenience. Refinement grows finer with depth, so the two failure
+directions are not symmetric: a larger $d$ separates nodes the encoder cannot tell apart, which
+stays exact but forfeits compression, whereas a smaller $d$ merges nodes the encoder \emph{can}
+separate, and the losslessness argument fails. Exactness requires $L \leq d$, and $d = L$ is
+therefore the coarsest, most compressing depth that keeps the guarantee.
+
+% Superseded, the two clauses were the wrong way round: a smaller $d$ merges less and gains
+% nothing, while a larger one merges nodes the encoder can separate, and the losslessness
+% argument fails.
+% Also cut, pending the count-cap decision above: Only its two named endpoints, $c = \infty$
+% and $c = 1$, are run, since intermediate caps are bracketed by them and each value costs a
+% training run.
 % Original: The subscript in~\eqref{eq:method:summary-refine} is the count cap
 % of~\ref{sec:prelim:gnn:expressivity}, and only its two named endpoints are run:
 % $c = \infty$, lossless for a summing GNN, and $c = 1$, which is bisimulation, coarser and

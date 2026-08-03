@@ -273,8 +273,12 @@ approximate, but the guarantee holds only under a modified encoder.
 
 When $k$ nodes merge, parallel edges collapse into one super-edge whose message must equal
 the sum of the $k$ it replaces. Multiplicity $w_{uv}$ carried as an edge attribute enters
-$\sigma$ in~\eqref{eq:method:message}, which does not decompose over sums. Setting
-$c_{uv} = w_{uv}$ instead scales the message outside $\sigma$ and gives equality.
+$\sigma$ in~\eqref{eq:method:message}, which does not decompose over sums. Setting $c_{uv}$
+to the per-target-member multiplicity $w_{uv} / m_{v}$
+of~\eqref{eq:prelim:exact-aggregation} instead scales the message outside $\sigma$ and gives
+equality. The divisor is not cosmetic: $w_{uv}$ alone counts member edges across the whole
+receiving cluster, whereas the quantity a single node's aggregation needs is the count each
+member sees.
 
 Edge attributes are therefore dropped, and inversion moves onto the nodes: fan-in is fixed
 by node type (zero for constants and PIs, two for AND gates, one for POs), so a node's type

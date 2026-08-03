@@ -51,8 +51,10 @@ number of member edges a super-edge stands for is its multiplicity,
 \begin{equation}
     w_{u'v'} = \bigl| \{\, (u, v) \in \mathcal{E} :
         \mu(u) = u',\ \mu(v) = v' \,\} \bigr|,
+    \qquad m_{v'} = \bigl| \mu^{-1}(v') \bigr|,
     \label{eq:prelim:multiplicity}
 \end{equation}
+writing $m_{v'}$ for the number of members a cluster holds,
 and a quotient that keeps attribute-distinct super-edges parallel is a multigraph. Because
 $\mu$ is a function, a coarsening \emph{is} a partition of $\mathcal{V}$, so a tolerance
 band such as ``within one level'' cannot define one: the relation it induces is not
@@ -108,19 +110,32 @@ encoder used here, that multiplicity enters as a coefficient on the message:
 \begin{equation}
     \bigoplus_{u \in \mathcal{N}(v)} \psi \bigl( h_u, e_{uv} \bigr)
     \;=\; \sum_{u' \in \mathcal{N}'(\mu(v))}
-        w_{u' \mu(v)} \, \psi \bigl( h_{u'}, e_{u' \mu(v)} \bigr) ,
+        \frac{w_{u' \mu(v)}}{m_{\mu(v)}} \,
+        \psi \bigl( h_{u'}, e_{u' \mu(v)} \bigr) ,
     \label{eq:prelim:exact-aggregation}
 \end{equation}
-with $\mathcal{N}'$ the quotient neighbourhood. Where the multiplicity enters decides
-whether~\eqref{eq:prelim:exact-aggregation} holds: $\psi$ is nonlinear, so
+with $\mathcal{N}'$ the quotient neighbourhood. The coefficient is the multiplicity
+\emph{per member of the target cluster}, not the multiplicity itself: the left side aggregates
+at one node $v$, whereas $w_{u'v'}$ counts member edges across all $m_{v'}$ members of $v'$.
+The two coincide only at $m_{v'} = 1$, that is only where nothing merged, so carrying
+$w_{u'v'}$ alone would overstate every message by the size of the receiving cluster.
+
+Uniformity of the per-member count is what makes the coefficient well defined: each member of
+$v'$ must have the same number of neighbours in $u'$. That does not hold for an arbitrary
+partition. It holds once refinement has run to a depth at least the number of layers read
+(\ref{sec:method:summary:wl}), which is why the guarantee is stated against a matched
+refinement depth rather than unconditionally.
+
+Where the multiplicity enters decides whether~\eqref{eq:prelim:exact-aggregation} holds:
+$\psi$ is nonlinear, so
 $\psi(h, w_{u'v'} e) \neq w_{u'v'} \, \psi(h, e)$, and a multiplicity carried as an edge
 attribute breaks the equality a coefficient outside $\psi$ preserves
 (\ref{sec:method:architecture:exact}).
 
 \paragraph{(c) The readout.}
 Conditions (a) and (b) give $h_{\mu(v)}^{l} = h_v^{l}$ at every layer, so pooling over
-$\mathcal{V}'$ must weight each super-node by its member count $m_{v'} = | \mu^{-1}(v') |$
-to reproduce pooling over $\mathcal{V}$:
+$\mathcal{V}'$ must weight each super-node by its member count $m_{v'}$
+of~\eqref{eq:prelim:multiplicity} to reproduce pooling over $\mathcal{V}$:
 \begin{equation}
     \frac{1}{\left| \mathcal{V} \right|} \sum_{v \in \mathcal{V}} h_v^{L}
     \;=\; \frac{\sum_{v' \in \mathcal{V}'} m_{v'} \, h_{v'}^{L}}
