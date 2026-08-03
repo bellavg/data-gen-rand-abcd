@@ -5,12 +5,15 @@
 \label{sec:prelim:aig:definition}
 An AIG is a DAG $G = (\mathcal{V}, \mathcal{E})$ representing a Boolean network over the
 functionally complete basis $\{\wedge, \neg\}$ \citep{mishchenko2006rewriting}: every internal
-node is a two-input AND gate, and every edge carries an optional inversion. One Boolean
-function admits many such AIGs, and which one an optimizer is handed bounds what it can
-remove, a sensitivity known as structural bias \citep{gardner2025bias}: optimizability is a
-property of the graph, not of the function it computes, which makes corpus construction
-consequential (\ref{sec:method:data:statistics:source}).
-%TODO no need for structural bias how is that relevant
+node is a two-input AND gate, and every edge carries an optional inversion. Conjunction is
+therefore the only operation that costs a node, and negation costs none. Completeness does
+not buy uniqueness: one Boolean function admits many AIGs, and which one an optimizer is
+handed bounds what it can remove, a sensitivity known as structural bias
+\citep{gardner2025bias}. How far a given network can be reduced is thus a property of the
+graph rather than of the function it computes.
+
+% Cut, thesis content in preliminaries: which makes corpus construction consequential
+% (\ref{sec:method:data:statistics:source}).
 
 % An AIG is a DAG $G = (\mathcal{V}, \mathcal{E})$
 % representing a Boolean network over the basis $\{\wedge, \neg\}$
@@ -36,10 +39,20 @@ The fanin and fanout of a node are
 \end{equation}
 with $|\operatorname{fi}(v)| = 2$ at every AND gate, $\operatorname{fi}(v) = \emptyset$ at
 every \emph{Primary Input} (PI) and at the constant, and $|\operatorname{fi}(v)| = 1$ at every
-\emph{Primary Output} (PO), materialised here as a node rather than a pointer. Acyclicity
-yields a topological order $\prec$, so signals flow from the PIs to the POs, and the circuit
-interface sits inside $|\mathcal{V}|$, the~\ref{sec:method:data:label:definition} target.
-%TODO wtf do you mean circuit interface
+\emph{Primary Output} (PO). The constant is the single source node supplying the logical
+values $0$ and $1$; the PIs are the free variables of the network; an AND gate computes the
+conjunction of the two values delivered on its fanin edges; the POs are the signals the
+network exposes to whatever consumes it. Together the PIs and POs form the \emph{boundary} of
+the circuit, the only signals visible from outside it.
+
+Acyclicity yields a topological order $\prec$, with $u \prec v$ for every
+$(u, v) \in \mathcal{E}$, so signals flow from the PIs to the POs and never return. POs are
+materialised as nodes here rather than as pointers into the AND network, as is also common.
+That choice is why the node role of~\eqref{eq:prelim:role} takes four values instead of
+three, and it places the boundary inside $|\mathcal{V}|$.
+
+% Cut, thesis content in preliminaries: and the circuit interface sits inside
+% $|\mathcal{V}|$, the~\ref{sec:method:data:label:definition} target.
 
 
 % The vocabulary used throughout follows from the edge set. The fanin and fanout of a node
@@ -63,7 +76,6 @@ Two labellings are carried on every graph. A node role
     \label{eq:prelim:role}
 \end{equation}
 separates the constant, the PIs, the AND gates and the POs, and an inversion flag
-%TODO did you define what inversion is and what a pu and and gate and constant is?
 $\mathrm{inv} \colon \mathcal{E} \rightarrow \{0, 1\}$ marks each edge as regular or inverted.
 Inversion is semantic: writing $b_u \in \{0,1\}$ for the value produced at $u$, edge
 $e = (u, v)$ delivers to $v$ the value
@@ -72,10 +84,13 @@ $e = (u, v)$ delivers to $v$ the value
     \label{eq:prelim:inversion}
 \end{equation}
 so two edges agreeing in their endpoints but differing in $\mathrm{inv}$ carry complementary
-signals. The one-hot encodings of $\tau$ and $\mathrm{inv}$ are the node and edge features
-of~\ref{sec:method:data:representation:features}, drawn for a small AIG
+signals. Inversion is therefore semantic rather than decorative: it is part of the function
+the graph denotes, not an annotation on it. A small AIG carrying both labellings is drawn
 in~\ref{fig:aig_example}.
-%TODO preliminaries should jus tbe introducing concept mention of how to convert it or anythign abotu one hot shoudl not be here
+
+% Cut, feature encoding belongs in the methodology: The one-hot encodings of $\tau$ and
+% $\mathrm{inv}$ are the node and edge features
+% of~\ref{sec:method:data:representation:features}.
 
 
 % Two labellings are carried on every graph. A node role separates the constant, the PIs,
@@ -102,12 +117,16 @@ The topological level of a node is its longest distance from the input frontier,
     \end{cases}
     \label{eq:prelim:level}
 \end{equation}
-and the depth of the graph is $\ell(G) = \max_{v \in \mathcal{V}} \ell(v)$, an absolute
-coordinate an AIG carries and a general graph does not, read by the positional encoding
-(\ref{sec:method:data:representation:pe}), the level-sliced and span-weighted partitioners
-(\ref{sec:method:reduction:partitioning}), and the cone candidate
-(\ref{sec:method:summary:domain}).
-%TODO shoudl not mention anything about the thesis content this is prelminaries. should introduce the relevant info nto argue or connect it 
+and the depth of the graph is $\ell(G) = \max_{v \in \mathcal{V}} \ell(v)$. The drawn height
+of a gate in~\ref{fig:aig_example} is exactly $\ell$. Level is an absolute coordinate: every
+node has a well defined distance from the input frontier, which a general graph does not
+supply, and it orders the network by how much logic must resolve before a gate can be
+evaluated.
+
+% Cut, thesis content in preliminaries: read by the positional encoding
+% (\ref{sec:method:data:representation:pe}), the level-sliced and span-weighted partitioners
+% (\ref{sec:method:reduction:partitioning}), and the cone candidate
+% (\ref{sec:method:summary:domain}).
 % The topological level of a node is its longest distance from the input frontier, and the
 % depth of the graph is $\ell(G) = \max_{v \in \mathcal{V}} \ell(v)$. The drawn height of a
 % gate in~\ref{fig:aig_example} is exactly $\ell$. Level is an absolute coordinate that an AIG
@@ -124,12 +143,15 @@ cone (the logic or causal cone) and fanout cone of $v$ are
     \mathcal{F}(v) = \{\, w \in \mathcal{V} : v \rightsquigarrow w \,\}.
     \label{eq:prelim:cone}
 \end{equation}
-The claim of~\ref{sec:intro:motivation:reduction}, that generic reduction severs causal
-structure, is a claim about $\mathcal{C}$: deleting one edge on a long path removes gates from
-every downstream cone, regardless of similarity under an undirected measure. The
-depth-bounded form $\mathcal{C}_k$ of~\eqref{eq:method:cone} makes the effect measurable.
+Both cones contain $v$ itself. The fanin cone is the set of gates on which $v$ functionally
+depends, and~\eqref{eq:prelim:level} measures the longest path through it. Cones are nested
+along paths: deleting a single edge on a long path removes gates from the fanin cone of
+everything downstream of it, whether or not the result resembles the original under an
+undirected measure of similarity.
 
-%TODO preliminaries is just abotu concept introduction not the thesis content. 
+% Cut, thesis content in preliminaries: The claim of~\ref{sec:intro:motivation:reduction},
+% that generic reduction severs causal structure, is a claim about $\mathcal{C}$. The
+% depth-bounded form $\mathcal{C}_k$ of~\eqref{eq:method:cone} makes the effect measurable.
 
 % Writing $u \rightsquigarrow v$ for the existence of a directed path, of length zero when
 % $u = v$, the fanin cone (equivalently the logic or causal cone) and the fanout cone of $v$
@@ -141,12 +163,20 @@ depth-bounded form $\mathcal{C}_k$ of~\eqref{eq:method:cone} makes the effect me
 % original under an undirected measure. The depth-bounded form $\mathcal{C}_k$
 % of~\eqref{eq:method:cone} is what makes the effect measurable.
 
-Fanout degree $|\operatorname{fo}(v)|$ separates gates consumed once from gates shared and
-reused, which constrains rewriting. Reconvergence is the same property from below: $v$ is a
-reconvergence point of $u$ when two internally disjoint paths run from $u$ to $v$. AIGs are
-dense in reconvergence: structural hashing (\ref{sec:prelim:algorithms:primitives}) shares
-duplicated subexpressions rather than replicating them \citep{kuehlmann2002robust}.
-%TODO what is the relevance of this?
+Fanout degree $|\operatorname{fo}(v)|$ separates gates whose output is consumed once from
+gates whose output is shared. Chains of single-fanout gates carry no sharing information.
+Multi-fanout gates are the points at which logic is reused, and they are what constrains local
+restructuring: a gate feeding several consumers cannot be rewritten for the benefit of one
+without affecting the others, so shared logic is expensive to change and cheap to keep.
+
+Reconvergence is the same property seen from below. A gate $v$ is a reconvergence point of $u$
+when two internally disjoint directed paths run from $u$ to $v$, so a single signal reaches
+$v$ along more than one route. AIGs are dense in reconvergence, because structural hashing
+(\ref{sec:prelim:algorithms:primitives}) shares every duplicated subexpression instead of
+replicating it \citep{kuehlmann2002robust}. Reconvergence is what makes an AIG resist being
+treated as a tree: the fanin cones of two gates overlap rather than partitioning the network,
+so any procedure that groups gates must decide what to do with logic that several groups have
+a claim on.
 % Fanout degree $|\operatorname{fo}(v)|$ separates gates whose output is consumed once from
 % gates whose output is shared. Chains of single-fanout gates carry no sharing information;
 % multi-fanout gates are the points at which logic is reused, and they are what constrains
@@ -163,9 +193,15 @@ $\prec$ to it, the immediate post-dominator of $v$ is
         \{\, u \neq v : \text{every } v \rightsquigarrow t \text{ path meets } u \,\},
     \label{eq:prelim:ipdom}
 \end{equation}
-the gate at which $\mathcal{F}(v)$ reconverges, or $t$ when it never does. The cone
-candidate of~\ref{sec:method:summary:domain} groups gates by $\operatorname{ipdom}$.
-%TODO what is the reconvergence important? maybe it should be explained more in the context of the way it is used in this thesis like the relevant info one needs for being able ot handle its mention later on in the thesis
+the gate at which $\mathcal{F}(v)$ reconverges, or $t$ when it never does. Post-dominance
+gives a canonical answer to the question reconvergence raises: every gate has exactly one
+immediate post-dominator, so the network admits a well defined partition into regions that
+reconverge at a common point, and a procedure grouping gates can use that partition instead of
+choosing arbitrarily.
+
+% Cut, thesis content in preliminaries: The cone candidate
+% of~\ref{sec:method:summary:domain} groups gates by $\operatorname{ipdom}$.
+
 The Maximal Fanout-Free Cone (MFFC) of a root gate $v$ collects the gates feeding $v$ and
 nothing else \citep{mishchenko2006rewriting},
 \begin{equation}
@@ -173,9 +209,14 @@ nothing else \citep{mishchenko2006rewriting},
         \text{every path } u \rightsquigarrow t \text{ passes through } v \,\},
     \label{eq:prelim:mffc}
 \end{equation}
-so removing $v$ removes exactly $\operatorname{MFFC}(v)$: the unit refactoring re-expresses
-one at a time (\ref{sec:prelim:algorithms:primitives}) and the second domain candidate
-merges (\ref{sec:method:summary:domain}).
+so removing $v$ from the network removes exactly $\operatorname{MFFC}(v)$ and nothing more.
+That property makes the MFFC the natural unit of local restructuring: it is the largest region
+whose fate is decided entirely by one gate, and therefore the largest region that can be
+replaced without consulting the rest of the network
+(\ref{sec:prelim:algorithms:primitives}).
+
+% Cut, thesis content in preliminaries: and the second domain candidate merges
+% (\ref{sec:method:summary:domain}).
 
 % The Maximal Fanout-Free Cone (MFFC) of a root gate $v$ collects the gates feeding $v$ and
 % nothing else, so removing $v$ from the network removes exactly $\operatorname{MFFC}(v)$ and
@@ -185,34 +226,44 @@ merges (\ref{sec:method:summary:domain}).
 % candidate of~\ref{sec:method:summary:domain}, which is why that candidate carries an
 % argument about label leakage and the others do not.
 
-%TODO informal title
-\subsubsection{Why AIGs Differ from General Graphs}
+\subsubsection{Structural Distinctions from General Graph Classes}
 \label{sec:prelim:aig:distinct}
-Five properties separate an AIG from the citation, social and knowledge graphs on which graph
-reduction was developed, and each costs a generic method something specific.
+Five properties separate an AIG from the citation, social and knowledge graphs on which the
+graph reduction literature was developed. Each bears on what a method designed for those
+classes can assume.
 
-(i) An AIG is directed and acyclic: reducing on the undirected projection discards the
-orientation that carries the logic, since a DAG's quotient need not itself be acyclic, as in
-the spanning forest of~\ref{sec:method:sparse:forest}.
+(i) An AIG is directed and acyclic. Machinery built for undirected graphs does not transfer
+unchanged, because a quotient of a DAG need not itself be acyclic, and a reduction computed on
+the undirected projection discards the orientation that carries the logic.
+
+% Cut, thesis content in preliminaries: as in the spanning forest
+% of~\ref{sec:method:sparse:forest}.
 
 % (i) An AIG is directed and acyclic. Machinery built for undirected graphs does not transfer
 % unchanged, because a quotient of a DAG need not be acyclic, and a reduction computed on the
 % undirected projection discards the orientation that carries the logic. The spanning forest
 % of~\ref{sec:method:sparse:forest} is the concrete case.
 
-(ii) Depth, not width, is the binding dimension: the critical path (longest PI-to-PO path)
-has length $\ell(G)$ of~\eqref{eq:prelim:level}, the quantity balancing shortens
-(\ref{sec:prelim:algorithms:primitives}) and an encoder must span. After $L$
-message-passing layers a node depends only on its $L$-hop neighbourhood
-(\ref{sec:prelim:gnn:mp}), so $\mathcal{C}_L(v) = \mathcal{C}(v)$ only when
+(ii) Depth, not width, is the binding dimension. The critical path is a longest directed path
+from a PI to a PO, and its length is the depth $\ell(G)$ of~\eqref{eq:prelim:level}: the
+quantity balancing exists to shorten (\ref{sec:prelim:algorithms:primitives}). After $L$
+message-passing rounds a node representation depends on its $L$-hop neighbourhood and on
+nothing else (\ref{sec:prelim:gnn:mp}), so a gate reads the whole of the logic it depends on,
+$\mathcal{C}_L(v) = \mathcal{C}(v)$, only when
 \begin{equation}
     L \ge \ell(v).
     \label{eq:prelim:reach}
 \end{equation}
-Corpus depth is $35$ levels at the median and $24{,}802$ at the maximum
-(\ref{sec:method:data:sources}) against a single-digit encoder depth, so~\eqref{eq:prelim:reach}
-holds only near the input frontier: receptive-field starvation is the normal condition here,
-which hypothesis H1 (\ref{sec:intro:rq3}) proposes coarsening relieves.
+Logic circuits routinely reach depths in the hundreds or thousands, whereas the round counts at
+which message passing remains trainable are in the single digits, so~\eqref{eq:prelim:reach}
+fails for all but the shallowest gates. Graph classes on which reduction was developed are
+shallow and wide, and the inequality is not binding on them.
+
+% Cut, thesis content in preliminaries: Corpus depth is $35$ levels at the median and
+% $24{,}802$ at the maximum (\ref{sec:method:data:sources}) against a single-digit encoder
+% depth, so~\eqref{eq:prelim:reach} holds only near the input frontier: receptive-field
+% starvation is the normal condition here, which hypothesis H1 (\ref{sec:intro:rq3}) proposes
+% coarsening relieves.
 
 % (ii) Depth, not width, is the binding dimension. The critical path is a longest directed
 % path from a PI to a PO, and its length is the depth $\ell(G)$ of~\eqref{eq:prelim:level}:
@@ -226,10 +277,13 @@ which hypothesis H1 (\ref{sec:intro:rq3}) proposes coarsening relieves.
 % the normal condition on this data, and it is the starvation that hypothesis H1
 % (\ref{sec:intro:rq3}) proposes coarsening relieves.
 
-(iii) Edges carry function: the inversion in~\eqref{eq:prelim:inversion} is part of what the
-graph represents, so averaging or discarding $\mathrm{inv}$ changes the Boolean function
-rather than approximating it, unlike every summarization method here, which keeps normal and
-inverted connections distinguishable.
+(iii) Edges carry function. The inversion of~\eqref{eq:prelim:inversion} is part of what the
+graph represents, so a merge that averages or discards $\mathrm{inv}$ changes the Boolean
+function rather than approximating it. Elsewhere an edge attribute is usually a weight or a
+relation type that a reduction may smooth over; here it is a logical operator.
+
+% Cut, thesis content in preliminaries: unlike every summarization method here, which keeps
+% normal and inverted connections distinguishable.
 
 % (iii) Edges carry function. The inversion in~\eqref{eq:prelim:inversion} is part of what
 % the graph represents, so a merge that averages or discards $\mathrm{inv}$ changes the
@@ -237,30 +291,34 @@ inverted connections distinguishable.
 % constrained to keep normal and inverted connections distinguishable, a constraint no
 % general method imposes on itself.
 
-(iv) The interface is fixed: the PIs and POs are the circuit's contract with the rest of the
-design, so merging them away changes what the graph is rather than coarsening it
-(\ref{sec:method:summary:mergemap}).
-%TODO what do you mean by interface i have never heard this term used before. 
+(iv) The boundary is fixed. The PIs and POs are the signals by which the circuit is connected
+to the rest of a design, so they are not free to be renamed, merged or removed: doing so
+changes which function the network computes for its surroundings, rather than coarsening its
+internal structure. General graphs distinguish no such privileged set of nodes.
+
+% Cut, thesis content in preliminaries: (\ref{sec:method:summary:mergemap}).
 
 % (iv) The interface is fixed. The PIs and POs are the circuit's contract with the
 % rest of the design, and merging them away changes what the graph is rather than coarsening
 % it. The boundary is enforced uniformly in~\ref{sec:method:summary:mergemap}.
 
-(v) Node count is at once the cost and the scale of the label. Fanin cardinality is fixed by
-the basis, so
+(v) The graph carries no surplus density. Fanin cardinality is fixed by the basis, so
 \begin{equation}
     |\mathcal{E}| = 2 \left| \tau^{-1}(\mathrm{AND}) \right|
         + \left| \tau^{-1}(\mathrm{PO}) \right| < 2 \left| \mathcal{V} \right|,
     \label{eq:prelim:edges}
 \end{equation}
-and one message-passing layer costs $\Theta(|\mathcal{V}|)$ at fixed width: an AIG carries no
-surplus density, so removing edges alone cannot lower that cost at any retention ratio
-(\ref{sec:prelim:reduction:sparsification}). The same count is the optimizability
-target's~\eqref{eq:prelim:target} denominator, so $y(G)$ is quantised in steps of
-$1/|\mathcal{V}(G)|$, coarsest on the smallest circuits, where the corpus piles up at exactly
-zero (\ref{sec:method:data:statistics:label}).
-%TODO this should be way less thesis related how i apply the ML in my project to AIGs should not be introduced or explained in preliminaires while introducing AIGS!!!
-%
+so the edge count is bounded by twice the node count and one message-passing round costs
+$\Theta(|\mathcal{V}|)$ at fixed width. An AIG is therefore already as sparse as a graph of its
+node count can be, and removing edges alone cannot take that cost below the same order at any
+retention ratio (\ref{sec:prelim:reduction:sparsification}). The social and citation graphs
+that motivated edge sparsification are dense by comparison, which is what gives edge removal
+something to remove.
+
+% Cut, thesis content in preliminaries: The same count is the optimizability
+% target's~\eqref{eq:prelim:target} denominator, so $y(G)$ is quantised in steps of
+% $1/|\mathcal{V}(G)|$, coarsest on the smallest circuits, where the corpus piles up at exactly
+% zero (\ref{sec:method:data:statistics:label}).
 
 % (v) Node count is at once the cost and the scale of the label. Fanin cardinality is fixed
 % by the basis, so and one message-passing layer therefore costs $\Theta(|\mathcal{V}|)$ at

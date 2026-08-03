@@ -103,16 +103,31 @@ billion-node AIGs the motivation invokes are out of reach here
 (\ref{sec:discussion:limitations:scalability}).
 
 %TODO what is held fixed is not a proper title for an ancademic work this is a thesis!
-\paragraph{What is held fixed.}
-\label{sec:intro:scope:reductions}\label{sec:intro:scope:architecture}
+\paragraph{Definition of optimizability.}
+\label{sec:intro:scope:target}
+Optimizability is relative \emph{node} reduction only. Area, delay and power, the objectives
+synthesis actually optimizes for, are not modelled, and node count stands in for area
+(\ref{sec:discussion:limitations:validity}).
+
+\paragraph{Reduction families.}
+\label{sec:intro:scope:reductions}
 Partitioning, sparsification and summarization/coarsening are covered, the taxonomy of
-\citet{hashemi2024survey} with partitioning substituted for the excluded condensation, which
-establishes no node correspondence and so leaves RQ5 undefined
-(\ref{sec:relwork:reduction:summarization}). One encoder is held fixed, an edge-aware GCN+
-(\ref{sec:method:architecture}), so outcome differences are attributable to the reduction,
-with published circuit models entering only as RQ1 baselines
-(\ref{sec:method:architecture:baselines}), leaving untested whether the reduction ranking
-holds for another encoder.
-%TODO what is this section? this is a valid inclusion but seems to be filled with bullshit
+\citet{hashemi2024survey} with partitioning substituted for condensation. Condensation is
+excluded because it establishes no node correspondence, leaving RQ5 undefined
+(\ref{sec:relwork:reduction:summarization}).
+
+\paragraph{Model architecture.}
+\label{sec:intro:scope:architecture}
+One encoder, an edge-aware GCN+ (\ref{sec:method:architecture}), held fixed so that outcome
+differences are attributable to the reduction. Published circuit models enter only as RQ1
+baselines (\ref{sec:method:architecture:baselines}), so whether the ranking of reductions
+transfers to another encoder is untested.
+
+\paragraph{Prediction rather than script generation.}
+\label{sec:intro:scope:prediction}
+Optimizability is predicted, not synthesis scripts. Spearman correlation ranks \emph{circuits}
+under one fixed script, whereas selecting a script would require ranking \emph{algorithms} for
+one circuit, which a single-algorithm model cannot do
+(\ref{sec:conclusion:futurework:generation}).
 
 %TODO what about exact vs inexact summarization methods?
