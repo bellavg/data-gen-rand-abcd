@@ -14,8 +14,8 @@ $v$ and $e_{uv}$ for the attribute of edge $(u, v)$, one layer computes
     \label{eq:prelim:mp}
 \end{equation}
 where $\psi^{l}$ builds a message per edge, $\bigoplus$ is a permutation-invariant
-aggregation, and $\phi^{l}$ updates the node state. The encoder here is one instantiation
-of~\eqref{eq:prelim:mp}, written out in~\ref{sec:method:architecture:equations}.
+aggregation, and $\phi^{l}$ updates the node state.
+% Cut, thesis content in preliminaries: The encoder here is one instantiation of~\eqref{eq:prelim:mp}, written out in~\ref{sec:method:architecture:equations}.
 
 % A GNN computes a representation $h_v^{l} \in \mathbb{R}^{w}$ for
 % every node $v$ by repeated neighbourhood aggregation
@@ -26,12 +26,9 @@ of~\eqref{eq:prelim:mp}, written out in~\ref{sec:method:architecture:equations}.
 % thesis is one instantiation of~\eqref{eq:prelim:mp}, written out
 % in~\ref{sec:method:architecture:equations}.
 
-After $L$ layers, $h_v^{L}$ depends only on the $L$-hop neighbourhood of $v$, a depth-$L$
-prefix of the cones of~\eqref{eq:prelim:cone} on an AIG\@. Every depth-coupling argument here,
-from the refinement depth of~\ref{sec:method:summary:wl} to hypothesis H1
-(\ref{sec:intro:rq3}), rests on this fact.
-
-%TODO should not mention AIGS in GNN prelim makes no sense
+After $L$ layers, $h_v^{L}$ depends only on the $L$-hop neighbourhood of $v$: the receptive
+field of an $L$-layer message-passing network is bounded by its depth.
+% Cut, thesis content in preliminaries: After $L$ layers, $h_v^{L}$ depends only on the $L$-hop neighbourhood of $v$, a depth-$L$ prefix of the cones of~\eqref{eq:prelim:cone} on an AIG\@. Every depth-coupling argument here, from the refinement depth of~\ref{sec:method:summary:wl} to hypothesis H1 (\ref{sec:intro:rq3}), rests on this fact.
 
 
 % After $L$ layers, $h_v^{L}$ is a function of exactly the $L$-hop neighbourhood of $v$ and
@@ -45,13 +42,13 @@ from the refinement depth of~\ref{sec:method:summary:wl} to hypothesis H1
 
 \subsubsection{Graph-Level Readout and Pooling}
 \label{sec:prelim:gnn:readout}
-A graph-level prediction pools node representations into one vector, here a mean over
-nodes, optionally after summing per-layer outputs so shallow and deep features both reach
-the readout (jumping knowledge, \citealp{xu2018jk}). Every node of a graph must be present
-in the same forward pass, so a graph is the indivisible unit of batching: batches are
-assembled under a node budget rather than a fixed graph count
-(\ref{sec:method:experiment:batching}), and the memory cost of one step is set by the
-largest graphs, exactly the cost reduction is meant to lower.
+A graph-level prediction pools node representations into one vector, for example by
+summation, averaging, or a maximum over nodes, optionally after combining per-layer
+outputs so shallow and deep features both reach the readout (jumping knowledge,
+\citealp{xu2018jk}). Every node of a graph must be present in the same forward pass, so a
+graph is the indivisible unit of batching and cannot be split across steps, and the memory
+cost of one step is therefore set by the largest graph it contains.
+% Cut, thesis content in preliminaries: A graph-level prediction pools node representations into one vector, here a mean over nodes, optionally after summing per-layer outputs so shallow and deep features both reach the readout (jumping knowledge, \citealp{xu2018jk}). Every node of a graph must be present in the same forward pass, so a graph is the indivisible unit of batching: batches are assembled under a node budget rather than a fixed graph count (\ref{sec:method:experiment:batching}), and the memory cost of one step is set by the largest graphs, exactly the cost reduction is meant to lower.
 
 
 % A graph-level prediction pools the node representations into one vector, here by a mean
@@ -70,9 +67,10 @@ Message passing sees only relative structure: two nodes with isomorphic $L$-hop
 neighbourhoods receive identical representations wherever they sit. A Positional Encoding
 (PE) attaches a coordinate to each node to break that indifference. An undirected graph has
 no canonical coordinate, so encodings are built from random walks or spectra, but on a DAG
-the topological level $\ell(v)$ of~\eqref{eq:prelim:level} is an absolute coordinate the
-graph carries for free, making the level-based encoding used here
-(\ref{sec:method:data:representation:pe}) DAG-native rather than generic.
+the topological level of a node, its longest path length from a source, is an absolute
+coordinate the graph carries for free, making a level-based encoding DAG-native rather than
+generic.
+% Cut, thesis content in preliminaries: on a DAG the topological level $\ell(v)$ of~\eqref{eq:prelim:level} is an absolute coordinate the graph carries for free, making the level-based encoding used here (\ref{sec:method:data:representation:pe}) DAG-native rather than generic.
 
 % Message passing sees only relative structure: two nodes whose $L$-hop neighbourhoods are
 % isomorphic receive identical representations wherever they sit in the graph. A Positional
@@ -114,10 +112,9 @@ exists, not how many. A count cap $c$ interpolates, truncating each multiplicity
 $c = 1$ is bisimulation and $c = \infty$ is colour refinement \citep{bollen2023exact}.
 Merging nodes the network provably cannot distinguish removes no information it could have
 used, so quotienting by such a partition is lossless, and since automorphism orbits form an
-equitable partition, symmetric structure is always compressible this way, a redundancy AIGs
-carry in quantity: an AND gate's two fanins are interchangeable and datapath logic
-replicates one bit slice across the word width. How much survives structural hashing is
-measured in~\ref{sec:method:summary:wl}.
+equitable partition, symmetric structure is always compressible this way. How much survives
+structural hashing is measured in~\ref{sec:method:summary:wl}.
+% Cut, thesis content in preliminaries: symmetric structure is always compressible this way, a redundancy AIGs carry in quantity: an AND gate's two fanins are interchangeable and datapath logic replicates one bit slice across the word width.
 
 % Replacing the multiset in~\eqref{eq:prelim:cr} by a set yields bisimulation, which ignores
 % how many neighbours of a colour exist and asks only whether one does. A count cap $c$
@@ -147,9 +144,10 @@ graph-independent floor, the memory a graph itself costs is
     \end{aligned}
     \label{eq:prelim:memory}
 \end{equation}
-and the factor $L$ between them is the whole asymmetry, with the largest graph in the
-corpus setting the peak, since pooling forbids splitting a graph across steps
+and the factor $L$ between them is the whole asymmetry, with the largest graph processed
+setting the peak, since pooling forbids splitting a graph across steps
 (\ref{sec:prelim:gnn:readout}).
+% Cut, thesis content in preliminaries: and the factor $L$ between them is the whole asymmetry, with the largest graph in the corpus setting the peak, since pooling forbids splitting a graph across steps (\ref{sec:prelim:gnn:readout}).
 
 % Training and inference differ in what must be held in memory. Backpropagation through $L$
 % applications of~\eqref{eq:prelim:mp} retains the node states of every layer and the
@@ -160,32 +158,33 @@ corpus setting the peak, since pooling forbids splitting a graph across steps
 % sets the peak, since pooling forbids splitting a graph across steps
 % (\ref{sec:prelim:gnn:readout}).
 
-This factor $L$ is the mechanism RQ5 (\ref{sec:intro:rq5}) depends on: training on $R(G)$
-and querying on $G$ stay inside one memory budget when
-\begin{equation}
-    \left| \mathcal{V}(G) \right| + \left| \mathcal{E}(G) \right|
-    \;\leq\; L \left( \left| \mathcal{V}(R(G)) \right|
-        + \left| \mathcal{E}(R(G)) \right| \right),
-    \label{eq:prelim:crossstate-budget}
-\end{equation}
-so any reduction retaining more than a $1/L$ share of $G$ admits full-graph inference on
-the hardware its own training required, making training the binding constraint.
+% Cut, thesis content in preliminaries:
+% This factor $L$ is the mechanism RQ5 (\ref{sec:intro:rq5}) depends on: training on $R(G)$
+% and querying on $G$ stay inside one memory budget when
+% \begin{equation}
+%     \left| \mathcal{V}(G) \right| + \left| \mathcal{E}(G) \right|
+%     \;\leq\; L \left( \left| \mathcal{V}(R(G)) \right|
+%         + \left| \mathcal{E}(R(G)) \right| \right),
+%     \label{eq:prelim:crossstate-budget}
+% \end{equation}
+% so any reduction retaining more than a $1/L$ share of $G$ admits full-graph inference on
+% the hardware its own training required, making training the binding constraint.
 
 % The factor $L$ in~\eqref{eq:prelim:memory} is the mechanism RQ5 (\ref{sec:intro:rq5})
 % depends on. Training on $R(G)$ and querying on $G$ stay inside one memory budget when
 % so any reduction retaining more than a $1/L$ share of $G$ admits full-graph inference on
 % the hardware its own training required. Training is the binding constraint, not inference.
 
-Four techniques recur in Chapter 3, defined here once. Reported memory is
+Four memory-reduction techniques are common practice. Reported memory is
 \emph{allocated}, the tensors actually held, not the larger \emph{reserved} pool the
 allocator keeps (\ref{sec:method:experiment:metrics:efficiency}). Mixed precision halves
 activation cost by storing them in half-width floating point. Gradient checkpointing
 discards and recomputes intermediate activations on the backward pass, trading compute for
-memory and making the largest baseline runnable at all
-(\ref{sec:method:architecture:baselines}). Gradient accumulation sums gradients over
-several small steps so the effective batch size exceeds what fits in one. All four trade
-against a \emph{fixed} input size, unlike the input reduction this thesis studies
-(\ref{sec:relwork:scaling:memory}).
+memory and often making an otherwise infeasible model trainable. Gradient accumulation
+sums gradients over several small steps so the effective batch size exceeds what fits in
+one. All four trade against a \emph{fixed} input size, unlike techniques that instead
+reduce the input itself (\ref{sec:relwork:scaling:memory}).
+% Cut, thesis content in preliminaries: Four techniques recur in Chapter 3, defined here once. Reported memory is \emph{allocated}, the tensors actually held, not the larger \emph{reserved} pool the allocator keeps (\ref{sec:method:experiment:metrics:efficiency}). Mixed precision halves activation cost by storing them in half-width floating point. Gradient checkpointing discards and recomputes intermediate activations on the backward pass, trading compute for memory and making the largest baseline runnable at all (\ref{sec:method:architecture:baselines}). Gradient accumulation sums gradients over several small steps so the effective batch size exceeds what fits in one. All four trade against a \emph{fixed} input size, unlike the input reduction this thesis studies (\ref{sec:relwork:scaling:memory}).
 
 % Four techniques recur in Chapter 3 and are defined here once. Reported memory is
 % \emph{allocated} memory, the tensors actually held, as opposed to the larger
@@ -202,8 +201,8 @@ against a \emph{fixed} input size, unlike the input reduction this thesis studie
 Depth has a cost of its own: a fixed-width representation cannot carry a receptive field
 that grows exponentially with it, so distant signal is compressed away, a failure known as
 over-squashing \citep{alon2021oversquashing}. Contracting paths shortens the distance
-signal must travel, a recognised remedy \citep{dwivedi2022lrgb} and the mechanism behind
-hypothesis H1 (\ref{sec:intro:rq3}), which sparsification alone cannot supply.
+signal must travel, a recognised remedy \citep{dwivedi2022lrgb}.
+% Cut, thesis content in preliminaries: Contracting paths shortens the distance signal must travel, a recognised remedy \citep{dwivedi2022lrgb} and the mechanism behind hypothesis H1 (\ref{sec:intro:rq3}), which sparsification alone cannot supply.
 
 % Depth has a cost of its own. A fixed-width representation cannot carry the information of
 % a receptive field that grows exponentially with depth, so signal from distant nodes is
