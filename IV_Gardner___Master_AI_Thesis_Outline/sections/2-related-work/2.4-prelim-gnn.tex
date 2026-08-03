@@ -31,6 +31,9 @@ prefix of the cones of~\eqref{eq:prelim:cone} on an AIG\@. Every depth-coupling 
 from the refinement depth of~\ref{sec:method:summary:wl} to hypothesis H1
 (\ref{sec:intro:rq3}), rests on this fact.
 
+%TODO should not mention AIGS in GNN prelim makes no sense
+
+
 % After $L$ layers, $h_v^{L}$ is a function of exactly the $L$-hop neighbourhood of $v$ and
 % of nothing outside it. On an AIG that neighbourhood is a depth-$L$ prefix of the cones
 % of~\eqref{eq:prelim:cone}, so an encoder of depth $L$ reads $L$ levels of logic around each
@@ -49,6 +52,7 @@ in the same forward pass, so a graph is the indivisible unit of batching: batche
 assembled under a node budget rather than a fixed graph count
 (\ref{sec:method:experiment:batching}), and the memory cost of one step is set by the
 largest graphs, exactly the cost reduction is meant to lower.
+
 
 % A graph-level prediction pools the node representations into one vector, here by a mean
 % over nodes, optionally after summing the per-layer outputs so that shallow and deep

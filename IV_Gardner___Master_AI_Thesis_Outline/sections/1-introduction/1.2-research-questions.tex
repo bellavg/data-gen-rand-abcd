@@ -1,6 +1,6 @@
 \section{Research Questions}
 \label{sec:intro:rqs}
-Throughout, \emph{optimizability} is the fraction of AIG nodes a given synthesis algorithm
+ \emph{Optimizability} is the fraction of AIG nodes a given synthesis algorithm
 removes from a circuit (formalised in~\ref{sec:prelim:formalization}
 and~\ref{sec:method:data:label:definition}), and \emph{compression} is reported as the node
 and edge retention ratios $\eta_{\mathcal{V}}$ and $\eta_{\mathcal{E}}$
@@ -12,6 +12,9 @@ $95\%$ bootstrap interval and a two-sided paired rank test, whereas accuracy dif
 single-run point estimates (\ref{sec:method:experiment:metrics:stats}). Hypotheses are
 stated for RQ3 and RQ4 alone, the two questions whose direction is predicted in advance and
 can still be overturned by the result.
+
+%TODO in regards to above  why formalized twice?  (formalised in~\ref{sec:prelim:formalization} and~\ref{sec:method:data:label:definition}),
+%TODO Mention RQ4 here before intorfucing RQ4 that is odd
 
 \subsection{RQ1: Task Feasibility and Baseline}
 \label{sec:intro:rq1}
@@ -27,7 +30,7 @@ recipe-disjoint split, and the design-disjoint split behind every result reporte
 inference from design recognition, and the per-design breakdown under the strictest
 protocol shows whether the residual error is spread evenly over held-out designs or carried
 by a few (\ref{sec:results:rq1:protocol}).
-
+% TODO tone here and wording sounds juvenile and informal shoudl be using more mathemetical and scientific big kid language
 \subsection{RQ2: Reduction Efficiency}
 \label{sec:intro:rq2}
 Applied to AIGs, how do partitioning, sparsification, and summarization/coarsening differ
@@ -74,15 +77,11 @@ evaluates weights trained in one state on inputs in the other.
 
 Inference is the regime where this pays off. Training stores activations and gradients for
 every node in a batch, whereas forward-only inference stores neither. A model that had to be
-trained on reduced graphs to fit in memory may therefore still serve full graphs on
+trained on reduced graphs to fit in memory may therefore still be able to perform inference on full graphs on
 substantially more modest hardware. The practical claim under test is \emph{train cheap,
-infer full}.
+infer full}. %TODO tone here wildly informal
 
-One reduction in the comparison is exact rather than approximate. Colour refinement at an
-unbounded count cap is provably lossless for this encoder
-(\ref{sec:method:architecture:exact}), so its cross-state score must match the full-graph
-baseline, which is what separates a genuine cross-state failure from a broken evaluation
-path.
+
 
 \subsection{Scope and Delimitations}
 \label{sec:intro:rqs:scope}
@@ -95,15 +94,7 @@ during the work are separated out into~\ref{sec:discussion:limitations}.
 Training and evaluation target \texttt{Orchestrate} alone, since cross-algorithm variance
 would not isolate what a reduction costs, leaving the \texttt{Deepsyn}, \texttt{Syn4} and
 \texttt{C2RS} graphs of the same corpus unused (\ref{sec:conclusion:futurework:algorithms}).
-
-\paragraph{What the target captures.}
-\label{sec:intro:scope:target}\label{sec:intro:scope:prediction}
-Optimizability is relative \emph{node} reduction alone, an area proxy silent on delay and
-power (\ref{sec:discussion:limitations:validity}). That label is predicted, not a synthesis
-script: Spearman correlation ranks \emph{circuits} under one fixed script, whereas script
-selection would require ranking \emph{algorithms} for one circuit
-(\ref{sec:conclusion:futurework:generation}).
-
+%TODO why mention the unsued graphs they wouldnt know... 
 \paragraph{Graph scale.}
 \label{sec:intro:scope:scale}
 The corpus is bounded at an intermediate rather than industrial scale: RQ1's full-graph
@@ -111,6 +102,7 @@ baseline has to fit in memory (\ref{sec:method:experiment:scale}), so the millio
 billion-node AIGs the motivation invokes are out of reach here
 (\ref{sec:discussion:limitations:scalability}).
 
+%TODO what is held fixed is not a proper title for an ancademic work this is a thesis!
 \paragraph{What is held fixed.}
 \label{sec:intro:scope:reductions}\label{sec:intro:scope:architecture}
 Partitioning, sparsification and summarization/coarsening are covered, the taxonomy of
@@ -121,3 +113,6 @@ establishes no node correspondence and so leaves RQ5 undefined
 with published circuit models entering only as RQ1 baselines
 (\ref{sec:method:architecture:baselines}), leaving untested whether the reduction ranking
 holds for another encoder.
+%TODO what is this section? this is a valid inclusion but seems to be filled with bullshit
+
+%TODO what about exact vs inexact summarization methods?

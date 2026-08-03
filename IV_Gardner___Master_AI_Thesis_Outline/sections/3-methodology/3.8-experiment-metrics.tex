@@ -4,6 +4,7 @@ Four groups of metrics are reported. Accuracy and ranking are always reported to
 a coarsened EDA graph, CTS-Bench \citep{cts_bench2026} observed mean absolute error barely
 moving while $R^2$ fell below zero, exactly the failure a reduction study risks missing if
 it reports error alone.
+%TODO why mention CTS Bench here better to mention this fact in related work alone
 
 \paragraph{Notation.}
 Let $\mathcal{D} = \{G_i\}_{i=1}^{N}$ be an evaluation set, $y_i = y(G_i) \in [0, 1]$ the
@@ -25,6 +26,7 @@ The matched pass~\eqref{eq:method:pass-matched} sees reduced graphs, the full-gr
 pass~\eqref{eq:method:pass-full} unreduced ones, and their difference isolates the cost of
 the structural shift from the cost of the reduction itself.
 
+%TODO look at this naming nor formal not scientific
 \paragraph{Which measurement answers which question.}
 Accuracy and ranking on the matched pass answer RQ1 (unreduced) and RQ3 (reduced), recomputed
 under each split protocol for RQ1a. Retention~\eqref{eq:prelim:retention}, offline cost, the
@@ -33,7 +35,7 @@ throughput~\eqref{eq:method:throughput} answer RQ2. RQ4 is the paired
 gap~\eqref{eq:method:paired-gap} between a domain-informed configuration and its generic
 control, with the receptive field~\eqref{eq:method:receptive} as the mechanism test H1
 requires. RQ5 is the cross-state drop-off~\eqref{eq:method:dropoff} between the two passes.
-
+%TODO is this really appropriate here look at other experimental setup and metrics
 % Original, condensed above:
 % Four groups of metrics are reported. Accuracy and ranking are reported together and never
 % separately: on a coarsened EDA graph, CTS-Bench \citep{cts_bench2026} observed the mean
@@ -334,7 +336,7 @@ than counting super-nodes is what makes the comparison meaningful, since it coun
 gates in both states. H1 predicts $\bar{c}_L(R(G)) > \bar{c}_L(G)$ under summarization and
 $\bar{c}_L(R(G)) \leq \bar{c}_L(G)$ under sparsification, and unlike a DAG longest-path
 metric, \eqref{eq:method:receptive} is well defined for every method.
-% TODO: not implemented, so H1 is currently asserted rather than evidenced.
+
 
 % Original, condensed above:
 % The offline cost matters independently of the training saving. Let $c_R$ be the cost of

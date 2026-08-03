@@ -1,7 +1,10 @@
 \subsection{Synthesis Algorithms}
 \label{sec:prelim:algorithms}
 
+%TODO informal language. these are three rewrite refact and balance not four and you forgot resub in title. 
 \subsubsection{Rewriting, Refactoring, and Balancing}
+\label{sec:prelim:algorithms:primitives}
+\subsubsection{Rewriting, Refactoring, Resubstitution, and Balancing}
 \label{sec:prelim:algorithms:primitives}
 Every script here is assembled from four local, function-preserving transformations
 \citep{mishchenko2006rewriting}. A cut of gate $v$ is a $K$-feasible node set, of size at most
@@ -31,6 +34,8 @@ Structural hashing carries a signature on every AND gate \citep{kuehlmann2002rob
 \end{equation}
 and maintains $\kappa(u) \neq \kappa(v)$ for distinct AND gates, so one-hop structural
 redundancy is gone before summarization runs (\ref{sec:method:summary:wl}).
+%TODO no mention of sumamrizatoin application or any kind of methodology or applciation concepts in related work and prelim
+
 
 % and maintains $\kappa(u) \neq \kappa(v)$ for distinct AND gates on construction, so one-hop
 % structural redundancy is gone before any summarization runs
@@ -46,6 +51,7 @@ such pair \citep{mishchenko2005fraig}. Structural hashing decides~\eqref{eq:prel
 only when $\kappa(u) = \kappa(v)$, and every summarization method here stays on that side,
 since a merge by~\eqref{eq:prelim:funceq} performs part of the optimization the model is
 trained to predict (\ref{sec:discussion:limitations:methods}).
+%TODO relevance?
 
 % with $b_u$ as in~\eqref{eq:prelim:inversion}. A Functionally Reduced AIG (FRAIG) merges
 % every such pair \citep{mishchenko2005fraig}, whereas~\eqref{eq:prelim:strash}
@@ -89,7 +95,7 @@ rather than the accident of one command sequence, and (ii) it is deterministic, 
 a single graph rather than a distribution over runs, and optimizability under Orchestrate is
 well defined as the $y(G)$ of~\ref{sec:method:data:label:definition}. The exact invocation is
 recorded in~\ref{sec:apx:algorithms}.
-% TODO: per-pass visit order taken from the cited paper, not confirmed against the tool source.
+%TODO i feel like i know nothign abotu how orchestrate works for this. think about what needs to be known to contextualize and understand the thesis
 
 % Orchestrate, the target algorithm, moves the choice of transformation into the graph
 % \citep{li2024orchestration}. At each AND gate, rewriting, refactoring and resubstitution
@@ -113,6 +119,8 @@ fixed deterministic flow over the same primitives. C2RS chains balancing, refact
 rewriting and resubstitution \citep{mishchenko2006scalable}, widening its resubstitution cut
 from $K = 6$ to $K = 12$ so successive steps reason over larger windows. The invocations are
 recorded in~\ref{sec:apx:algorithms}.
+%TODO i feel like i know nothign abotu how these works for this. think about what needs to be known to contextualize and understand the thesis
+
 
 % Three further scripts of the synthesis system were applied during dataset generation
 % \citep{brayton2010abc}, and every tier-1 graph that enters training is the output of one of

@@ -10,7 +10,7 @@ EDA is the tool chain that compiles a functional description of
 a digital circuit into a manufacturable layout \citep{demicheli1994synthesis}. Its optimization
 stages fix the area, power and delay of the fabricated chip. Every label used in this thesis is
 the output of one such tool, and the cost of obtaining it is what motivates prediction.
-
+%TODO bad subsectoin look at given examples in MyWork
 \subsubsection{Position of Logic Synthesis in the Design Flow}
 \label{sec:prelim:synthesis:flow}
 The flow is a sequence of refinements: a Register-Transfer-Level (RTL) description is compiled
@@ -19,7 +19,7 @@ objectives, technology mapping binds the result to the cells of a target library
 and routing assign physical positions and wires. LS is pre-physical. Its network has no
 coordinates, no wire lengths and no layout-extracted timing, which is what makes the spatial
 coarsening methods of~\ref{sec:relwork:domain:circuits} inapplicable to it.
-
+%TODO better to say technogloy independent instead of pre physical. look at how this is all defined in previous preliminaries you can copy paste from the AIG2PT or Bias By DEsign or AIGVERSE
 \subsubsection{Synthesis Scripts, Recipes, and Steps}
 \label{sec:prelim:synthesis:scripts}
 A step is one function-preserving transformation of the network, and a synthesis script is an
@@ -33,6 +33,8 @@ produced, so the same script yields different gains on different designs and scr
 cannot be fixed once and reused. A recipe is a script whose steps are drawn at random from a
 fixed alphabet of passes, which is how the corpus
 of~\ref{sec:method:data:generation:transform} is built, one stored graph per prefix.
+%TODO i dont know if recipe is random or synonymouis for script. check the literature and make sure this is correct. if it is not correct then change it to be correct.
+
 
 % Electronic Design Automation (EDA) organises the design of a digital circuit as a flow of
 % successive refinements \citep{demicheli1994synthesis}. A Register-Transfer-Level (RTL)
