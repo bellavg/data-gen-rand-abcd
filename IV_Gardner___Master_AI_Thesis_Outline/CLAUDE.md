@@ -47,10 +47,11 @@ The outline stage rewards density, not volume. See the [page limit note in the t
 - One line, no rationale. `% TODO: measure before defending this` is fine. A multi-line note explaining why a passage sits in this chapter rather than another is not.
 - No bullet lists, no `\ref` chains, and no second-person instructions ("keep it to one sentence each", "do not report it as tested") inside a comment. That register is the tell.
 - Do not record why a decision was made. Either the prose carries the reason or the reason does not need writing down.
-- Commented-out prose is restored or deleted, never left sitting in the file.
 - Outline scaffolding, a heading whose intended content is written as comments, is the one exception, and only while that section is still a stub. It goes before the section is shown to anyone.
 
-Sweep before sending anything out: `grep -rn "^\s*%" sections/`.
+**Exception, currently active: preserved prose from condensation.** While the document is at the outline stage, prose removed by a condensation pass is kept in place as a `%` comment, immediately below its replacement and introduced by a single `% Original, condensed above:` line. Roughly 21,700 words are preserved this way. **Do not sweep, delete, reflow or un-comment those blocks.** They are the full text the author will use in the real thesis, and deleting them destroys work that cannot be regenerated. This exception overrides the general rule that commented-out prose is restored or deleted, and it stays in force until she says the condensation is final.
+
+Sweep the *other* comments before sending anything out, and read what you are deleting first: `grep -rn "^\s*%" sections/`. A `% TODO` line and a `% Original, condensed above:` block are both deliberate; neither is sweepable.
 
 ### Word and punctuation discipline
 
@@ -89,6 +90,23 @@ Direct feedback received: the writing is **too code-specific and hardware-specif
 - **Generalise hardware.** "Peak memory", not "VRAM"; "exceeds device memory", not "OOM crash"; "modest hardware", not "a single H100". Specific devices and library versions are stated once, in reproducibility, and never again.
 - **Describe the mechanism, not the call sequence.** "Edges are removed in inverse proportion to their span" beats "the sparsifier iterates the edge list and drops entries below the threshold."
 - Exception: the experimental setup and reproducibility subsections exist precisely to be concrete. Do not abstract away the numbers there.
+
+### Preliminaries and related work introduce concepts, nothing else
+
+**The preliminaries and the related work introduce concepts. They do not mention this thesis.** Author feedback, given repeatedly and emphatically: a preliminaries section that explains how the work applies a concept has put method content in the wrong chapter.
+
+Define each concept so a reader can understand what it is, why it matters in the field, and enough about it to follow its later use. Then stop. Judge every sentence by "would this sentence exist in a textbook chapter on this topic?" If it only exists because of this thesis, it belongs in the methodology, the research questions, or the discussion.
+
+Specifically, these do **not** belong in preliminaries or related work:
+
+- How a concept is applied in this work, or which of its variants this work chose.
+- Feature representation: tensor conversion, one-hot encoding, input schemas, feature dimensions.
+- Motivation for this thesis, problem statements, gaps framed as this work's opportunity.
+- Cross-references forward into the methodology that argue rather than point.
+- Naming the target algorithm, the corpus, the splits, or the reductions as *this work's* choices.
+- Mentioning AIGs inside the GNN preliminaries, or the ML pipeline inside the AIG preliminaries. Keep the two vocabularies separate until the methodology brings them together.
+
+The inverse failure also counts: a concept the later chapters lean on must be introduced here **well enough to carry that weight**. If the methodology assumes the reader knows how a synthesis algorithm behaves, or what reconvergence costs, the preliminaries owe that explanation, framed as the concept rather than as this work's use of it.
 
 ### Anti-tells for generated prose
 
