@@ -2,15 +2,15 @@
 \label{sec:intro:motivation}
 \subsection{Logic Synthesis and Optimization Script Design}
 \label{sec:intro:motivation:synthesis}
-Electronic Design Automation (EDA) supplies the tools that convert Boolean specifications
+Electronic Design Automation (EDA) supplies the tools that convert formal specifications
 into the integrated circuits underlying nearly every computing device modern life depends on,
-from consumer electronics to the data centers and communication networks behind it. Logic
-synthesis and optimization remain the foundational steps within EDA for translating
+from consumer electronics to the data centers and communication networks behind them. Logic
+synthesis and optimization remain a foundational steps within EDA for translating
 high-level Boolean specifications into efficient, manufacturable hardware. One of the
 central challenges of this field is efficiently representing and manipulating Boolean functions,
 particularly as the complexity of digital circuits increases. Traditional methods such as
-truth tables, sum-of-products (SOP), or binary-decision diagrams (BDD) became impractical for
-large-scale designs due to their potential exponential growth in size. And-Inverter Graphs
+truth tables, sum-of-products (SOP), or Binary Decision Diagrams (BDD) became impractical for
+large-scale designs due to their (potential) exponential growth in size. And-Inverter Graphs
 (AIGs) address this issue by providing a more scalable and compact data structure for Boolean
 function representation \citep{kuehlmann2002robust}, and are the state-of-the-art for
 technology-independent logic optimization, supporting a wide range of synthesis and
@@ -18,6 +18,7 @@ optimization tasks fundamental to EDA \citep{mishchenko2006rewriting,brayton2010
 past few decades, numerous optimization algorithms have been developed for AIGs, each
 targeting a different objective, among them node count, logic depth, area, delay, and power
 consumption \citep{mishchenko2006scalable}.
+%TODO citations
 
 These algorithms are applied as a sequence, and their order is itself a determinant of the
 outcome: the same set of algorithms yields different results depending on the order in which
@@ -30,7 +31,7 @@ completion before its result is known.
 
 \subsubsection{Machine Learning for Logic Synthesis}
 \label{sec:intro:motivation:ml:field}
-Structural representations such as AIGs provide a foundation for applying machine learning
+Structural representations such as AIGs  provide a foundation for applying machine learning
 (ML) to address a multitude of complex challenges in logic synthesis. These methods divide
 into two classes: those that predict a synthesis outcome, and those that replace the
 heuristic that produces it \citep{liu2026ml4lssurvey}. Progress on both fronts remains
@@ -57,7 +58,7 @@ device, and a distributed setup only makes the problem explicit, since it necess
 splitting the graph.
 
 This ceiling applies to training, not inference. Backpropagation retains the node states,
-materialised edge messages, and gradients of every layer, whereas a forward-only pass keeps
+materialized edge messages, and gradients of every layer, whereas a forward-only pass keeps
 only one layer resident and computes no gradients. Training
 therefore requires several times the memory inference does, scaling with the number of
 layers. A circuit too large to train on may consequently still be queried, motivating the question of whether reducing the training
