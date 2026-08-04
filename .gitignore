@@ -5,7 +5,7 @@ __pycache__/
 .vscode 
 .github/agent.md
 .claude
-
+*.md
 logs/inspect_issues_22600850/
 logs/combined_logs.zip
 
