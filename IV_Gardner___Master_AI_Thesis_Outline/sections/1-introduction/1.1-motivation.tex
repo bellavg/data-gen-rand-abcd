@@ -46,19 +46,19 @@ in two roles: predicting a synthesis outcome, and replacing the heuristic that p
 \label{sec:intro:motivation:ml:optimizability}
 A model that predicts a circuit's \emph{optimizability}, the fraction of nodes a given
 script removes from it, would circumvent that trial-and-error search by supporting
-data-driven script generation directly, and, arguably, by revealing how much a circuit can
-shrink before an expensive optimization flow completes. \emph{Graph Neural Networks} (GNNs) are the natural
+data-driven script generation directly, and by revealing how much a circuit can shrink before
+an expensive optimization flow completes. \emph{Graph Neural Networks} (GNNs) are the natural
 class of models for the task: an AIG is a graph, and the quantity to be predicted is
-structural. Industrial AIGs reach millions of nodes, at which point training a GNN on them
+structural. Industrial AIGs reach millions of nodes. At that size, training a GNN on them
 exceeds the memory available on a single device and drives training time beyond what is
-practical, actively preventing the field from scaling to more capable models and more complex tasks.
+practical.
 
 \subsection{The Scale Bottleneck}
 \label{sec:intro:motivation:scale}
 To bypass this bottleneck, the usual responses are to restrict model capacity, adopting a
-weaker architecture than the task warrants, or to rely on multi-GPU clusters and distributed
-training. Neither removes the constraint: a single AIG can still exceed the memory of one
-device, and a distributed setup only makes the problem explicit, since it necessitates
+weaker architecture than the task warrants, or to rely on distributed training across
+multiple devices. Neither removes the constraint: a single AIG can still exceed the memory of
+one device, and a distributed setup only makes the problem explicit, since it necessitates
 splitting the graph.
 
 Training and inference do not impose the same memory cost. Backpropagation, the mechanism by
@@ -78,9 +78,9 @@ structurally from the graphs reduction was developed on: an edge encodes a term 
 the Boolean function the circuit computes, and logic depth, the length of the longest path
 from primary inputs to primary outputs, correlates with the circuit delay a synthesis pass
 optimizes for. A cut that balances partition sizes, or a sparsification that preserves the
-graph's spectrum, can blindly sever causal cones, obscure logic depth, and break the longest
-paths, thereby altering the underlying logic function and destroying the structural
-features accurate prediction depends on.
+graph's spectrum, can blindly sever causal cones and break the longest paths. The reduced
+graph then encodes a different logic function, and obscures information that accurate
+prediction depends on.
 
 A coarsening that collapses gates into one super-node can lose the separation between
 topological levels unless its criterion accounts for them. A coarsening that collapses gates
@@ -91,15 +91,16 @@ the model is trained to predict.
 \label{sec:intro:gap}
 Two approaches to scaling GNNs on AIGs are predominantly utilized in the field today. The
 first trains on extracted subcircuits of at most a few thousand gates, three orders of
-magnitude below the source circuits, or \emph{designs}, from which they are cut, a sampling
+magnitude below the source circuits, or designs, from which they are cut, a sampling
 too coarse to preserve the global structure on which a synthesis script operates. The second
 adapts the \emph{architecture} to the memory available, either by restricting capacity or by
-adopting mechanisms such as pooling and sparse attention. Both alter the model, not the input.
+adopting mechanisms such as pooling and sparse attention.
+% Both alter the model, not the input.
 % TODO: cite subcircuit training and architecture scaling
 
-Graph reduction shrinks the \emph{input} instead, and is well studied on citation, social,
-and knowledge graphs \citep{hashemi2024survey}. It has never been systematically applied to
-whole AIGs as a preprocessing step for GNN training, and no work measures which reduction
+Graph reduction shrinks the \emph{input} rather than the model, and is well studied on
+citation, social, and knowledge graphs \citep{hashemi2024survey}. It has never been
+systematically applied to whole AIGs as a preprocessing step for GNN training, and no work measures which reduction
 preserves a downstream synthesis label.
 
 Prior models also rarely predict from the AIG alone. Most pair the graph with additional
