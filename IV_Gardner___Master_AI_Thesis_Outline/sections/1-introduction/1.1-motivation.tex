@@ -76,8 +76,8 @@ structurally from the graphs reduction was developed on: an edge encodes a term 
 the Boolean function the circuit computes, and the maximum topological level, the length of
 the longest path from a primary input to a primary output, correlates with the circuit delay
 a synthesis pass optimizes for. A cut that balances partition sizes, or a sparsification that
-preserves the graph's spectrum, can blindly sever causal cones and break the longest paths. The reduced
-graph then encodes a different logic function, and obscures information that accurate
+preserves the graph's spectrum, can blindly sever causal cones and break the longest paths.
+The reduced graph then encodes a different logic function, and obscures information that accurate
 prediction depends on.
 
 A coarsening that collapses gates into one super-node can lose the separation between
@@ -97,8 +97,8 @@ adopting mechanisms such as pooling and sparse attention.
 
 Graph reduction shrinks the \emph{input} rather than the model, and is well studied on
 citation, social, and knowledge graphs \citep{hashemi2024survey}. It has never been
-systematically applied to whole AIGs as a preprocessing step for GNN training, and no work measures which reduction
-preserves a downstream synthesis label.
+systematically applied to whole AIGs as a preprocessing step for GNN training, and no work
+measures which reduction preserves a downstream synthesis label.
 
 Prior models also rarely predict from the AIG alone. Most pair the graph with additional
 inputs from elsewhere in the EDA flow, such as the high-level design description or the

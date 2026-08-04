@@ -18,7 +18,7 @@ inputs, primary outputs, and constant, so AND gates are all it can remove. The
 so $y_S(G) = 0$ when $S$ removes no AND gates. Measuring $y_S(G)$ means running $S$.
 Predicting it does not.
 
-%TODO compression is still the metric name in 2.5 and 4.4
+%TODO compression is still the metric name in 2.5
 A GNN with a graph-level readout (\ref{sec:prelim:gnn:mp}), denoted $f_\theta$, is fitted to
 approximate $y_S$ for the single script $S$ this thesis targets
 (\ref{sec:intro:scope:algorithm}). A \emph{reduction} $R$ maps $G$ to a smaller training
@@ -32,8 +32,8 @@ retains,
     \eta_{\mathcal{E}} = \frac{\left| \mathcal{E}(R(G)) \right|}{\left| \mathcal{E}(G) \right|},
     \label{eq:intro:retention}
 \end{equation}
-where either ratio equals $1$ when nothing was removed. The two are not interchangeable: sparsification
-lowers $\eta_{\mathcal{E}}$ at $\eta_{\mathcal{V}} = 1$.
+where either ratio equals $1$ when nothing was removed. The two are not interchangeable:
+sparsification lowers $\eta_{\mathcal{E}}$ at $\eta_{\mathcal{V}} = 1$.
 Accuracy is reported as predictive error (Smooth L1 loss, RMSE, and the coefficient of
 determination $R^2$) and as ranking ability, the Spearman correlation between predicted and
 true optimizability across the test circuits. Cost is reported as peak memory and time per graph
