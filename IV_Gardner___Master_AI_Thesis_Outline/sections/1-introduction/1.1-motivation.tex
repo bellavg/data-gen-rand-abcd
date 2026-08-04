@@ -13,7 +13,7 @@ central challenges of this field is efficiently representing and manipulating Bo
 particularly as the complexity of digital circuits increases. Traditional methods such as
 truth tables, sum-of-products (SOP), or Binary Decision Diagrams (BDD) became impractical for
 large-scale designs due to their (potential) exponential growth in size. And-Inverter Graphs
-(AIGs) address this issue by providing a more scalable and compact data structure for Boolean
+(AIGs) address this issue by providing a scalable and more compact data structure for Boolean
 function representation \citep{kuehlmann2002robust}, and are the state-of-the-art for
 technology-independent logic optimization, supporting a wide range of synthesis and
 optimization tasks fundamental to EDA \citep{mishchenko2006rewriting,brayton2010abc}. Over the
@@ -92,17 +92,34 @@ estimate.
 \label{sec:intro:gap}
 Two approaches to scaling GNNs on AIGs are predominantly utilized in the field today. The
 first trains on extracted subcircuits of at most a few thousand gates, three orders of
-magnitude below the designs from which they are cut, a sampling too coarse to preserve the
-global structure on which a synthesis script operates. The second adapts the
-\emph{architecture} to the memory available, either by restricting capacity or by adopting
-mechanisms such as pooling and sparse attention. Both alter the model, not the input.
+magnitude below the source circuits, or \emph{designs}, from which they are cut, a sampling
+too coarse to preserve the global structure on which a synthesis script operates. The second
+adapts the \emph{architecture} to the memory available, either by restricting capacity or by
+adopting mechanisms such as pooling and sparse attention. Both alter the model, not the input.
 % TODO: cite subcircuit training and architecture scaling
 
-Graph reduction shrinks the \emph{input} instead, and is well studied on citation, social
+Graph reduction shrinks the \emph{input} instead, and is well studied on citation, social,
 and knowledge graphs \citep{hashemi2024survey}. It has never been systematically applied to
 whole AIGs as a preprocessing step for GNN training, and no work measures which reduction
 preserves a downstream synthesis label.
 
-The gap this thesis addresses is therefore twofold: (i) there is no systematic evaluation
-of graph reduction for AIGs, and (ii) there is no evidence on whether AIG-specific
-adaptation of those reductions is worth its cost.
+Prior models also rarely predict from the AIG alone. Most consume the register-transfer
+level description, the synthesis script, or other side information alongside the graph.
+Relying on that side information enlarges the input and leaves open how much of the
+prediction AIG structure alone can support.
+% TODO: cite models using side inputs beyond the AIG
+
+Evaluation practice is a further weakness. An AIG corpus is built from a small set of source
+circuits, each optimized by many different scripts, so one design supplies many graphs.
+Withholding individual graphs rather than whole designs is defensible when distinct designs
+are scarce, but graphs from one design vary little in the structure a GNN reads. Accuracy
+measured that way rewards recognizing a familiar design as much as inferring from structure.
+Generalization to an unseen design goes untested.
+% TODO: cite the graph-level evaluation practice
+
+The gap this thesis addresses is therefore threefold: (i) there is no systematic evaluation
+of graph reduction for AIGs, (ii) there is no evidence on whether AIG-specific adaptation of
+those reductions is worth its cost, and (iii) optimizability has not been predicted from the
+AIG alone under a protocol that withholds whole designs, so the accuracy such a predictor can
+reach is unknown.
+% TODO: triple check and verify claim (iii) against all of related work but I am quite sure...
