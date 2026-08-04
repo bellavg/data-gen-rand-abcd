@@ -82,10 +82,11 @@ graph's spectrum, can blindly sever causal cones, obscure logic depth, and break
 paths, thereby altering the underlying logic function and destroying the structural
 features accurate prediction depends on.
 
-Merging rather than cutting fails differently. A coarsening that collapses gates into one
-super-node can lose the separation between AIG levels unless its merge criterion accounts for
-topological level. A criterion that merges gates by logical equivalence performs part of the
-optimization itself, and shrinks the very quantity a predictor is asked to estimate.
+% Merging rather than cutting fails differently.
+A coarsening that collapses gates into one super-node can lose the separation between
+topological levels unless its criterion accounts for them. A coarsening that collapses gates
+by logical equivalence performs part of the optimization itself, and lowers the optimizability
+the model is trained to predict.
 
 \subsection{Problem Statement and Research Gap}
 \label{sec:intro:gap}
