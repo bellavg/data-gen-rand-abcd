@@ -19,8 +19,8 @@ technology-independent logic optimization, supporting a wide range of synthesis 
 optimization tasks fundamental to EDA \citep{mishchenko2006rewriting,brayton2010abc}. Over the
 past few decades, numerous optimization algorithms have been developed for AIGs
 \citep{mishchenko2006rewriting,mishchenko2006scalable,brayton2010abc}. Most target area,
-which on an AIG correlates with node count, and a smaller set targets delay, which correlates
-with logic depth.
+which on an AIG correlates with AND gate count, and a smaller set targets delay, which
+correlates with the maximum topological level.
 
 These algorithms are applied as a sequence, and their order is itself a determinant of the
 outcome: the same set of algorithms yields different results depending on the order in which
@@ -73,10 +73,10 @@ alone would therefore suffice, provided the reduction preserves what the model m
 \label{sec:intro:motivation:reduction}
 Graph reduction is applied as a preprocessing step before training, but AIGs differ
 structurally from the graphs reduction was developed on: an edge encodes a term of
-the Boolean function the circuit computes, and logic depth, the length of the longest path
-from primary inputs to primary outputs, correlates with the circuit delay a synthesis pass
-optimizes for. A cut that balances partition sizes, or a sparsification that preserves the
-graph's spectrum, can blindly sever causal cones and break the longest paths. The reduced
+the Boolean function the circuit computes, and the maximum topological level, the length of
+the longest path from a primary input to a primary output, correlates with the circuit delay
+a synthesis pass optimizes for. A cut that balances partition sizes, or a sparsification that
+preserves the graph's spectrum, can blindly sever causal cones and break the longest paths. The reduced
 graph then encodes a different logic function, and obscures information that accurate
 prediction depends on.
 
@@ -106,8 +106,8 @@ synthesis script itself. Relying on that side information enlarges the input and
 how much of the prediction AIG structure alone can support.
 % TODO: cite models using side inputs beyond the AIG
 
-Evaluation practice is a further weakness. An AIG corpus is built from a small set of source
-circuits, each optimized by many different scripts, so one design supplies many graphs.
+Evaluation practice is a further weakness. An AIG corpus is built from a small set of
+designs, each optimized by many different scripts, so one design supplies many graphs.
 Withholding individual graphs rather than whole designs is defensible when distinct designs
 are scarce, but graphs from one design vary little in the structure a GNN reads. Accuracy
 measured that way rewards recognizing a familiar design as much as inferring from structure.
