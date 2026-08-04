@@ -1,28 +1,30 @@
 \section{Contributions}
 \label{sec:intro:contributions}
 This thesis studies graph reduction on whole AIGs. It measures what reduction costs as a
-preprocessing step for GNN training, asks whether criteria built from AIG structure outperform
-generic ones, and reports every result under a protocol that withholds whole designs. Six
-contributions follow. (i) A corpus of AIGs extending OpenABC-D \citep{chowdhury2021openabc}
-(\ref{sec:method:data}). (ii) A full-graph baseline for optimizability prediction from the AIG
-alone on unseen designs, and a systematic benchmark of partitioning, sparsification, and
-summarization/coarsening against it as a preprocessing step for GNN training on AIGs, measured
-on node and edge retention, peak memory, throughput, the offline cost of the reduction itself,
-and predictive retention. (iii) Domain-informed adaptations of each family, built from
-topological level, fanout structure, and gate role, compared against their generic counterparts
-at matched node and edge retention. (iv) A coarsening that is provably lossless for this
-encoder \citep{bollen2023exact}, the reference point every inexact method is measured against
-(\ref{sec:method:architecture:exact}), together with what losslessness demands of the encoder:
-normalization, and topological level supplied either in the initial coloring or as node-level
-positional information (\ref{sec:method:summary:level}). (v) An evaluation of cross-state
+preprocessing step for GNN training, asks whether domain-informed reductions outperform
+generic ones, and reports its headline results under a protocol that withholds whole designs.
+Six contributions follow. (i) A corpus of AIGs extending OpenABC-D
+\citep{chowdhury2021openabc} (\ref{sec:method:data}). (ii) A full-graph baseline for
+optimizability prediction from the AIG alone on unseen designs, and a systematic benchmark of
+partitioning, sparsification, and summarization/coarsening against it as a preprocessing step
+for GNN training on AIGs, measured on node and edge retention, peak memory, training and
+inference throughput, the offline cost of the reduction itself, and predictive retention.
+(iii) Domain-informed adaptations of each family, built from
+topological level, fanout structure, or gate role, compared against their generic counterparts
+at matched node and edge retention. (iv) A coarsening derived from \citet{bollen2023exact} and
+the conditions under which it is lossless for this encoder: normalization and topological level
+supplied either in the initial coloring or as node-level positional information
+(\ref{sec:method:architecture:exact}, \ref{sec:method:summary:level}). Where it is lossless it
+is the reference point every inexact method is measured against. (v) An evaluation of cross-state
 inference, in which a model trained on reduced AIGs is queried on full ones. (vi) A controlled
 comparison of three train/test protocols: random, script-disjoint, and design-disjoint, ordered
 by the information each admits into the test set (\ref{sec:method:experiment:splitting}). The
 hypothesis under test is that the design-disjoint split alone measures structural inference,
-and that the excess accuracy of the other two is design recognition.
+and that the excess accuracy of the other two is script and design recognition.
 
-The corpus is the enabling contribution: it draws on 55 source designs, extending OpenABC-D's 29.
-The design-disjoint protocol behind the RQ1 baseline depends on that count
-(\ref{sec:relwork:ml4eda:datasets}).
+The corpus is the enabling contribution: it draws on 55 source designs, the 29 of OpenABC-D
+plus 26 more. Every design held out for testing is one the model cannot train on, so the number
+of designs sets how large a design-disjoint test split can be
+(\ref{sec:relwork:ml4eda:protocols}).
 
-% TODO: recheck every contribution against the finished chapters 2, 3, and 6
+% TODO: recheck every contribution against the finished chapters 2, 3, 4, and 6
