@@ -24,7 +24,7 @@
 # writing here, not there.
 set -euo pipefail
 
-MIRROR=git@github.com:bellavg/msc-thesis-latex.git
+MIRROR=git@github.com:bellavg/IV-Gardner-msc-thesis-latex.git
 PREFIX=IV_Gardner___Master_AI_Thesis_Outline
 
 PUBLISH=(

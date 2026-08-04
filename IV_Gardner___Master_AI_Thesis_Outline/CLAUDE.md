@@ -12,7 +12,7 @@ Three git locations, and they are **not** connected by submodules. Nothing about
 |---|---|
 | `~/thesis-main`, branch `main` | The working checkout. Approved, supervisor-facing content. **Write here.** |
 | `~/data-gen-rand-abcd`, branch `thesis-outline` | The full working draft, roughly 12,000 lines ahead of `main` in chapters 2 to 7, plus planning notes. Reference and source material. |
-| `github.com/bellavg/msc-thesis-latex` | The Overleaf mirror the supervisor reads. A flattened snapshot, not a branch of this repo. Shares no history with it. |
+| `github.com/bellavg/IV-Gardner-msc-thesis-latex` | The Overleaf mirror the supervisor reads. A flattened snapshot, not a branch of this repo. Shares no history with it. |
 
 `main` and `thesis-outline` drift on purpose. A chapter moves to `main` when it is approved, copied **per file**, never by syncing whole trees: `thesis-outline` still holds older copies of files `main` has since corrected, and a bulk copy silently reverts them.
 
@@ -35,7 +35,7 @@ Rules that hold regardless of what is convenient:
 **Pulling Overleaf edits back.** Edits made on the Overleaf side are real work that lives only on the mirror, and the mirror's files sit at its root while this repo nests them under `IV_Gardner___Master_AI_Thesis_Outline/`, so no merge can do it. Diff the mirror against its last sync point and apply with a prefix:
 
 ```bash
-git fetch git@github.com:bellavg/msc-thesis-latex.git main
+git fetch git@github.com:bellavg/IV-Gardner-msc-thesis-latex.git main
 git log --oneline FETCH_HEAD          # find the newest "Sync thesis source from <rev>" commit
 git diff <that-sync-commit> FETCH_HEAD | git apply --directory=IV_Gardner___Master_AI_Thesis_Outline
 ```
