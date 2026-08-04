@@ -24,7 +24,6 @@ operator $R$ (\ref{sec:prelim:reduction}) acts ahead of the encoder, so the argu
 receives is $G$ or $R(G)$. Accuracy is reported as predictive error (Smooth L1 loss, RMSE,
 and $R^2$) and as circuit-ranking ability (Spearman correlation), both defined
 in~\ref{sec:method:experiment:metrics:accuracy} and~\ref{sec:method:experiment:metrics:ranking}.
-% Cut from above: and takes values in the same interval $[0, 1]$.
 
 %TODO compression is still the metric name in 1.3, 2.5, and 4.4
 \emph{Node and edge retention} is reported separately as the ratios
@@ -32,11 +31,6 @@ $\eta_{\mathcal{V}}$ and $\eta_{\mathcal{E}}$ of~\eqref{eq:prelim:retention}. Sp
 lowers $\eta_{\mathcal{E}}$ with $\eta_{\mathcal{V}} = 1$, so the two are not
 interchangeable. Memory and time are compared per graph against the full-graph
 baseline (\ref{sec:method:experiment:metrics:stats}).
-% Original, condensed above:
-% Memory and time differences are taken per graph against the full-graph baseline
-% and carry a $95\%$ bootstrap interval and a two-sided paired rank test,
-% whereas accuracy differences are single-run point estimates
-% (\ref{sec:method:experiment:metrics:stats}).
 
 \subsection{RQ1: Task Feasibility and Baseline}
 \label{sec:intro:rq1}
@@ -49,21 +43,6 @@ The RQ1 baseline withholds whole designs (design-disjoint), whereas conventional
 often withhold individual graphs (random) or whole synthesis scripts (script-disjoint). By
 how much does the RQ1 result change under each of those two protocols
 (\ref{sec:method:experiment:splitting},~\ref{sec:results:rq1:protocol})?
-
-% \subsubsection{RQ1a: Protocol Sensitivity}
-% How much of the RQ1 result is attributable to the assignment of graphs to splits rather than
-% to the encoder? One model is trained under three protocols differing in nothing but that
-% assignment: a random split, a recipe-disjoint split withholding whole transformation recipes,
-% and the design-disjoint split withholding whole source circuits, the protocol behind every
-% result reported here (\ref{sec:method:experiment:splitting}). The three are nested in what each
-% admits into the test set, and the prediction under test is an ordering of the $R^{2}$
-% of~\eqref{eq:method:r2},
-% \begin{equation}
-%     R^{2}_{\mathrm{random}} \;\geq\; R^{2}_{\mathrm{recipe}} \;\geq\; R^{2}_{\mathrm{design}},
-%     \label{eq:intro:protocol-ordering}
-% \end{equation}
-% whose two gaps measure design recognition rather than structural inference
-% (\ref{sec:results:rq1:protocol}).
 
 \subsection{RQ2: Reduction Efficiency}
 \label{sec:intro:rq2}
@@ -82,13 +61,6 @@ node and edge retention does it achieve with and without topological level in th
 coloring? How do inexact summarization methods compare against that lossless reference
 point in node and edge retention, and in accuracy?
 
-% \subsubsection{RQ3a: Exact and Inexact Compression}
-% How much compression do AIGs admit at zero accuracy cost, and what does each further
-% increment cost once that bound is passed? The provably lossless coarsening
-% of~\ref{sec:method:architecture:exact} fixes that bound at its retention ratios
-% $\eta_{\mathcal{V}}$ and $\eta_{\mathcal{E}}$, so every inexact method is quantified by the
-% compression it gains beyond that bound and the accuracy it forfeits.
-
 \subsection{RQ4: Value of Domain-Informed Adaptation}
 \label{sec:intro:rq4}
 Do domain-informed reductions, which exploit topological level, fanout structure, or
@@ -105,24 +77,6 @@ A \emph{structural state} is the form in which a graph reaches the encoder, the 
 $R(G)$ or the unreduced $G$ of~\ref{sec:intro:formalization}. Cross-state inference
 evaluates weights trained in one state on inputs in the other.
 
-% The training and inference costs of~\ref{sec:intro:motivation:scale} differ by a factor of the
-% encoder depth $L$. Inference is the regime where this pays off. Backpropagation retains the node states and
-% materialized edge messages of all $L$ layers, whereas forward-only inference keeps one layer
-% resident and no gradients at all (\ref{sec:prelim:gnn:cost}). A model that had to be trained
-% on reduced graphs to fit in memory may therefore still serve unreduced graphs on substantially
-% more modest hardware.
-
-% Training on $R(G)$ and querying on $G$ therefore stay inside one memory
-% budget when
-% \begin{equation}
-%     \left| \mathcal{V}(G) \right| + \left| \mathcal{E}(G) \right|
-%     \;\leq\; L \left( \left| \mathcal{V}(R(G)) \right|
-%         + \left| \mathcal{E}(R(G)) \right| \right),
-%     \label{eq:intro:crossstate-budget}
-% \end{equation}
-% so any reduction retaining more than a fraction $1/L$ of $G$ admits full-graph inference on
-% the hardware its own training required.
-
 \subsection{Scope and Delimitations}
 \label{sec:intro:rqs:scope}
 Optimizability prediction is the evaluation task, not the object of study. The delimitations
@@ -134,8 +88,6 @@ in~\ref{sec:discussion:limitations}.
 Training and evaluation target one synthesis algorithm, Orchestrate
 (\ref{sec:prelim:algorithms:orchestrate}), since variance across algorithms would confound
 the cost attributable to a reduction.
-% The corpus carries three further algorithms, left unused
-% (\ref{sec:method:data:tier1}, \ref{sec:conclusion:futurework:algorithms}).
 
 \paragraph{Graph scale.}
 \label{sec:intro:scope:scale}
@@ -161,7 +113,6 @@ correspond to no nodes of the original, and RQ5 requires that correspondence
 \label{sec:intro:scope:architecture}
 One encoder, an edge-aware GCN+ (\ref{sec:method:architecture}), is held fixed so that
 outcome differences are attributable to the reduction.
-% Transfer to another encoder is untested.
 
 \paragraph{Prediction rather than script generation.}
 \label{sec:intro:scope:prediction}
