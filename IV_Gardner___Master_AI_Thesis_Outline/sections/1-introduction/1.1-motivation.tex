@@ -1,12 +1,14 @@
 \section{Motivation}
 \label{sec:intro:motivation}
-\subsection{Logic Synthesis and Optimization Script Design}
+\subsection{Electronic Design Automation}
 \label{sec:intro:motivation:synthesis}
 Electronic Design Automation (EDA) supplies the tools that convert formal specifications
 into the integrated circuits underlying nearly every computing device modern life depends on,
 from consumer electronics to the data centers and communication networks behind them. Logic
-synthesis and optimization remain foundational steps within EDA for translating
-high-level Boolean specifications into efficient, manufacturable hardware. One of the
+synthesis and optimization remain foundational steps within EDA, turning a high-level Boolean
+specification into an optimized network of logic gates, which later stages build into a
+physical circuit. The properties of that network are therefore directly tied to the quality
+of the final circuit. One of the
 central challenges of this field is efficiently representing and manipulating Boolean functions,
 particularly as the complexity of digital circuits increases. Traditional methods such as
 truth tables, sum-of-products (SOP), or Binary Decision Diagrams (BDD) became impractical for
@@ -15,10 +17,10 @@ large-scale designs due to their (potential) exponential growth in size. And-Inv
 function representation \citep{kuehlmann2002robust}, and are the state-of-the-art for
 technology-independent logic optimization, supporting a wide range of synthesis and
 optimization tasks fundamental to EDA \citep{mishchenko2006rewriting,brayton2010abc}. Over the
-past few decades, numerous optimization algorithms have been developed for AIGs, each
-targeting a different objective, among them node count, logic depth, area, delay, and power
-consumption \citep{mishchenko2006scalable}.
-%TODO citations
+past few decades, numerous optimization algorithms have been developed for AIGs
+\citep{mishchenko2006rewriting,mishchenko2006scalable,brayton2010abc}. Most target area,
+which on an AIG correlates with node count, and a smaller set targets delay, which correlates
+with logic depth.
 
 These algorithms are applied as a sequence, and their order is itself a determinant of the
 outcome: the same set of algorithms yields different results depending on the order in which
@@ -31,12 +33,14 @@ completion before its result is known.
 
 \subsubsection{Machine Learning for Logic Synthesis}
 \label{sec:intro:motivation:ml:field}
-Structural representations such as AIGs provide a foundation for applying machine learning
-(ML) to address a multitude of complex challenges in logic synthesis. These methods divide
-into two classes: those that predict a synthesis outcome, and those that replace the
-heuristic that produces it \citep{liu2026ml4lssurvey}. Progress on both fronts remains
-constrained by the absence of standardized, large-scale AIG datasets and benchmarks
-\citep{chowdhury2023imagenets}.
+The same properties that make the AIG the standard representation for optimization,
+compactness and independence from any target technology, make it a strong input for machine
+learning (ML) as well. Although ML has the potential to address many challenges in logic
+synthesis, its application in the field remains an open problem. To date, it has been applied
+in two roles: predicting a synthesis outcome, and replacing the heuristic that produces it
+\citep{liu2026ml4lssurvey}.
+% Progress in both roles remains constrained by the absence of
+% standardized, large-scale AIG datasets and benchmarks \citep{chowdhury2023imagenets}.
 
 \subsubsection{Predicting Optimizability}
 \label{sec:intro:motivation:ml:optimizability}
@@ -57,12 +61,15 @@ training. Neither removes the constraint: a single AIG can still exceed the memo
 device, and a distributed setup only makes the problem explicit, since it necessitates
 splitting the graph.
 
-This ceiling applies to training, not inference. Backpropagation retains the node states,
-materialized edge messages, and gradients of every layer, whereas a forward-only pass keeps
-only one layer resident and computes no gradients. Training
-therefore requires several times the memory inference does, scaling with the number of
-layers. A circuit too large to train on may consequently still be queried, motivating the question of whether reducing the training
-input alone suffices.
+Training and inference do not impose the same memory cost. Backpropagation, the mechanism by
+which a model is fitted to data, retains the activations and gradients of every layer
+simultaneously, whereas evaluating an already-trained model holds one layer at a time and
+computes no gradients. Training a model on a circuit requires several times the memory that
+querying that model requires, and this requirement falls on device memory in particular,
+since inference can be carried out on general-purpose hardware while training cannot. The
+constraint binds far more severely at training time, and a circuit too large to train on may
+still lie within reach of a model that has already been trained. Reducing the training input
+alone would therefore suffice, provided the reduction preserves what the model must learn.
 
 \subsection{Limitations of Generic Graph Reduction}
 \label{sec:intro:motivation:reduction}
@@ -83,13 +90,13 @@ estimate.
 
 \subsection{Problem Statement and Research Gap}
 \label{sec:intro:gap}
-The field scales GNNs on AIGs in two ways today. The first is to train on extracted
-subcircuits of at most a few thousand gates, a crude sampling that discards global structure
-and is the de-facto reduction in most circuit-GNN work, including the DeepGate line
-\citep{li2022deepgate}. The second is to scale the \emph{architecture}: DeepGate3
-\citep{shi2024deepgate3} pools over subcircuits with a transformer, and DeepGate4
-\citep{deepgate4_2025} uses sparse attention for sub-linear memory. Both change the model,
-not the input.
+Two approaches to scaling GNNs on AIGs are predominantly utilized in the field today. The
+first trains on extracted subcircuits of at most a few thousand gates, three orders of
+magnitude below the designs from which they are cut, a sampling too coarse to preserve the
+global structure on which a synthesis script operates. The second adapts the
+\emph{architecture} to the memory available, either by restricting capacity or by adopting
+mechanisms such as pooling and sparse attention. Both alter the model, not the input.
+% TODO: cite subcircuit training and architecture scaling
 
 Graph reduction shrinks the \emph{input} instead, and is well studied on citation, social
 and knowledge graphs \citep{hashemi2024survey}. It has never been systematically applied to
