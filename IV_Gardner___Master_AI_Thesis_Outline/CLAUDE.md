@@ -153,6 +153,23 @@ Specifically, these do **not** belong in preliminaries or related work:
 
 The inverse failure also counts: a concept the later chapters lean on must be introduced here **well enough to carry that weight**. If the methodology assumes the reader knows how a synthesis algorithm behaves, or what reconvergence costs, the preliminaries owe that explanation, framed as the concept rather than as this work's use of it.
 
+### The motivation section argues, it does not introduce
+
+`sections/1-introduction/1.1-motivation.tex` is the counterpart to the rule above. Concepts that chapter 2 introduces are *motivated* here and introduced there. The motivation answers four questions and stops:
+
+1. **The core problem**, stated broadly, carried by the named obstacle the introduction is built around.
+2. **The consequence.** Who is blocked, and at what cost. The "so what".
+3. **The gap**, in a sentence or two, at the level of approaches rather than named systems.
+4. **The objective**, in outline. What the work sets out to establish, not how.
+
+What does **not** belong:
+
+- **Literature review.** Prior work appears only where it names the specific limitation this thesis fixes. Named systems, their architectures, and the citations behind them belong in related work. If a passage reads as a survey of who did what, it is in the wrong chapter; point to the chapter that does the reviewing instead.
+- **Method detail.** No experimental setup, no equations, no algorithm or command names, no configuration, no dataset construction. The approach stays at the level of what is done and why.
+- **Sweeping openers.** No history of computing, no "in today's" framing, no appeal to the field's importance in the abstract. Open inside the specific domain.
+- **Overblown claims.** No promise the results cannot support, and no assertion that the problem blocks an entire field. State the constraint and the cost it imposes.
+- **Detailed results.** One sentence teasing the main finding is allowed at the end. Numbers, tables, and conclusions are not.
+
 ### Anti-tells for generated prose
 
 **Definitive reference: <https://en.wikipedia.org/wiki/Wikipedia:Signs_of_AI_writing>.** That page is an evidence-backed catalogue of the patterns that mark text as machine-written, and it is the specification for what this thesis must not sound like. Consult it directly when editing a passage that feels generated but you cannot say why. Its "Content", "Language and grammar", and "Style" sections are the relevant ones; the markup, citation-bug, and Wikipedia-process sections are not.
