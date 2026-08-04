@@ -73,8 +73,8 @@ alone would therefore suffice, provided the reduction preserves what the model m
 
 \subsection{Limitations of Generic Graph Reduction}
 \label{sec:intro:motivation:reduction}
-Graph reduction, applied as a preprocessing step before training, is standard practice on
-citation and social graphs, but AIGs differ structurally: an edge encodes a term of
+Graph reduction is applied as a preprocessing step before training, but AIGs differ
+structurally from the graphs reduction was developed on: an edge encodes a term of
 the Boolean function the circuit computes, and logic depth, the length of the longest path
 from primary inputs to primary outputs, correlates with the circuit delay a synthesis pass
 optimizes for. A cut that balances partition sizes, or a sparsification that preserves the
@@ -83,10 +83,9 @@ paths, thereby altering the underlying logic function and destroying the structu
 features accurate prediction depends on.
 
 Merging rather than cutting fails differently. A coarsening that collapses gates into one
-super-node loses the level separation between them unless its merge criterion reads or understands level, and
-a criterion that merges gates by logical equivalence carries out part of the optimization a
-synthesis pass would have carried out, shrinking the very quantity a predictor is asked to
-estimate.
+super-node can lose the separation between AIG levels unless its merge criterion accounts for
+topological level. A criterion that merges gates by logical equivalence performs part of the
+optimization itself, and shrinks the very quantity a predictor is asked to estimate.
 
 \subsection{Problem Statement and Research Gap}
 \label{sec:intro:gap}
