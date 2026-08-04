@@ -7,6 +7,7 @@ How well can a GNN predict the optimizability of a circuit directly from
 its full, unreduced AIG representation, relative to trivial predictors and published
 circuit-representation models?
 
+
 \subsubsection{RQ1a: Protocol Sensitivity}
 How much of the RQ1 result is attributable to the assignment of graphs to splits rather than
 to the encoder? One model is trained under three protocols differing in nothing but that
@@ -57,17 +58,25 @@ A \emph{structural state} is the form in which a graph reaches the encoder, the 
 $R(G)$ or the unreduced $G$ of~\ref{sec:prelim:formalization}, and cross-state inference
 evaluates weights trained in one state on inputs in the other.
 
+%TODO somethign liek this is useful because (but nicer stated)
 The training and inference costs of~\ref{sec:intro:motivation:scale} differ by a factor of the
-encoder depth $L$. Training on $R(G)$ and querying on $G$ therefore stay inside one memory
-budget when
-\begin{equation}
-    \left| \mathcal{V}(G) \right| + \left| \mathcal{E}(G) \right|
-    \;\leq\; L \left( \left| \mathcal{V}(R(G)) \right|
-        + \left| \mathcal{E}(R(G)) \right| \right),
-    \label{eq:intro:crossstate-budget}
-\end{equation}
-so any reduction retaining more than a fraction $1/L$ of $G$ admits full-graph inference on
-the hardware its own training required.
+encoder depth $L$. Inference is the regime where this pays off. Backpropagation retains the node states and
+materialised edge messages of all $L$ layers, whereas forward-only inference keeps one layer
+resident and no gradients at all (\ref{sec:prelim:gnn:cost}). A model that had to be trained
+on reduced graphs to fit in memory may therefore still serve unreduced graphs on substantially
+more modest hardware. 
+%TODO add a final conclusion sentence
+
+% Training on $R(G)$ and querying on $G$ therefore stay inside one memory
+% budget when
+% \begin{equation}
+%     \left| \mathcal{V}(G) \right| + \left| \mathcal{E}(G) \right|
+%     \;\leq\; L \left( \left| \mathcal{V}(R(G)) \right|
+%         + \left| \mathcal{E}(R(G)) \right| \right),
+%     \label{eq:intro:crossstate-budget}
+% \end{equation}
+% so any reduction retaining more than a fraction $1/L$ of $G$ admits full-graph inference on
+% the hardware its own training required.
 
 \subsection{Scope and Delimitations}
 \label{sec:intro:rqs:scope}
