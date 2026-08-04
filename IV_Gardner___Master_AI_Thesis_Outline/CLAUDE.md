@@ -4,6 +4,44 @@ Applies to all prose in `.tex` files (and to abstracts, captions, and figure tex
 
 **Overriding goal: it must read as human, and specifically as Isabella's writing.** Prose that scans as generated text fails even if it is grammatical and formal. The samples in `~/Documents/MyWork/` are the reference for what "correct" sounds like; when a rule below and the samples disagree, the samples win. The one exception is the flagged-phrase inventory in [Anti-tells for generated prose](#anti-tells-for-generated-prose), which outranks the samples, because the samples are unpublished drafts and contain some of the phrasing that inventory bans.
 
+### Where the thesis lives, and how it reaches the supervisor
+
+Three git locations, and they are **not** connected by submodules. Nothing about this is automatic.
+
+| Location | What it is |
+|---|---|
+| `~/thesis-main`, branch `main` | The working checkout. Approved, supervisor-facing content. **Write here.** |
+| `~/data-gen-rand-abcd`, branch `thesis-outline` | The full working draft, roughly 12,000 lines ahead of `main` in chapters 2 to 7, plus planning notes. Reference and source material. |
+| `github.com/bellavg/msc-thesis-latex` | The Overleaf mirror the supervisor reads. A flattened snapshot, not a branch of this repo. Shares no history with it. |
+
+`main` and `thesis-outline` drift on purpose. A chapter moves to `main` when it is approved, copied **per file**, never by syncing whole trees: `thesis-outline` still holds older copies of files `main` has since corrected, and a bulk copy silently reverts them.
+
+**Publishing is one command, run from `~/thesis-main`:**
+
+```bash
+bash IV_Gardner___Master_AI_Thesis_Outline/sync-overleaf.sh
+```
+
+It pushes the current branch to `origin` first, then replaces the mirror's contents with the allowlisted files as of `HEAD`. A failed origin push aborts before the mirror is touched, so Overleaf never shows work that exists nowhere else. It publishes **committed** state; uncommitted edits stay local.
+
+Rules that hold regardless of what is convenient:
+
+- **Never run `sync-overleaf.sh` without being asked.** It reaches the supervisor and pushes to two remotes. Committing is not publishing. Offer, then wait.
+- **Never push to the mirror by hand,** and never edit on the Overleaf side expecting it to survive. The script wipes and rewrites the mirror on every run.
+- **To publish a new file, add it to the `PUBLISH` allowlist in the script.** The list is private-by-default: a new notes file anywhere under this directory is excluded automatically. Do not work around it by renaming or relocating a file into a published path.
+- Only the allowlist reaches the mirror: `msc_thesis.tex`, `mscaithesis.cls`, `README.md`, `sections/**/*.tex`, `bibliographies/**/*.bib`, and `media`. `CLAUDE.md`, every `.md` note, and these scripts exist on `origin` only, which is why the origin push is not optional.
+- The script pushes the **whole branch**, not just this directory. On `main` that includes `src/`. Check `git log origin/main..main` before publishing if that matters.
+
+**Pulling Overleaf edits back.** Edits made on the Overleaf side are real work that lives only on the mirror, and the mirror's files sit at its root while this repo nests them under `IV_Gardner___Master_AI_Thesis_Outline/`, so no merge can do it. Diff the mirror against its last sync point and apply with a prefix:
+
+```bash
+git fetch git@github.com:bellavg/msc-thesis-latex.git main
+git log --oneline FETCH_HEAD          # find the newest "Sync thesis source from <rev>" commit
+git diff <that-sync-commit> FETCH_HEAD | git apply --directory=IV_Gardner___Master_AI_Thesis_Outline
+```
+
+This applies cleanly only if `main` has not moved since that publish. If it has, use `git apply -3` and resolve. Read the diff before applying: hand edits made in Overleaf have introduced grammar errors before.
+
 ### Register
 
 Publication-ready scientific English, at the level of a submitted conference paper. Every sentence should be one you would submit to a venue without further editing.
