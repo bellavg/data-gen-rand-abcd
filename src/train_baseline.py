@@ -94,14 +94,14 @@ and the fanout cone 2, and the consumer keeps `== 1`. Turning on
 --deepgate4_symmetric_virtual_edges doubles every number above AND departs
 from both sources, so leave it off.
 
-The consequence is that a batch holds roughly 2-3 average graphs, versus ~75
+The consequence is that a batch holds roughly 5 average graphs, versus ~75
 for the primary model, so --accumulate_grad_batches has to do the rest of the
-work; train_baseline_deepgate4.sh pairs a 100k-node budget with 30. The same
-caveat HOGA's section above records applies here and bites harder: Lightning
-divides each micro-batch loss by the constant accumulate_grad_batches rather
-than by its graph count, so effective sample size over the window is the
-harmonic mean, below 30 x 2.5. Budget and accumulation must be retuned
-together -- their product is the effective batch.
+work; train_baseline_deepgate4.sh pairs a 200k-node budget with 15, sized for
+an 80 GB H100. The same caveat HOGA's section above records applies here and
+bites harder: Lightning divides each micro-batch loss by the constant
+accumulate_grad_batches rather than by its graph count, so effective sample
+size over the window is the harmonic mean, below 15 x 5. Budget and
+accumulation must be retuned together -- their product is the effective batch.
 
 An irreducible peak remains that no budget can lower: a graph bigger than the
 budget still forms a singleton batch, because graph-level pooling cannot split
@@ -207,6 +207,27 @@ _BASELINE_DEFAULTS = {
     "hoga": HOGA_DEFAULTS,
     "deepgate4": DEEPGATE4_DEFAULTS,
 }
+
+
+def _run_label(args: argparse.Namespace) -> str:
+    """Name for this run's checkpoint dir, log dir and WandB run.
+
+    Same rule as train.py: each default stays untagged so existing run
+    directories keep their names, and every non-default gets a suffix so two
+    runs that differ only in that setting cannot write over each other.
+
+    The edge-direction suffix is not cosmetic. DIAGNOSIS.md asks for SynthNet's
+    upstream and native directions to be run as a pair and reported together,
+    and everything else about the two runs is identical -- without a suffix the
+    second overwrites the first's last.ckpt and there is no way to tell which
+    direction produced which checkpoint.
+    """
+    label = f"{args.baseline}_{args.algorithm}"
+    if args.split_by != config.SPLIT_BY:
+        label = f"{label}_{args.split_by}"
+    if args.baseline == "synthnet" and not args.synthnet_upstream_edge_direction:
+        label = f"{label}_nativeedges"
+    return label
 
 
 def _batch_limit(value: str) -> int | float:
@@ -495,6 +516,11 @@ def main(args: argparse.Namespace) -> None:
         hp_tuning_splits_path=args.hp_tuning_splits_path,
         tier0_cache_dir=args.tier0_cache_dir,
         tier1_cache_dir=args.tier1_cache_dir,
+        # Both are hashed into _build_cache_signature(), so they have to match
+        # warmup_train_cache.sh's values or this job misses the manifest that
+        # job wrote and re-derives it for all ~700k train samples.
+        split_by=args.split_by,
+        use_graph_cache=args.use_graph_cache,
         # HOGA's node budget is applied in _hoga_loader, which builds its own
         # sampler over these datasets; SynthNet keeps its published fixed batch
         # size. Neither uses the datamodule's own loaders. See module docstring.
@@ -537,7 +563,7 @@ def main(args: argparse.Namespace) -> None:
         scheduler_patience=args.scheduler_patience,
     )
 
-    run_label = f"{args.baseline}_{args.algorithm}"
+    run_label = _run_label(args)
     algo_checkpoint_dir = os.path.join(args.checkpoint_dir, run_label)
     os.makedirs(algo_checkpoint_dir, exist_ok=True)
 
@@ -709,11 +735,27 @@ if __name__ == "__main__":
     parser.add_argument("--tier0_cache_dir", type=str, default=None)
     parser.add_argument("--tier1_cache_dir", type=str, default=None)
     parser.add_argument("--hp_tuning_splits_path", type=str, default=None)
-    # No --split_by flag: this branch's AIGGraphRegressionDataset hardcodes
-    # design-level splitting (see data/dataset.py, "split_by": "design" baked
-    # into its cache signature) -- there's no alternative to select on this
-    # branch. A configurable split_by (design/recipe/random) was added on
-    # main after this branch diverged; it isn't available here.
+    parser.add_argument(
+        "--split_by",
+        type=str,
+        default=config.SPLIT_BY,
+        choices=sorted(config.VALID_SPLIT_BY),
+        help="Train/val/test grouping strategy: 'design' (default, whole circuit "
+        "per split, unseen-IP), 'recipe' (whole ABC synthesis recipe held out "
+        "across all designs, seen-IP/unseen-recipe), or 'random' (no grouping, "
+        "per-row split). Must match the strategy warmup_train_cache.sh warmed, "
+        "since it is part of the graph-cache signature.",
+    )
+    parser.add_argument(
+        "--use_graph_cache",
+        type=lambda x: str(x).lower() in ("true", "1", "yes"),
+        default=False,
+        help="Rewrite every graph into cache_dir/processed_graphs before "
+        "training. Defaults to False to match warmup_train_cache.sh: with "
+        "NORMALIZE_EDGES=False the cached copy is the raw graph minus attrs "
+        "get() drops anyway, and the signature must agree with the warmup's or "
+        "the manifest is missed and all ~700k graphs are rewritten.",
+    )
 
     # SynthNet hyperparameters (defaults: models/qor/SynthNetV3/train.py).
     parser.add_argument(
@@ -880,15 +922,16 @@ if __name__ == "__main__":
     parser.add_argument(
         "--deepgate4_max_nodes_per_batch",
         type=int,
-        default=100_000,
+        default=200_000,
         help=(
             "Total-node budget per DeepGate4 batch, replacing --batch_size for "
             "this baseline (0 disables, restoring fixed graph-count batching). "
             "Counted in pre-expansion nodes, which is what the dataset's node "
             "list holds; NOT-node expansion then adds ~60%% more. At the "
             "published k=8 that is ~182 virtual edges per original node, so "
-            "100k nodes is ~18M edges, ~9.3 GB for one checkpointed GAT layer "
-            "and ~2.5 average graphs. Retune --accumulate_grad_batches "
+            "200k nodes is ~36M edges, ~18.6 GB for one checkpointed GAT layer "
+            "and ~5 average graphs, sized for an 80 GB H100. Retune "
+            "--accumulate_grad_batches "
             "alongside this: their product is the effective batch. NOTE this "
             "bounds typical batches only -- a graph larger than the budget "
             "still forms a singleton batch, since graph-level pooling cannot "

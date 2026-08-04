@@ -188,10 +188,23 @@ NUM_WORKERS="${NUM_WORKERS:-16}"  # of the 18 cores auto-assigned per GPU on gpu
 PREFETCH_FACTOR="${PREFETCH_FACTOR:-4}"
 PIN_MEMORY="${PIN_MEMORY:-true}"
 PERSISTENT_WORKERS="${PERSISTENT_WORKERS:-true}"
-# No SPLIT_BY: this branch's dataset hardcodes design-level splitting (see
-# data/dataset.py) -- there's no --split_by flag to pass on train_baseline.py.
+# Must match the strategy warmup_train_cache.sh warmed (its array slot 0 is
+# "design"), and --use_graph_cache must match that job's use_graph_cache=False:
+# both are hashed into the dataset's cache signature, so a mismatch renames the
+# manifest, misses the warm one, and re-derives all ~700k train samples on the
+# GPU node. Same default as train_no_sparsification.sh's array slot 0.
+#
+# NOTE these baseline scripts are single-submission only: unlike
+# train_no_sparsification.sh and warmup_train_cache.sh, they do NOT map
+# SLURM_ARRAY_TASK_ID to a strategy. Submitting one with --array=0-2 would run
+# three identical "design" jobs into one checkpoint dir. To run another
+# strategy, submit separately with
+#   sbatch --export=ALL,SPLIT_BY=recipe <script>
+# (bare VAR=value sbatch does not propagate on Snellius).
+SPLIT_BY="${SPLIT_BY:-design}"
 
 echo "Using NUM_WORKERS=$NUM_WORKERS for data loading."
+echo "Using SPLIT_BY=$SPLIT_BY."
 echo "Using HOGA_NUM_HOPS=$HOGA_NUM_HOPS, HOGA_DIRECTED=$HOGA_DIRECTED."
 echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-<unset>}"
 
@@ -214,6 +227,8 @@ srun python -u -m train_baseline \
     --tier0_cache_dir    "$TIER0_CACHE_DIR" \
     --tier1_cache_dir    "$TIER1_CACHE_DIR" \
     --hp_tuning_splits_path "$HP_TUNING_SPLITS" \
+    --split_by           "$SPLIT_BY" \
+    --use_graph_cache    "false" \
     --hoga_num_hops      "$HOGA_NUM_HOPS" \
     --hoga_max_nodes_per_batch "$HOGA_MAX_NODES_PER_BATCH" \
     --accumulate_grad_batches  "$ACCUMULATE_GRAD_BATCHES" \

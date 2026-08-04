@@ -102,8 +102,8 @@ DEEPGATE4_GRADIENT_CHECKPOINTING="${DEEPGATE4_GRADIENT_CHECKPOINTING:-true}"
 
 # Node budget per batch, counted in PRE-expansion nodes (NOT-node expansion
 # then adds ~60% more). At the measured ~182 virtual edges per original node,
-# 100k nodes is ~18M edges, ~9.3 GB for one checkpointed GAT layer, and about
-# 2.5 average graphs.
+# 200k nodes is ~36M edges, ~18.6 GB for one checkpointed GAT layer, and about
+# 5 average graphs.
 #
 # As with HOGA, a graph larger than the budget cannot be split (graph-level
 # pooling needs all its nodes at once), so it forms a singleton batch and sets
@@ -112,38 +112,62 @@ DEEPGATE4_GRADIENT_CHECKPOINTING="${DEEPGATE4_GRADIENT_CHECKPOINTING:-true}"
 # checkpointed layer. If those graphs OOM, lower DEEPGATE4_NUM_HOPS to 6 --
 # do NOT reach for DEEPGATE4_SYMMETRIC, which is already at its
 # paper-and-code-faithful setting.
-DEEPGATE4_MAX_NODES_PER_BATCH="${DEEPGATE4_MAX_NODES_PER_BATCH:-100000}"
+#
+# That singleton peak is why 200k is the right budget on an 80 GB H100 rather
+# than the 100k a memory-only reading would pick. ~34 GB is already the
+# binding peak whatever this is set to, so raising the budget to ~18.6 GB
+# cannot become the constraint -- it buys ~2x fewer micro-batches for the same
+# worst case. On a smaller card the budget is not the lever either, for the
+# same reason: on the L40 (48 GB) the paper used for its own OpenABC-D
+# experiments (Appendix A.4) the ~34 GB singleton eats most of the card
+# whatever this is set to, so lower DEEPGATE4_NUM_HOPS to 6 there rather than
+# lowering this.
+DEEPGATE4_MAX_NODES_PER_BATCH="${DEEPGATE4_MAX_NODES_PER_BATCH:-200000}"
 
-# The budget above yields ~2.5 graphs per micro-batch, against the primary
+# The budget above yields ~5 graphs per micro-batch, against the primary
 # model's ~75 (its 3M budget / ~40k avg nodes). One graph is one label is one
 # loss term, so node count buys no gradient-variance reduction; without
-# accumulation this baseline would train on ~30x fewer loss terms per update
-# than the model it is compared against. 30 x 2.5 brings the effective batch
+# accumulation this baseline would train on ~15x fewer loss terms per update
+# than the model it is compared against. 15 x 5 brings the effective batch
 # back to ~75, matching the primary model, while leaving the published lr=1e-4
 # untouched.
 #
 # Same two caveats as the HOGA script: Lightning divides each micro-batch loss
 # by the CONSTANT accumulate_grad_batches, so micro-batches weigh equally
 # however many graphs they hold, and the effective sample size over the window
-# is the harmonic mean, below 30 x 2.5. This approximates the primary model's
+# is the harmonic mean, below 15 x 5. This approximates the primary model's
 # regime; it does not match it. TrainingStartupCallback prints the real
 # avg_graphs_per_batch each epoch -- calibrate from an actual log.
 #
 # MUST be retuned together with DEEPGATE4_MAX_NODES_PER_BATCH -- their product
 # is the effective batch, and that product is the whole point of the pairing.
-ACCUMULATE_GRAD_BATCHES="${ACCUMULATE_GRAD_BATCHES:-30}"
+# 200k x 15 is the same product as the 100k x 30 this pairing started at, so
+# the H100 budget bump above changes throughput, not the optimization regime.
+ACCUMULATE_GRAD_BATCHES="${ACCUMULATE_GRAD_BATCHES:-15}"
 
-# Epoch subsampling -- mandatory here, not a nicety. At ~1 graph per
-# micro-batch a full epoch is ~630k micro-batches, so a single epoch would far
-# outrun the 72h walltime, let alone the --patience 4 early-stop cadence.
+# Epoch subsampling -- mandatory here, not a nicety. At ~5 graphs per
+# micro-batch a full epoch over ~707k train graphs is ~141k micro-batches, so a
+# single epoch would far outrun the 72h walltime, let alone the --patience 4
+# early-stop cadence. 7200 of those is ~5% of an epoch.
 #
-# THESE TWO NUMBERS ARE PLACEHOLDERS. They are sized off an ESTIMATED ~2.5 s
-# per micro-batch (12 GATConv layers over ~7.36M edges, plus the tokenizer's
-# level loop, plus checkpoint recompute in backward). That estimate has NOT
-# been measured on an H100 -- only the structural quantities behind it have
-# (edge counts, expanded depth, adapter time). RECALIBRATE from the first
-# "[train] Epoch summary" line (train_utils.py prints avg_step_s and epoch_s)
-# before trusting any result.
+# THESE TWO NUMBERS ARE PLACEHOLDERS. They are sized off an ESTIMATED ~5 s
+# per micro-batch at the 200k budget (12 GATConv layers over ~36M edges, plus
+# the tokenizer's level loop, plus checkpoint recompute in backward). That
+# estimate has NOT been measured on an H100 -- only the structural quantities
+# behind it have (edge counts, expanded depth, adapter time). RECALIBRATE from
+# the first "[train] Epoch summary" line (train_utils.py prints avg_step_s and
+# epoch_s) before trusting any result.
+#
+# Halved alongside the 100k -> 200k budget bump, so an epoch still covers the
+# same ~36k graphs and still performs 480 optimizer steps. Only the micro-batch
+# count changed.
+#
+# Wall-clock is NOT expected to halve, and may not improve at all. The GATConv
+# term is edge-linear and so is flat under this trade, while the tokenizer term
+# is level-synchronous over the whole batch (dg2.py:114, :236 loop to
+# max(forward_level)), so doubling graphs per batch doubles the per-level work
+# and the batch's max depth can only grow -- the packer anchors the largest
+# graph and backfills with the smallest. Treat ~5 s/micro-batch as a floor.
 #
 # The estimate is WEAKEST ON DEEP CIRCUITS, and per-step cost varies far more
 # than the node budget suggests. DeepGate2's tokenizer is level-synchronous:
@@ -156,10 +180,10 @@ ACCUMULATE_GRAD_BATCHES="${ACCUMULATE_GRAD_BATCHES:-30}"
 # in the tokenizer term alone, on top of the memory spread the node budget
 # already handles. Batches are packed by node count, which does NOT correlate
 # with depth, so a deep-but-small circuit can dominate a step. If avg_step_s
-# comes in far above 2.5 s, check the depth distribution before assuming the
+# comes in far above 5 s, check the depth distribution before assuming the
 # transformer is at fault.
 #
-# 14400 % 30 == 0, so no partial accumulation window is left at the epoch
+# 7200 % 15 == 0, so no partial accumulation window is left at the epoch
 # boundary (Lightning does step on a trailing partial window, giving one
 # under-scaled update). Preserve that property if you override either value.
 #
@@ -173,23 +197,43 @@ ACCUMULATE_GRAD_BATCHES="${ACCUMULATE_GRAD_BATCHES:-30}"
 # of the val split. That number drives ModelCheckpoint, PreciseEarlyStopping
 # and ReduceLROnPlateau, so quote the FULL val/test split from a separate eval
 # pass when reporting. Compare models on graphs seen, not on epoch index.
-LIMIT_TRAIN_BATCHES="${LIMIT_TRAIN_BATCHES:-14400}"
-LIMIT_VAL_BATCHES="${LIMIT_VAL_BATCHES:-1440}"
+LIMIT_TRAIN_BATCHES="${LIMIT_TRAIN_BATCHES:-7200}"
+LIMIT_VAL_BATCHES="${LIMIT_VAL_BATCHES:-720}"
 
 # DELIBERATELY LOWER than the other baselines' 16/4. The dataloader payload
 # here is the virtual edge list: ~7.36M edges x 2 rows x 8 B = ~118 MB PER
 # GRAPH, shipped from worker to main process through shared memory. A batch
-# holds ~2.5 graphs, so ~295 MB per batch; at 16 workers x prefetch 4 that
-# queue would hold ~19 GB and exhaust /dev/shm, while 6 x 2 holds ~3.5 GB. The
+# holds ~5 graphs, so ~590 MB per batch; at 16 workers x prefetch 4 that
+# queue would hold ~38 GB and exhaust /dev/shm, while 6 x 1 holds ~3.5 GB. The
 # adapter itself costs only ~0.2 s per graph (measured), well under the
 # per-step GPU time, so few workers still keep the GPU fed. Raise only
 # alongside a lower DEEPGATE4_NUM_HOPS.
+#
+# PREFETCH_FACTOR dropped 2 -> 1 when the node budget doubled, so the in-flight
+# shm total stays at ~3.5 GB. Six workers each holding one ready batch is still
+# six batches of queue depth against a ~5 s step, and each worker only has to
+# produce 5 x 0.2 s = ~1 s of adapter work per batch.
 NUM_WORKERS="${NUM_WORKERS:-6}"
-PREFETCH_FACTOR="${PREFETCH_FACTOR:-2}"
+PREFETCH_FACTOR="${PREFETCH_FACTOR:-1}"
 PIN_MEMORY="${PIN_MEMORY:-true}"
 PERSISTENT_WORKERS="${PERSISTENT_WORKERS:-true}"
+# Must match the strategy warmup_train_cache.sh warmed (its array slot 0 is
+# "design"), and --use_graph_cache must match that job's use_graph_cache=False:
+# both are hashed into the dataset's cache signature, so a mismatch renames the
+# manifest, misses the warm one, and re-derives all ~700k train samples on the
+# GPU node. Same default as train_no_sparsification.sh's array slot 0.
+#
+# NOTE these baseline scripts are single-submission only: unlike
+# train_no_sparsification.sh and warmup_train_cache.sh, they do NOT map
+# SLURM_ARRAY_TASK_ID to a strategy. Submitting one with --array=0-2 would run
+# three identical "design" jobs into one checkpoint dir. To run another
+# strategy, submit separately with
+#   sbatch --export=ALL,SPLIT_BY=recipe <script>
+# (bare VAR=value sbatch does not propagate on Snellius).
+SPLIT_BY="${SPLIT_BY:-design}"
 
 echo "Using NUM_WORKERS=$NUM_WORKERS for data loading."
+echo "Using SPLIT_BY=$SPLIT_BY."
 echo "Using DEEPGATE4_NUM_HOPS=$DEEPGATE4_NUM_HOPS, SYMMETRIC=$DEEPGATE4_SYMMETRIC."
 echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-<unset>}"
 
@@ -224,6 +268,8 @@ srun python -u -m train_baseline \
     --tier0_cache_dir    "$TIER0_CACHE_DIR" \
     --tier1_cache_dir    "$TIER1_CACHE_DIR" \
     --hp_tuning_splits_path "$HP_TUNING_SPLITS" \
+    --split_by           "$SPLIT_BY" \
+    --use_graph_cache    "false" \
     --deepgate4_num_hops "$DEEPGATE4_NUM_HOPS" \
     --deepgate4_symmetric_virtual_edges "$DEEPGATE4_SYMMETRIC" \
     --deepgate4_gradient_checkpointing  "$DEEPGATE4_GRADIENT_CHECKPOINTING" \

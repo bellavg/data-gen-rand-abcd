@@ -66,10 +66,43 @@ NUM_WORKERS="${NUM_WORKERS:-16}"  # of the 18 cores auto-assigned per GPU on gpu
 PREFETCH_FACTOR="${PREFETCH_FACTOR:-4}"
 PIN_MEMORY="${PIN_MEMORY:-true}"
 PERSISTENT_WORKERS="${PERSISTENT_WORKERS:-true}"
-# No SPLIT_BY: this branch's dataset hardcodes design-level splitting (see
-# data/dataset.py) -- there's no --split_by flag to pass on train_baseline.py.
+# Must match the strategy warmup_train_cache.sh warmed (its array slot 0 is
+# "design"), and --use_graph_cache must match that job's use_graph_cache=False:
+# both are hashed into the dataset's cache signature, so a mismatch renames the
+# manifest, misses the warm one, and re-derives all ~700k train samples on the
+# GPU node. Same default as train_no_sparsification.sh's array slot 0.
+#
+# NOTE these baseline scripts are single-submission only: unlike
+# train_no_sparsification.sh and warmup_train_cache.sh, they do NOT map
+# SLURM_ARRAY_TASK_ID to a strategy. Submitting one with --array=0-2 would run
+# three identical "design" jobs into one checkpoint dir. To run another
+# strategy, submit separately with
+#   sbatch --export=ALL,SPLIT_BY=recipe <script>
+# (bare VAR=value sbatch does not propagate on Snellius).
+SPLIT_BY="${SPLIT_BY:-design}"
+
+# Edge direction fed to the GCN trunk. true is upstream's own direction:
+# andAIG2Graphml.py:56 writes edges node -> fanin and pygDataFromNetworkx
+# passes list(G.edges) through unreversed, so under PyG's default
+# flow="source_to_target" each node summarises its fanout cone. That is the
+# direction every number in the OpenABC-D paper's Table 6 was produced with,
+# so it is what this job runs. Pinned explicitly rather than left to
+# train_baseline.py's default so the log records which variant produced the
+# result.
+#
+# false restores this project's native fanin -> node direction. It is not a
+# neutral flip: model.py:78 computes deg on edge_index[0], so upstream's
+# direction makes deg a fanin count (2, 3 or 4 after self-loops) and the GCN
+# normalisation nearly degree-blind, while native makes it a fanout count
+# spanning orders of magnitude. src/baselines/openabc_synthnet/DIAGNOSIS.md
+# asks for both to be reported; run the pair with
+#   sbatch --export=ALL,SYNTHNET_UPSTREAM_EDGE_DIRECTION=false src/shell/train_baseline_synthnet.sh
+# (bare VAR=value sbatch does not propagate on Snellius).
+SYNTHNET_UPSTREAM_EDGE_DIRECTION="${SYNTHNET_UPSTREAM_EDGE_DIRECTION:-true}"
 
 echo "Using NUM_WORKERS=$NUM_WORKERS for data loading."
+echo "Using SPLIT_BY=$SPLIT_BY."
+echo "Using SYNTHNET_UPSTREAM_EDGE_DIRECTION=$SYNTHNET_UPSTREAM_EDGE_DIRECTION."
 echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-<unset>}"
 
 # =========================================================
@@ -90,6 +123,9 @@ srun python -u -m train_baseline \
     --tier0_cache_dir    "$TIER0_CACHE_DIR" \
     --tier1_cache_dir    "$TIER1_CACHE_DIR" \
     --hp_tuning_splits_path "$HP_TUNING_SPLITS" \
+    --split_by           "$SPLIT_BY" \
+    --use_graph_cache    "false" \
+    --synthnet_upstream_edge_direction "$SYNTHNET_UPSTREAM_EDGE_DIRECTION" \
     --prefetch_factor    "$PREFETCH_FACTOR" \
     --num_workers        "$NUM_WORKERS" \
     --pin_memory         "$PIN_MEMORY" \

@@ -1,16 +1,20 @@
 """CLI wiring smoke tests for train_baseline.py.
 
 Regression coverage for a real bug: train_baseline.py was written against a
-transient, uncommitted config.py/AIGDataModule state (a configurable
-`split_by` feature) that was never actually part of this branch's history --
-it only exists in a separate commit on `main`. The argparse setup referenced
-`config.SPLIT_BY`/`config.VALID_SPLIT_BY` (which don't exist here) and passed
-`split_by=` to `AIGDataModule` (which doesn't accept it here), so simply
+configurable `split_by` feature that had not reached this branch yet, so the
+argparse setup referenced `config.SPLIT_BY`/`config.VALID_SPLIT_BY` and passed
+`split_by=` to an `AIGDataModule` that accepted none of them, and simply
 running `python -m train_baseline --help` crashed immediately. None of the
 other baseline tests exercise this file's `__main__` block at all (they test
 the regressor/lightning-wrapper classes directly), so this went undetected
 until it was run for real. These tests invoke the actual CLI as a subprocess
 to catch this class of bug going forward.
+
+`main` has since been merged in, so `split_by` and `use_graph_cache` are both
+real flags now. They stay under test because they are hashed into the dataset's
+graph-cache signature: a value that disagrees with warmup_train_cache.sh's
+renames the manifest, misses the warmed one, and silently re-derives all ~700k
+train samples on the GPU node (~10 h) instead of loading them.
 """
 
 from __future__ import annotations
@@ -21,6 +25,7 @@ import subprocess
 import sys
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 _SRC_DIR = str(Path(__file__).resolve().parents[2])
 _SHELL_DIR = Path(_SRC_DIR) / "shell"
@@ -48,11 +53,89 @@ class TestTrainBaselineCLI(unittest.TestCase):
             msg=f"stdout={result.stdout}\nstderr={result.stderr}",
         )
 
-    def test_split_by_flag_does_not_exist(self):
-        # This branch's dataset hardcodes design-level splitting (see
-        # data/dataset.py); --split_by isn't a real, wired-up flag here.
-        result = _run_cli("--help")
-        self.assertNotIn("--split_by", result.stdout)
+    def test_job_scripts_pin_the_warmup_cache_signature(self):
+        """Both flags are hashed into _build_cache_signature().
+
+        warmup_train_cache.sh builds the train+val manifest on a CPU node with
+        use_graph_cache=False and its array slot's split_by. If a baseline job
+        disagrees on either, it computes a different signature, finds no
+        manifest under that name, and rebuilds the whole thing on the GPU node
+        -- which is exactly how a SynthNet run burned ~10 h re-caching 707k
+        graphs it already had.
+        """
+        # Anchored to the kwarg in the embedded Python, NOT a bare substring:
+        # "use_graph_cache=False" also appears twice in that file's comments,
+        # so an unanchored check stays green even if the real call flips to
+        # True -- the one change this assertion exists to catch.
+        warmup = (_SHELL_DIR / "warmup_train_cache.sh").read_text()
+        self.assertRegex(
+            warmup,
+            r"(?m)^\s*use_graph_cache=False,",
+            "warmup no longer disables the graph cache -- update the job scripts",
+        )
+
+        scripts = sorted(_SHELL_DIR.glob("train_baseline_*.sh"))
+        self.assertTrue(scripts, "no baseline job scripts found")
+        for script in scripts:
+            with self.subTest(script=script.name):
+                text = script.read_text()
+                # (?m)^\s*(?!#) so a commented-out flag in the srun block does
+                # not satisfy these -- the point is what the job actually
+                # passes, not what the file happens to mention.
+                self.assertRegex(
+                    text,
+                    r'(?m)^\s*(?!#)--use_graph_cache\s+"false"',
+                    f"{script.name} must pass --use_graph_cache false",
+                )
+                self.assertRegex(
+                    text,
+                    r'(?m)^\s*(?!#)--split_by\s+"\$SPLIT_BY"',
+                    f"{script.name} must pass --split_by",
+                )
+                self.assertRegex(
+                    text,
+                    r'(?m)^\s*(?!#)SPLIT_BY="\$\{SPLIT_BY:-design\}"',
+                    f"{script.name} must default SPLIT_BY to the warmed strategy",
+                )
+
+    def test_run_label_separates_the_two_synthnet_edge_directions(self):
+        """DIAGNOSIS.md asks for both directions to be run and reported.
+
+        The two runs share every other setting, so without a suffix they share
+        one checkpoint dir, one log dir and one WandB name, and the second
+        silently overwrites the first's last.ckpt. Upstream (True) stays
+        untagged so existing run directories keep their names.
+        """
+        import config
+        import train_baseline
+
+        def label(**overrides):
+            args = SimpleNamespace(
+                baseline="synthnet",
+                algorithm="Orchestrate",
+                split_by=config.SPLIT_BY,
+                synthnet_upstream_edge_direction=True,
+            )
+            for key, value in overrides.items():
+                setattr(args, key, value)
+            return train_baseline._run_label(args)
+
+        self.assertEqual(label(), "synthnet_Orchestrate")
+        self.assertEqual(
+            label(synthnet_upstream_edge_direction=False),
+            "synthnet_Orchestrate_nativeedges",
+        )
+        # Orthogonal to split_by, and both suffixes stack.
+        self.assertEqual(
+            label(split_by="recipe", synthnet_upstream_edge_direction=False),
+            "synthnet_Orchestrate_recipe_nativeedges",
+        )
+        # The suffix is SynthNet-only: the other baselines have no such flag,
+        # so their label must not depend on it.
+        self.assertEqual(
+            label(baseline="hoga", synthnet_upstream_edge_direction=False),
+            "hoga_Orchestrate",
+        )
 
     def test_missing_required_baseline_arg_fails_cleanly(self):
         result = _run_cli("--csv_paths", "dummy.csv")
