@@ -14,7 +14,8 @@ training-set mean $\bar{y}_S$ and against existing GNN models for circuits, retr
 same data (\ref{sec:method:architecture:baselines}).
 (iii) AIG-specific adaptations of each class, built from a node's topological level
 $\ell(v)$, its fanout, or its role as a gate, compared against their domain-agnostic
-counterparts at comparable $\eta_{\mathcal{V}}$ and $\eta_{\mathcal{E}}$
+counterparts at a comparable amount removed ($\eta_{\mathcal{V}}$ and $\eta_{\mathcal{E}}$ for
+sparsification and coarsening, $k$ and $\eta_{\mathcal{E}}$ for partitioning)
 (\ref{sec:results:rq4:pairings}). (iv) A coarsening for an AIG $G$ derived from
 \citet{bollen2023exact}, the conditions under which it is exact for $f_\theta$, and what
 satisfying them costs the model

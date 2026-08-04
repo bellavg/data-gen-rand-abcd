@@ -8,11 +8,10 @@ from consumer electronics to the data centers and communication networks behind 
 synthesis and optimization remain foundational steps within EDA, turning a high-level Boolean
 specification into an optimized network of logic gates, which later stages build into a
 physical circuit. The properties of that network are therefore directly tied to the quality
-of the final circuit. One of the
-central challenges of this field is efficiently representing and manipulating Boolean functions,
-particularly as the complexity of digital circuits increases. Traditional methods such as
-truth tables, sum-of-products (SOP), or Binary Decision Diagrams (BDD) became impractical for
-large-scale designs due to their (potential) exponential growth in size. And-Inverter Graphs
+of the final circuit. The cost of representing and manipulating Boolean functions
+efficiently increases with circuit complexity. Traditional methods such as truth tables,
+sum-of-products (SOP), or Binary Decision Diagrams (BDD) became impractical for large-scale
+designs due to their potentially exponential growth in size. And-Inverter Graphs
 (AIGs) address this issue by providing a scalable and more compact data structure for Boolean
 function representation \citep{kuehlmann2002robust}, and are the state-of-the-art for
 technology-independent logic optimization, supporting a wide range of synthesis and
@@ -22,11 +21,10 @@ past few decades, numerous optimization algorithms have been developed for AIGs
 which on an AIG correlates with AND gate count, and a smaller set targets delay, which
 correlates with the maximum topological level.
 
-These algorithms are applied as a sequence, and their order is itself a determinant of the
-outcome: the same set of algorithms yields different results depending on the order in which
-they are applied. Crafting an effective sequence, a synthesis \emph{script}, for a given
-circuit is therefore a heuristic trial-and-error process: each candidate script must run to
-completion before its result is known.
+These algorithms are applied as a sequence, and the same set yields different results
+depending on the order applied. Crafting an effective sequence, a synthesis \emph{script},
+for a given circuit is therefore a heuristic trial-and-error search: each candidate script
+must run to completion before its result is known.
 
 \subsection{Machine Learning for AIGs}
 \label{sec:intro:motivation:ml}
@@ -53,8 +51,8 @@ practical.
 
 \subsection{The Scale Bottleneck}
 \label{sec:intro:motivation:scale}
-To bypass this bottleneck, the usual responses are to restrict model capacity, adopting a
-weaker architecture than the task warrants, or to rely on distributed training across
+To bypass this bottleneck, the usual responses are to restrict model capacity (adopting a
+weaker architecture than the task warrants) or to rely on distributed training across
 multiple devices. Neither removes the constraint: a single AIG can still exceed the memory of
 one device, and a distributed setup only makes the problem explicit, since it necessitates
 splitting the graph.
@@ -62,7 +60,7 @@ splitting the graph.
 Training and inference do not impose the same memory cost. Backpropagation, the mechanism by
 which a model is fitted to data, retains the activations and gradients of every layer
 simultaneously, whereas evaluating an already-trained model holds one layer at a time and
-computes no gradients. Training a model on a circuit requires several times the memory that
+computes no gradients. Training a model on a circuit demands substantially more memory than
 querying that model requires, and this requirement falls on device memory in particular,
 since inference can be carried out on general-purpose hardware while training cannot. The
 constraint binds far more severely at training time, and a circuit too large to train on may
@@ -76,7 +74,7 @@ structurally from the graphs reduction was developed on: an edge encodes a term 
 the Boolean function the circuit computes, and the maximum topological level, the length of
 the longest path from a primary input to a primary output, correlates with the circuit delay
 a synthesis pass optimizes for. A cut that balances partition sizes, or a sparsification that
-preserves the graph's spectrum, can blindly sever causal cones and break the longest paths.
+preserves the graph's spectrum, can blindly sever logic cones and longest paths alike.
 The reduced graph then encodes a different logic function, and obscures information that accurate
 prediction depends on.
 
@@ -89,7 +87,7 @@ the model is trained to predict.
 \label{sec:intro:gap}
 Two approaches to scaling GNNs on AIGs are predominantly utilized in the field today. The
 first trains on extracted subcircuits of at most a few thousand gates, three orders of
-magnitude below the source circuits, or designs, from which they are cut, a sampling
+magnitude below the designs from which they are cut, a sampling
 too coarse to preserve the global structure on which a synthesis script operates. The second
 adapts the \emph{architecture} to the memory available, either by restricting capacity or by
 adopting mechanisms such as pooling and sparse attention.
@@ -116,7 +114,8 @@ Generalization to an unseen design goes untested.
 
 The gap this thesis addresses is therefore threefold: (i) there is no systematic evaluation
 of graph reduction for AIGs, (ii) there is no evidence on whether AIG-specific adaptation of
-those reductions is worth its cost, and (iii) optimizability has not been predicted from the
-AIG alone under a protocol that withholds whole designs, so the accuracy such a predictor can
-reach is unknown. This thesis aims to close all three.
+those reductions is worth its cost, and (iii) no work has predicted optimizability from the
+AIG alone under a protocol that withholds whole designs, so fixing either weakness above
+without the other still leaves the achievable accuracy unknown. This thesis aims to close
+all three.
 % TODO: triple check and verify claim (iii) against all of related work but I am quite sure...
