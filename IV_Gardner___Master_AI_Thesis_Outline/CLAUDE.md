@@ -71,7 +71,8 @@ Recurring traits in those samples, to preserve:
 - **A named obstacle carries the introduction.** Each paper names its blocking problem as a term ("structural bias", "the scale bottleneck"), defines it in one sentence, and returns to that exact term. The introduction is built around the obstacle, not around the field's importance.
 - **Terminology repeats verbatim.** A concept gets one name and keeps it. Renaming it for variety is a generated-prose tell and does not appear in her samples.
 - **Magnitudes carry numbers.** "17.2× faster", "$r = 0.72$", "100 % structural validity", "three to four orders of magnitude". A claim about size, speed, or strength with no figure attached is unfinished prose.
-- American spelling and the Oxford comma: *modeled*, *materialized*, *optimized*, *centered*.
+- American spelling: *modeled*, *materialized*, *optimized*, *centered*.
+- **The Oxford comma is mandatory**, in every list of three or more, in prose, captions, and enumerated scope statements alike: "area, delay, and power". Not optional, not a house-style toss-up. Restore it whenever an edit touches a list.
 
 **Caution: the samples are drafts, not exemplars of every sentence.** `AIG_Generation_ASP_DAC.pdf` in particular still carries unedited phrasing that the anti-tell inventory below bans ("plays a critical role", "sets the stage for", "key properties", a participial tail listing four future applications). Take structure, terminology, person, and density from the samples. Do not lift their phrasing.
 
@@ -93,6 +94,8 @@ The outline stage rewards density, not volume. See the [page limit note in the t
 - Do not record why a decision was made. Either the prose carries the reason or the reason does not need writing down.
 - Outline scaffolding, a heading whose intended content is written as comments, is the one exception, and only while that section is still a stub. It goes before the section is shown to anyone.
 
+**Cut prose is commented out, never deleted.** When the author says to cut a passage, comment it out in place rather than removing it. She decides later whether it is gone for good. This applies to every cut she asks for, not only to condensation passes, and it holds until she says a passage may be deleted outright.
+
 **Exception, currently active: preserved prose from condensation.** While the document is at the outline stage, prose removed by a condensation pass is kept in place as a `%` comment, immediately below its replacement and introduced by a single `% Original, condensed above:` line. Roughly 21,700 words are preserved this way. **Do not sweep, delete, reflow or un-comment those blocks.** They are the full text the author will use in the real thesis, and deleting them destroys work that cannot be regenerated. This exception overrides the general rule that commented-out prose is restored or deleted, and it stays in force until she says the condensation is final.
 
 Sweep the *other* comments before sending anything out, and read what you are deleting first: `grep -rn "^\s*%" sections/`. A `% TODO` line and a `% Original, condensed above:` block are both deliberate; neither is sweepable.
@@ -103,8 +106,22 @@ Follow the flagged-term and punctuation rules in `~/.claude/plugins/cache/academ
 
 - Avoid defaulting to *delve, leverage, crucial, pivotal, comprehensive, robust, landscape, foster, showcase, underscore, nuanced, cutting-edge*. Exception: a term that is standard in EDA/ML usage ("robust estimator", "the loss landscape") is fine.
 - Also flagged, from the corpus studies cited on the Wikipedia page below: *additionally* (especially sentence-initial), *align with*, *boasts*, *bolstered*, *emphasize*, *enduring*, *enhance*, *garner*, *highlight* (as a verb), *interplay*, *intricate*, *key* (as an adjective), *meticulous*, *tapestry*, *testament*, *valuable*, *vibrant*. These co-occur: where one appears, look for the others.
+- **American spelling only, no exceptions, document-wide.** *color* not *colour*, *labeling* not *labelling*, *optimize*, *modeled*, *normalization*, *amortization*, *materialized*, *analyze*. This overrides local consistency: if a term is spelled the British way somewhere else in the document, correct that too rather than matching it. Careful with false positives, *analysis* is already American and must not be "fixed".
 - Semicolons: ≤ 2 per 1000 words.
 - Do not open consecutive paragraphs with a colon-plus-list.
+
+**Grammar-check every touched passage before committing.** Read each edited sentence for agreement, tense, article use, dangling modifiers, and comma splices, and check that a sentence still parses after words were cut from it. Condensation is where this fails most often: removing a clause routinely leaves a subject without its verb or a list without its conjunction. This is a separate pass from the flagged-term check above, and it runs on the final text, not on the intermediate draft.
+
+### Fixed terminology
+
+One name per concept, chosen once and repeated verbatim. These are settled. Do not re-derive them, and do not rename one for variety.
+
+- **Never write bare "retention".** Two different quantities carry the name and both are legitimate: *node and edge retention* ($\eta_{\mathcal{V}}$, $\eta_{\mathcal{E}}$) is how much graph a reduction leaves, and *predictive retention* is how much accuracy survives relative to the full-graph baseline. Qualify which one, every time. An unqualified "retention" is ambiguous exactly where it matters, in a sentence that also mentions accuracy.
+- **"Compression" is not a word this thesis uses for its own concepts.** Retention is the metric, coarsening is the method. $\eta = 1$ means nothing was removed, so a reader parsing $\eta$ as compression reads every number backwards. Use it only when reporting what a cited author called their own work.
+- **"Script", not "recipe".** §1.1 defines `a synthesis \emph{script}`. *Recipe* is OpenABC-D's term for one sampled sequence; use their word only when naming their artifact.
+- **"Topological level", symbol $\ell$.** Never a "depth" variant. Colour-refinement depth ($d$), message-passing layers ($L$), and logic depth already exist and would collide.
+- **"Coarsening", not "merging".**
+- **"Design", not "source circuit".**
 
 ### Mathematical language first
 
@@ -169,6 +186,21 @@ What does **not** belong:
 - **Sweeping openers.** No history of computing, no "in today's" framing, no appeal to the field's importance in the abstract. Open inside the specific domain.
 - **Overblown claims.** No promise the results cannot support, and no assertion that the problem blocks an entire field. State the constraint and the cost it imposes.
 - **Detailed results.** One sentence teasing the main finding is allowed at the end. Numbers, tables, and conclusions are not.
+
+### The research questions section asks, it does not answer
+
+`sections/1-introduction/1.2-research-questions.tex` states the questions and the boundaries that keep them answerable. Each question is asked directly and unambiguously, and each one names what is actually being varied and measured. What belongs:
+
+1. **The question itself**, stated as a question, with no ambiguity about what a yes or a no would look like.
+2. **The variables and concepts under test**, named in the terms the rest of the document uses.
+3. **Scope and delimitations.** The context, corpus, and parameters that keep the question answerable within one thesis.
+
+What does **not** belong:
+
+- **Vague or unmeasurable phrasing.** "Is the reduced model better?" is not a research question until *better* is a named quantity. A question no experiment can settle is not in scope.
+- **The why.** The motivation section already argued that the work matters. Do not restate the background, the gap, or the cost of the problem here. Ask the question and stop.
+- **The how.** No tooling, no dataset construction, no experimental design, no protocol description. Those belong in the methodology; point to it with a reference rather than summarising it.
+- **The answer.** No hint of the finding, no prediction of which method wins, and no result stated as a premise inside the question.
 
 ### Anti-tells for generated prose
 
