@@ -1,0 +1,27 @@
+# ChkTeX settings for this thesis.
+#
+# Picked up automatically by the mathematic.vscode-latex extension, which walks
+# up from the edited .tex file looking for .chktexrc and passes it as `chktex -l`.
+# Also honoured by a plain `chktex` run from this directory.
+#
+# CmdLine entries are treated as command-line arguments.
+
+CmdLine
+{
+    # -n24  "Delete this space to maintain correct pagereferences"
+    #       Fires on every \label placed on the line after \section/\subsection,
+    #       which is the layout used throughout this thesis.
+    -n24
+
+    # -n27  "Could not execute LaTeX command"
+    #       \input{\resultsgen/...}; ChkTeX cannot expand the path macro.
+    -n27
+
+    # -n21  "This command might not be intended"
+    #       amsmath spacing: \!, \;, \big\| inside equations.
+    -n21
+
+    # -n46  "Use \( ... \) instead of $ ... $"
+    #       This thesis uses $...$ throughout; both are valid.
+    -n46
+}
