@@ -7,7 +7,7 @@ An AIG $G = (\mathcal{V}, \mathcal{E})$ holds one node per primary input, one pe
 output, a single constant node, and a set of AND gates $\mathcal{V}_{\wedge}(G) \subseteq
 \mathcal{V}$, each with exactly two incoming edges. Every edge records whether the signal it
 carries is inverted (\ref{sec:prelim:aig}). The \emph{target script} $S$, whose effect on $G$
-is the quantity predicted, maps $G$ to a function-equivalent $S(G)$ with the same primary
+is the quantity predicted, maps $G$ to a function-equivalent circuit $S(G)$ with the same primary
 inputs, primary outputs, and constant, so AND gates are all it can remove. The
 \emph{optimizability} of $G$ under $S$ is the fraction of them it does remove,
 \begin{equation}
@@ -15,10 +15,10 @@ inputs, primary outputs, and constant, so AND gates are all it can remove. The
     \;\in\; [0, 1],
     \label{eq:intro:target}
 \end{equation}
-so $y_S = 0$ is a circuit $S$ leaves unchanged. Measuring $y_S(G)$ means running $S$.
+so $y_S(G) = 0$ when $S$ removes no AND gates. Measuring $y_S(G)$ means running $S$.
 Predicting it does not.
 
-%TODO compression is still the metric name in 1.3, 2.5, and 4.4
+%TODO compression is still the metric name in 2.5 and 4.4
 A GNN with a graph-level readout (\ref{sec:prelim:gnn:mp}), denoted $f_\theta$, is fitted to
 approximate $y_S$ for the single script $S$ this thesis targets
 (\ref{sec:intro:scope:algorithm}). A \emph{reduction} $R$ maps $G$ to a smaller training
@@ -32,7 +32,7 @@ retains,
     \eta_{\mathcal{E}} = \frac{\left| \mathcal{E}(R(G)) \right|}{\left| \mathcal{E}(G) \right|},
     \label{eq:intro:retention}
 \end{equation}
-where $\eta = 1$ means nothing was removed. The two are not interchangeable: sparsification
+where either ratio equals $1$ when nothing was removed. The two are not interchangeable: sparsification
 lowers $\eta_{\mathcal{E}}$ at $\eta_{\mathcal{V}} = 1$.
 Accuracy is reported as predictive error (Smooth L1 loss, RMSE, and $R^2$) and as ranking
 ability, the Spearman correlation between predicted and true optimizability across the test
@@ -49,9 +49,9 @@ $y_S$ and evaluated on the same withheld graphs (\ref{sec:method:architecture:ba
 \paragraph{Sensitivity to the evaluation protocol.}
 The corpus supplies many graphs per design, so a train/test split can be drawn in three ways.
 The question above withholds all graphs from the test designs (design-disjoint). The
-alternatives withhold individual graphs at random, or whole \emph{generating scripts}, the
-sequences that produced the corpus graphs from their designs, so that every design stays in
-training (script-disjoint). How much do the RQ1 results change under each
+alternatives withhold individual graphs (random) or whole \emph{generating scripts}, the
+sequences that produced the corpus graphs from their designs (script-disjoint). Under both,
+every design stays in training. How much do the RQ1 results change under each
 (\ref{sec:method:experiment:splitting},~\ref{sec:results:rq1:protocol})?
 
 \subsection{RQ2: Cost of Reduction}
@@ -89,7 +89,7 @@ from node and edge attributes, without reading what those attributes mean in a c
 node's topological level $\ell(v)$, its fanout, or its role as a gate. To what extent do
 AIG-specific reductions reach higher predictive retention than their domain-agnostic
 counterparts at comparable node retention $\eta_{\mathcal{V}}$ and edge retention
-$\eta_{\mathcal{E}}$? Comparable retention holds the amount removed constant, so any
+$\eta_{\mathcal{E}}$? Comparable node and edge retention holds the amount removed constant, so any
 difference is attributable to which nodes and edges each criterion selected
 (\ref{sec:results:rq4:pairings}).
 
@@ -111,7 +111,7 @@ in~\ref{sec:discussion:limitations}.
 
 \paragraph{Target script.}
 \label{sec:intro:scope:algorithm}
-Training and evaluation target one script, Orchestrate
+Training and evaluation target one script, \texttt{orchestrate}
 (\ref{sec:prelim:algorithms:orchestrate}), since variance across scripts would confound the
 cost attributable to a reduction.
 
@@ -123,8 +123,8 @@ reaches (\ref{sec:method:experiment:scale},~\ref{sec:discussion:limitations:scal
 
 \paragraph{Definition of optimizability.}
 \label{sec:intro:scope:target}
-Optimizability $y_S(G)$~\eqref{eq:intro:target} is defined on AND gate counts. Area, delay,
-and power, the objectives synthesis actually optimizes for, are not modeled
+Optimizability $y_S(G)$~\eqref{eq:intro:target} is defined on AND gate counts, the standard
+area proxy on an AIG (\ref{sec:intro:motivation:synthesis}). Delay and power are not modeled
 (\ref{sec:discussion:limitations:validity}).
 
 \paragraph{Reduction classes.}
@@ -132,16 +132,16 @@ and power, the objectives synthesis actually optimizes for, are not modeled
 Three classes of reduction are in scope: partitioning, sparsification, and
 summarization/coarsening. This set is the taxonomy of \citet{hashemi2024survey} with
 partitioning in place of condensation. Condensation synthesizes a new small graph whose nodes
-correspond to no nodes of the original, and that correspondence is what lets methods be
-compared across classes and lets one set of weights be applied to both reduced and unreduced
-inputs (\ref{sec:relwork:reduction:summarization}). Condensation is left to future work
-(\ref{sec:conclusion:futurework}).
+correspond to no nodes of the original, so one set of weights cannot be applied to both
+reduced and unreduced inputs, which RQ5 requires
+(\ref{sec:relwork:reduction:summarization}). Condensation is left to future work.
 
 \paragraph{Model architecture.}
 \label{sec:intro:scope:architecture}
-One architecture is held fixed, an edge-aware GCN+ \citep{luo2024gnnplus} whose messages read
-whether an edge is inverted as well as the nodes it joins (\ref{sec:method:architecture}), so
-that outcome differences are attributable to the reduction.
+One architecture is held fixed, an edge-aware extension of GCN+ \citep{luo2024gnnplus} whose
+messages read whether an edge is inverted as well as the nodes it joins
+(\ref{sec:method:architecture}), so that outcome differences are attributable to the
+reduction.
 
 \paragraph{What the prediction supports.}
 \label{sec:intro:scope:prediction}

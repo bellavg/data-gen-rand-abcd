@@ -2,28 +2,35 @@
 \label{sec:intro:contributions}
 %TODO ii tooooo long
 This thesis studies graph reduction on whole AIGs. It measures what reduction costs as a
-preprocessing step for GNN training, asks whether AIG-specific reductions outperform
-domain-agnostic ones, and reports its headline results under a protocol that withholds whole designs.
+preprocessing step for GNN training, asks whether AIG-specific reductions reach higher
+predictive retention than domain-agnostic ones at comparable node and edge retention, and
+reports its primary results under a protocol that withholds whole designs.
 Six contributions follow. (i) A corpus of AIGs extending OpenABC-D
-\citep{chowdhury2021openabc} (\ref{sec:method:data}). (ii) A full-graph baseline for
-optimizability prediction from the AIG alone on unseen designs, and a systematic benchmark of
-partitioning, sparsification, and summarization/coarsening against it as a preprocessing step
-for GNN training on AIGs, measured on node and edge retention, peak memory, training and
-inference throughput, the offline cost of the reduction itself, and predictive retention.
-(iii) AIG-specific adaptations of each class, built from a
-node's topological level $\ell(v)$, its fanout, or its role as a gate, compared against their
-domain-agnostic counterparts at comparable node and edge retention. (iv) A coarsening derived from \citet{bollen2023exact} and
-the conditions under which it is lossless for this encoder: normalization and topological level
+\citep{chowdhury2021openabc} (\ref{sec:method:data}). (ii) A full-graph baseline predicting
+$y_S(G)$ from the AIG alone on withheld designs, and a systematic benchmark of partitioning,
+sparsification, and summarization/coarsening against it on node and edge retention
+($\eta_{\mathcal{V}}$, $\eta_{\mathcal{E}}$), peak memory, training and inference throughput,
+the one-time cost of $R(G)$, and predictive retention. The baseline is measured against the
+training-set mean $\bar{y}_S$ and against existing GNN models for circuits, retrained on the
+same data (\ref{sec:method:architecture:baselines}).
+(iii) AIG-specific adaptations of each class, built from a node's topological level
+$\ell(v)$, its fanout, or its role as a gate, compared against their domain-agnostic
+counterparts at comparable $\eta_{\mathcal{V}}$ and $\eta_{\mathcal{E}}$
+(\ref{sec:results:rq4:pairings}). (iv) A coarsening derived from \citet{bollen2023exact} and
+the conditions under which it is exact for $f_\theta$: normalization and topological level
 supplied either in the initial coloring or as node-level positional information
-(\ref{sec:method:architecture:exact}, \ref{sec:method:summary:level}). Where it is lossless it
-is the reference point every inexact method is measured against. (v) An evaluation of cross-state
-inference, in which a model trained on reduced AIGs is queried on full ones. (vi) A controlled
+(\ref{sec:method:architecture:exact},~\ref{sec:method:summary:level}). Where it is exact it is
+the reference point every inexact coarsening is measured against, in node and edge retention
+and in predictive retention. (v) An evaluation of cross-state inference, in which a model
+trained only on reduced AIGs is queried, with the same weights, on the unreduced $G$ of each
+withheld design (\ref{sec:results:rq5:accuracy}). (vi) A controlled
 comparison of three train/test protocols: random, script-disjoint, and design-disjoint, ordered
-by the information each admits into the test set (\ref{sec:method:experiment:splitting}). The
-hypothesis under test is that the design-disjoint split alone measures structural inference,
-and that the excess accuracy of the other two is script and design recognition.
+by the information each admits into the test set
+(\ref{sec:method:experiment:splitting},~\ref{sec:results:rq1:protocol}). The hypothesis under
+test is that the design-disjoint split alone measures structural inference, and that the
+excess accuracy of the other two is script and design recognition.
 
-The corpus is the enabling contribution: it draws on 55 source designs, the 29 of OpenABC-D
+The corpus is the enabling contribution: it draws on 55 designs, the 29 of OpenABC-D
 plus 26 more. Every design held out for testing is one the model cannot train on, so the number
 of designs sets how large a design-disjoint test split can be
 (\ref{sec:relwork:ml4eda:protocols}).
