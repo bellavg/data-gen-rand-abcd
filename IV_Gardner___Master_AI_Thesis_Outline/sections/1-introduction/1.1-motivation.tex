@@ -82,7 +82,6 @@ graph's spectrum, can blindly sever causal cones, obscure logic depth, and break
 paths, thereby altering the underlying logic function and destroying the structural
 features accurate prediction depends on.
 
-% Merging rather than cutting fails differently.
 A coarsening that collapses gates into one super-node can lose the separation between
 topological levels unless its criterion accounts for them. A coarsening that collapses gates
 by logical equivalence performs part of the optimization itself, and lowers the optimizability
@@ -103,10 +102,10 @@ and knowledge graphs \citep{hashemi2024survey}. It has never been systematically
 whole AIGs as a preprocessing step for GNN training, and no work measures which reduction
 preserves a downstream synthesis label.
 
-Prior models also rarely predict from the AIG alone. Most consume the register-transfer
-level description, the synthesis script, or other side information alongside the graph.
-Relying on that side information enlarges the input and leaves open how much of the
-prediction AIG structure alone can support.
+Prior models also rarely predict from the AIG alone. Most pair the graph with additional
+inputs from elsewhere in the design flow, such as the description the circuit was synthesized
+from or the synthesis script itself. Relying on that side information enlarges the input and
+leaves open how much of the prediction AIG structure alone can support.
 % TODO: cite models using side inputs beyond the AIG
 
 Evaluation practice is a further weakness. An AIG corpus is built from a small set of source
