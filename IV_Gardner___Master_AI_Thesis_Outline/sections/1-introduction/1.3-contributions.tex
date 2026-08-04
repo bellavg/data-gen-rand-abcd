@@ -1,17 +1,18 @@
 \section{Contributions}
 \label{sec:intro:contributions}
+%TODO ii tooooo long
 This thesis studies graph reduction on whole AIGs. It measures what reduction costs as a
-preprocessing step for GNN training, asks whether domain-informed reductions outperform
-generic ones, and reports its headline results under a protocol that withholds whole designs.
+preprocessing step for GNN training, asks whether AIG-specific reductions outperform
+domain-agnostic ones, and reports its headline results under a protocol that withholds whole designs.
 Six contributions follow. (i) A corpus of AIGs extending OpenABC-D
 \citep{chowdhury2021openabc} (\ref{sec:method:data}). (ii) A full-graph baseline for
 optimizability prediction from the AIG alone on unseen designs, and a systematic benchmark of
 partitioning, sparsification, and summarization/coarsening against it as a preprocessing step
 for GNN training on AIGs, measured on node and edge retention, peak memory, training and
 inference throughput, the offline cost of the reduction itself, and predictive retention.
-(iii) Domain-informed adaptations of each family, built from
-topological level, fanout structure, or gate role, compared against their generic counterparts
-at matched node and edge retention. (iv) A coarsening derived from \citet{bollen2023exact} and
+(iii) AIG-specific adaptations of each class, built from a
+node's topological level $\ell(v)$, its fanout, or its role as a gate, compared against their
+domain-agnostic counterparts at comparable node and edge retention. (iv) A coarsening derived from \citet{bollen2023exact} and
 the conditions under which it is lossless for this encoder: normalization and topological level
 supplied either in the initial coloring or as node-level positional information
 (\ref{sec:method:architecture:exact}, \ref{sec:method:summary:level}). Where it is lossless it

@@ -1,123 +1,153 @@
 \section{Research Questions}
 \label{sec:intro:rqs}
 
-%TODO eq:prelim:role, eq:prelim:inversion, and eq:prelim:retention await chapter 2
-
 \subsection{Problem Formalization}
 \label{sec:intro:formalization}
-Let $G$ be an AIG with the node roles
-of~\eqref{eq:prelim:role} and edge inversions of~\eqref{eq:prelim:inversion} as its features,
-and let $S$ be a deterministic synthesis algorithm
-(\ref{sec:prelim:algorithms:orchestrate}) mapping $G$ to the function-equivalent,
-optimized $S(G)$. Primary inputs, primary outputs, and the constant are invariant under $S$,
-so the AND nodes $\mathcal{V}_{\wedge}$ are the only ones it can remove. The
-\emph{optimizability} of $G$ under $S$ is the fraction of AND nodes the algorithm removes,
+An AIG $G = (\mathcal{V}, \mathcal{E})$ holds one node per primary input, one per primary
+output, a single constant node, and a set of AND gates $\mathcal{V}_{\wedge}(G) \subseteq
+\mathcal{V}$, each with exactly two incoming edges. Every edge records whether the signal it
+carries is inverted (\ref{sec:prelim:aig}). The \emph{target script} $S$, whose effect on $G$
+is the quantity predicted, maps $G$ to a function-equivalent $S(G)$ with the same primary
+inputs, primary outputs, and constant, so AND gates are all it can remove. The
+\emph{optimizability} of $G$ under $S$ is the fraction of them it does remove,
 \begin{equation}
-    y(G) = 1 - \frac{\left| \mathcal{V}_{\wedge}(S(G)) \right|}{\left| \mathcal{V}_{\wedge}(G) \right|}
-    \;\in\; [0, 1].
+    y_S(G) = 1 - \frac{\left| \mathcal{V}_{\wedge}(S(G)) \right|}{\left| \mathcal{V}_{\wedge}(G) \right|}
+    \;\in\; [0, 1],
     \label{eq:intro:target}
 \end{equation}
-Evaluating~\eqref{eq:intro:target} requires executing $S$, a cost that prediction avoids. An
-encoder $f_\theta$, a GNN in the sense of~\ref{sec:prelim:gnn:mp} with a graph-level readout,
-is fitted to approximate $y$. A reduction
-operator $R$ (\ref{sec:prelim:reduction}) acts ahead of the encoder, so the argument $f_\theta$
-receives is $G$ or $R(G)$. Accuracy is reported as predictive error (Smooth L1 loss, RMSE,
-and $R^2$) and as circuit-ranking ability (Spearman correlation), both defined
-in~\ref{sec:method:experiment:metrics:accuracy} and~\ref{sec:method:experiment:metrics:ranking}.
+so $y_S = 0$ is a circuit $S$ leaves unchanged. Measuring $y_S(G)$ means running $S$.
+Predicting it does not.
 
 %TODO compression is still the metric name in 1.3, 2.5, and 4.4
-\emph{Node and edge retention} is reported separately as the ratios
-$\eta_{\mathcal{V}}$ and $\eta_{\mathcal{E}}$ of~\eqref{eq:prelim:retention}. Sparsification
-lowers $\eta_{\mathcal{E}}$ with $\eta_{\mathcal{V}} = 1$, so the two are not
-interchangeable. Memory and time are compared per graph against the full-graph
-baseline (\ref{sec:method:experiment:metrics:stats}).
+A GNN with a graph-level readout (\ref{sec:prelim:gnn:mp}), denoted $f_\theta$, is fitted to
+approximate $y_S$ for the single script $S$ this thesis targets
+(\ref{sec:intro:scope:algorithm}). A \emph{reduction} $R$ maps $G$ to a smaller training
+input $R(G)$, one graph or, under partitioning, a set of subgraphs, before the model sees it
+(\ref{sec:prelim:reduction}). The \emph{node retention} $\eta_{\mathcal{V}}$ and \emph{edge
+retention} $\eta_{\mathcal{E}}$ of a reduction are the fractions of nodes and of edges it
+retains,
+\begin{equation}
+    \eta_{\mathcal{V}} = \frac{\left| \mathcal{V}(R(G)) \right|}{\left| \mathcal{V}(G) \right|},
+    \qquad
+    \eta_{\mathcal{E}} = \frac{\left| \mathcal{E}(R(G)) \right|}{\left| \mathcal{E}(G) \right|},
+    \label{eq:intro:retention}
+\end{equation}
+where $\eta = 1$ means nothing was removed. The two are not interchangeable: sparsification
+lowers $\eta_{\mathcal{E}}$ at $\eta_{\mathcal{V}} = 1$.
+Accuracy is reported as predictive error (Smooth L1 loss, RMSE, and $R^2$) and as ranking
+ability, the Spearman correlation between predicted and true optimizability across the test
+circuits. Cost is reported as peak memory and time per graph
+(\ref{sec:method:experiment:metrics}).
 
 \subsection{RQ1: Task Feasibility and Baseline}
 \label{sec:intro:rq1}
-What predictive accuracy (Smooth L1 loss, RMSE, and $R^2$) and circuit-ranking ability
-(Spearman correlation) does a GNN reach on optimizability predicted directly from a
-circuit's full, unreduced AIG representation, relative to trivial predictors and
-published circuit-representation models?
+Can $f_\theta$ predict $y_S(G)$~\eqref{eq:intro:target} from the unreduced AIG $G$ alone, on
+designs withheld from training? Accuracy is measured against two references: the training-set
+mean $\bar{y}_S$ and existing GNN models for circuits, retrained on the same data to predict
+$y_S$ and evaluated on the same withheld graphs (\ref{sec:method:architecture:baselines}).
 
-The RQ1 baseline withholds whole designs (design-disjoint), whereas conventional protocols
-often withhold individual graphs (random) or whole synthesis scripts (script-disjoint). By
-how much does the RQ1 result change under each of those two protocols
+\paragraph{Sensitivity to the evaluation protocol.}
+The corpus supplies many graphs per design, so a train/test split can be drawn in three ways.
+The question above withholds all graphs from the test designs (design-disjoint). The
+alternatives withhold individual graphs at random, or whole \emph{generating scripts}, the
+sequences that produced the corpus graphs from their designs, so that every design stays in
+training (script-disjoint). How much do the RQ1 results change under each
 (\ref{sec:method:experiment:splitting},~\ref{sec:results:rq1:protocol})?
 
-\subsection{RQ2: Reduction Efficiency}
+\subsection{RQ2: Cost of Reduction}
 \label{sec:intro:rq2}
-Applied to AIGs, how do partitioning, sparsification, and summarization/coarsening differ in
-node and edge retention, peak memory, training and inference throughput, and the offline cost
-of the reduction itself?
+This work studies three classes of graph reduction (\ref{sec:intro:scope:reductions}):
+partitioning cuts a graph into subgraphs that are trained on separately, sparsification
+deletes edges and keeps every node, and summarization/coarsening collapses groups of nodes
+into super-nodes. Applied to an AIG $G$, how do the methods in these three classes differ in
+node retention $\eta_{\mathcal{V}}$ and edge retention $\eta_{\mathcal{E}}$
+\eqref{eq:intro:retention}, peak memory, training and inference throughput, and the one-time
+cost of computing $R(G)$? Accuracy is left to RQ3.
 
 \subsection{RQ3: Predictive Retention and Trade-offs}
 \label{sec:intro:rq3}
-To what extent do models trained on reduced AIGs retain predictive accuracy (Smooth L1 loss,
-RMSE, and $R^2$) and circuit-ranking ability (Spearman correlation) relative to the full-graph
-baseline of RQ1, and how does the accuracy lost trade off against the memory and time saved?
+\emph{Predictive retention} is the accuracy a model trained on $R(G)$ keeps relative to one
+trained on the unreduced AIG $G$ (\ref{sec:intro:rq1}), measured on the same withheld
+designs. How much predictive retention does each reduction method reach at the node retention
+$\eta_{\mathcal{V}}$ and edge retention $\eta_{\mathcal{E}}$ it achieves, and how much memory
+and time does it save per unit of accuracy lost (\ref{sec:method:experiment:metrics})?
 
-Does the provably lossless coarsening of \citet{bollen2023exact} apply to AIGs, and what
-node and edge retention does it achieve with and without topological level in the initial
-coloring? How do inexact summarization methods compare against that lossless reference
-point in node and edge retention, and in accuracy?
+\paragraph{The exact reference point.}
+\citet{bollen2023exact} give a coarsening that, under stated conditions on the model, leaves
+the prediction provably unchanged, i.e.\ $f_\theta$ returns the same value on the reduced
+graph $R(G)$ as on $G$. To what extent do those conditions hold for an AIG $G$, specifically
+with and without node-level information such as the topological level $\ell(v)$? What node
+retention $\eta_{\mathcal{V}}$ and edge retention $\eta_{\mathcal{E}}$ does the coarsening
+reach in each case? To what extent do inexact coarsenings, which do not carry the guarantee,
+differ from it in node and edge retention and in predictive retention?
 
-\subsection{RQ4: Value of Domain-Informed Adaptation}
+\subsection{RQ4: Value of AIG-Specific Adaptation}
 \label{sec:intro:rq4}
-Do domain-informed reductions, which exploit topological level, fanout structure, or
-gate role, retain more predictive accuracy than their generic counterparts at matched node
-and edge retention, $\eta_{\mathcal{V}}$ and $\eta_{\mathcal{E}}$?
+A \emph{domain-agnostic} reduction decides what to remove or collapse from connectivity and
+from node and edge attributes, without reading what those attributes mean in a circuit. An
+\emph{AIG-specific} reduction is the same method under a criterion that does read them: a
+node's topological level $\ell(v)$, its fanout, or its role as a gate. To what extent do
+AIG-specific reductions reach higher predictive retention than their domain-agnostic
+counterparts at comparable node retention $\eta_{\mathcal{V}}$ and edge retention
+$\eta_{\mathcal{E}}$? Comparable retention holds the amount removed constant, so any
+difference is attributable to which nodes and edges each criterion selected
+(\ref{sec:results:rq4:pairings}).
 
 \subsection{RQ5: Cross-State Inference}
 \label{sec:intro:rq5}
-Can a model trained exclusively on reduced AIGs, whether partitioned, sparsified, or
-summarized, be queried on full ones at inference time without falling below its own
-accuracy on reduced inputs?
-
-A \emph{structural state} is the form in which a graph reaches the encoder, the reduced
-$R(G)$ or the unreduced $G$ of~\ref{sec:intro:formalization}. Cross-state inference
-evaluates weights trained in one state on inputs in the other.
+A graph reaches the model in one of two \emph{structural states}: reduced, as $R(G)$, or
+unreduced, as $G$. A model trained exclusively on reduced AIGs, whether partitioned,
+sparsified, or summarized, is queried on the unreduced AIG $G$ of each withheld design, with
+the same weights and no further training. To what extent does its accuracy there match the
+accuracy those same weights reach on $R(G)$ for the same designs
+(\ref{sec:results:rq5:accuracy})?
 
 \subsection{Scope and Delimitations}
 \label{sec:intro:rqs:scope}
-Optimizability prediction is the evaluation task, not the object of study. The delimitations
-below were fixed in advance. Limitations found during the work are reported
+The object of study is graph reduction as a preprocessing step for GNN training on AIGs.
+Optimizability prediction is the task it is evaluated on. The delimitations below were fixed
+in advance. Limitations found during the work are reported
 in~\ref{sec:discussion:limitations}.
 
-\paragraph{Target synthesis algorithm.}
+\paragraph{Target script.}
 \label{sec:intro:scope:algorithm}
-Training and evaluation target one synthesis algorithm, Orchestrate
-(\ref{sec:prelim:algorithms:orchestrate}), since variance across algorithms would confound
-the cost attributable to a reduction.
+Training and evaluation target one script, Orchestrate
+(\ref{sec:prelim:algorithms:orchestrate}), since variance across scripts would confound the
+cost attributable to a reduction.
 
 \paragraph{Graph scale.}
 \label{sec:intro:scope:scale}
-RQ1's full-graph baseline must fit in memory, so the corpus is bounded at an intermediate
-rather than an industrial scale
-(\ref{sec:method:experiment:scale},~\ref{sec:discussion:limitations:scalability}).
+The RQ1 baseline trains on the unreduced $G$, which must fit in memory, so the corpus is
+bounded at $400{,}000$ nodes per AIG, below the millions of nodes an industrial design
+reaches (\ref{sec:method:experiment:scale},~\ref{sec:discussion:limitations:scalability}).
 
 \paragraph{Definition of optimizability.}
 \label{sec:intro:scope:target}
-Optimizability is relative \emph{node} reduction only. Area, delay, and power, the objectives
-synthesis actually optimizes for, are not modeled
+Optimizability $y_S(G)$~\eqref{eq:intro:target} is defined on AND gate counts. Area, delay,
+and power, the objectives synthesis actually optimizes for, are not modeled
 (\ref{sec:discussion:limitations:validity}).
 
-\paragraph{Reduction families.}
+\paragraph{Reduction classes.}
 \label{sec:intro:scope:reductions}
-Three reduction families are in scope: partitioning, sparsification, and
+Three classes of reduction are in scope: partitioning, sparsification, and
 summarization/coarsening. This set is the taxonomy of \citet{hashemi2024survey} with
 partitioning in place of condensation. Condensation synthesizes a new small graph whose nodes
-correspond to no nodes of the original, and RQ5 requires that correspondence
-(\ref{sec:relwork:reduction:summarization}).
+correspond to no nodes of the original, and that correspondence is what lets methods be
+compared across classes and lets one set of weights be applied to both reduced and unreduced
+inputs (\ref{sec:relwork:reduction:summarization}). Condensation is left to future work
+(\ref{sec:conclusion:futurework}).
 
 \paragraph{Model architecture.}
 \label{sec:intro:scope:architecture}
-One encoder, an edge-aware GCN+ (\ref{sec:method:architecture}), is held fixed so that
-outcome differences are attributable to the reduction.
+One architecture is held fixed, an edge-aware GCN+ \citep{luo2024gnnplus} whose messages read
+whether an edge is inverted as well as the nodes it joins (\ref{sec:method:architecture}), so
+that outcome differences are attributable to the reduction.
 
-\paragraph{Prediction rather than script generation.}
+\paragraph{What the prediction supports.}
 \label{sec:intro:scope:prediction}
-Optimizability is predicted, not synthesis scripts. The prediction is bound to one algorithm:
-it answers whether that algorithm is worth running on a given circuit, and by how much.
-Selecting a script instead requires ranking \emph{algorithms} for one circuit, which a
-single-algorithm model cannot support (\ref{sec:conclusion:futurework:generation}).
+The model predicts $y_S(G)$ for the one target script $S$, which says what fraction of a
+circuit's AND gates $S$ would remove, and therefore whether running it is worthwhile. It
+cannot choose a script. Choosing one requires comparing candidate scripts on the same
+circuit, which a model fitted to a single $S$ has no way to do
+(\ref{sec:conclusion:futurework:generation}).
 

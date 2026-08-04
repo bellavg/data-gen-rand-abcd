@@ -11,7 +11,7 @@
 \midrule
 $G = (\mathcal{V}, \mathcal{E})$ & And-Inverter Graph (AIG): a directed acyclic graph over the basis $\{\wedge, \neg\}$, with node (gate) set $\mathcal{V}$ and edge set $\mathcal{E}$ (\ref{sec:prelim:aig}). \\
 $\tau$ & Node-role labeling, $\tau \colon \mathcal{V} \rightarrow \{\mathrm{const}, \mathrm{PI}, \mathrm{AND}, \mathrm{PO}\}$ \eqref{eq:prelim:role}. \\
-$\mathcal{V}_{\wedge}$ & AND nodes of $G$, $\mathcal{V}_{\wedge} = \tau^{-1}(\mathrm{AND})$: the only role a synthesis algorithm adds or removes. \\
+$\mathcal{V}_{\wedge}(G)$ & AND gates of $G$, $\mathcal{V}_{\wedge} = \tau^{-1}(\mathrm{AND})$: the only role a synthesis script adds or removes. \\
 $\mathrm{inv}$ & Edge-inversion tag, $\mathrm{inv} \colon \mathcal{E} \rightarrow \{0, 1\}$, marking a connection as regular or inverted \eqref{eq:prelim:inversion}. \\
 $\operatorname{fi}(v)$, $\operatorname{fo}(v)$ & Fanin set and fanout set of node $v$ \eqref{eq:prelim:fanin}. \\
 $\ell(v)$, $\ell(G)$ & Topological level of node $v$, and maximum level of $G$: $\ell(G) = \max_{v \in \mathcal{V}} \ell(v)$ \eqref{eq:prelim:level}. \\
@@ -20,16 +20,17 @@ $\operatorname{MFFC}(v)$ & Maximal Fanout-Free Cone of $v$: the gates that feed 
 \addlinespace
 \multicolumn{2}{@{}l}{\textbf{Task, model, and reduction operators}} \\
 \midrule
-$S$ & Deterministic synthesis algorithm (Orchestrate); $S(G)$ is the function-equivalent, optimized circuit (\ref{sec:prelim:algorithms:orchestrate}). \\
-$y(G)$ & Optimizability of $G$ under $S$: the fraction of AND nodes $S$ removes, $y(G) = 1 - |\mathcal{V}_{\wedge}(S(G))| / |\mathcal{V}_{\wedge}(G)| \in [0, 1]$ \eqref{eq:intro:target}. \\
-$f_\theta$ & Trained GNN encoder, approximating $y$ from an input AIG (\ref{sec:intro:formalization}). \\
+$S$ & Target script: the deterministic synthesis script (Orchestrate) whose effect is predicted; $S(G)$ is the function-equivalent, optimized circuit (\ref{sec:prelim:algorithms:orchestrate}). \\
+$y_S(G)$ & Optimizability of $G$ under $S$: the fraction of AND gates $S$ removes, $y_S(G) = 1 - |\mathcal{V}_{\wedge}(S(G))| / |\mathcal{V}_{\wedge}(G)| \in [0, 1]$ \eqref{eq:intro:target}. \\
+$\bar{y}_S$ & Training-set mean of $y_S$, the reference value a graph-independent predictor returns (\ref{sec:intro:rq1}). \\
+$f_\theta$ & Trained GNN, approximating $y_S$ from an input AIG (\ref{sec:intro:formalization}). \\
 $L$ & Number of message-passing layers in the GNN, i.e.\ the radius of a node's receptive field (\ref{sec:prelim:gnn:mp}). \\
 $R$ & Reduction operator; $R(G)$ is the reduced graph, and $R = \operatorname{id}$ denotes the unreduced baseline (\ref{sec:prelim:reduction}). \\
 $d$ & Color-refinement depth: the number of refinement rounds run when building a reduct. Distinct from the topological level $\ell$; exactness requires $L \leq d$ (\ref{sec:prelim:reduction}). \\
 \addlinespace
 \multicolumn{2}{@{}l}{\textbf{Measuring reduction}} \\
 \midrule
-$\eta_{\mathcal{V}}(G)$, $\eta_{\mathcal{E}}(G)$ & Node and edge retention ratio of a reduction: $|\mathcal{V}(R(G))| / |\mathcal{V}(G)|$ and $|\mathcal{E}(R(G))| / |\mathcal{E}(G)|$ \eqref{eq:prelim:retention}. \\
+$\eta_{\mathcal{V}}(G)$, $\eta_{\mathcal{E}}(G)$ & Node and edge retention of a reduction: $|\mathcal{V}(R(G))| / |\mathcal{V}(G)|$ and $|\mathcal{E}(R(G))| / |\mathcal{E}(G)|$ \eqref{eq:intro:retention}. \\
 $n^{\star}$ & Amortization threshold: the number of epochs beyond which applying a reduction is cheaper than training on the unreduced graph \eqref{eq:method:amortization}. \\
 \bottomrule
 \end{tabular}
