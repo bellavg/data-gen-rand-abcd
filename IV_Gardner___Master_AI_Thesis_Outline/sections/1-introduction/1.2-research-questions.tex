@@ -6,10 +6,11 @@
 An AIG $G = (\mathcal{V}, \mathcal{E})$ holds one node per primary input, one per primary
 output, a single constant node, and a set of AND gates $\mathcal{V}_{\wedge}(G) \subseteq
 \mathcal{V}$, each with exactly two incoming edges. Every edge records whether the signal it
-carries is inverted (\ref{sec:prelim:aig}). The \emph{target script} $S$, whose effect on $G$
-is the quantity predicted, maps $G$ to a function-equivalent circuit $S(G)$ with the same primary
-inputs, primary outputs, and constant, so AND gates are all it can remove. The
-\emph{optimizability} of $G$ under $S$ is the fraction of them it does remove,
+carries is inverted (\ref{sec:prelim:aig}). The \emph{target script} $S$, whose effect on
+$G$ is the quantity predicted, maps $G$ to a function-equivalent circuit $S(G)$ with the
+same primary inputs, primary outputs, and constant. $S$ only keeps a rewrite that does not
+increase the AND gate count, so AND gates are the only thing it ever removes, never adds.
+The \emph{optimizability} of $G$ under $S$ is the fraction of them it does remove,
 \begin{equation}
     y_S(G) = 1 - \frac{\left| \mathcal{V}_{\wedge}(S(G)) \right|}{\left| \mathcal{V}_{\wedge}(G) \right|}
     \;\in\; [0, 1],
@@ -21,7 +22,7 @@ Predicting it does not.
 A GNN with a graph-level readout (\ref{sec:prelim:gnn:mp}), denoted $f_\theta$, is fitted to
 approximate $y_S$ for the single script $S$ this thesis targets
 (\ref{sec:intro:scope:algorithm}). A \emph{reduction} $R$ maps $G$ to a smaller training
-input $R(G)$, one graph or, under partitioning, a set of subgraphs, before the model sees it
+input $R(G)$, one graph or, under partitioning, a set of $k$ subgraphs, before the model sees it
 (\ref{sec:prelim:reduction}). The \emph{node retention} $\eta_{\mathcal{V}}$ and \emph{edge
 retention} $\eta_{\mathcal{E}}$ of a reduction are the fractions of nodes and of edges it
 retains,
@@ -32,7 +33,10 @@ retains,
     \label{eq:intro:retention}
 \end{equation}
 where either ratio equals $1$ when nothing was removed. The two are not interchangeable:
-sparsification lowers $\eta_{\mathcal{E}}$ at $\eta_{\mathcal{V}} = 1$.
+sparsification lowers $\eta_{\mathcal{E}}$ at $\eta_{\mathcal{V}} = 1$. Partitioning is the
+opposite case: its $k$ subgraphs are node-disjoint, so $\eta_{\mathcal{V}} = 1$ regardless of
+$k$, and only the edges it cuts between subgraphs are dropped, so $\eta_{\mathcal{E}}$
+together with $k$ reports what partitioning costs.
 Accuracy is reported as predictive error (Smooth L1 loss, RMSE, and the coefficient of
 determination $R^2$) and as ranking ability, the Spearman correlation between predicted and
 true optimizability across the test circuits. Cost is reported as peak memory and time per graph
@@ -56,7 +60,7 @@ every design stays in training. How much do the RQ1 results change under each
 \subsection{RQ2: Cost of Reduction}
 \label{sec:intro:rq2}
 This work studies three classes of graph reduction (\ref{sec:intro:scope:reductions}):
-partitioning cuts a graph into subgraphs that are trained on separately, sparsification
+partitioning cuts a graph into $k$ subgraphs that are trained on separately, sparsification
 deletes edges and keeps every node, and summarization/coarsening collapses groups of nodes
 into super-nodes. Applied to an AIG $G$, how do the methods in these three classes differ in
 node retention $\eta_{\mathcal{V}}$ and edge retention $\eta_{\mathcal{E}}$
@@ -88,9 +92,11 @@ from node and edge attributes, without reading what those attributes mean in a c
 node's topological level $\ell(v)$, its fanout, or its role as a gate. To what extent do
 AIG-specific reductions reach higher predictive retention than their domain-agnostic
 counterparts at comparable node retention $\eta_{\mathcal{V}}$ and edge retention
-$\eta_{\mathcal{E}}$? Comparable node and edge retention holds the amount removed constant, so any
-difference is attributable to which nodes and edges each criterion selected
-(\ref{sec:results:rq4:pairings}).
+$\eta_{\mathcal{E}}$? For partitioning, where $\eta_{\mathcal{V}} = 1$ regardless of scheme
+(\ref{sec:intro:formalization}), the pairing instead holds the partition count $k$ and edge
+retention $\eta_{\mathcal{E}}$ comparable. Either pairing fixes the amount removed, so any
+difference in predictive retention is attributable to which nodes and edges each criterion
+selected (\ref{sec:results:rq4:pairings}).
 
 \subsection{RQ5: Cross-State Inference}
 \label{sec:intro:rq5}
