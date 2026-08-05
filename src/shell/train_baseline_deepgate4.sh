@@ -94,8 +94,13 @@ DEEPGATE4_SYMMETRIC="${DEEPGATE4_SYMMETRIC:-false}"
 GRADIENT_CLIP_VAL="${GRADIENT_CLIP_VAL:-0}"
 
 # Recompute sparse-transformer activations in backward instead of storing them.
-# Verified to leave forward values and gradients bit-identical (see
-# src/unittests/baselines/test_deepgate4.py). Do NOT turn this off: 12 GATConv
+# Verified numerically transparent -- forward values to 1e-6 and gradients to
+# 1e-5 (src/unittests/baselines/test_deepgate4.py). Not a bitwise claim, and
+# the test covers 4 layers on CPU in fp32, not the shipped 12 layers under
+# bf16-mixed. The mechanism is sound at the shipped config regardless:
+# use_reentrant=False replays dropout RNG on recompute, and the checkpointed
+# block has LayerNorm only, no BatchNorm running stats to double-update.
+# Do NOT turn this off: 12 GATConv
 # layers over ~7.36M edges retain ~45 GB for a single average graph, over half
 # an 80 GB H100. With it, peak is one layer at a time (~3.8 GB).
 DEEPGATE4_GRADIENT_CHECKPOINTING="${DEEPGATE4_GRADIENT_CHECKPOINTING:-true}"
@@ -200,6 +205,24 @@ ACCUMULATE_GRAD_BATCHES="${ACCUMULATE_GRAD_BATCHES:-15}"
 LIMIT_TRAIN_BATCHES="${LIMIT_TRAIN_BATCHES:-7200}"
 LIMIT_VAL_BATCHES="${LIMIT_VAL_BATCHES:-720}"
 
+# Set explicitly rather than left at config.LOG_EVERY_N_STEPS = 1000.
+# Lightning counts log_every_n_steps in OPTIMIZER steps, and 7200
+# micro-batches / 15 accumulation = 480 steps per epoch -- under the 1000
+# default, per-step train_loss/train_rmse would reach W&B only about once
+# every 2.1 epochs. Epoch-level val_loss is logged unconditionally, so
+# checkpointing, early stopping and ReduceLROnPlateau were never affected.
+#
+# MUST be retuned whenever LIMIT_TRAIN_BATCHES or ACCUMULATE_GRAD_BATCHES is
+# overridden, since steps/epoch is their quotient: keep it well under
+# LIMIT_TRAIN_BATCHES / ACCUMULATE_GRAD_BATCHES. Env-overridable for exactly
+# that reason.
+#
+# Not a DeepGate4-only problem, just worst here: at 12500/10 = 1250 steps
+# HOGA clears the 1000 default by so little that it logs one step-point per
+# epoch. SynthNet is fine (it caps neither value, so it runs tens of thousands
+# of steps per epoch). Fixing HOGA is out of scope for this script.
+LOG_STEPS="${LOG_STEPS:-100}"
+
 # DELIBERATELY LOWER than the other baselines' 16/4. The dataloader payload
 # here is the virtual edge list: ~7.36M edges x 2 rows x 8 B = ~118 MB PER
 # GRAPH, shipped from worker to main process through shared memory. A batch
@@ -282,4 +305,5 @@ srun python -u -m train_baseline \
     --num_workers        "$NUM_WORKERS" \
     --pin_memory         "$PIN_MEMORY" \
     --persistent_workers "$PERSISTENT_WORKERS" \
+    --log_steps          "$LOG_STEPS" \
     --patience           4

@@ -73,7 +73,20 @@ class TrainingStartupCallback(pl.Callback):
                 num_graphs = 1
         else:
             num_graphs = int(num_graphs)
-        num_nodes = int(batch.x.size(0)) if getattr(batch, "x", None) is not None else 0
+        # Read num_nodes rather than x.size(0): the DeepGate4 adapter builds a
+        # Data with `gate` and no `x` (baselines/deepgate4/aig_features.py), so
+        # the x-based form reported 0 nodes every epoch for that baseline.
+        # Equivalent wherever x does exist.
+        #
+        # CAUTION for DeepGate4 only: the value printed there is the EXPANDED
+        # node count (aig_features.py sets num_nodes after NOT-node expansion,
+        # ~1.65x), whereas DEEPGATE4_MAX_NODES_PER_BATCH is counted in
+        # PRE-expansion nodes. A 200k budget prints ~330k here; that is not a
+        # broken budget. It also makes this figure non-comparable with HOGA's
+        # and SynthNet's, which report base nodes -- do not put the raw number
+        # in a cross-baseline table.
+        nodes = getattr(batch, "num_nodes", None)
+        num_nodes = int(nodes) if nodes is not None else 0
         edge_index = getattr(batch, "edge_index", None)
         num_edges = int(edge_index.size(1)) if edge_index is not None else 0
         return num_graphs, num_nodes, num_edges
