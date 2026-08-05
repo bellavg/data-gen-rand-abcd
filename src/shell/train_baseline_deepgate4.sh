@@ -118,6 +118,18 @@ DEEPGATE4_GRADIENT_CHECKPOINTING="${DEEPGATE4_GRADIENT_CHECKPOINTING:-true}"
 # do NOT reach for DEEPGATE4_SYMMETRIC, which is already at its
 # paper-and-code-faithful setting.
 #
+# The GAT figures below are NOT the whole peak. The DeepGate2 tokenizer runs
+# in fp32 (see the autocast block in regressor.py for why -- it crashes under
+# AMP and upstream is fp32 anyway), and its retained backward activations
+# measure at ~16.7 kB per expanded edge: ~8 GiB at this budget, ~15 GiB on a
+# MAX_NUM_GATES singleton. So the real singleton peak is ~34 + ~15 = ~49 GB,
+# not the ~34 GB the next paragraph quotes.
+#
+# Still comfortable on an 80 GB H100. It is NOT comfortable on the 48 GB L40
+# discussed further down, and lowering DEEPGATE4_NUM_HOPS does not help there:
+# the tokenizer term scales with real circuit edges, not virtual ones, so k
+# does not touch it. On a 48 GB card lower this node budget instead.
+#
 # That singleton peak is why 200k is the right budget on an 80 GB H100 rather
 # than the 100k a memory-only reading would pick. ~34 GB is already the
 # binding peak whatever this is set to, so raising the budget to ~18.6 GB

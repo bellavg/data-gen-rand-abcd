@@ -1070,6 +1070,56 @@ class TestEncoderComposition(unittest.TestCase):
         finally:
             ckpt.checkpoint = original
 
+    def test_tokenizer_runs_outside_autocast_but_transformer_inside(self):
+        """Regression: bf16-mixed AMP crashed on the first training batch.
+
+        The vendored tokenizer writes its GRU output back into the fp32 `hs`/`hf`
+        buffers in place (dg2.py:220, :229, :246, :252, :263, :269). Under CUDA
+        autocast the GRU returns reduced precision, and index-put demands
+        matching dtypes, so training died with
+
+            RuntimeError: Index put requires the source and destination dtypes
+            match, got Float for the destination and Half for the source
+
+        The fix draws the autocast boundary in `regressor.forward` rather than
+        editing a file PROVENANCE.md records as vendored unmodified.
+
+        This asserts the boundary's PLACEMENT, not the dtype, deliberately: CPU
+        autocast does not cover GRU, so a plain autocast forward passes on this
+        machine with or without the fix and would be a test with no teeth. The
+        transformer half of the assertion matters just as much -- disabling
+        autocast for the whole forward would "fix" the crash while silently
+        giving up the AMP the memory budget in train_baseline_deepgate4.sh is
+        sized around.
+        """
+        model = self._model()
+        batch = collate_deepgate_batch(
+            [to_deepgate_graph(_tiny_aig(y=0.1 * i), num_hops=3) for i in range(2)]
+        )
+        seen = {}
+
+        def spy(name, fn):
+            def wrapper(*args, **kwargs):
+                seen[name] = torch.is_autocast_enabled("cpu")
+                return fn(*args, **kwargs)
+            return wrapper
+
+        model.tokenizer.forward = spy("tokenizer", model.tokenizer.forward)
+        model.transformer.forward = spy("transformer", model.transformer.forward)
+
+        with torch.autocast(device_type="cpu", dtype=torch.bfloat16):
+            model(batch)
+
+        self.assertFalse(
+            seen["tokenizer"],
+            "tokenizer ran under autocast; its in-place GRU writeback will "
+            "raise an index-put dtype mismatch on CUDA",
+        )
+        self.assertTrue(
+            seen["transformer"],
+            "sparse transformer lost AMP; the node budget assumes bf16 activations",
+        )
+
     def test_functional_embedding_reaches_the_readout(self):
         """Mirror of the above for `hf`, so neither half can be dropped."""
         model = self._model()

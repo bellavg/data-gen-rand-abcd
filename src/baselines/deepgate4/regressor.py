@@ -399,7 +399,44 @@ class DeepGate4GraphRegressor(nn.Module):
         abs_pe = self.abs_pe_embedding(self.sinu_pe[level])
         init_lhs = abs_pe + self.out_not(batch.out_not) + self.out_and(batch.out_and)
 
-        hs, hf = self.tokenizer(batch, mk=mk, lhs=init_lhs)
+        # The tokenizer runs in fp32 even under bf16-mixed AMP, for two
+        # independent reasons.
+        #
+        # It CRASHES otherwise. The vendored loop writes its GRU output back
+        # into the fp32 `hs`/`hf` buffers in place (dg2.py:220, :229, :246,
+        # :252, :263, :269; those buffers are bare torch.zeros at dg2.py:178),
+        # and index-put demands matching dtypes:
+        #   RuntimeError: Index put requires the source and destination dtypes
+        #   match, got Float for the destination and Half for the source
+        # on the very first training batch. Casting at those six sites would
+        # mean editing a file PROVENANCE.md records as vendored unmodified, so
+        # the autocast boundary is drawn here instead.
+        #
+        # "Half" there is not a typo for bf16. CUDA autocast wraps cuDNN RNNs
+        # with at::kHalf HARDCODED rather than the active autocast dtype
+        # (pytorch aten/src/ATen/cudnn/AutocastRNN.cpp), so nn.GRU returns
+        # fp16 even under bf16-mixed -- while Lightning deliberately builds no
+        # GradScaler for bf16-mixed (plugins/precision/amp.py). Before this
+        # boundary existed, the four tokenizer GRUs were therefore running in
+        # UNSCALED fp16: a silent gradient-underflow hazard quite apart from
+        # the crash. Keeping the tokenizer fp32 removes both at once.
+        #
+        # It is also the faithful choice. Upstream DeepGate4 is pure fp32 --
+        # no autocast, GradScaler, amp, fp16/bf16 or .half() anywhere in
+        # dg4_trainer.py, config.py, main.py or run/train_large.sh at the
+        # commit PROVENANCE.md pins. The sparse transformer -- the term
+        # train_baseline_deepgate4.sh actually budgets for -- stays under AMP
+        # on the line below, and has no in-place index-put to break.
+        #
+        # MEMORY: this is not free. Autograd retention in the level loop
+        # measures at ~16.7 kB per expanded EDGE in fp32 vs ~8.4 kB in bf16
+        # (flat per edge; it is O(E), not O(levels x nodes)). At the 200k
+        # pre-expansion budget that is ~8 GiB rather than ~4 GiB, and on a
+        # MAX_NUM_GATES singleton ~15 GiB rather than ~7.6 GiB. Note this term
+        # scales with REAL circuit edges and is independent of k, so lowering
+        # DEEPGATE4_NUM_HOPS does not shrink it.
+        with torch.autocast(device_type=device.type, enabled=False):
+            hs, hf = self.tokenizer(batch, mk=mk, lhs=init_lhs.float())
         hf_tf, hs_tf = self.transformer(batch, hf.clone(), hs.clone(), mk)
         hf = hf + hf_tf
         hs = hs + hs_tf
