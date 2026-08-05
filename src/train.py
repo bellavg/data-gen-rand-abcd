@@ -152,22 +152,26 @@ def main(args):
     )
 
     # 5. Define Callbacks and Logger
-    # When neither sparsification nor partitioning is active, use just the
-    # algorithm name so checkpoints, logs, and WandB runs are named
-    # "Orchestrate" etc. Otherwise append whichever one is active as a
-    # suffix (they are mutually exclusive, enforced above).
+    # Sparsification and partitioning are mutually exclusive (enforced above),
+    # so at most one of them names the run. The directory name comes from
+    # config.run_label_for, shared with test.py and benchmark.py: three private
+    # copies of this rule is what let --partition random and --split_by random
+    # write into one directory. Do not reimplement it here.
     if args.sparsification is not None:
-        run_label = f"{args.algorithm}_{args.sparsification}"
-        wandb_run_name = f"train_{args.algorithm}_sparsification_{args.sparsification}"
+        reduction_type, reduction_method = "sparsification", args.sparsification
     elif args.partition is not None:
-        run_label = f"{args.algorithm}_{args.partition}"
-        wandb_run_name = f"train_{args.algorithm}_partition_{args.partition}"
+        reduction_type, reduction_method = "partition", args.partition
     else:
-        run_label = args.algorithm
-        wandb_run_name = f"train_{args.algorithm}"
+        reduction_type, reduction_method = "none", None
 
+    run_label = config.run_label_for(
+        args.algorithm, reduction_type, reduction_method, args.split_by
+    )
+
+    wandb_run_name = f"train_{args.algorithm}"
+    if reduction_type != "none":
+        wandb_run_name = f"{wandb_run_name}_{reduction_type}_{reduction_method}"
     if args.split_by != config.SPLIT_BY:
-        run_label = f"{run_label}_{args.split_by}"
         wandb_run_name = f"{wandb_run_name}_{args.split_by}"
 
     algo_checkpoint_dir = os.path.join(args.checkpoint_dir, run_label)

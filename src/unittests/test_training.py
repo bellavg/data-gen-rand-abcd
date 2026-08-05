@@ -416,24 +416,28 @@ def _base_train_args(tmp_path, **overrides) -> SimpleNamespace:
 @pytest.mark.parametrize(
     "split_by,sparsification,partition,expected_run_label,expected_wandb_name",
     [
-        # Default split_by ("design") must NOT get a suffix — this is the
-        # naming scheme every existing checkpoint/log/WandB run already uses.
+        # Default split_by ("design") must NOT get a suffix, so the headline
+        # configuration keeps its plain "Orchestrate" directory.
         ("design", None, None, "Orchestrate", "train_Orchestrate"),
-        ("recipe", None, None, "Orchestrate_recipe", "train_Orchestrate_recipe"),
-        ("random", None, None, "Orchestrate_random", "train_Orchestrate_random"),
+        ("recipe", None, None, "Orchestrate_none_recipe", "train_Orchestrate_recipe"),
+        # The splitting protocol "random" and the partitioner "random" both
+        # resolved to "Orchestrate_random" under the old scheme, which is how
+        # RQ1a came to be measured on the partitioning model. These two cases
+        # are the pair that used to collide.
+        ("random", None, None, "Orchestrate_none_random", "train_Orchestrate_random"),
         (
-            "recipe",
-            "random_edge_dropout",
+            "design",
             None,
-            "Orchestrate_random_edge_dropout_recipe",
-            "train_Orchestrate_sparsification_random_edge_dropout_recipe",
+            "random",
+            "Orchestrate_partition_random",
+            "train_Orchestrate_partition_random",
         ),
         (
-            "random",
+            "design",
+            "random_edge_dropout",
             None,
-            "metis",
-            "Orchestrate_metis_random",
-            "train_Orchestrate_partition_metis_random",
+            "Orchestrate_sparsification_random_edge_dropout",
+            "train_Orchestrate_sparsification_random_edge_dropout",
         ),
     ],
 )

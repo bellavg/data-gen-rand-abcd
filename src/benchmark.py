@@ -148,10 +148,13 @@ def reproducibility_metadata(seed: int, device: torch.device) -> dict:
     }
 
 
-def run_label_for(algorithm: str, reduction_type: str, reduction_method: str | None) -> str:
-    if reduction_type == "none":
-        return algorithm
-    return f"{algorithm}_{reduction_method}"
+# Shared with train.py and test.py so the three cannot drift apart again.
+#
+# Benchmarking deliberately does not take a split_by and always resolves to the
+# design-level default: it measures per-graph step time, throughput and peak
+# memory, and which graphs are held out does not change any of those. There is
+# nothing to disambiguate, so there is no suffix.
+run_label_for = config.run_label_for
 
 
 def resolve_reduction_kwargs(reduction_type: str, reduction_method: str | None) -> dict:

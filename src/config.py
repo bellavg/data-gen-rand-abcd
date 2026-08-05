@@ -113,6 +113,101 @@ KNOWN_ALGORITHMS = {"Orchestrate", "Deepsyn", "Syn4", "C2RS"}
 VALID_SPLIT_BY = {"design", "recipe", "random"}
 SPLIT_BY = "design"
 
+# The reduction axis. "none" is the full-graph baseline; the other three name a
+# family in src/data. Also the argparse choices for --reduction_type in test.py
+# and benchmark.py, and the set run_label_for/parse_run_label agree on.
+VALID_REDUCTION_TYPES = ("none", "sparsification", "partition", "summarization")
+
+
+def run_label_for(
+    algorithm: str,
+    reduction_type: str,
+    reduction_method: str | None,
+    split_by: str = SPLIT_BY,
+) -> str:
+    """The directory name a configuration's checkpoints and logs live under.
+
+    Single source of truth for train.py, test.py and benchmark.py. It used to be
+    reimplemented in all three, they drifted, and the drift cost a result:
+    train.py labelled by method alone, so ``--partition random`` and
+    ``--split_by random`` both resolved to ``Orchestrate_random`` and wrote
+    ``save_top_k=3`` checkpoints each into one directory. test.py's "best"
+    selection then picked the partitioning run's epoch 3 (val_loss 0.0031) over
+    the splitting run's epoch 16 (0.0048), and RQ1a's random-split row was
+    measured on the partitioning model.
+
+    The format is ``<algorithm>_<reduction_type>_<method>``. Carrying the
+    *type* is what fixes the collision: method names are only unique within a
+    family by luck. A non-default split reuses the same three slots as
+    ``<algorithm>_none_<split_by>``, which is unambiguous because a reduction
+    run never has type ``none``.
+
+    The all-defaults configuration stays bare ``Orchestrate`` so the headline
+    run keeps the directory it already has.
+
+    Only the baseline is ever trained on a non-default split (see
+    ``src/shell/test.sh``'s array mapping: there is nothing for
+    ``sparsification:pagerank:recipe`` to evaluate), so three slots are enough.
+    Asking for both a reduction and a non-default split has no representation
+    here and raises, rather than returning a name that would quietly mean two
+    things --- which is the failure this function exists to prevent.
+
+    >>> run_label_for("Orchestrate", "none", None)
+    'Orchestrate'
+    >>> run_label_for("Orchestrate", "partition", "random")
+    'Orchestrate_partition_random'
+    >>> run_label_for("Orchestrate", "none", None, split_by="random")
+    'Orchestrate_none_random'
+    """
+    if reduction_type != "none":
+        if split_by != SPLIT_BY:
+            raise ValueError(
+                f"No run label exists for {reduction_type}/{reduction_method} on "
+                f"the {split_by!r} split: the label format has three slots and a "
+                f"reduction already uses them. Only the baseline is trained on a "
+                f"non-default split. Extend the format before training this."
+            )
+        return f"{algorithm}_{reduction_type}_{reduction_method}"
+    if split_by != SPLIT_BY:
+        return f"{algorithm}_none_{split_by}"
+    return algorithm
+
+
+def parse_run_label(label: str) -> tuple[str, str, str | None, str]:
+    """Inverse of :func:`run_label_for`.
+
+    The label is not only a directory name: test.py names its result and
+    prediction CSVs after it, and the analysis package has to recover the
+    configuration from those filenames. That reader used to split positionally
+    on underscores and take everything before the eval mode as the method,
+    which silently produced ``partition_metis`` as a method name --- and since
+    the figure code fails closed on an unregistered method, every real result
+    would have been drawn as fabricated data. Parsing with the same definition
+    that wrote the name is what stops the two from drifting.
+
+    Returns ``(algorithm, reduction_type, reduction_method, split_by)``.
+
+    >>> parse_run_label("Orchestrate")
+    ('Orchestrate', 'none', None, 'design')
+    >>> parse_run_label("Orchestrate_partition_random")
+    ('Orchestrate', 'partition', 'random', 'design')
+    >>> parse_run_label("Orchestrate_none_random")
+    ('Orchestrate', 'none', None, 'random')
+    """
+    for reduction_type in VALID_REDUCTION_TYPES:
+        if reduction_type == "none":
+            continue
+        head, sep, tail = label.partition(f"_{reduction_type}_")
+        if sep:
+            return head, reduction_type, tail, SPLIT_BY
+    # A `none` type never names a method, so whatever follows it is the split.
+    # Checking the value against VALID_SPLIT_BY keeps a design named
+    # "some_none_thing" from being read as a splitting protocol.
+    head, sep, tail = label.partition("_none_")
+    if sep and tail in VALID_SPLIT_BY:
+        return head, "none", None, tail
+    return label, "none", None, SPLIT_BY
+
 # Output dimension used by models (set equal to hidden dim by default)
 OUTPUT_DIM = HIDDEN_DIM
 

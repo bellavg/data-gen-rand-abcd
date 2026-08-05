@@ -91,22 +91,13 @@ def reproducibility_metadata(seed: int) -> dict:
     }
 
 
-def run_label_for(
-    algorithm: str,
-    reduction_type: str,
-    reduction_method: str | None,
-    split_by: str = config.SPLIT_BY,
-) -> str:
-    """Mirrors train.py's run_label, including its split_by suffix rule.
-
-    train.py only appends the split_by suffix for NON-default strategies, so
-    design-split checkpoints keep their unsuffixed directory names. This must
-    stay in lockstep with train.py or eval cannot find the checkpoint dir.
-    """
-    label = algorithm if reduction_type == "none" else f"{algorithm}_{reduction_method}"
-    if split_by != config.SPLIT_BY:
-        label = f"{label}_{split_by}"
-    return label
+# The checkpoint directory name. Re-exported from config rather than mirrored,
+# because this file used to carry its own copy of the rule and a copy is what
+# has to "stay in lockstep with train.py" by hand. It did not: train.py's
+# version labelled by method alone, so a partitioning run and a splitting-
+# protocol run shared a directory and resolve_checkpoint_path below picked the
+# wrong model out of it.
+run_label_for = config.run_label_for
 
 
 def wandb_run_name_for(
@@ -190,6 +181,19 @@ def resolve_checkpoint_path(
     # Lowest val_loss wins; tie-break on filename for a deterministic choice.
     scored.sort(key=lambda item: (item[0], item[1].name))
     best_score, best_path = scored[0]
+
+    # Print every candidate, not just the winner. This selection once picked a
+    # checkpoint belonging to an entirely different run out of a directory two
+    # configurations shared, and nothing in the job log showed it: the log
+    # named the file it chose and never mentioned what it chose between. The
+    # naming collision that allowed it is fixed in config.run_label_for, but
+    # the cost of listing the candidates is one line per checkpoint and it is
+    # the only thing here a human can audit after the fact.
+    print(
+        f"[test] {len(scored)} checkpoint(s) in {run_dir}, selecting lowest "
+        f"val_loss: " + ", ".join(f"{p.name}" for _, p in scored),
+        flush=True,
+    )
 
     # The filename carries val_loss at {:.4f}, so near-identical checkpoints can
     # round to the same value and the true minimum is not recoverable here.

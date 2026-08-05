@@ -35,9 +35,18 @@ class TestRunLabelFor:
     def test_baseline_uses_bare_algorithm(self):
         assert run_label_for("Orchestrate", "none", None) == "Orchestrate"
 
-    def test_reduction_appends_method_suffix(self):
-        assert run_label_for("Orchestrate", "sparsification", "pagerank") == "Orchestrate_pagerank"
-        assert run_label_for("Orchestrate", "partition", "metis") == "Orchestrate_metis"
+    def test_reduction_appends_type_and_method(self):
+        """The reduction *type* is part of the directory name. Method names are
+        unique across families only by luck, and summarization is not wired in
+        yet."""
+        assert (
+            run_label_for("Orchestrate", "sparsification", "pagerank")
+            == "Orchestrate_sparsification_pagerank"
+        )
+        assert (
+            run_label_for("Orchestrate", "partition", "metis")
+            == "Orchestrate_partition_metis"
+        )
 
     def test_default_split_by_adds_no_suffix(self):
         """train.py leaves design-split checkpoint dirs unsuffixed, so eval
@@ -45,11 +54,73 @@ class TestRunLabelFor:
         assert run_label_for("Orchestrate", "none", None, config.SPLIT_BY) == "Orchestrate"
 
     def test_non_default_split_by_matches_train_pys_directory(self):
-        assert run_label_for("Orchestrate", "none", None, "recipe") == "Orchestrate_recipe"
+        """A non-default split reuses the method slot, which is free because a
+        baseline has no reduction method to name."""
         assert (
-            run_label_for("Orchestrate", "sparsification", "pagerank", "random")
-            == "Orchestrate_pagerank_random"
+            run_label_for("Orchestrate", "none", None, "recipe")
+            == "Orchestrate_none_recipe"
         )
+        assert (
+            run_label_for("Orchestrate", "none", None, "random")
+            == "Orchestrate_none_random"
+        )
+
+    def test_reduction_on_a_non_default_split_raises(self):
+        """Three slots cannot hold four axes, and only the baseline is ever
+        trained on a non-default split (src/shell/test.sh's array mapping).
+        Refusing is the point: returning a name here is what produced two
+        meanings for one directory in the first place."""
+        with pytest.raises(ValueError, match="No run label exists"):
+            run_label_for("Orchestrate", "sparsification", "pagerank", "random")
+
+    def test_partitioning_and_splitting_on_random_do_not_collide(self):
+        """The regression this scheme exists for.
+
+        Under the old rule both of these were "Orchestrate_random", so the two
+        runs wrote save_top_k=3 checkpoints each into one directory and
+        resolve_checkpoint_path picked the lowest val_loss across both. RQ1a's
+        random-split row was measured on the partitioning model.
+        """
+        assert run_label_for("Orchestrate", "partition", "random") != run_label_for(
+            "Orchestrate", "none", None, "random"
+        )
+
+    def test_labels_are_unique_across_every_configuration(self):
+        """Injectivity, not spot checks.
+
+        Every assertion above passed while the collision was live, because each
+        one only inspected a label it already expected. What was missing was a
+        check that no two *different* configurations can produce the same
+        directory name.
+        """
+        configs = [("none", None)] + [
+            (reduction_type, method)
+            for reduction_type, methods in (
+                ("sparsification", ("and_gate_only", "random_edge_dropout",
+                                    "spanning_forest", "pagerank")),
+                ("partition", ("random", "metis", "level_slicing",
+                               "span_weighted_metis")),
+                ("summarization", ("random_merge", "convmatch", "cone", "mffc", "wl")),
+            )
+            for method in methods
+        ]
+
+        seen: dict[str, tuple] = {}
+        for reduction_type, method in configs:
+            for split_by in sorted(config.VALID_SPLIT_BY):
+                key = (reduction_type, method, split_by)
+                try:
+                    label = run_label_for("Orchestrate", reduction_type, method, split_by)
+                except ValueError:
+                    continue  # refused outright, so it cannot collide
+                assert label not in seen, f"{key} and {seen[label]} both map to {label!r}"
+                seen[label] = key
+                # The name has to survive the round trip too: test.py names its
+                # result and prediction CSVs after it, and the analysis package
+                # recovers the configuration by parsing those filenames back.
+                assert config.parse_run_label(label) == (
+                    "Orchestrate", reduction_type, method, split_by
+                ), f"{label!r} does not parse back to {key}"
 
 
 class TestWandbRunNameFor:

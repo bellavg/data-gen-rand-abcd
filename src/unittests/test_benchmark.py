@@ -34,8 +34,21 @@ class TestRunLabelFor:
     def test_baseline_uses_bare_algorithm(self):
         assert run_label_for("Orchestrate", "none", None) == "Orchestrate"
 
-    def test_reduction_appends_method_suffix(self):
-        assert run_label_for("Orchestrate", "partition", "metis") == "Orchestrate_metis"
+    def test_reduction_appends_type_and_method(self):
+        assert (
+            run_label_for("Orchestrate", "partition", "metis")
+            == "Orchestrate_partition_metis"
+        )
+
+    def test_benchmark_labels_carry_no_split_suffix(self):
+        """benchmark.py measures step time, throughput and peak memory per
+        graph, none of which depend on which graphs are held out, so it passes
+        no split_by and every label resolves to the design-level default."""
+        assert run_label_for("Orchestrate", "none", None) == "Orchestrate"
+        assert (
+            run_label_for("Orchestrate", "sparsification", "pagerank")
+            == "Orchestrate_sparsification_pagerank"
+        )
 
 
 class TestResolveReductionKwargs:
