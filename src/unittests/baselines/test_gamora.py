@@ -18,6 +18,7 @@ Three groups, matching the three things that could silently go wrong:
 from __future__ import annotations
 
 import ast
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -483,6 +484,125 @@ class TestNoSamplingInPort(unittest.TestCase):
         self.assertIn("NeighborSampler", self._identifiers(source) & self.FORBIDDEN)
 
 
+class TestGamoraTorchCompile(unittest.TestCase):
+    """Gamora is the one baseline compile is turned on for (train_baseline_
+    gamora.sh, --torch_compile true) -- see baselines/common/
+    lightning_wrapper.py's module docstring for the full rationale. These run
+    torch.compile against the REAL GamoraGraphRegressor, not the generic toy
+    stand-in test_lightning_wrapper.py uses for wrapper-level behaviour, so
+    the claims made in that docstring (eager/compiled equivalence, gradients,
+    varying shapes) are demonstrated on the thing actually being shipped.
+
+    Slower than the rest of the suite -- torch.compile does real JIT tracing
+    here, not a mock.
+    """
+
+    def test_compiled_forward_matches_eager(self):
+        """NOT bit-exact -- fused kernels can reorder floating-point ops, so
+        this is a tolerance check, not assertEqual. Verified fp32 on CPU only;
+        the actual bf16-mixed-autocast H100 run is NOT covered by this
+        (see lightning_wrapper.py's module docstring)."""
+        torch.manual_seed(0)
+        model = GamoraGraphRegressor(hidden_channels=8, num_layers=4)
+        model.eval()
+        batch = Batch.from_data_list([_make_aig_data(seed=i) for i in range(3)])
+        with torch.no_grad():
+            eager_out = model(batch)
+
+        compiled = torch.compile(model, dynamic=True)
+        with torch.no_grad():
+            compiled_out = compiled(batch)
+        torch.testing.assert_close(compiled_out, eager_out, rtol=1e-4, atol=1e-5)
+
+    def test_compiled_gradients_flow(self):
+        torch.manual_seed(0)
+        model = GamoraGraphRegressor(hidden_channels=8, num_layers=4)
+        model.train()
+        compiled = torch.compile(model, dynamic=True)
+        batch = Batch.from_data_list([_make_aig_data(seed=i) for i in range(4)])
+
+        compiled(batch).sum().backward()
+        for name, p in model.named_parameters():
+            self.assertIsNotNone(p.grad, msg=f"no gradient for {name}")
+            self.assertTrue(torch.isfinite(p.grad).all(), msg=name)
+
+    def test_compiled_handles_varying_batch_shapes(self):
+        torch.manual_seed(0)
+        model = GamoraGraphRegressor(hidden_channels=8, num_layers=4)
+        model.train()
+        compiled = torch.compile(model, dynamic=True)
+
+        for num_graphs in (3, 7, 2, 10):
+            batch = Batch.from_data_list(
+                [_make_aig_data(seed=100 + num_graphs + j) for j in range(num_graphs)]
+            )
+            out = compiled(batch)
+            self.assertEqual(out.shape, (num_graphs, 1))
+            out.sum().backward()
+            model.zero_grad()
+
+
+class TestGamoraCompiledCheckpointRoundTrip(unittest.TestCase):
+    """Real Trainer.fit + ModelCheckpoint + on-disk .ckpt file, not the direct
+    state_dict()/load_state_dict() calls test_lightning_wrapper.py's
+    TestCompiledCheckpointKeys uses. Confirms the fix holds through Lightning's
+    actual checkpointing machinery, and specifically through the pattern this
+    repo already uses elsewhere to consume a baseline checkpoint by hand
+    (diagnose_synthnet_baseline.py: strip a "model." prefix, then
+    load_state_dict(strict=True)) -- the exact thing an OptimizedModule's
+    unstripped _orig_mod. prefix would have silently broken.
+    """
+
+    def test_checkpoint_saved_under_compile_has_the_repos_expected_key_shape(self):
+        torch.manual_seed(0)
+        dataset = [_make_aig_data(seed=i) for i in range(8)]
+        train_loader = DataLoader(dataset[:4], batch_size=2)
+        val_loader = DataLoader(dataset[4:6], batch_size=2)
+
+        base = GamoraGraphRegressor(hidden_channels=8, num_layers=4)
+        model = BaselineRegressionLightningModule(
+            base, lr=1e-3, compile_model=True
+        )
+
+        with tempfile.TemporaryDirectory() as d:
+            ckpt_cb = pl.callbacks.ModelCheckpoint(dirpath=d, save_last=True)
+            trainer = pl.Trainer(
+                max_epochs=1,
+                accelerator="cpu",
+                logger=False,
+                callbacks=[ckpt_cb],
+                enable_progress_bar=False,
+            )
+            trainer.fit(
+                model, train_dataloaders=train_loader, val_dataloaders=val_loader
+            )
+            ckpt_path = ckpt_cb.last_model_path
+
+            raw = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+            keys = list(raw["state_dict"].keys())
+            self.assertTrue(keys)
+            self.assertTrue(
+                all("_orig_mod" not in k for k in keys),
+                "compile prefix leaked into the on-disk checkpoint",
+            )
+
+            # The repo's own established pattern for loading a baseline
+            # checkpoint by hand (diagnose_synthnet_baseline.py:108-113).
+            plain_base = GamoraGraphRegressor(hidden_channels=8, num_layers=4)
+            stripped = {
+                k[len("model.") :]: v
+                for k, v in raw["state_dict"].items()
+                if k.startswith("model.")
+            }
+            plain_base.load_state_dict(stripped, strict=True)  # must not raise
+
+            # And Lightning's own official reload path.
+            reloaded = BaselineRegressionLightningModule.load_from_checkpoint(
+                ckpt_path, model=GamoraGraphRegressor(hidden_channels=8, num_layers=4)
+            )
+            self.assertTrue(reloaded.hparams.compile_model)
+
+
 class TestGamoraLightningTraining(unittest.TestCase):
     def setUp(self):
         self.dataset = [_make_aig_data(seed=i) for i in range(10)]
@@ -494,6 +614,37 @@ class TestGamoraLightningTraining(unittest.TestCase):
         base_model = GamoraGraphRegressor(hidden_channels=8, num_layers=4)
         model = BaselineRegressionLightningModule(
             base_model, lr=1e-3, loss_fn=torch.nn.SmoothL1Loss(beta=0.01)
+        )
+
+        trainer = pl.Trainer(
+            fast_dev_run=True,
+            accelerator="cpu",
+            logger=False,
+            enable_checkpointing=False,
+        )
+        trainer.fit(
+            model,
+            train_dataloaders=self.train_loader,
+            val_dataloaders=self.val_loader,
+        )
+        trainer.test(model, dataloaders=self.test_loader)
+
+    def test_training_and_testing_loop_with_torch_compile(self):
+        """Gamora is the one baseline actually turned on under torch.compile
+        (train_baseline_gamora.sh, --torch_compile true) -- see
+        baselines/common/lightning_wrapper.py's module docstring for why it,
+        specifically, was verified and the other three were not. This is the
+        integration check: the real `BaselineRegressionLightningModule` +
+        `pl.Trainer` path, not just a raw forward/backward call, actually
+        completes fit+test with compile enabled. Slower than the rest of the
+        suite -- torch.compile does real JIT tracing here, not a mock.
+        """
+        base_model = GamoraGraphRegressor(hidden_channels=8, num_layers=4)
+        model = BaselineRegressionLightningModule(
+            base_model,
+            lr=1e-3,
+            loss_fn=torch.nn.SmoothL1Loss(beta=0.01),
+            compile_model=True,
         )
 
         trainer = pl.Trainer(

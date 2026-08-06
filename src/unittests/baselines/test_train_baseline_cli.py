@@ -271,11 +271,91 @@ class TestTrainBaselineCLI(unittest.TestCase):
         result = _run_cli("--help")
         for flag in (
             "--loss",
+            "--torch_compile",
             "--gamora_num_layers",
             "--gamora_hidden_dim",
             "--gamora_max_nodes_per_batch",
         ):
             self.assertIn(flag, result.stdout)
+
+    def test_torch_compile_defaults_off(self):
+        """Shared by all four baselines' wrapper; only Gamora's script turns it
+        on. A flipped default would silently change what SynthNet/HOGA/
+        DeepGate4 execute without any of them being verified under compile --
+        see baselines/common/lightning_wrapper.py's module docstring.
+
+        argparse's plain HelpFormatter never prints defaults, so --help can't
+        show this, and train_baseline.py builds its parser only inside
+        `if __name__ == "__main__":` rather than a reusable function, so it
+        can't be imported and re-invoked either. Assert on the source directly:
+        the default is a literal in the add_argument call, immediately after
+        the flag name.
+        """
+        source = (Path(_SRC_DIR) / "train_baseline.py").read_text()
+        flag_idx = source.find('"--torch_compile"')
+        self.assertNotEqual(flag_idx, -1, "--torch_compile flag not found")
+        # Scan forward a bounded window rather than matching to the next ")":
+        # the type= lambda's own ("true", "1", "yes") tuple contains a ")"
+        # first, which a naive [^)]* stops at before reaching default=.
+        window = source[flag_idx : flag_idx + 300]
+        match = re.search(r"default=(\w+)", window)
+        self.assertIsNotNone(match, "--torch_compile default not found")
+        self.assertEqual(match.group(1), "False")
+
+    def test_torch_compile_arg_is_wired_to_the_lightning_module(self):
+        """The one line connecting the CLI flag to the wrapper.
+
+        Confirmed by mutation: deleting `compile_model=args.torch_compile,`
+        from the `BaselineRegressionLightningModule(...)` call left the ENTIRE
+        baseline test suite green (137 passed) -- every existing test either
+        constructs the wrapper directly (bypassing this line) or never checks
+        whether `--torch_compile true` actually reaches it. Source-level
+        rather than a full CLI run, matching this file's own established
+        pattern for pinning a literal (e.g.
+        test_gamora_node_budget_matches_the_primary_models): `main()` loads
+        the real dataset and touches wandb, which is too heavy to invoke here
+        just to prove one kwarg is threaded through.
+        """
+        source = (Path(_SRC_DIR) / "train_baseline.py").read_text()
+        call_start = source.index("model = BaselineRegressionLightningModule(")
+        # Scan forward a bounded window rather than to the next ")": one of
+        # this call's own kwargs is _build_loss(args), a nested call whose
+        # closing paren comes first and would truncate the block early (bit
+        # us once already on the --torch_compile default= regex above).
+        call_block = source[call_start : call_start + 400]
+        self.assertIn(
+            "compile_model=args.torch_compile",
+            call_block,
+            "args.torch_compile is not passed to BaselineRegressionLightningModule",
+        )
+
+    def test_only_gamora_script_turns_on_torch_compile(self):
+        """The opt-in is per-script, not per-baseline in train_baseline.py.
+
+        Only Gamora has been verified under compile (see
+        baselines/common/lightning_wrapper.py); the other three scripts must
+        not pass --torch_compile at all, so they keep the parser's off
+        default rather than someone copy-pasting Gamora's block into them.
+        """
+        scripts = sorted(_SHELL_DIR.glob("train_baseline_*.sh"))
+        self.assertTrue(scripts, "no baseline job scripts found")
+        for script in scripts:
+            with self.subTest(script=script.name):
+                text = script.read_text()
+                has_flag = bool(
+                    re.search(r'(?m)^\s*(?!#)--torch_compile\s+"', text)
+                )
+                if script.name == "train_baseline_gamora.sh":
+                    self.assertTrue(has_flag, "gamora script must pass --torch_compile")
+                    self.assertRegex(
+                        text,
+                        r'(?m)^TORCH_COMPILE="\$\{TORCH_COMPILE:-true\}"',
+                        "gamora script must default TORCH_COMPILE to true",
+                    )
+                else:
+                    self.assertFalse(
+                        has_flag, f"{script.name} must not pass --torch_compile"
+                    )
 
     def test_deepgate4_flags_are_wired(self):
         # train_baseline_deepgate4.sh passes all of these; a rename would break

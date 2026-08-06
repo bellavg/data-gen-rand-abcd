@@ -190,6 +190,32 @@ LIMIT_VAL_BATCHES="${LIMIT_VAL_BATCHES:-1.0}"
 # check against the other three baselines, which do keep MSE.
 LOSS="${LOSS:-smooth_l1}"
 
+# ON for Gamora specifically, unlike the other three baselines' scripts
+# (train_baseline.py's own default is off -- the shared wrapper serves all
+# four, and only this one has real verification behind it: see
+# src/unittests/baselines/test_gamora.py's TestGamoraTorchCompile, which runs
+# eager-vs-compiled equivalence, gradients and varying batch shapes against
+# the actual GamoraGraphRegressor, not a stand-in). Every batch here has a
+# different shape (node-budget batching), so torch.compile is invoked with
+# dynamic=True. One known limitation, not a bug: PyG's global_mean_pool calls
+# int(index.max()), which forces a graph break Dynamo cannot trace through, so
+# the model compiles as two segments rather than one fused graph -- the
+# SAGEConv stack compiles, the pooling step falls back to eager. Checkpoints
+# are unaffected: the wrapper strips torch.compile's key prefix on save, so a
+# checkpoint from this run has the same keys as an uncompiled one. Full
+# rationale, including what is and is NOT verified (fp32/CPU only -- the
+# actual bf16-mixed-autocast H100 numerics are unchecked, so "compile only
+# changes speed, not results" is an expectation here, not a demonstrated
+# fact), in baselines/common/lightning_wrapper.py's module docstring.
+#
+# First few steps after enabling this will be SLOWER than uncompiled
+# (one-time trace + compile cost); judge from steady-state avg_step_s a few
+# batches in, not the first one. To get an UNCOMPILED run for that
+# comparison: an env override does not reach an sbatch job on this cluster
+# (same limitation as SPLIT_BY above) -- edit the literal below to false,
+# submit separately, and revert it afterward.
+TORCH_COMPILE="${TORCH_COMPILE:-true}"
+
 NUM_WORKERS="${NUM_WORKERS:-16}"  # of the 18 cores auto-assigned per GPU on gpu_h100; 2 left for the main process + pin_memory thread
 PREFETCH_FACTOR="${PREFETCH_FACTOR:-4}"
 PIN_MEMORY="${PIN_MEMORY:-true}"
@@ -220,6 +246,7 @@ echo "Using NUM_WORKERS=$NUM_WORKERS for data loading."
 echo "Using SPLIT_BY=$SPLIT_BY."
 echo "Using GAMORA_NUM_LAYERS=$GAMORA_NUM_LAYERS, GAMORA_HIDDEN_DIM=$GAMORA_HIDDEN_DIM."
 echo "Using LOSS=$LOSS."
+echo "Using TORCH_COMPILE=$TORCH_COMPILE."
 echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-<unset>}"
 
 # =========================================================
@@ -262,6 +289,7 @@ srun python -u -m train_baseline \
     --split_by           "$SPLIT_BY" \
     --use_graph_cache    "false" \
     --loss               "$LOSS" \
+    --torch_compile      "$TORCH_COMPILE" \
     --gamora_num_layers  "$GAMORA_NUM_LAYERS" \
     --gamora_hidden_dim  "$GAMORA_HIDDEN_DIM" \
     --gamora_max_nodes_per_batch "$GAMORA_MAX_NODES_PER_BATCH" \

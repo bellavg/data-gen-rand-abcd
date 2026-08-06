@@ -688,6 +688,7 @@ def main(args: argparse.Namespace) -> None:
         loss_fn=_build_loss(args),
         scheduler_factor=args.scheduler_factor,
         scheduler_patience=args.scheduler_patience,
+        compile_model=args.torch_compile,
     )
 
     run_label = _run_label(args)
@@ -807,6 +808,19 @@ if __name__ == "__main__":
     # baseline scored under SmoothL1 is scored under the primary model's exact
     # loss rather than a differently-shaped one.
     parser.add_argument("--loss_beta", type=float, default=0.01)
+    # Default False -- unlike train.py's own --torch_compile, whose model
+    # (models/lightning_model.py) defaults compile_model=True. This wrapper is
+    # shared by all four baselines, and only Gamora has been verified under
+    # compile (forward/gradients match eager, dynamic batch shapes don't crash
+    # or force a recompile per step); see baselines/common/lightning_wrapper.py
+    # for the full rationale and the one known limitation (a graph break at
+    # global_mean_pool). Turn on per-baseline only after doing the same
+    # verification, not by flipping this default.
+    parser.add_argument(
+        "--torch_compile",
+        type=lambda x: str(x).lower() in ("true", "1", "yes"),
+        default=False,
+    )
     # Unlike lr/batch_size/loss/optimizer above, the ReduceLROnPlateau settings
     # are NOT published: neither baseline paper uses an LR scheduler at all (see
     # baselines/common/lightning_wrapper.py). Since the values are ours either
