@@ -8,7 +8,7 @@ import pytest
 import trivial_baselines as tb
 
 
-def _rows(paths, targets, nodes, levels=None, scripts=None):
+def _rows(paths, targets, nodes, levels=None, scripts=None, designs=None):
     """A frame shaped like load_rows' output.
 
     The type counts are split so the totals hold: one primary input, one primary
@@ -28,6 +28,7 @@ def _rows(paths, targets, nodes, levels=None, scripts=None):
             "num_edges": 2 * num_and + 1,
             "level": np.asarray(levels if levels is not None else nodes / 10, dtype=float),
             "source_script": list(scripts) if scripts is not None else ["tier0 base"] * len(nodes),
+            "design": list(designs) if designs is not None else ["aes"] * len(nodes),
         }
     )
 
@@ -401,3 +402,142 @@ def test_bootstrap_spearman_stays_nan_for_a_constant():
     intervals = tb.bootstrap_ci(y_true, np.full_like(y_true, 0.2), 20, seed=0)
     assert all(np.isnan(v) for v in intervals["spearman"])
     assert not any(np.isnan(v) for v in intervals["mae"])
+
+
+def test_the_pooled_stratum_reproduces_the_unstratified_score():
+    """The pooled row must equal scoring the whole test split, or old numbers move.
+
+    Stratification is additive: it may not disturb what was already reported, so
+    the previously published figures stay reproducible from the same command.
+    """
+    train = _rows(["a", "b", "c", "d"], [0.0, 0.1, 0.2, 0.5], [100, 200, 300, 400])
+    test = _rows(["e", "f", "g", "h"], [0.0, 0.3, 0.0, 0.6], [150, 250, 350, 450])
+    predictors = tb.fit_predictors(train)
+
+    results = tb.evaluate(predictors, test, n_resamples=10, seed=0)
+    pooled = results[results["stratum"] == "pooled"].set_index("predictor")
+
+    for name, predictor in predictors.items():
+        direct = tb.score(test["target"].to_numpy(dtype=float), predictor.predict(test))
+        assert pooled.loc[name, "n_test"] == len(test)
+        for metric, value in direct.items():
+            recorded = pooled.loc[name, metric]
+            assert (np.isnan(recorded) and np.isnan(value)) or recorded == pytest.approx(value)
+
+
+def test_predictors_are_fitted_once_on_train_not_refitted_per_stratum():
+    """A stratum changes the population scored, never the predictor scoring it.
+
+    Refitting per stratum would give each subset a predictor tuned to it, which
+    the model never gets, so the mean arm must stay the TRAIN mean everywhere.
+    The train mean here (0.2) is deliberately unequal to the mean of every
+    stratum it is scored on, so a refit would be visible rather than a
+    coincidence.
+    """
+    train = _rows(["a", "b", "c", "d"], [0.0, 0.1, 0.3, 0.4], [100, 200, 300, 400])
+    test = _rows(["e", "f", "g", "h"], [0.0, 0.0, 0.8, 0.9], [150, 250, 350, 450])
+    assert train["target"].mean() == pytest.approx(0.2)
+
+    mean_predictor = tb.fit_predictors(train)["mean"]
+    for mask in tb.strata_for(test).values():
+        part = test[mask]
+        if part.empty:
+            continue
+        assert np.allclose(mean_predictor.predict(part), 0.2)
+
+
+def test_a_design_with_no_target_spread_is_dropped_from_the_live_strata():
+    """A design whose targets never move cannot separate two predictors."""
+    test = _rows(
+        [f"g{i}" for i in range(6)],
+        [0.0, 0.4, 0.8, 0.0, 0.0, 0.0],
+        [100, 200, 300, 400, 500, 600],
+        designs=["alive"] * 3 + ["flat"] * 3,
+    )
+    strata = tb.strata_for(test)
+
+    assert set(test.loc[strata["live_designs"], "design"]) == {"alive"}
+    assert "design:flat" in strata
+    assert strata["design:flat"].sum() == 3
+
+
+def test_the_nonzero_stratum_drops_exactly_the_zero_targets():
+    test = _rows(["a", "b", "c", "d"], [0.0, 0.2, 0.0, 0.7], [100, 200, 300, 400])
+    strata = tb.strata_for(test)
+
+    assert np.all(test.loc[strata["nonzero"], "target"] > 0)
+    assert strata["nonzero"].sum() == 2
+    assert np.all(strata["pooled"])
+
+
+def test_nonzero_live_designs_is_the_and_of_its_two_components():
+    """The combined stratum must not silently drop rows either mask alone keeps."""
+    test = _rows(
+        [f"g{i}" for i in range(6)],
+        [0.0, 0.4, 0.8, 0.0, 0.0, 0.0],
+        [100, 200, 300, 400, 500, 600],
+        designs=["alive"] * 3 + ["flat"] * 3,
+    )
+    strata = tb.strata_for(test)
+
+    assert np.array_equal(
+        strata["nonzero_live_designs"], strata["nonzero"] & strata["live_designs"]
+    )
+    # "alive" rows g1, g2 are the only ones both live and nonzero.
+    assert strata["nonzero_live_designs"].sum() == 2
+    assert set(test.loc[strata["nonzero_live_designs"], "graph_path"]) == {"g1", "g2"}
+
+
+def test_the_per_design_strata_partition_the_test_split():
+    """Every test row lands in exactly one design stratum, so none is lost."""
+    test = _rows(
+        [f"g{i}" for i in range(6)],
+        [0.0, 0.1, 0.2, 0.3, 0.4, 0.5],
+        [100, 200, 300, 400, 500, 600],
+        designs=["x", "x", "y", "y", "z", "z"],
+    )
+    strata = tb.strata_for(test)
+    per_design = [m for name, m in strata.items() if name.startswith("design:")]
+
+    assert len(per_design) == 3
+    assert np.array_equal(sum(per_design), np.ones(len(test)))
+
+
+def test_design_is_read_from_both_tier_layouts(tmp_path):
+    """Tier 0 names the design directly; tier 1 names the script before it."""
+    paths = [
+        "/scratch-shared/graphs/tier0/aes/g0.pt",
+        "/scratch-shared/graphs/tier1/Syn4/picosoc/g1.pt",
+        "/somewhere/else/g2.pt",
+    ]
+    csv = tmp_path / "Orchestrate.csv"
+    _write_csv(csv, paths, [0.0, 0.1, 0.2], [10, 20, 30])
+
+    designs = tb.load_rows([str(csv)])["design"].tolist()
+    assert designs == ["aes", "picosoc", "unknown design"]
+
+
+def test_every_stratum_reaches_both_output_files(tmp_path):
+    """Fair rows and oracle rows are stratified alike, still in separate files."""
+    paths = [f"/scratch-shared/graphs/tier1/Syn4/aes/g{i}.pt" for i in range(6)]
+    csv = tmp_path / "Orchestrate.csv"
+    _write_csv(csv, paths, [0.0, 0.1, 0.2, 0.3, 0.0, 0.5], [10, 20, 30, 40, 50, 60])
+
+    splits = tmp_path / "splits.json"
+    splits.write_text(json.dumps({"train": paths[:3], "val": paths[3:4], "test": paths[4:]}))
+
+    out = tmp_path / "rq1.csv"
+    tb.main(
+        argparse.Namespace(
+            csv_paths=[str(csv)], splits_path=str(splits), out=str(out), n_resamples=10, seed=0,
+            algorithm="Orchestrate", split_by="design", wandb=False,
+        )
+    )
+
+    fair = pd.read_csv(out)
+    oracles = pd.read_csv(out.with_name("rq1_oracles.csv"))
+    assert "stratum" in fair.columns
+    assert set(fair["stratum"]) == set(oracles["stratum"])
+    assert "pooled" in set(fair["stratum"])
+    assert set(fair["role"]) == {"fair"}
+    assert set(oracles["role"]) == {"oracle"}

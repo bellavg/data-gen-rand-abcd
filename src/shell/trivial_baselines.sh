@@ -15,7 +15,8 @@
 # CPU-only, but not a login-node job: the generation CSV is on the order of a
 # million rows of long scratch paths, and the splits JSON holds every one of
 # those paths again as a Python string. Measured peak resident memory at that
-# scale is just under 1 GB and the whole job runs in well under a minute. Two
+# scale is just under 1 GB. Every predictor is scored on ten test strata, which
+# puts the bootstrap at roughly a minute; the reservation still covers it. Two
 # genoa cores carry it with room to spare; the work is single threaded, so the
 # second core is memory headroom rather than parallelism. Do not raise these
 # without measuring, since the reservation is what gets charged.

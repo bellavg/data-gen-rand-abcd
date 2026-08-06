@@ -60,6 +60,29 @@ sklearn.metrics.r2_score. That is what puts the zero point where it belongs: a
 constant taken from any other split scores R^2 <= 0, with equality only where
 the train and test means happen to coincide.
 
+Every predictor is fitted ONCE, on the whole train split, and then scored on
+several subsets of test. Stratifying the scoring and not the fitting is what
+keeps the comparison like-for-like: the baseline's information set stays the one
+the model had, and only the population the score is read over changes. Refitting
+per stratum would hand each subset a predictor tuned to it, which the model does
+not get. The strata are ``pooled`` (every test graph, so the unstratified
+numbers stay reproducible), ``nonzero`` (graphs the script changed at all),
+``live_designs``, ``nonzero_live_designs``, and one per test design.
+
+The pooled numbers are dominated by two things that stratification separates: a
+point mass at zero covering roughly half the corpus, and designs whose targets
+barely move at all. A predictor that wins pooled but loses on the nonzero
+stratum won the zero-inflation, not the regression. Note that ``nonzero``
+conditions on the outcome, so its R^2 is taken against that subset's own mean
+and is not comparable to the pooled figure; it is comparable across predictors,
+which is what it is for.
+
+This changes the shape of both output CSVs, not only the W&B table: every row
+is now one (predictor, stratum) pair rather than one predictor, so a reader
+built against the old one-row-per-predictor file must filter on
+``stratum == "pooled"`` to recover it. The W&B summary keys do that filtering
+already and are unaffected.
+
 Nothing here loads a graph or runs a model. Every input is a column the
 generation pipeline already wrote (data/creation/shell/10_algorithm_csv.sh):
 ``optimizability`` is the target, ``pre_depth`` the maximum topological level,
@@ -78,9 +101,10 @@ which also removes the failure mode where a reconstructed filename silently
 resolves to a different run's split.
 
 Results go to W&B as ``baseline_trivial_<algorithm>``, one run holding every
-predictor as a table, with per-predictor summary keys namespaced by role so an
-oracle cannot be globbed into a panel of fair competitors. ``--wandb false``
-skips it.
+predictor and stratum as a table, with per-predictor summary keys namespaced by
+role so an oracle cannot be globbed into a panel of fair competitors. Those
+summary keys report the pooled stratum only, since a summary key holds one
+scalar per run. ``--wandb false`` skips it.
 
 Usage:
 
@@ -120,6 +144,14 @@ _REQUIRED_COLS = (
 # graphs and its mean is not fitted to noise.
 _N_BINS = 10
 
+# A design whose test targets barely move cannot separate any two predictors, so
+# its rows are spent without measuring anything. The cut is on the spread of a
+# design's own test targets relative to the split's. On the design split this
+# corpus is scored under, the six test designs sit at 0.001, 0.022, 0.147, 0.487,
+# 1.275 and 1.691 of the pooled standard deviation, so any threshold inside that
+# gap selects the same two. Which designs it drops is printed, never assumed.
+_LIVE_DESIGN_SD_FRACTION = 0.05
+
 
 def _normalize_graph_path(graph_path: str) -> str:
     """Apply the rewrite AIGGraphRegressionDataset._normalize_graph_path applies.
@@ -128,6 +160,19 @@ def _normalize_graph_path(graph_path: str) -> str:
     too or nothing joins. data/dataset.py owns this rule; this is a second copy.
     """
     return str(graph_path).replace("/gpfs/scratch1/shared", "/scratch-shared")
+
+
+def _design_of(graph_path: pd.Series) -> pd.Series:
+    """The design a graph came from, read off the same tiered path layout.
+
+    A tier-0 path names its design directly; a tier-1 path names the script that
+    produced it first, then the design. Used only to group the test split for
+    per-design scoring, never as a feature: the split is by design, so a test
+    design is unseen and no predictor may condition on it.
+    """
+    tier0 = graph_path.str.extract(r"/tier0/([^/]+)/", expand=False)
+    tier1 = graph_path.str.extract(r"/tier1/[^/]+/([^/]+)/", expand=False)
+    return tier0.fillna(tier1).fillna("unknown design")
 
 
 def load_rows(csv_paths: list[str]) -> pd.DataFrame:
@@ -176,6 +221,8 @@ def load_rows(csv_paths: list[str]) -> pd.DataFrame:
             "source_script": graph_path.str.extract(r"/tier1/([^/]+)/", expand=False).fillna(
                 "tier0 base"
             ),
+            # Groups the test split for per-design scoring. Not a predictor input.
+            "design": _design_of(graph_path),
         }
     )
     if "step_id" in df.columns:
@@ -503,31 +550,76 @@ def bootstrap_ci(
     return intervals
 
 
+def strata_for(test: pd.DataFrame) -> dict[str, np.ndarray]:
+    """Named row masks over the test split. ``pooled`` is every row, unfiltered.
+
+    Dict order only decides the order rows print in; ``log_to_wandb`` and the
+    CSV-shape note above select ``stratum == "pooled"`` explicitly rather than
+    relying on position, so nothing downstream depends on this order.
+    """
+    y = test["target"].to_numpy(dtype=float)
+    nonzero = y > 0.0
+    spread = test.groupby("design")["target"].transform("std").to_numpy(dtype=float)
+    # A design with one test row has no spread, so its NaN compares False and it
+    # is treated as dead rather than silently kept.
+    live = spread >= _LIVE_DESIGN_SD_FRACTION * float(test["target"].std())
+
+    dead = sorted(set(test.loc[~live, "design"]))
+    if dead:
+        print(
+            f"[trivial] {len(dead)} test design(s) below "
+            f"{_LIVE_DESIGN_SD_FRACTION:.0%} of the pooled target spread, excluded from the "
+            f"live-design strata: {', '.join(dead)}"
+        )
+
+    strata = {
+        "pooled": np.ones(len(test), dtype=bool),
+        "nonzero": nonzero,
+        "live_designs": live,
+        "nonzero_live_designs": nonzero & live,
+    }
+    for design in sorted(pd.unique(test["design"])):
+        strata[f"design:{design}"] = (test["design"] == design).to_numpy()
+    return strata
+
+
 def evaluate(
     predictors: dict[str, Predictor], test: pd.DataFrame, n_resamples: int, seed: int
 ) -> pd.DataFrame:
-    """Score every predictor on test. Test targets are read here and nowhere else."""
-    y_test = test["target"].to_numpy(dtype=float)
+    """Score every predictor on every test stratum. Test targets are read here only.
+
+    The predictors arrive already fitted on train and are not refitted per
+    stratum; each is simply asked to predict the rows of the subset. A stratum
+    the split leaves empty is reported and skipped rather than scored on nothing.
+    """
     records = []
-    for name, predictor in predictors.items():
-        y_pred = predictor.predict(test)
-        metrics = score(y_test, y_pred)
-        intervals = bootstrap_ci(y_test, y_pred, n_resamples, seed)
-        record = {
-            "predictor": name,
-            "role": predictor.role,
-            "n_test": len(test),
-            "fitted_on": predictor.fitted_on,
-        }
-        for metric, value in metrics.items():
-            record[metric] = value
-            record[f"{metric}_lo"], record[f"{metric}_hi"] = intervals[metric]
-        records.append(record)
-        print(
-            f"[trivial] {predictor.role:6} {name:18} rmse {metrics['rmse']:.4f}  "
-            f"mae {metrics['mae']:.4f}  r2 {metrics['r2']:+.4f} "
-            f"[{intervals['r2'][0]:+.4f}, {intervals['r2'][1]:+.4f}]"
-        )
+    for stratum, mask in strata_for(test).items():
+        part = test[mask]
+        if part.empty:
+            print(f"[trivial] stratum {stratum!r} is empty on this split; skipped")
+            continue
+        y_test = part["target"].to_numpy(dtype=float)
+        for name, predictor in predictors.items():
+            y_pred = predictor.predict(part)
+            metrics = score(y_test, y_pred)
+            intervals = bootstrap_ci(y_test, y_pred, n_resamples, seed)
+            record = {
+                "predictor": name,
+                "stratum": stratum,
+                "role": predictor.role,
+                "n_test": len(part),
+                "fitted_on": predictor.fitted_on,
+            }
+            for metric, value in metrics.items():
+                record[metric] = value
+                record[f"{metric}_lo"], record[f"{metric}_hi"] = intervals[metric]
+            records.append(record)
+            print(
+                f"[trivial] {stratum:22} {predictor.role:6} {name:18} "
+                f"n {len(part):>7,}  rmse {metrics['rmse']:.4f}  "
+                f"mae {metrics['mae']:.4f}  r2 {metrics['r2']:+.4f} "
+                f"[{intervals['r2'][0]:+.4f}, {intervals['r2'][1]:+.4f}]"
+            )
     return pd.DataFrame(records)
 
 
@@ -546,6 +638,11 @@ def log_to_wandb(results: pd.DataFrame, args: argparse.Namespace, n_train: int) 
 
     Fair predictors and oracles go to differently named summary keys, so a panel
     built by globbing the fair prefix cannot pick up an oracle.
+
+    The table carries every stratum; the summary keys carry the pooled stratum
+    alone and keep the names they already had. A summary key is a single scalar
+    per run, so folding strata into it would either overwrite one stratum with
+    another or silently change what an existing panel is plotting.
     """
     import wandb
 
@@ -560,7 +657,8 @@ def log_to_wandb(results: pd.DataFrame, args: argparse.Namespace, n_train: int) 
             "split_by": args.split_by,
             "fitted_on": "train",
             "n_train": n_train,
-            "n_test": int(results["n_test"].iloc[0]),
+            "n_test": int(results.loc[results["stratum"] == "pooled", "n_test"].iloc[0]),
+            "strata": sorted(set(results["stratum"])),
             "n_resamples": args.n_resamples,
             "seed": args.seed,
             "splits_path": args.splits_path,
@@ -568,7 +666,8 @@ def log_to_wandb(results: pd.DataFrame, args: argparse.Namespace, n_train: int) 
         },
     )
     run.log({"baselines": wandb.Table(dataframe=results)})
-    for record in results.to_dict(orient="records"):
+    pooled = results[results["stratum"] == "pooled"]
+    for record in pooled.to_dict(orient="records"):
         prefix = f"{record['role']}/{record['predictor']}"
         run.summary.update(
             {f"{prefix}/{m}": record[m] for m in ("mae", "rmse", "r2", "spearman")}
@@ -617,15 +716,19 @@ def main(args: argparse.Namespace) -> None:
     # and a column does not prevent it.
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
-    results[results["role"] == "fair"].to_csv(out, index=False)
-    print(f"[trivial] wrote {out}")
+    fair = results[results["role"] == "fair"]
+    fair.to_csv(out, index=False)
+    print(
+        f"[trivial] wrote {out}: {len(fair)} row(s), one per (predictor, stratum). "
+        "Filter stratum == 'pooled' for the previous one-row-per-predictor shape."
+    )
 
     oracles = results[results["role"] == "oracle"]
     oracle_out = out.with_name(f"{out.stem}_oracles{out.suffix}")
     oracles.to_csv(oracle_out, index=False)
     print(
-        f"[trivial] wrote {oracle_out}: {len(oracles)} predictor(s) using information "
-        "unavailable at inference. Never rank these against the model."
+        f"[trivial] wrote {oracle_out}: {oracles['predictor'].nunique()} predictor(s) using "
+        "information unavailable at inference. Never rank these against the model."
     )
 
     # Logged after the CSVs are on disk, so an unreachable W&B backend cannot
