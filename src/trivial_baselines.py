@@ -408,6 +408,37 @@ def score(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, float]:
     }
 
 
+def _tie_groups(values: np.ndarray) -> tuple[np.ndarray, int]:
+    """Ascending tie-group index per element, and the group count."""
+    groups = np.unique(values, return_inverse=True)[1]
+    return groups, int(groups.max()) + 1
+
+
+def _midranks(groups: np.ndarray, weights: np.ndarray, n_groups: int) -> np.ndarray:
+    """Midrank of each element within the resample its weights describe.
+
+    An element sits above every resampled element in a lower tie group and
+    shares one rank block with its own group, so its midrank is the count below
+    it plus half the block. This is what makes ties correct, and the target has a
+    point mass at zero covering roughly half the corpus, so ties are the common
+    case rather than an edge case.
+    """
+    size = np.bincount(groups, weights=weights, minlength=n_groups)
+    below = np.concatenate(([0.0], np.cumsum(size)[:-1]))
+    return below[groups] + (size[groups] + 1.0) / 2.0
+
+
+def _weighted_pearson(x: np.ndarray, y: np.ndarray, w: np.ndarray, n: int) -> float:
+    mx, my = (w @ x) / n, (w @ y) / n
+    cov = (w @ (x * y)) / n - mx * my
+    var_x, var_y = (w @ (x * x)) / n - mx * mx, (w @ (y * y)) / n - my * my
+    # A resample can draw a single distinct value on either side, leaving no
+    # spread to correlate. scipy answers NaN there and so does this, quietly.
+    if var_x <= 0.0 or var_y <= 0.0:
+        return float("nan")
+    return float(cov / np.sqrt(var_x * var_y))
+
+
 def bootstrap_ci(
     y_true: np.ndarray,
     y_pred: np.ndarray,
@@ -415,13 +446,49 @@ def bootstrap_ci(
     seed: int,
     alpha: float = 0.05,
 ) -> dict[str, tuple[float, float]]:
-    """Percentile bootstrap over graphs, resampling the pair so it stays paired."""
+    """Percentile bootstrap over graphs, resampling the pair so it stays paired.
+
+    A resample is carried as its multiplicity vector rather than as an index
+    list, which turns every statistic into a weighted sum over the original
+    arrays and never materializes a resampled copy. Spearman needs the ranks
+    *within* each resample; those follow from the global tie groups by counting,
+    so no resample is ever sorted. Sorting otherwise dominates this function, and
+    this function otherwise dominates the whole script: at 96k test graphs the
+    naive form spends about 40 seconds per non-constant predictor against about
+    one second here. The result matches ranking each resample from scratch to
+    floating-point noise, which test_bootstrap_matches_the_naive_resampling
+    pins.
+    """
     rng = np.random.default_rng(seed)
-    draws: dict[str, list[float]] = {}
+    n = len(y_true)
+    residual = y_pred - y_true
+    abs_residual, sq_residual, y_squared = np.abs(residual), residual**2, y_true**2
+
+    # A constant predictor has no ranking, matching score()'s guard.
+    ranked = bool(np.ptp(y_pred) > 0)
+    if ranked:
+        groups_pred, n_pred = _tie_groups(y_pred)
+        groups_true, n_true = _tie_groups(y_true)
+
+    draws: dict[str, list[float]] = {"mae": [], "rmse": [], "r2": [], "spearman": []}
     for _ in range(n_resamples):
-        idx = rng.integers(0, len(y_true), len(y_true))
-        for metric, value in score(y_true[idx], y_pred[idx]).items():
-            draws.setdefault(metric, []).append(value)
+        weights = np.bincount(rng.integers(0, n, n), minlength=n).astype(float)
+        ss_res = float(weights @ sq_residual)
+        y_mean = float(weights @ y_true) / n
+        ss_tot = float(weights @ y_squared) - n * y_mean**2
+        draws["mae"].append(float(weights @ abs_residual) / n)
+        draws["rmse"].append(np.sqrt(ss_res / n))
+        draws["r2"].append(1.0 - ss_res / ss_tot if ss_tot > 0 else float("nan"))
+        draws["spearman"].append(
+            _weighted_pearson(
+                _midranks(groups_pred, weights, n_pred),
+                _midranks(groups_true, weights, n_true),
+                weights,
+                n,
+            )
+            if ranked
+            else float("nan")
+        )
     intervals = {}
     for metric, values in draws.items():
         # Spearman is NaN throughout for a constant predictor, and asking for a

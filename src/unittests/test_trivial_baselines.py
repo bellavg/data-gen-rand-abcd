@@ -362,3 +362,42 @@ def test_the_wandb_run_name_follows_the_project_convention():
     assert (
         tb.wandb_run_name_for("Orchestrate", "recipe") == "baseline_trivial_Orchestrate_recipe"
     )
+
+
+def _naive_bootstrap(y_true, y_pred, n_resamples, seed):
+    """The obvious implementation: materialize each resample and call score()."""
+    rng = np.random.default_rng(seed)
+    draws = {}
+    for _ in range(n_resamples):
+        idx = rng.integers(0, len(y_true), len(y_true))
+        for metric, value in tb.score(y_true[idx], y_pred[idx]).items():
+            draws.setdefault(metric, []).append(value)
+    return draws
+
+
+def test_bootstrap_matches_the_naive_resampling():
+    """The fast path must be an optimization, not a different statistic.
+
+    Heavy ties in both vectors on purpose: the target has a point mass at zero
+    covering about half the corpus, and midrank handling is where a rank
+    shortcut goes wrong.
+    """
+    rng = np.random.default_rng(7)
+    n = 2000
+    y_true = np.clip(rng.exponential(0.02, n), 0, 1)
+    y_true[rng.random(n) < 0.49] = 0.0
+    y_pred = np.clip(y_true * 0.4 + rng.normal(0, 0.01, n), 0, 1)
+    y_pred[rng.random(n) < 0.20] = 0.05
+
+    naive = _naive_bootstrap(y_true, y_pred, 200, seed=3)
+    fast = tb.bootstrap_ci(y_true, y_pred, 200, seed=3)
+    for metric, values in naive.items():
+        lo, hi = np.percentile(values, 2.5), np.percentile(values, 97.5)
+        assert fast[metric] == pytest.approx((lo, hi), abs=1e-9), metric
+
+
+def test_bootstrap_spearman_stays_nan_for_a_constant():
+    y_true = np.array([0.0, 0.1, 0.2, 0.7])
+    intervals = tb.bootstrap_ci(y_true, np.full_like(y_true, 0.2), 20, seed=0)
+    assert all(np.isnan(v) for v in intervals["spearman"])
+    assert not any(np.isnan(v) for v in intervals["mae"])

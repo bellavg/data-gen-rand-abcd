@@ -1,8 +1,8 @@
 #!/bin/bash
 #SBATCH --job-name=rq1_trivial_baselines
-#SBATCH --time=00:20:00
+#SBATCH --time=00:10:00
 #SBATCH --nodes=1
-#SBATCH --cpus-per-task=8
+#SBATCH --cpus-per-task=2
 #SBATCH --partition=genoa
 #SBATCH --output=logs/rq1_trivial_baselines_%j.out
 
@@ -14,10 +14,11 @@
 #
 # CPU-only, but not a login-node job: the generation CSV is on the order of a
 # million rows of long scratch paths, and the splits JSON holds every one of
-# those paths again as a Python string, so peak memory runs to several GB.
-# Eight genoa cores carry that comfortably. The work itself is single
-# threaded; the cores are asked for their share of node memory, not for
-# parallelism.
+# those paths again as a Python string. Measured peak resident memory at that
+# scale is just under 1 GB and the whole job runs in well under a minute. Two
+# genoa cores carry it with room to spare; the work is single threaded, so the
+# second core is memory headroom rather than parallelism. Do not raise these
+# without measuring, since the reservation is what gets charged.
 #
 # Submit with:
 #   sbatch src/shell/trivial_baselines.sh
