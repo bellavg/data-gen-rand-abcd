@@ -2,7 +2,22 @@
 #SBATCH --job-name=aig_train_baseline_gamora
 #SBATCH --time=72:00:00
 #SBATCH --nodes=1
-#SBATCH --partition=gpu_a100
+# gpu_h100, not gpu_a100. Tried gpu_a100 on 2026-08-06 (twice: once with
+# torch.compile on, once off) and both runs showed the same broken pattern --
+# a step that reports finishing in ~50ms, immediately followed by ~25-30s of
+# data_wait_s on the NEXT batch. A ~3M-node batch cannot really finish
+# forward+backward in 50ms on any current GPU, so that isn't real GPU speed --
+# the time is landing on the wrong side of the batch boundary. Confirmed NOT
+# caused by torch.compile (identical pattern with it off), so most likely
+# NUM_WORKERS=16 below (tuned for gpu_h100's documented 18 cores/GPU) is
+# oversubscribed on gpu_a100's actual core-per-GPU allocation, which this
+# project has never verified -- or some other A100-node-specific difference.
+# Real wall-clock for 3 batches was ~10s on gpu_h100 (original run) vs. ~108s
+# on gpu_a100 even with compile off -- roughly 10x worse, well beyond the
+# ~2-3x a slower card alone would explain. Verify the actual cause (check
+# `sinfo -p gpu_a100 -o "%c %G"` for cores/GPU, retune NUM_WORKERS to match)
+# before trying gpu_a100 again.
+#SBATCH --partition=gpu_h100
 #SBATCH --gpus=1
 #SBATCH --constraint=scratch-node
 #SBATCH --output=logs/train_baseline_gamora_%j.out
