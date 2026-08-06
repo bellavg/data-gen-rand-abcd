@@ -21,17 +21,19 @@ $\operatorname{MFFC}(v)$ & Maximal Fanout-Free Cone of $v$: the gates that feed 
 \addlinespace
 \multicolumn{2}{@{}l}{\textbf{Task, model, and reduction operators}} \\
 \midrule
-$S$ & Target script: the deterministic synthesis script (\texttt{orchestrate}) whose effect is predicted; $S(G)$ is the function-equivalent, optimized circuit (\ref{sec:prelim:algorithms:orchestrate}). \\
+$S$ & Target script: the deterministic synthesis script (\texttt{orchestrate}) whose effect is predicted; $S(G)$ is the functionally equivalent, optimized AIG (\ref{sec:prelim:algorithms:orchestrate}). \\
 $y_S(G)$ & Optimizability of $G$ under $S$: the fraction of AND gates $S$ removes, $y_S(G) = 1 - |\mathcal{V}_{\wedge}(S(G))| / |\mathcal{V}_{\wedge}(G)| \in [0, 1]$ \eqref{eq:intro:target}. \\
 $\bar{y}_{\text{train}}$ & Train-split mean of $y_S$, the reference value a graph-independent predictor returns (\ref{sec:intro:rq1}). \\
 $f_\theta$ & Trained GNN, approximating $y_S$ from an input AIG (\ref{sec:intro:formalization}). \\
 $L$ & Number of message-passing layers in the GNN, i.e.\ the radius of a node's receptive field (\ref{sec:prelim:gnn:mp}). \\
 $R$ & Reduction operator; $R(G)$ is the reduced training input, one graph or, under partitioning, a set of subgraphs, and $R = \operatorname{id}$ denotes the unreduced baseline (\ref{sec:prelim:reduction}). \\
+$k$ & Number of subgraphs a partitioning reduction produces. They are node-disjoint, so $\eta_{\mathcal{V}} = 1$ regardless of $k$ (\ref{sec:intro:formalization}). \\
 $d$ & Color-refinement depth: the number of refinement rounds run when building a reduct. Distinct from the topological level $\ell$; exactness requires $L \leq d$ (\ref{sec:prelim:reduction}). \\
 \addlinespace
 \multicolumn{2}{@{}l}{\textbf{Measuring reduction}} \\
 \midrule
 $\eta_{\mathcal{V}}$, $\eta_{\mathcal{E}}$ & Node and edge retention of a reduction: $|\mathcal{V}(R(G))| / |\mathcal{V}(G)|$ and $|\mathcal{E}(R(G))| / |\mathcal{E}(G)|$ \eqref{eq:intro:retention}. \\
+$R^{2}$ & Coefficient of determination: the share of label variance a predictor explains, $R^{2} = 0$ at the constant predictor $\bar{y}$ and negative below it \eqref{eq:method:r2}. \\
 $n^{\star}$ & Amortization threshold: the number of epochs beyond which applying a reduction is cheaper than training on the unreduced graph \eqref{eq:method:amortization}. \\
 \bottomrule
 \end{tabular}
