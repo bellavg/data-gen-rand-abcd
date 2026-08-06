@@ -24,25 +24,34 @@ not preventing an unbounded per-batch cost that was never actually there on
 this torch version. Still worth setting explicitly rather than relying on
 automatic detection to trigger correctly on the first real training step.
 
-Default is FALSE for every baseline, INCLUDING Gamora as of 2026-08-06 -- see
-train_baseline_gamora.sh's TORCH_COMPILE block for why: a real run on
-gpu_a100 regressed ~20x (3 batches: ~10s uncompiled vs. ~202s compiled),
-almost certainly repeated recompilation rather than one stable graph, because
-real batches vary in THREE shape dimensions at once (node count, edge count,
-graph count) and the CPU/toy-model verification below only exercised one
-varying dimension at a time. That verification is real and still worth
-having (`src/unittests/baselines/test_gamora.py`'s `TestGamoraTorchCompile`:
+This wrapper's own default (the `compile_model` constructor argument below)
+is FALSE for every baseline. train_baseline_gamora.sh is the one script that
+overrides it, and its own value has moved twice:
+  1. Briefly default-on: a real run on gpu_a100 regressed ~20x (3 batches:
+     ~10s uncompiled vs. ~202s compiled), plausibly repeated recompilation,
+     since real batches vary in THREE shape dimensions at once (node count,
+     edge count, graph count) and the CPU/toy-model verification below only
+     exercised one varying dimension at a time -- so it was turned off.
+  2. Then a SEPARATE gpu_a100 run with compile OFF showed the same ~10x
+     wall-clock regression and the identical fast-step/slow-next-wait log
+     pattern the compiled run had -- proving gpu_a100 itself is
+     pathologically slow for this workload for a reason unrelated to
+     compile. The one real compiled run ever done was on the one node type
+     independently confirmed broken; compile was never actually tested
+     clean. train_baseline_gamora.sh defaults it back on, on gpu_h100, to
+     get that clean test.
+The CPU/toy-model verification below is real and still worth having
+(`src/unittests/baselines/test_gamora.py`'s `TestGamoraTorchCompile`:
 eager-vs-compiled forward on the actual `GamoraGraphRegressor`, gradients,
 four batch shapes; `src/unittests/baselines/test_lightning_wrapper.py`: the
-generic wrapping/checkpoint-key behavior below, on a toy model) -- it just
-was not sufficient evidence to ship this default-on for a real training job,
-and the corrected lesson is: CPU/toy-model shape coverage does not stand in
-for a real workload's actual shape diversity at real scale. Re-verify at
-scale (a real steady-state avg_step_s comparison, not just "did it crash")
-before defaulting this on again, for Gamora or anyone else. HOGA's custom
-`MultiheadAttention` and DeepGate4's gradient-checkpointed sparse transformer
-remain untested here on top of that -- checkpointing especially has known
-rough edges with Dynamo's graph capture in other codebases.
+generic wrapping/checkpoint-key behavior below, on a toy model) -- the
+lesson from gpu_a100 is that it does not stand in for a real workload's
+actual shape diversity at real scale, not that compiling this workload is
+inherently a bad idea. HOGA's custom `MultiheadAttention` and DeepGate4's
+gradient-checkpointed sparse transformer remain untested here on top of
+that -- checkpointing especially has known rough edges with Dynamo's graph
+capture in other codebases -- so neither should default on without the same
+kind of clean, at-scale test this comment describes for Gamora.
 
 KNOWN LIMITATION, not a bug: compiling `GamoraGraphRegressor` produces a graph
 break at `global_mean_pool` -- PyG's `scatter` calls `int(index.max())`
