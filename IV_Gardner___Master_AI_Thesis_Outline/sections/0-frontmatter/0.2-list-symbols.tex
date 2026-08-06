@@ -23,7 +23,7 @@ $\operatorname{MFFC}(v)$ & Maximal Fanout-Free Cone of $v$: the gates that feed 
 \midrule
 $S$ & Target script: the deterministic synthesis script (\texttt{orchestrate}) whose effect is predicted; $S(G)$ is the function-equivalent, optimized circuit (\ref{sec:prelim:algorithms:orchestrate}). \\
 $y_S(G)$ & Optimizability of $G$ under $S$: the fraction of AND gates $S$ removes, $y_S(G) = 1 - |\mathcal{V}_{\wedge}(S(G))| / |\mathcal{V}_{\wedge}(G)| \in [0, 1]$ \eqref{eq:intro:target}. \\
-$\bar{y}_S$ & Training-set mean of $y_S$, the reference value a graph-independent predictor returns (\ref{sec:intro:rq1}). \\
+$\bar{y}_{\text{train}}$ & Train-split mean of $y_S$, the reference value a graph-independent predictor returns (\ref{sec:intro:rq1}). \\
 $f_\theta$ & Trained GNN, approximating $y_S$ from an input AIG (\ref{sec:intro:formalization}). \\
 $L$ & Number of message-passing layers in the GNN, i.e.\ the radius of a node's receptive field (\ref{sec:prelim:gnn:mp}). \\
 $R$ & Reduction operator; $R(G)$ is the reduced training input, one graph or, under partitioning, a set of subgraphs, and $R = \operatorname{id}$ denotes the unreduced baseline (\ref{sec:prelim:reduction}). \\

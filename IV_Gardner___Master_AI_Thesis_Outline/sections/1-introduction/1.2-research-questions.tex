@@ -47,7 +47,7 @@ true optimizability across the test AIGs. Cost is reported as peak memory and ti
 \label{sec:intro:rq1}
 Can $f_\theta$ predict $y_S(G)$~\eqref{eq:intro:target} from the unreduced AIG $G$ alone, on
 designs withheld from training? Accuracy is measured against two baseline references: trivial
-predictors fitted on the train split, among them the constant $\bar{y}_S$,
+predictors fitted on the train split, among them the constant $\bar{y}_{\text{train}}$,
 and existing GNN models for AIGs, retrained on the same data to predict $y_S$ and
 evaluated on the same withheld graphs (\ref{sec:method:architecture:baselines}).
 

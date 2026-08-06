@@ -9,8 +9,9 @@ Six contributions follow. (i) A corpus of AIGs extending OpenABC-D
 from the unreduced AIG $G$ alone on withheld designs, and a systematic benchmark of
 partitioning, sparsification, and summarization/coarsening against it on node and edge retention
 ($\eta_{\mathcal{V}}$, $\eta_{\mathcal{E}}$), peak memory, training and inference throughput,
-the one-time cost of $R(G)$, and predictive retention. The baseline is measured against the
-training-set mean $\bar{y}_S$ and against existing GNN models for circuits, retrained on the
+the one-time cost of $R(G)$, and predictive retention. The baseline is measured against
+trivial predictors fitted on the train split, among them the constant
+$\bar{y}_{\text{train}}$, and against existing GNN models for AIGs, retrained on the
 same data (\ref{sec:method:architecture:baselines}).
 (iii) AIG-specific adaptations of each class, built from a node's topological level
 $\ell(v)$, its fanout, or its role as a gate, compared against their domain-agnostic
