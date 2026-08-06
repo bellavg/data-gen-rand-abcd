@@ -194,6 +194,13 @@ class TrainingStartupCallback(pl.Callback):
             return
         epoch_duration = time.monotonic() - self._epoch_start_time
         pl_module.log("epoch_time_seconds", epoch_duration)
+        # Cumulative since fit start -- the counters below are never reset per
+        # epoch. Logged because "epoch" is not a comparable unit across these
+        # runs: --limit_train_batches differs per baseline (12500 for HOGA,
+        # unset for Gamora) and so does the node budget that sets graphs per
+        # batch, so --patience 4 buys a different amount of training in each.
+        # Plot learning curves against this, not against epoch index.
+        pl_module.log("graphs_seen", float(self._train_graph_count))
         if self._train_batch_count > 0:
             avg_graphs = self._train_graph_count / self._train_batch_count
             avg_nodes = self._train_node_count / self._train_batch_count
@@ -207,6 +214,7 @@ class TrainingStartupCallback(pl.Callback):
                 f"avg_edges_per_batch={avg_edges:.0f} "
                 f"avg_data_wait_s={avg_wait:.3f} "
                 f"avg_step_s={avg_step:.3f} "
-                f"epoch_s={epoch_duration:.1f}",
+                f"epoch_s={epoch_duration:.1f} "
+                f"graphs_seen={self._train_graph_count}",
                 flush=True,
             )

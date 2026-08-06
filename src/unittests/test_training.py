@@ -780,7 +780,15 @@ def test_training_startup_callback_logs_transitions(capsys):
     assert "First training batch started" in output
 
 
-def test_training_startup_callback_logs_epoch_time():
+def test_training_startup_callback_logs_epoch_time_and_graphs_seen():
+    """`graphs_seen` is logged alongside the epoch timing, cumulatively.
+
+    Epoch index is not a comparable unit across these runs: --limit_train_batches
+    differs per baseline job and so does the node budget that sets graphs per
+    batch, so --patience 4 buys a different amount of training in each. Learning
+    curves have to be plotted against graphs seen instead, which means the value
+    has to exist in the logs of every run, not just the capped ones.
+    """
     callback = TrainingStartupCallback()
     trainer = MagicMock()
     module = MagicMock()
@@ -789,7 +797,45 @@ def test_training_startup_callback_logs_epoch_time():
         callback.on_train_epoch_start(trainer, module)
         callback.on_train_epoch_end(trainer, module)
 
-    module.log.assert_called_once_with("epoch_time_seconds", 3.5)
+    module.log.assert_any_call("epoch_time_seconds", 3.5)
+    module.log.assert_any_call("graphs_seen", 0.0)
+    assert module.log.call_count == 2
+
+
+def test_training_startup_callback_graphs_seen_accumulates_across_epochs():
+    """Cumulative since fit start, not per epoch -- the counter is never reset."""
+    callback = TrainingStartupCallback()
+    trainer = MagicMock()
+    module = MagicMock()
+
+    batch = Batch.from_data_list(
+        [
+            Data(
+                x=torch.randn(5, 4),
+                edge_index=torch.randint(0, 5, (2, 10)),
+                edge_attr=torch.randn(10, 2),
+                y=torch.randn(1, 1),
+            )
+            for _ in range(3)
+        ]
+    )
+
+    def epoch_end_values():
+        return [
+            call.args[1]
+            for call in module.log.call_args_list
+            if call.args and call.args[0] == "graphs_seen"
+        ]
+
+    with patch("train_utils.time.monotonic", return_value=0.0):
+        callback.on_train_epoch_start(trainer, module)
+        callback.on_train_batch_start(trainer, module, batch, 0)
+        callback.on_train_epoch_end(trainer, module)
+        callback.on_train_epoch_start(trainer, module)
+        callback.on_train_batch_start(trainer, module, batch, 1)
+        callback.on_train_epoch_end(trainer, module)
+
+    assert epoch_end_values() == [3.0, 6.0]
 
 
 def test_training_startup_callback_logs_step_time_with_explicit_batch_size():

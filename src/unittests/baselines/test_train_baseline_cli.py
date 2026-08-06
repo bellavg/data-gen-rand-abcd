@@ -40,7 +40,13 @@ def _run_cli(*args: str) -> subprocess.CompletedProcess:
         env=env,
         capture_output=True,
         text=True,
-        timeout=30,
+        # Each call spawns a fresh interpreter that imports torch/PyG: ~3 s
+        # warm, but this file makes several such calls and the whole suite runs
+        # them alongside everything else. At 30 s a loaded machine produced
+        # TimeoutExpired failures that vanish on re-run -- a false red, not a
+        # signal. This is a liveness guard against a hung CLI, so it only needs
+        # to be well short of the suite's own patience.
+        timeout=120,
     )
 
 
@@ -142,9 +148,9 @@ class TestTrainBaselineCLI(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("--baseline", result.stderr)
 
-    def test_baseline_choices_are_synthnet_hoga_and_deepgate4(self):
+    def test_baseline_choices_are_the_four_ported_baselines(self):
         result = _run_cli("--help")
-        self.assertIn("{synthnet,hoga,deepgate4}", result.stdout)
+        self.assertIn("{synthnet,hoga,deepgate4,gamora}", result.stdout)
 
     def test_every_flag_used_by_a_job_script_exists(self):
         """Generalises the per-flag checks below.
@@ -174,6 +180,7 @@ class TestTrainBaselineCLI(unittest.TestCase):
         (models/qor/SynthNetV3/train.py), DeepGate4 200 (Zheng et al. ICLR'25
         Sec 4.1, "We train all models for 200 epochs", and upstream's
         run/train_large.sh --epoch 200). HOGA publishes none and keeps 80.
+        Gamora's released code defaults to 100 (gnn_multitask.py:532).
         A single shared default would silently give DeepGate4 SynthNet's number.
         """
         sys.path.insert(0, _SRC_DIR)
@@ -184,14 +191,91 @@ class TestTrainBaselineCLI(unittest.TestCase):
 
         self.assertEqual(train_baseline.DEEPGATE4_DEFAULTS["max_epochs"], 200)
         self.assertEqual(train_baseline.SYNTHNET_DEFAULTS["max_epochs"], 80)
+        self.assertEqual(train_baseline.GAMORA_DEFAULTS["max_epochs"], 100)
         self.assertEqual(
-            set(train_baseline._BASELINE_DEFAULTS), {"synthnet", "hoga", "deepgate4"}
+            set(train_baseline._BASELINE_DEFAULTS),
+            {"synthnet", "hoga", "deepgate4", "gamora"},
         )
         for name, defaults in train_baseline._BASELINE_DEFAULTS.items():
             with self.subTest(baseline=name):
                 self.assertEqual(
-                    set(defaults), {"batch_size", "lr", "weight_decay", "max_epochs"}
+                    set(defaults),
+                    {"batch_size", "lr", "weight_decay", "max_epochs", "loss"},
                 )
+
+    def test_loss_is_resolved_per_baseline(self):
+        """The three older baselines must keep MSE; only Gamora changes.
+
+        train_baseline.py used to hardcode nn.MSELoss() for every baseline,
+        while the primary model (train.py:151) trains under
+        SmoothL1(beta=0.01) -- and those two weight a zero-inflated target very
+        differently, so a baseline scored under the wrong one confounds
+        architecture with loss choice. Gamora publishes
+        no regression loss at all (its task is classification, F.nll_loss at
+        gnn_multitask.py:183), so it takes the primary model's. The other three
+        keep the loss their runs were made under, and this test is what stops
+        that changing by accident.
+        """
+        import torch.nn as nn
+
+        sys.path.insert(0, _SRC_DIR)
+        try:
+            import train_baseline
+        finally:
+            sys.path.remove(_SRC_DIR)
+
+        self.assertEqual(train_baseline.SYNTHNET_DEFAULTS["loss"], "mse")
+        self.assertEqual(train_baseline.HOGA_DEFAULTS["loss"], "mse")
+        self.assertEqual(train_baseline.DEEPGATE4_DEFAULTS["loss"], "mse")
+        self.assertEqual(train_baseline.GAMORA_DEFAULTS["loss"], "smooth_l1")
+
+        mse = train_baseline._build_loss(SimpleNamespace(loss="mse", loss_beta=0.01))
+        self.assertIsInstance(mse, nn.MSELoss)
+
+        smooth = train_baseline._build_loss(
+            SimpleNamespace(loss="smooth_l1", loss_beta=0.01)
+        )
+        self.assertIsInstance(smooth, nn.SmoothL1Loss)
+        # beta must match train.py's, or "the primary model's loss" is a
+        # differently-shaped loss that merely shares a name.
+        self.assertEqual(smooth.beta, 0.01)
+
+        with self.assertRaises(ValueError):
+            train_baseline._build_loss(SimpleNamespace(loss="huber", loss_beta=0.01))
+
+    def test_gamora_node_budget_matches_the_primary_models(self):
+        """The Gamora baseline's whole batching argument is parity.
+
+        Unlike HOGA's and DeepGate4's, its node budget is not a memory
+        compromise -- it is set to config.MAX_TOTAL_NODES_PER_BATCH so the
+        baseline trains at the same effective batch (~75 graphs/step) as the
+        primary model it is compared against, with no gradient accumulation.
+        train_baseline.py's argparse default derives from that constant, but
+        train_baseline_gamora.sh passes a LITERAL, so retuning the constant
+        would silently leave the baseline at the old budget and break the
+        parity the comparison rests on. Assert they agree.
+        """
+        import config
+
+        script = (_SHELL_DIR / "train_baseline_gamora.sh").read_text()
+        match = re.search(
+            r'(?m)^GAMORA_MAX_NODES_PER_BATCH="\$\{GAMORA_MAX_NODES_PER_BATCH:-(\d+)\}"',
+            script,
+        )
+        self.assertIsNotNone(match, "GAMORA_MAX_NODES_PER_BATCH default not found")
+        self.assertEqual(int(match.group(1)), config.MAX_TOTAL_NODES_PER_BATCH)
+
+    def test_gamora_flags_are_wired(self):
+        # train_baseline_gamora.sh passes all of these; a rename would break
+        # the job script silently.
+        result = _run_cli("--help")
+        for flag in (
+            "--loss",
+            "--gamora_num_layers",
+            "--gamora_hidden_dim",
+            "--gamora_max_nodes_per_batch",
+        ):
+            self.assertIn(flag, result.stdout)
 
     def test_deepgate4_flags_are_wired(self):
         # train_baseline_deepgate4.sh passes all of these; a rename would break

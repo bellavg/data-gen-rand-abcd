@@ -1,4 +1,4 @@
-"""Training entrypoint for baseline models (SynthNet, HOGA, DeepGate4) on this project's AIG dataset.
+"""Training entrypoint for baseline models (SynthNet, HOGA, DeepGate4, Gamora) on this project's AIG dataset.
 
 Mirrors train.py's structure (argparse -> AIGDataModule -> Lightning module ->
 Trainer) but swaps in a baseline model + baselines.common.lightning_wrapper
@@ -111,6 +111,51 @@ lower --deepgate4_num_hops (k=6 is ~2.6x cheaper, k=4 ~7.5x) and report the
 change -- though note k=6 is itself ablated in Appendix A.3 and scores the
 best functional loss of any setting there, so it is a published option rather
 than an improvisation.
+
+GAMORA is the cheapest of the four and needs none of that machinery. Its trunk
+is 4 SAGEConv layers at 32 channels and 8,193 parameters in total.
+
+MEASURED on a single 366,040-node graph (config.MAX_NUM_GATES) with 677,172
+edges, fp32, at the published defaults: **743 MB retained for the backward
+pass, i.e. 2.08 KB per node**. Method, because it matters: this is the sum of
+the tensors autograd packs for backward, deduplicated by storage pointer
+(`torch.autograd.graph.saved_tensors_hooks`), NOT an RSS delta. An RSS
+high-water delta on the same forward reads only 561 MB, because PyTorch's CPU
+allocator satisfies much of the forward from pages already resident and freed,
+so the process high-water never reflects the true working set. The 743 MB
+figure is itself a lower bound on peak: transient per-op buffers that are
+freed before the forward returns (SAGEConv's gathered [E, C] messages, most
+of all) are not counted.
+
+Extrapolating: at the 3M-node budget below that is ~6.2 GB fp32 and roughly
+half that under the bf16-mixed AMP an H100 job gets -- comfortable on an 80 GB
+card with no gradient checkpointing, no partitioning, and no memory-driven
+compromise on the batch. The budget is therefore set to
+config.MAX_TOTAL_NODES_PER_BATCH, the SAME budget the primary model uses. That
+yields ~75 graphs per step, matching the primary model's effective batch, so
+--accumulate_grad_batches stays at 1 and neither of the harmonic-mean caveats
+above applies to it. Upstream publishes no graph-level batch size to match
+anyway: its unit is 20 sampled root NODES from a single graph
+(gnn_multitask.py:570-572), which cannot transfer to a graph-level task. See
+baselines/gamora/regressor.py for what that sampler means for this port, and
+for why the row must be labelled as Gamora's encoder rather than as Gamora.
+
+LOSS. --loss is resolved per baseline, like lr and batch_size, because the
+answer differs by baseline and a single hardcoded default was wrong for at
+least one of them. SynthNet publishes MSE (OpenABC-D Section 4.1) and HOGA and
+DeepGate4 keep MSE as the setting their runs were made under, so all three are
+unchanged. Gamora publishes NO regression loss at all -- its task is
+classification, trained with `F.nll_loss` (gnn_multitask.py:183) -- so there is
+nothing to be faithful to, and it defaults instead to the primary model's own
+loss, SmoothL1 at beta=0.01 (train.py:151). That is the right default for a
+baseline with no published loss: scoring a baseline under a different loss
+than the model it is compared against confounds architecture with loss choice,
+and the two are not interchangeable on this target -- an out-of-repo analysis
+of the label distribution puts ~49% of it at exactly zero, and MSE and
+SmoothL1(beta=0.01) weight that spike very differently. (That distribution
+figure is not derived anywhere in this repository; treat it as the motivation
+for the default, not as a citable project result.) --loss mse restores the old
+behaviour for a like-for-like check against the other three.
 """
 
 from __future__ import annotations
@@ -151,6 +196,15 @@ from baselines.deepgate4.regressor import (
 )
 from baselines.deepgate4.regressor import DEFAULT_TF_DROPOUT as DG4_DEFAULT_TF_DROPOUT
 from baselines.deepgate4.regressor import DeepGate4GraphRegressor
+from baselines.gamora.regressor import DEFAULT_DROPOUT as GAMORA_DEFAULT_DROPOUT
+from baselines.gamora.regressor import DEFAULT_HIDDEN_DIM as GAMORA_DEFAULT_HIDDEN_DIM
+from baselines.gamora.regressor import DEFAULT_LR as GAMORA_DEFAULT_LR
+from baselines.gamora.regressor import DEFAULT_NUM_EPOCHS as GAMORA_DEFAULT_NUM_EPOCHS
+from baselines.gamora.regressor import DEFAULT_NUM_LAYERS as GAMORA_DEFAULT_NUM_LAYERS
+from baselines.gamora.regressor import (
+    DEFAULT_WEIGHT_DECAY as GAMORA_DEFAULT_WEIGHT_DECAY,
+)
+from baselines.gamora.regressor import GAMORA_NODE_FEATURE_DIM, GamoraGraphRegressor
 from baselines.hoga.hop_features import HopFeatureCache, collate_hoga_batch, num_hop_slots
 from baselines.hoga.regressor import DEFAULT_HEADS as HOGA_DEFAULT_HEADS
 from baselines.hoga.regressor import DEFAULT_HIDDEN_DIM as HOGA_DEFAULT_HIDDEN_DIM
@@ -179,6 +233,7 @@ SYNTHNET_DEFAULTS = {
     "lr": 0.001,
     "weight_decay": 0.0,
     "max_epochs": 80,  # models/qor/SynthNetV3/train.py default
+    "loss": "mse",  # published (OpenABC-D Sec 4.1)
 }
 HOGA_DEFAULTS = {
     "batch_size": config.BATCH_SIZE,  # no published QoR-task batch size; see baselines/hoga/regressor.py
@@ -187,6 +242,9 @@ HOGA_DEFAULTS = {
     # HOGA publishes no epoch count for the QoR task; keep SynthNet's 80 rather
     # than inventing one. (Early stopping governs in practice either way.)
     "max_epochs": 80,
+    # Not published for the QoR task either; "mse" is the setting HOGA's runs
+    # were made under and is kept so --loss does not silently change them.
+    "loss": "mse",
 }
 DEEPGATE4_DEFAULTS = {
     # Upstream trains with batch_size 1 and mini_batch_size 128, where the unit
@@ -201,11 +259,29 @@ DEEPGATE4_DEFAULTS = {
     # is resolved per-baseline rather than left at the shared 80, which is
     # SynthNet's number from a different paper.
     "max_epochs": DG4_DEFAULT_NUM_EPOCHS,
+    # As for HOGA: unchanged from what this baseline's runs already used.
+    "loss": "mse",
+}
+GAMORA_DEFAULTS = {
+    # Gamora's own unit is 20 sampled root NODES from one graph
+    # (gnn_multitask.py:570-572), which does not transfer to a graph-level
+    # task. --gamora_max_nodes_per_batch governs instead, and unlike HOGA's and
+    # DeepGate4's it is set to the primary model's own budget rather than a
+    # memory compromise. See this module's docstring.
+    "batch_size": config.BATCH_SIZE,
+    "lr": GAMORA_DEFAULT_LR,  # 0.008, upstream's argparse default (:531)
+    "weight_decay": GAMORA_DEFAULT_WEIGHT_DECAY,  # 5e-5, upstream's optimizer (:595)
+    "max_epochs": GAMORA_DEFAULT_NUM_EPOCHS,  # 100, upstream's argparse default (:532)
+    # Gamora publishes no regression loss (its task is classification, trained
+    # with F.nll_loss at :183), so this defaults to the PRIMARY model's loss
+    # rather than to the other baselines'. See this module's docstring.
+    "loss": "smooth_l1",
 }
 _BASELINE_DEFAULTS = {
     "synthnet": SYNTHNET_DEFAULTS,
     "hoga": HOGA_DEFAULTS,
     "deepgate4": DEEPGATE4_DEFAULTS,
+    "gamora": GAMORA_DEFAULTS,
 }
 
 
@@ -321,7 +397,34 @@ def _build_model(args: argparse.Namespace) -> nn.Module:
         if args.deepgate4_pretrained_tokenizer:
             model.load_pretrained_tokenizer(args.deepgate4_pretrained_tokenizer)
         return model
+    if args.baseline == "gamora":
+        return GamoraGraphRegressor(
+            # Not config.NODE_INPUT_DIM: Gamora defines its own 4-column node
+            # featurisation and the model consumes that, not this project's
+            # one-hot. The two happen to be the same width; they are not the
+            # same features. See baselines/gamora/regressor.py.
+            in_channels=GAMORA_NODE_FEATURE_DIM,
+            hidden_channels=args.gamora_hidden_dim,
+            num_layers=args.gamora_num_layers,
+            dropout=args.gamora_dropout,
+            task_out_dim=config.TASK_OUT_DIM,
+            head_dropout=args.gamora_head_dropout,
+        )
     raise ValueError(f"Unknown baseline: {args.baseline!r}")
+
+
+def _build_loss(args: argparse.Namespace) -> nn.Module:
+    """Resolve --loss to a loss module.
+
+    Per-baseline, like lr and batch_size: the three older baselines keep MSE
+    and Gamora defaults to the primary model's SmoothL1(beta=0.01). See this
+    module's docstring for why the answer is not the same for all four.
+    """
+    if args.loss == "mse":
+        return nn.MSELoss()
+    if args.loss == "smooth_l1":
+        return nn.SmoothL1Loss(beta=args.loss_beta)
+    raise ValueError(f"Unknown loss: {args.loss!r}")
 
 
 def _loader_kwargs(args: argparse.Namespace) -> dict:
@@ -353,8 +456,8 @@ def _node_budget_loader(
 ) -> DataLoader:
     """Build a loader that batches to a total-node budget instead of a graph count.
 
-    Shared by the HOGA and DeepGate4 baselines; SynthNet keeps its published
-    fixed batch size and does not use this. `wrapped` must be index-aligned
+    Shared by the HOGA, DeepGate4 and Gamora baselines; SynthNet keeps its
+    published fixed batch size and does not use this. `wrapped` must be index-aligned
     with `ds` -- same length, `__getitem__` delegating straight through -- so a
     plan built from `ds`'s node counts indexes `wrapped` correctly.
     """
@@ -448,6 +551,24 @@ def _deepgate4_loader(ds, args: argparse.Namespace, *, shuffle: bool) -> DataLoa
     )
 
 
+def _gamora_loader(ds, args: argparse.Namespace, *, shuffle: bool) -> DataLoader:
+    """Node-budget loader over the plain PyG graphs.
+
+    Unlike HOGA and DeepGate4, Gamora needs no per-graph feature adapter: its
+    node features are derived inside the model's forward from `.x`,
+    `.edge_index` and `.edge_attr`, which every sample already carries. So the
+    dataset is its own `wrapped` here and the collate is PyG's default.
+    """
+    return _node_budget_loader(
+        ds,
+        ds,
+        args,
+        shuffle=shuffle,
+        collate_fn=Batch.from_data_list,
+        max_nodes=args.gamora_max_nodes_per_batch,
+    )
+
+
 def main(args: argparse.Namespace) -> None:
     torch.backends.cuda.matmul.allow_tf32 = True
     if hasattr(torch.backends, "cudnn"):
@@ -468,6 +589,8 @@ def main(args: argparse.Namespace) -> None:
         args.weight_decay = defaults["weight_decay"]
     if args.max_epochs is None:
         args.max_epochs = defaults["max_epochs"]
+    if args.loss is None:
+        args.loss = defaults["loss"]
 
     print(f"--- Starting Baseline Training: {args.baseline} / {args.algorithm} ---")
 
@@ -521,9 +644,10 @@ def main(args: argparse.Namespace) -> None:
         # job wrote and re-derives it for all ~700k train samples.
         split_by=args.split_by,
         use_graph_cache=args.use_graph_cache,
-        # HOGA's node budget is applied in _hoga_loader, which builds its own
-        # sampler over these datasets; SynthNet keeps its published fixed batch
-        # size. Neither uses the datamodule's own loaders. See module docstring.
+        # The node budgets for HOGA, DeepGate4 and Gamora are applied in their
+        # own _*_loader functions, which build samplers over these datasets;
+        # SynthNet keeps its published fixed batch size. None of the four uses
+        # the datamodule's own loaders. See module docstring.
         dynamic_batching=False,
     )
 
@@ -548,6 +672,9 @@ def main(args: argparse.Namespace) -> None:
     elif args.baseline == "deepgate4":
         train_loader = _deepgate4_loader(datamodule.train_ds, args, shuffle=True)
         val_loader = _deepgate4_loader(datamodule.val_ds, args, shuffle=False)
+    elif args.baseline == "gamora":
+        train_loader = _gamora_loader(datamodule.train_ds, args, shuffle=True)
+        val_loader = _gamora_loader(datamodule.val_ds, args, shuffle=False)
     else:
         train_loader = _plain_loader(datamodule.train_ds, args, shuffle=True)
         val_loader = _plain_loader(datamodule.val_ds, args, shuffle=False)
@@ -558,7 +685,7 @@ def main(args: argparse.Namespace) -> None:
         lr=args.lr,
         weight_decay=args.weight_decay,
         optimizer_name="adam",
-        loss_fn=nn.MSELoss(),
+        loss_fn=_build_loss(args),
         scheduler_factor=args.scheduler_factor,
         scheduler_patience=args.scheduler_patience,
     )
@@ -650,7 +777,10 @@ if __name__ == "__main__":
     )
 
     parser.add_argument(
-        "--baseline", type=str, required=True, choices=["synthnet", "hoga", "deepgate4"]
+        "--baseline",
+        type=str,
+        required=True,
+        choices=["synthnet", "hoga", "deepgate4", "gamora"],
     )
     parser.add_argument("--algorithm", type=str, default="Orchestrate")
     parser.add_argument("--csv_paths", nargs="+", required=True)
@@ -660,6 +790,23 @@ if __name__ == "__main__":
     parser.add_argument("--batch_size", type=int, default=None)
     parser.add_argument("--lr", type=float, default=None)
     parser.add_argument("--weight_decay", type=float, default=None)
+    # Per-baseline like the four above, resolved from _BASELINE_DEFAULTS in
+    # main(): SynthNet/HOGA/DeepGate4 keep "mse", Gamora defaults to
+    # "smooth_l1" (the primary model's loss) because it publishes none. This
+    # replaces a hardcoded nn.MSELoss() that applied to every baseline
+    # regardless of what its paper used or what it was being compared against.
+    parser.add_argument(
+        "--loss",
+        type=str,
+        default=None,
+        choices=["mse", "smooth_l1"],
+        help="Regression loss. Defaults per baseline; see train_baseline.py's "
+        "module docstring for why the default is not the same for all four.",
+    )
+    # Only read when --loss is smooth_l1. 0.01 matches train.py:151, so a
+    # baseline scored under SmoothL1 is scored under the primary model's exact
+    # loss rather than a differently-shaped one.
+    parser.add_argument("--loss_beta", type=float, default=0.01)
     # Unlike lr/batch_size/loss/optimizer above, the ReduceLROnPlateau settings
     # are NOT published: neither baseline paper uses an LR scheduler at all (see
     # baselines/common/lightning_wrapper.py). Since the values are ours either
@@ -953,6 +1100,42 @@ if __name__ == "__main__":
             "on makes this a partially-pretrained baseline, which is a "
             "different claim and must be reported as one. Requires "
             "--deepgate4_hidden_dim 128."
+        ),
+    )
+
+    # Gamora hyperparameters. num_layers/hidden_dim are BOTH published (paper
+    # Sec IV.A) and upstream argparse defaults (gnn_multitask.py:528-529); lr,
+    # weight_decay, dropout and max_epochs are upstream's defaults only, with
+    # no value in the paper. head_dropout belongs to the regression head this
+    # port adds and has no upstream source at all -- see
+    # baselines/gamora/regressor.py's module docstring.
+    parser.add_argument(
+        "--gamora_num_layers",
+        type=int,
+        default=GAMORA_DEFAULT_NUM_LAYERS,
+        help="SAGEConv depth. 4 is the paper's shallow model; the paper's "
+        "other published configuration is 8 layers with --gamora_hidden_dim 80.",
+    )
+    parser.add_argument(
+        "--gamora_hidden_dim", type=int, default=GAMORA_DEFAULT_HIDDEN_DIM
+    )
+    parser.add_argument("--gamora_dropout", type=float, default=GAMORA_DEFAULT_DROPOUT)
+    parser.add_argument("--gamora_head_dropout", type=float, default=0.3)
+    parser.add_argument(
+        "--gamora_max_nodes_per_batch",
+        type=int,
+        default=config.MAX_TOTAL_NODES_PER_BATCH,
+        help=(
+            "Total-node budget per Gamora batch, replacing --batch_size for "
+            "this baseline (0 disables, restoring fixed graph-count batching). "
+            "Defaults to the PRIMARY model's own budget, not a memory-driven "
+            "compromise: 4 SAGEConv layers at 32 channels measure 2.08 KB/node "
+            "retained for backward in fp32, so 3M nodes is ~6.2 GB (about half "
+            "that under bf16-mixed) and ~75 graphs per step, matching the effective batch "
+            "of the model this is compared against with "
+            "--accumulate_grad_batches left at 1. Upstream publishes no "
+            "graph-level batch size (its unit is 20 sampled root nodes from "
+            "one graph). See this module's docstring."
         ),
     )
 
