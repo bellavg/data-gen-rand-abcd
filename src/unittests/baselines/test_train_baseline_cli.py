@@ -115,6 +115,7 @@ class TestTrainBaselineCLI(unittest.TestCase):
                 algorithm="Orchestrate",
                 split_by=config.SPLIT_BY,
                 synthnet_upstream_edge_direction=True,
+                loss=train_baseline._BASELINE_DEFAULTS["synthnet"]["loss"],
             )
             for key, value in overrides.items():
                 setattr(args, key, value)
@@ -137,14 +138,66 @@ class TestTrainBaselineCLI(unittest.TestCase):
             "hoga_Orchestrate",
         )
 
+    def test_run_label_separates_the_two_loss_recipes(self):
+        """PolarGate is meant to be run under both its own MSE-style recipe and
+        the primary model's SmoothL1 (train.py:151), and the two runs differ in
+        nothing else -- so without a suffix the second overwrites the first's
+        last.ckpt. Each baseline's own default stays untagged.
+        """
+        import config
+        import train_baseline
+
+        def label(baseline, loss):
+            return train_baseline._run_label(
+                SimpleNamespace(
+                    baseline=baseline,
+                    algorithm="Orchestrate",
+                    split_by=config.SPLIT_BY,
+                    synthnet_upstream_edge_direction=True,
+                    loss=loss,
+                    polargate_size_covariates=True,
+                    polargate_pooling="mean",
+                )
+            )
+
+        self.assertEqual(label("polargate", "smooth_l1"), "polargate_Orchestrate")
+        self.assertEqual(label("polargate", "mse"), "polargate_Orchestrate_mse")
+        # Inverted for the other three, whose default is mse.
+        self.assertEqual(label("hoga", "mse"), "hoga_Orchestrate")
+        self.assertEqual(label("hoga", "smooth_l1"), "hoga_Orchestrate_smooth_l1")
+
+    def test_polargate_defaults_to_the_primary_models_loss(self):
+        """The defect this guards: train_baseline.py used to hardcode
+        nn.MSELoss() for every baseline while train.py trains the primary model
+        under SmoothL1(beta=0.01). The label is 48.8% exactly zero, so MSE
+        through a terminal sigmoid collapses toward the mean and the comparison
+        confounds objective with architecture. Changing the existing three
+        baselines would invalidate runs already made, so only PolarGate moves.
+        """
+        import train_baseline
+
+        self.assertEqual(
+            train_baseline._BASELINE_DEFAULTS["polargate"]["loss"], "smooth_l1"
+        )
+        for baseline in ("synthnet", "hoga", "deepgate4"):
+            with self.subTest(baseline=baseline):
+                self.assertEqual(
+                    train_baseline._BASELINE_DEFAULTS[baseline]["loss"], "mse"
+                )
+        # train.py:151 is the source of truth for beta; these are the only two
+        # places the value appears.
+        self.assertEqual(train_baseline.SMOOTH_L1_BETA, 0.01)
+        train_py = Path(_SRC_DIR) / "train.py"
+        self.assertIn("nn.SmoothL1Loss(beta=0.01)", train_py.read_text())
+
     def test_missing_required_baseline_arg_fails_cleanly(self):
         result = _run_cli("--csv_paths", "dummy.csv")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("--baseline", result.stderr)
 
-    def test_baseline_choices_are_synthnet_hoga_and_deepgate4(self):
+    def test_baseline_choices_cover_every_ported_baseline(self):
         result = _run_cli("--help")
-        self.assertIn("{synthnet,hoga,deepgate4}", result.stdout)
+        self.assertIn("{synthnet,hoga,deepgate4,polargate}", result.stdout)
 
     def test_every_flag_used_by_a_job_script_exists(self):
         """Generalises the per-flag checks below.
@@ -174,6 +227,8 @@ class TestTrainBaselineCLI(unittest.TestCase):
         (models/qor/SynthNetV3/train.py), DeepGate4 200 (Zheng et al. ICLR'25
         Sec 4.1, "We train all models for 200 epochs", and upstream's
         run/train_large.sh --epoch 200). HOGA publishes none and keeps 80.
+        PolarGate publishes 500 (train.py argparse; TODAES Sec 6.2 confirms
+        "a maximum of 500 epochs").
         A single shared default would silently give DeepGate4 SynthNet's number.
         """
         sys.path.insert(0, _SRC_DIR)
@@ -184,13 +239,16 @@ class TestTrainBaselineCLI(unittest.TestCase):
 
         self.assertEqual(train_baseline.DEEPGATE4_DEFAULTS["max_epochs"], 200)
         self.assertEqual(train_baseline.SYNTHNET_DEFAULTS["max_epochs"], 80)
+        self.assertEqual(train_baseline.POLARGATE_DEFAULTS["max_epochs"], 500)
         self.assertEqual(
-            set(train_baseline._BASELINE_DEFAULTS), {"synthnet", "hoga", "deepgate4"}
+            set(train_baseline._BASELINE_DEFAULTS),
+            {"synthnet", "hoga", "deepgate4", "polargate"},
         )
         for name, defaults in train_baseline._BASELINE_DEFAULTS.items():
             with self.subTest(baseline=name):
                 self.assertEqual(
-                    set(defaults), {"batch_size", "lr", "weight_decay", "max_epochs"}
+                    set(defaults),
+                    {"batch_size", "lr", "weight_decay", "max_epochs", "loss"},
                 )
 
     def test_deepgate4_flags_are_wired(self):

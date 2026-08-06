@@ -1,4 +1,4 @@
-"""Training entrypoint for baseline models (SynthNet, HOGA, DeepGate4) on this project's AIG dataset.
+"""Training entrypoint for baseline models (SynthNet, HOGA, DeepGate4, PolarGate) on this project's AIG dataset.
 
 Mirrors train.py's structure (argparse -> AIGDataModule -> Lightning module ->
 Trainer) but swaps in a baseline model + baselines.common.lightning_wrapper
@@ -111,6 +111,51 @@ lower --deepgate4_num_hops (k=6 is ~2.6x cheaper, k=4 ~7.5x) and report the
 change -- though note k=6 is itself ablated in Appendix A.3 and scores the
 best functional loss of any setting there, so it is a published option rather
 than an improvisation.
+
+POLARGATE also uses the node-budget + accumulation treatment. Its per-node cost
+is MEASURED, not assumed: autograd retains 84,066 bytes (82.1 KiB) per node
+for the backward pass at the published out_dim=256 / layer_num=9, in float32 -- constant to
+three significant figures across 25k, 50k and 100k nodes, since the trunk is
+nine fixed-width convs with no attention and no virtual-edge expansion. Under
+the bf16-mixed AMP selected on H100 that is roughly half. So the 500k-node
+default budget is ~39 GiB fp32 / ~20 GiB bf16, and the irreducible singleton
+peak at config.MAX_NUM_GATES is below it, not above -- unlike HOGA and
+DeepGate4, the largest graph is not what sets this baseline's peak.
+
+Unlike HOGA and DeepGate4, PolarGate also has a PUBLISHED effective
+batch: upstream's `--batch_size 256` is gradient accumulation over 256
+single-graph forwards (train.py:339 steps the optimizer every `batch_size`
+iterations of a one-graph loop). So the pairing target here is 256 graphs per
+update -- the paper's own number -- not the ~75 graphs/update that HOGA and
+DeepGate4 aim at for parity with the primary model, because for those two no
+published value exists to prefer. That is a deliberate, documented difference
+between the baselines: it keeps each faithful to its own paper, at the cost of
+PolarGate optimizing under a ~3.4x larger effective batch than the primary
+model. The same Lightning caveat as above applies -- micro-batches are divided
+by the constant accumulate_grad_batches, not by their graph count.
+
+LOSS. --loss selects the objective, and it defaults PER BASELINE because
+changing the existing three would invalidate runs already reported.
+SynthNet/HOGA/DeepGate4 keep "mse" (what this file previously hardcoded for
+every baseline, and what SynthNet's own paper uses). PolarGate defaults to
+"smooth_l1" at beta=0.01, matching train.py:151 and therefore the primary
+model. The reason to care: the label is 48.8% exactly zero, mean 0.020, SD
+0.053, and MSE through a terminal sigmoid on that distribution collapses
+toward the mean, so a baseline scored under MSE against a primary model
+trained under SmoothL1 differs in objective as well as architecture. Run
+PolarGate under both -- `--loss mse` reproduces the other baselines' recipe --
+and report which is which. Upstream PolarGate's own default is neither:
+train.py's `--loss_type` defaults to 'mae' (L1) for its per-node probability
+task.
+
+PROVENANCE OF THE TWO FIGURES USED TO JUSTIFY BOTH OF THOSE CHOICES -- the
+label distribution (48.8% exactly zero, mean 0.020, SD 0.053) and the
+two-parameter log-size OLS outranking the primary encoder on Spearman. Both
+were supplied by the project author as prior diagnostic findings; NEITHER is
+computed or recorded by any artifact in this repository, so neither can be
+re-derived from it. They are load-bearing -- between them they justify the
+per-baseline loss default and the size covariates -- so before either appears
+in the thesis, recompute it and commit the script that does.
 """
 
 from __future__ import annotations
@@ -166,6 +211,18 @@ from baselines.openabc_synthnet.regressor import (
     DEFAULT_NUM_FC_LAYER,
     SynthNetGraphRegressor,
 )
+from baselines.polargate.regressor import (
+    DEFAULT_EFFECTIVE_BATCH_GRAPHS as PG_DEFAULT_EFFECTIVE_BATCH_GRAPHS,
+)
+from baselines.polargate.regressor import DEFAULT_HEAD_DROPOUT as PG_DEFAULT_HEAD_DROPOUT
+from baselines.polargate.regressor import DEFAULT_LAYER_NUM as PG_DEFAULT_LAYER_NUM
+from baselines.polargate.regressor import DEFAULT_LR as PG_DEFAULT_LR
+from baselines.polargate.regressor import DEFAULT_NUM_EPOCHS as PG_DEFAULT_NUM_EPOCHS
+from baselines.polargate.regressor import DEFAULT_OUT_DIM as PG_DEFAULT_OUT_DIM
+from baselines.polargate.regressor import (
+    DEFAULT_WEIGHT_DECAY as PG_DEFAULT_WEIGHT_DECAY,
+)
+from baselines.polargate.regressor import PolarGateGraphRegressor
 from data.datamodule import AIGDataModule
 from data.sampler import BalancedDynamicBatchSampler
 from train_utils import PreciseEarlyStopping, TrainingStartupCallback
@@ -174,11 +231,17 @@ torch.set_num_threads(1)
 
 # Published defaults for each baseline paper's own training setup -- see the
 # regressor modules for exactly where each of these comes from.
+#
+# "loss" is per-baseline for one reason only: this file used to hardcode
+# nn.MSELoss() for every baseline, and flipping the three existing ones now
+# would silently invalidate comparisons against runs already made. See the
+# module docstring's LOSS section.
 SYNTHNET_DEFAULTS = {
     "batch_size": 64,
     "lr": 0.001,
     "weight_decay": 0.0,
     "max_epochs": 80,  # models/qor/SynthNetV3/train.py default
+    "loss": "mse",  # OpenABC-D Sec 4.1; also this file's previous hardcoded value
 }
 HOGA_DEFAULTS = {
     "batch_size": config.BATCH_SIZE,  # no published QoR-task batch size; see baselines/hoga/regressor.py
@@ -187,6 +250,7 @@ HOGA_DEFAULTS = {
     # HOGA publishes no epoch count for the QoR task; keep SynthNet's 80 rather
     # than inventing one. (Early stopping governs in practice either way.)
     "max_epochs": 80,
+    "loss": "mse",  # unchanged from this file's previous hardcoded value
 }
 DEEPGATE4_DEFAULTS = {
     # Upstream trains with batch_size 1 and mini_batch_size 128, where the unit
@@ -201,11 +265,41 @@ DEEPGATE4_DEFAULTS = {
     # is resolved per-baseline rather than left at the shared 80, which is
     # SynthNet's number from a different paper.
     "max_epochs": DG4_DEFAULT_NUM_EPOCHS,
+    "loss": "mse",  # unchanged from this file's previous hardcoded value
+}
+POLARGATE_DEFAULTS = {
+    # Upstream's --batch_size 256 is an ACCUMULATION count over one-graph
+    # forwards (train.py:339), not a dataloader batch size, so it does not
+    # transfer to this key; --polargate_max_nodes_per_batch and
+    # --accumulate_grad_batches reproduce the 256-graph effective batch between
+    # them. See this module's docstring.
+    "batch_size": config.BATCH_SIZE,
+    "lr": PG_DEFAULT_LR,  # 0.01, train.py argparse default (train.sh does not override)
+    "weight_decay": PG_DEFAULT_WEIGHT_DECAY,  # 1e-3, ditto
+    # 500, train.py argparse default; TODAES Sec 6.2 confirms "a maximum of 500
+    # epochs ... early stopping ... patience of 50". Unreachable in walltime
+    # here, so --patience governs; see shell/train_baseline_polargate.sh.
+    "max_epochs": PG_DEFAULT_NUM_EPOCHS,
+    # The one baseline that does NOT default to MSE. Matches train.py:151, so
+    # this baseline and the primary model are scored on the same objective.
+    "loss": "smooth_l1",
 }
 _BASELINE_DEFAULTS = {
     "synthnet": SYNTHNET_DEFAULTS,
     "hoga": HOGA_DEFAULTS,
     "deepgate4": DEEPGATE4_DEFAULTS,
+    "polargate": POLARGATE_DEFAULTS,
+}
+
+# train.py:151 constructs the primary model's loss as nn.SmoothL1Loss(beta=0.01).
+# Duplicated as a literal rather than imported: importing train.py here would
+# pull its argparse/Trainer setup into this entrypoint, and this file's whole
+# premise is that train.py and the primary model stay untouched. If that beta
+# ever changes, change it here too -- these two are the only occurrences.
+SMOOTH_L1_BETA = 0.01
+_LOSSES = {
+    "mse": lambda: nn.MSELoss(),
+    "smooth_l1": lambda: nn.SmoothL1Loss(beta=SMOOTH_L1_BETA),
 }
 
 
@@ -227,6 +321,23 @@ def _run_label(args: argparse.Namespace) -> str:
         label = f"{label}_{args.split_by}"
     if args.baseline == "synthnet" and not args.synthnet_upstream_edge_direction:
         label = f"{label}_nativeedges"
+    # Same rule for --loss: every baseline's default stays untagged, and the
+    # non-default run gets a suffix. PolarGate is meant to be run under BOTH
+    # its own MSE-style recipe and the primary model's SmoothL1 (see the module
+    # docstring's LOSS section), so without this the second run would overwrite
+    # the first's last.ckpt and neither could be attributed afterwards.
+    if args.loss != _BASELINE_DEFAULTS[args.baseline]["loss"]:
+        label = f"{label}_{args.loss}"
+    # And for PolarGate's size covariates, for the same reason and a sharper
+    # one: the size-covariate arm is the ONLY model in the suite that sees |V|
+    # and |E|, so the paired `false` ablation is what makes any PolarGate win
+    # attributable at all. Two arms that differ in nothing else must not share
+    # a checkpoint dir. See baselines/polargate/PROVENANCE.md.
+    if args.baseline == "polargate":
+        if not args.polargate_size_covariates:
+            label = f"{label}_nosizecov"
+        if args.polargate_pooling != "mean":
+            label = f"{label}_{args.polargate_pooling}pool"
     return label
 
 
@@ -321,6 +432,21 @@ def _build_model(args: argparse.Namespace) -> nn.Module:
         if args.deepgate4_pretrained_tokenizer:
             model.load_pretrained_tokenizer(args.deepgate4_pretrained_tokenizer)
         return model
+    if args.baseline == "polargate":
+        return PolarGateGraphRegressor(
+            # 4, not upstream's --in_dim 3: upstream's one-hot is over
+            # {PI, AND, NOT} because its graphs carry explicit inverter NODES,
+            # while this project's is [constant, pi, and_gate, po] with
+            # inversion on the edge. See baselines/polargate/regressor.py.
+            in_dim=config.NODE_INPUT_DIM,
+            out_dim=args.polargate_out_dim,
+            layer_num=args.polargate_layer_num,
+            task_out_dim=config.TASK_OUT_DIM,
+            pooling=args.polargate_pooling,
+            size_covariates=args.polargate_size_covariates,
+            head_dropout=args.polargate_head_dropout,
+            head_norm_layer=args.polargate_head_norm_layer,
+        )
     raise ValueError(f"Unknown baseline: {args.baseline!r}")
 
 
@@ -448,6 +574,24 @@ def _deepgate4_loader(ds, args: argparse.Namespace, *, shuffle: bool) -> DataLoa
     )
 
 
+def _polargate_loader(ds, args: argparse.Namespace, *, shuffle: bool) -> DataLoader:
+    """Node-budget loader over the plain dataset.
+
+    Unlike HOGA and DeepGate4, PolarGate needs no feature adapter: it reads
+    `x`, `edge_index`, `edge_attr` and `batch` straight off the standard PyG
+    Batch, so `ds` is its own `wrapped` and the collate is the ordinary
+    `Batch.from_data_list`.
+    """
+    return _node_budget_loader(
+        ds,
+        ds,
+        args,
+        shuffle=shuffle,
+        collate_fn=Batch.from_data_list,
+        max_nodes=args.polargate_max_nodes_per_batch,
+    )
+
+
 def main(args: argparse.Namespace) -> None:
     torch.backends.cuda.matmul.allow_tf32 = True
     if hasattr(torch.backends, "cudnn"):
@@ -468,8 +612,26 @@ def main(args: argparse.Namespace) -> None:
         args.weight_decay = defaults["weight_decay"]
     if args.max_epochs is None:
         args.max_epochs = defaults["max_epochs"]
+    if args.loss is None:
+        args.loss = defaults["loss"]
 
     print(f"--- Starting Baseline Training: {args.baseline} / {args.algorithm} ---")
+    print(f"[main] Loss: {args.loss}", flush=True)
+    if args.baseline == "polargate":
+        # The node budget and the accumulation count only mean something as a
+        # product, and only the log can confirm the product landed where it was
+        # aimed -- avg_graphs_per_batch depends on the actual node-count
+        # distribution, not on the ~40k mean this was sized from.
+        print(
+            "[main] PolarGate effective-batch target: "
+            f"{PG_DEFAULT_EFFECTIVE_BATCH_GRAPHS} graphs/update (upstream "
+            f"train.sh --batch_size). This run accumulates "
+            f"{args.accumulate_grad_batches} micro-batches at a "
+            f"{args.polargate_max_nodes_per_batch}-node budget; check "
+            "avg_graphs_per_batch in the first '[train] Epoch summary' line "
+            "and retune the pair if the product is off.",
+            flush=True,
+        )
 
     datamodule = AIGDataModule(
         csv_paths=args.csv_paths,
@@ -548,6 +710,9 @@ def main(args: argparse.Namespace) -> None:
     elif args.baseline == "deepgate4":
         train_loader = _deepgate4_loader(datamodule.train_ds, args, shuffle=True)
         val_loader = _deepgate4_loader(datamodule.val_ds, args, shuffle=False)
+    elif args.baseline == "polargate":
+        train_loader = _polargate_loader(datamodule.train_ds, args, shuffle=True)
+        val_loader = _polargate_loader(datamodule.val_ds, args, shuffle=False)
     else:
         train_loader = _plain_loader(datamodule.train_ds, args, shuffle=True)
         val_loader = _plain_loader(datamodule.val_ds, args, shuffle=False)
@@ -558,7 +723,7 @@ def main(args: argparse.Namespace) -> None:
         lr=args.lr,
         weight_decay=args.weight_decay,
         optimizer_name="adam",
-        loss_fn=nn.MSELoss(),
+        loss_fn=_LOSSES[args.loss](),
         scheduler_factor=args.scheduler_factor,
         scheduler_patience=args.scheduler_patience,
     )
@@ -646,11 +811,17 @@ def main(args: argparse.Namespace) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Train a baseline model (SynthNet or HOGA) on this project's AIG dataset"
+        # Unenumerated on purpose: --baseline's own `choices` is the list, and
+        # this string had already gone stale once (it still said "SynthNet or
+        # HOGA" after DeepGate4 landed).
+        description="Train a baseline model on this project's AIG dataset"
     )
 
     parser.add_argument(
-        "--baseline", type=str, required=True, choices=["synthnet", "hoga", "deepgate4"]
+        "--baseline",
+        type=str,
+        required=True,
+        choices=["synthnet", "hoga", "deepgate4", "polargate"],
     )
     parser.add_argument("--algorithm", type=str, default="Orchestrate")
     parser.add_argument("--csv_paths", nargs="+", required=True)
@@ -660,6 +831,23 @@ if __name__ == "__main__":
     parser.add_argument("--batch_size", type=int, default=None)
     parser.add_argument("--lr", type=float, default=None)
     parser.add_argument("--weight_decay", type=float, default=None)
+    parser.add_argument(
+        "--loss",
+        type=str,
+        default=None,
+        choices=sorted(_LOSSES),
+        help=(
+            "Regression objective. Resolved per-baseline when unset: 'mse' for "
+            "synthnet/hoga/deepgate4 (what this file previously hardcoded for "
+            "all of them), 'smooth_l1' (beta=0.01) for polargate, which is "
+            "train.py:151's loss and therefore the primary model's. The label "
+            "is 48.8%% exactly zero (mean 0.020, SD 0.053), so MSE through a "
+            "terminal sigmoid collapses toward the mean and an MSE-scored "
+            "baseline is not being compared to the primary model on equal "
+            "terms. A non-default value is suffixed onto the run label so the "
+            "two runs cannot overwrite each other."
+        ),
+    )
     # Unlike lr/batch_size/loss/optimizer above, the ReduceLROnPlateau settings
     # are NOT published: neither baseline paper uses an LR scheduler at all (see
     # baselines/common/lightning_wrapper.py). Since the values are ours either
@@ -953,6 +1141,94 @@ if __name__ == "__main__":
             "on makes this a partially-pretrained baseline, which is a "
             "different claim and must be reported as one. Requires "
             "--deepgate4_hidden_dim 128."
+        ),
+    )
+
+    # PolarGate hyperparameters. layer_num is published in upstream's train.sh;
+    # out_dim / lr / weight_decay / max_epochs come from train.py's argparse
+    # defaults, which is what train.sh actually runs under. in_dim is NOT a
+    # flag: it is fixed to config.NODE_INPUT_DIM because it describes this
+    # project's node one-hot, not a tunable. See
+    # baselines/polargate/regressor.py's module docstring for the full
+    # breakdown, including why out_dim is 256 and not the 64 in model.py's
+    # class signature or the 128 in the TODAES paper.
+    parser.add_argument(
+        "--polargate_layer_num", type=int, default=PG_DEFAULT_LAYER_NUM
+    )
+    parser.add_argument("--polargate_out_dim", type=int, default=PG_DEFAULT_OUT_DIM)
+    parser.add_argument(
+        "--polargate_head_dropout", type=float, default=PG_DEFAULT_HEAD_DROPOUT
+    )
+    parser.add_argument(
+        "--polargate_head_norm_layer",
+        type=lambda x: None if str(x).lower() in ("none", "") else str(x),
+        default=None,
+        help=(
+            "Norm inside the readout MLP. Upstream uses 'batchnorm', where the "
+            "MLP is applied per NODE and sees thousands of rows per call. Here "
+            "it is applied per GRAPH and sees a handful -- exactly one, for "
+            "any graph larger than the node budget. 'batchnorm' therefore does "
+            "not degrade, it RAISES on that micro-batch ('Expected more than 1 "
+            "value per channel when training'), killing the job mid-epoch. "
+            "Unlike --deepgate4_head_norm_layer, whose vendored MLP pads a "
+            "1-row input by repeating it, PolarGate's does not. Leave unset."
+        ),
+    )
+    parser.add_argument(
+        "--polargate_pooling",
+        type=str,
+        default="mean",
+        choices=["mean", "sum"],
+        help=(
+            "Node-to-graph pooling. 'mean' (default) paired with "
+            "--polargate_size_covariates true is how this port avoids a "
+            "size-blind readout. 'sum' is the alternative -- it encodes |V| "
+            "implicitly -- but summing tanh-bounded rows over 366,040 nodes "
+            "gives embeddings ~4 orders of magnitude larger than a 40-node "
+            "graph's, straight into a sigmoid. Report whichever was used."
+        ),
+    )
+    parser.add_argument(
+        "--polargate_size_covariates",
+        type=lambda x: str(x).lower() in ("true", "1", "yes"),
+        default=True,
+        help=(
+            "Concatenate log1p(|V|) and log1p(|E|) per graph onto the pooled "
+            "embedding before the head. TRUE by default: mean pooling cannot "
+            "represent graph size, and on this dataset a two-parameter OLS on "
+            "those two numbers alone already outranks the primary encoder on "
+            "Spearman, so a size-blind baseline loses to a trivial predictor "
+            "before the architecture is tested at all. WARNING: this makes "
+            "PolarGate the ONLY model in the suite that sees graph size -- "
+            "HOGA, DeepGate4, SynthNet and the primary encoder all pool "
+            "without it -- so a PolarGate WIN is confounded and cannot be "
+            "credited to its architecture. Run the 'false' arm as a paired "
+            "ablation and report both. See baselines/polargate/PROVENANCE.md."
+        ),
+    )
+    parser.add_argument(
+        "--polargate_max_nodes_per_batch",
+        type=int,
+        default=500_000,
+        help=(
+            "Total-node budget per PolarGate batch, replacing --batch_size for "
+            "this baseline (0 disables, restoring fixed graph-count batching). "
+            "MEASURED cost: autograd retains 84,066 bytes/node for backward at "
+            "out_dim=256 / layer_num=9 in float32 and ~1.98 edges/node, so "
+            "500k nodes is ~39 GiB fp32 and ~20 GiB under the bf16-mixed AMP "
+            "an H100 gets. Sized jointly with --accumulate_grad_batches to "
+            "reproduce upstream's PUBLISHED 256-graph effective batch: at this "
+            "dataset's ~40k mean nodes, 500k is at most 12.5 graphs per "
+            "micro-batch, so 20 accumulation steps give around 250 graphs per "
+            "update against upstream's 256 (scaling HOGA's measured batch "
+            "count instead suggests ~16 graphs and ~310 -- see "
+            "shell/train_baseline_polargate.sh; read the real figure off the "
+            "first epoch summary). Retune "
+            "the two together -- their product is the effective batch. Unlike "
+            "HOGA and DeepGate4 the largest single graph does NOT set the "
+            "peak here: a 366,040-node singleton batch retains 28.7 GiB fp32, "
+            "below a full 500k budget. See this module's docstring and "
+            "shell/train_baseline_polargate.sh."
         ),
     )
 

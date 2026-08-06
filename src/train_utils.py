@@ -200,8 +200,24 @@ class TrainingStartupCallback(pl.Callback):
             avg_edges = self._train_edge_count / self._train_batch_count
             avg_wait = self._train_wait_time_sum / self._train_batch_count
             avg_step = self._train_step_time_sum / self._train_batch_count
+            # Cumulative since fit start (these counters are never reset), so
+            # this is the only figure that stays comparable across runs whose
+            # "epoch" means different things. --limit_train_batches makes an
+            # epoch a fraction of the corpus, and the baseline job scripts use
+            # it, so epoch index cannot be compared against train.py's. Graphs
+            # seen can. Quote it whenever a truncated run is reported.
+            #
+            # DELIBERATELY logged for the primary model too, not just the
+            # baselines: this callback is shared (train.py and
+            # train_baseline.py both install it), and the metric is only useful
+            # for cross-run comparison if BOTH sides of the comparison emit it.
+            # The cost is one added key in the primary model's WandB schema --
+            # additive, and it does not touch any monitored metric, checkpoint
+            # selection or early stopping.
+            pl_module.log("train_graphs_seen", float(self._train_graph_count))
             print(
                 "[train] Epoch summary: "
+                f"graphs_seen_total={self._train_graph_count} "
                 f"avg_graphs_per_batch={avg_graphs:.2f} "
                 f"avg_nodes_per_batch={avg_nodes:.0f} "
                 f"avg_edges_per_batch={avg_edges:.0f} "
