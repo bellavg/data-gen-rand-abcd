@@ -37,6 +37,7 @@ from config import (
     WARMUP_STEPS,
 )
 from models.base_model import UnifiedGraphBaseModel
+from models.base_model_exact import ExactGraphBaseModel
 
 # Ordered tuple of all stages; used to build metric ModuleDicts.
 _STAGES: tuple[str, ...] = ("train", "val", "test")
@@ -61,6 +62,9 @@ class AIGRegressionLightningModule(pl.LightningModule):
         pos_enc_dim: Dimensionality of the positional encoding vectors.
         pooling_type: Graph-level pooling strategy, e.g. ``"mean"`` or
             ``"sum"``.
+        model_type: ``"production"`` for ``UnifiedGraphBaseModel``, or
+            ``"exact"`` for the exact-compression track's
+            ``ExactGraphBaseModel``.
         head_dropout: Dropout probability in the prediction head. ``None``
             disables dropout.
         lr: Peak learning rate for the optimizer.
@@ -87,6 +91,7 @@ class AIGRegressionLightningModule(pl.LightningModule):
         pe_type: str = "none",
         pos_enc_dim: int = 0,
         pooling_type: str = "mean",
+        model_type: str = "production",
         head_dropout: float | None = None,
         lr: float = 1e-3,
         weight_decay: float = 1e-5,
@@ -107,18 +112,7 @@ class AIGRegressionLightningModule(pl.LightningModule):
         # ------------------------------------------------------------------ #
         # Core model                                                           #
         # ------------------------------------------------------------------ #
-        base_model = UnifiedGraphBaseModel(
-            encoder_name=self.hparams.encoder_name,
-            hidden_dim=self.hparams.hidden_dim,
-            node_input_dim=self.hparams.node_input_dim,
-            edge_attr_dim=self.hparams.edge_attr_dim,
-            task_out_dim=self.hparams.task_out_dim,
-            pe_type=self.hparams.pe_type,
-            pos_enc_dim=self.hparams.pos_enc_dim,
-            pooling_type=self.hparams.pooling_type,
-            head_dropout=self.hparams.head_dropout,
-            encoder_kwargs=self.hparams.encoder_kwargs,
-        )
+        base_model = self._build_base_model()
         self.model = (
             torch.compile(base_model, dynamic=True)
             if bool(self.hparams.compile_model)
@@ -140,6 +134,68 @@ class AIGRegressionLightningModule(pl.LightningModule):
             {f"s_{stage}": R2Score() for stage in ("val", "test")}
         )
 
+
+    def _build_base_model(self) -> nn.Module:
+        """Pick the base model ``model_type`` names.
+
+        ``"exact"`` selects the exact-compression track's model, which is a
+        separate class rather than a flag on ``UnifiedGraphBaseModel``
+        because normalization-free layers, size-weighted pooling and
+        edge_weight multiplicity are requirements of the exactness proof, not
+        configurable knobs (see models/base_model_exact.py).
+
+        The choice is explicit and never inferred from the batch: PyG
+        collates the keys of ``data_list[0]``, so a batch whose graphs
+        disagree about an attribute either drops it silently or raises a
+        bare ``KeyError`` depending on the order they happen to arrive in.
+        Sniffing the schema is least reliable in exactly the case that would
+        matter.
+        """
+        if self.hparams.model_type == "production":
+            return UnifiedGraphBaseModel(
+                encoder_name=self.hparams.encoder_name,
+                hidden_dim=self.hparams.hidden_dim,
+                node_input_dim=self.hparams.node_input_dim,
+                edge_attr_dim=self.hparams.edge_attr_dim,
+                task_out_dim=self.hparams.task_out_dim,
+                pe_type=self.hparams.pe_type,
+                pos_enc_dim=self.hparams.pos_enc_dim,
+                pooling_type=self.hparams.pooling_type,
+                head_dropout=self.hparams.head_dropout,
+                encoder_kwargs=self.hparams.encoder_kwargs,
+            )
+
+        if self.hparams.model_type != "exact":
+            raise ValueError(
+                f"Unknown model_type {self.hparams.model_type!r}; "
+                "expected 'production' or 'exact'."
+            )
+
+        # Refuse settings the exact model would silently ignore, rather than
+        # letting a run report hyperparameters it did not actually use.
+        if str(self.hparams.pe_type).lower() != "none":
+            raise ValueError(
+                f"model_type='exact' requires pe_type='none', got "
+                f"{self.hparams.pe_type!r}. Exact-schema graphs carry no "
+                "'level' to encode, and folding one back in costs most of the "
+                "compression (see config.SUMMARIZATION_PARAMS)."
+            )
+        if str(self.hparams.pooling_type).lower() != "mean":
+            raise ValueError(
+                f"model_type='exact' pools by node_size-weighted mean, so "
+                f"pooling_type must be 'mean', got {self.hparams.pooling_type!r}."
+            )
+
+        encoder_kwargs = self.hparams.encoder_kwargs
+        return ExactGraphBaseModel(
+            hidden_dim=self.hparams.hidden_dim,
+            num_layers=int(encoder_kwargs["num_layers"]),
+            node_input_dim=self.hparams.node_input_dim,
+            task_out_dim=self.hparams.task_out_dim,
+            dropout=float(encoder_kwargs.get("dropout", 0.0)),
+            jk_mode=encoder_kwargs.get("jk_mode", "cat"),
+            head_dropout=self.hparams.head_dropout,
+        )
 
     # ---------------------------------------------------------------------- #
     # Forward                                                                  #

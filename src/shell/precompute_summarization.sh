@@ -5,7 +5,7 @@
 #SBATCH --cpus-per-task=96
 #SBATCH --partition=genoa
 #SBATCH --constraint=scratch-node
-#SBATCH --array=32-63
+#SBATCH --array=0-31
 #SBATCH --output=logs/precompute_summarization_%A_%a.out
 
 # ---------------------------------------------------------------------------
@@ -25,26 +25,34 @@
 #   method = METHODS[ task / SHARDS_PER_METHOD ]
 #   shard  = task % SHARDS_PER_METHOD
 #
-# RUN EVERY METHOD (192 tasks — only once the cheap ones have been checked)
-#   sbatch --array=0-191 src/shell/precompute_summarization.sh
+# RUN EVERY METHOD (128 tasks — only once the cheap ones have been checked)
+#   sbatch --array=0-127 src/shell/precompute_summarization.sh
 #
 # RUN ONE METHOD AT A TIME — submit only that method's index range:
-#   sbatch --array=0-31    ...   # identity   (zero compression, the control)
-#   sbatch --array=32-63   ...   # cone       (S1, domain-specific)
-#   sbatch --array=64-95   ...   # wl         (S2, graded WL/bisimulation)
-#   sbatch --array=96-127  ...   # convmatch  (S3, SOTA — the slow one)
-#   sbatch --array=128-159 ...   # spectral   (S4, classic control)
-#   sbatch --array=160-191 ...   # lsh        (S5, cheap control)
+#   sbatch --array=0-31    ...   # cone       (S1, domain-specific)
+#   sbatch --array=32-63   ...   # wl         (S2, graded WL/bisimulation)
+#   sbatch --array=64-95   ...   # convmatch  (S3, SOTA — the slow one)
+#   sbatch --array=96-127  ...   # wl_exact   (S2-exact, the lossless track)
+#
+# These ranges changed on 2026-08-02, when identity, spectral and lsh were
+# deleted from the study; a range written down before that date now means a
+# different method.
+#
+# wl_exact is a separate range rather than a variant of wl's: it is a
+# different rewrite (data/exact_graph.py) writing a different graph schema —
+# no edge_attr, node_size and edge_weight instead — and its output can only
+# be trained with `--model exact`.  Expect it to report much lower retention
+# than wl: it clusters *after* fold_inversions_into_x, which drops `level`,
+# so nodes of different depth are free to merge.  wl keeps `level` in the
+# colour (pe_aware=True) because that is what makes its min-pooled level
+# exact.  See config.SUMMARIZATION_PARAMS for both sides.
 # The job prints its own method and range on the first lines of the log, so
 # check there rather than recounting.  A bare `sbatch` runs the default
 # --array above, which is cone — the first method whose compression on the
-# real corpus is unknown.  identity is a test fixture, not an experiment: its
-# output equals the raw graph on everything the encoder reads, so a run on it
-# only reproduces the unsummarized baseline while writing ~700k full-size
-# graphs.  Use it to tell a broken pipeline from a broken method, nothing else.
+# real corpus is unknown.
 #
 # SMOKE TEST — one shard of one method (~1/32 of the corpus):
-#   sbatch --array=32 src/shell/precompute_summarization.sh    # cone, shard 0
+#   sbatch --array=0 src/shell/precompute_summarization.sh     # cone, shard 0
 #
 # Parameters for each method come from config.SUMMARIZATION_PARAMS, not from
 # this script.  The method list lives in summarization_methods.sh, shared
@@ -60,9 +68,9 @@
 # CHAIN WITH TRAINING (one method's range, then train on that same method).
 # The two scripts index the shared list differently — precompute packs method
 # and shard into one index, train uses one task per method — so the ranges are
-# NOT the same number.  For cone (method slot 1):
-#   PID=$(sbatch --parsable --array=32-63 src/shell/precompute_summarization.sh)
-#   sbatch --dependency=afterok:$PID --array=1 src/shell/train_summarization.sh
+# NOT the same number.  For cone (method slot 0):
+#   PID=$(sbatch --parsable --array=0-31 src/shell/precompute_summarization.sh)
+#   sbatch --dependency=afterok:$PID --array=0 src/shell/train_summarization.sh
 # ---------------------------------------------------------------------------
 
 set -euo pipefail

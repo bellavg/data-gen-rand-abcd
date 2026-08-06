@@ -6,7 +6,7 @@
 #SBATCH --partition=gpu_h100
 #SBATCH --gpus=1
 #SBATCH --constraint=scratch-node
-#SBATCH --array=0-5
+#SBATCH --array=0-3
 #SBATCH --output=logs/train_summarization_%A_%a.out
 #
 # Train on summarized (coarsened) graphs.
@@ -33,6 +33,16 @@ export TMP="$TMPDIR"
 # One method per array task, from the list shared with
 # precompute_summarization.sh so the two can never disagree about which index
 # means which method.  Each method needs its own precompute run first.
+#
+#   --array=0  cone        --array=2  convmatch
+#   --array=1  wl          --array=3  wl_exact
+#
+# These indices changed on 2026-08-02, when identity, spectral and lsh were
+# deleted from the study.
+#
+# wl_exact trains a different model (ExactGraphBaseModel) on a different
+# graph schema; the flags for that are added below from
+# data.summarization.EXACT_METHODS rather than hardcoded here.
 source "${BASE_DIR:-$HOME/data-gen-rand-abcd}/src/shell/summarization_methods.sh"
 
 TASK_ID=${SLURM_ARRAY_TASK_ID:-0}
@@ -201,9 +211,37 @@ nvidia-smi -L
 # 5. EXECUTE TRAINING
 # =========================================================
 
+# Methods in data.summarization.EXACT_METHODS produce the exact-compression
+# schema (no edge_attr; node_size and edge_weight instead), which only
+# ExactGraphBaseModel can consume.  Asked of Python rather than restated as a
+# shell list so there is one source of truth for which methods those are.
+#
+# The probe *prints* its answer rather than signalling it through the exit
+# code: a nonzero exit has to keep meaning "python failed", or a broken venv
+# would read as "lossy" and quietly train the production model on
+# exact-schema graphs.  `set -e` turns that failure into a dead job here.
+IS_EXACT=$(python -c '
+import sys
+from data.summarization import EXACT_METHODS
+print("exact" if sys.argv[1] in EXACT_METHODS else "lossy")
+' "$METHOD")
+
+EXTRA_ARGS=()
+if [[ "$IS_EXACT" == "exact" ]]; then
+    echo "$METHOD is an exact method — training ExactGraphBaseModel."
+    # NOT --pe_type none: --pe_type also names the graph cache files, and
+    # these reducts inherited their names from the production pe=level
+    # cache.  train.py drops the PE on the model side only.
+    EXTRA_ARGS+=(--model exact)
+elif [[ "$IS_EXACT" != "lossy" ]]; then
+    echo "ERROR: exact-method probe returned '$IS_EXACT' for '$METHOD'." >&2
+    exit 1
+fi
+
 echo "Starting training for $ALGORITHM on summarization=$METHOD ..."
 
 srun python -u -m train \
+    ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"} \
     --algorithm         "$ALGORITHM" \
     --csv_paths         "$CSV_PATH" \
     --checkpoint_dir    "$CHECKPOINT_DIR" \

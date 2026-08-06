@@ -336,6 +336,7 @@ def test_train_main_passes_sparsification_and_partition_to_datamodule(
         num_sanity_val_steps=0,
         log_steps=1,
         torch_compile=False,
+        model="production",
     )
 
     with (
@@ -404,6 +405,7 @@ def test_main_falls_back_to_cpu_when_cuda_driver_init_fails(tmp_path):
         log_steps=1,
         torch_compile=False,
         seed=42,
+        model="production",
     )
 
     with (
@@ -479,6 +481,7 @@ def test_main_does_not_materialize_node_local_partition_cache_before_fit(
         log_steps=1,
         torch_compile=False,
         seed=42,
+        model="production",
     )
     with (
         patch("train.AIGDataModule") as datamodule_cls,
@@ -552,6 +555,7 @@ def test_main_raises_when_gpu_required_but_cuda_init_fails(tmp_path, monkeypatch
         log_steps=1,
         torch_compile=False,
         seed=42,
+        model="production",
     )
     monkeypatch.setenv("AIG_REQUIRE_GPU", "1")
 

@@ -5,7 +5,8 @@ Tests cover:
   edge_weight defaulted, purity, empty-edge graphs
 - apply_exact_merge_map: identity losslessness, representative (not summed)
   x, per-target-member multiplicity (not raw coalesced total), node_size,
-  internal-edge counting, validation reuse, purity, heterogeneous clusters
+  intra-cluster edges as weighted self-loops, validation reuse, purity,
+  heterogeneous clusters
 """
 from __future__ import annotations
 
@@ -154,19 +155,39 @@ class TestApplyExactMergeMap:
         assert edges[(1, 2)] == pytest.approx(2.0)  # C -> D
         assert edges[(2, 3)] == pytest.approx(2.0)  # D -> PO: 2 edges, target size 1
 
-    def test_internal_edges_rejected(self, symmetric_graph: Data) -> None:
+    def test_internal_edges_become_self_loops(self, symmetric_graph: Data) -> None:
         # Merging a node with one of its own fanins creates an intra-cluster
-        # edge. Silently dropping it (as the general apply_merge_map does)
-        # would break exactness, since it discards a real neighbor
-        # connection an actual member had; this function must refuse
-        # instead. Real, structurally-repetitive AIG regions (duplicated
-        # bit-slices) can put two WL-exact-equivalent, edge-connected nodes
-        # in the same class without any literal cycle, so this isn't just a
-        # defensive check against malformed input.
+        # edge.  The general apply_merge_map drops those, which is one of the
+        # things that makes it lossy; the exact rewrite keeps them as
+        # weighted self-loops, which Bollen's Def 3.6 defines directly (the
+        # reduct's edge relation ranges over all class pairs, v == w
+        # included).  This is not rare on real AIGs: at refinement depth 1 an
+        # 98k-node design produced 3,891 such edges, and the reduct still
+        # reproduced the full graph's embedding to 1.2e-07.
+        folded = fold_inversions_into_x(symmetric_graph)
+        cluster = torch.tensor([0, 1, 2, 1, 3, 4, 5, 6])  # {node1, node3} -> class 1
+        out = apply_exact_merge_map(folded, cluster, 7)
+
+        loops = out.edge_index[0] == out.edge_index[1]
+        assert int(loops.sum()) == 1
+        assert int(out.edge_index[0][loops]) == 1
+
+    def test_self_loop_weight_is_intra_edges_over_class_size(
+        self, symmetric_graph: Data
+    ) -> None:
+        # Same quantity as every other super-edge — how many source-class
+        # neighbours each member of the target class has — which for a
+        # self-loop means intra_class_edges / class_size.  Class 1 is
+        # {node1, node3} (size 2) with the single internal edge 1->3, so 1/2.
         folded = fold_inversions_into_x(symmetric_graph)
         cluster = torch.tensor([0, 1, 2, 1, 3, 4, 5, 6])
-        with pytest.raises(ValueError, match="connect two members of the same cluster"):
-            apply_exact_merge_map(folded, cluster, 7)
+        out = apply_exact_merge_map(folded, cluster, 7)
+
+        weights = {
+            (int(u), int(v)): float(w)
+            for u, v, w in zip(*out.edge_index, out.edge_weight, strict=True)
+        }
+        assert weights[(1, 1)] == pytest.approx(1 / 2)
 
     def test_heterogeneous_cluster_averages_gracefully(self, aig_graph: Data) -> None:
         # Not a real WL class (mixes a PI and an AND, with no edge between

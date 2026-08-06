@@ -9,7 +9,319 @@ AIG), trained on Orchestrate. This matters a lot for R1 (see below).
 
 ---
 
-## STATUS (2026-07-31) — all five methods built, read this box first
+---
+
+## ⚠ RQ numbering (read before trusting any RQ label below)
+
+The thesis now defines **five** RQs (`sections/1-introduction/1.2-research-questions.tex`).
+Most of this file predates that: it was written when RQ4 meant *cross-state
+generalization*, which is now **RQ5**. Occurrences have been corrected, but if
+you find an "RQ4" that reads like *train reduced, infer full*, it means RQ5.
+
+Current scheme: RQ1 baseline, RQ2 efficiency, RQ3 retention, **RQ4 value of
+domain-informed adaptation**, **RQ5 cross-state inference**.
+
+## STATUS (2026-07-31, later pass) — the exact WL track is now wired end to end
+
+Supersedes the box below on three points: the method set, what `wl` means, and
+which numbers are safe to quote. Everything else in that box still holds.
+
+### What was broken
+
+`wl` was described here as the "lossless anchor", and the machinery to make it
+lossless existed — `src/data/exact_graph.py`, `src/models/layers/gcn_exact.py`,
+`src/models/base_model_exact.py`, all unit-tested and correct — but **nothing
+called it.** `summarize_graph` routed every method through the lossy
+`apply_merge_map`, and `train_summarization.sh` ran plain `python -m train`,
+which builds `UnifiedGraphBaseModel`. Measured output of the shipped
+`wl` on c6288: `x` row max 256 (member *type counts*, not the class
+representative), `edge_attr` max 512 (polarity counts fed **into** the message
+nonlinearity, which cannot decompose over sums), and no `node_size` at all, so
+size-weighted pooling was impossible downstream. Four independent breaks,
+counting the GraphNorm and mean pooling the production model adds on top. `wl`
+was a third approximate method and the headline losslessness claim attached to
+nothing.
+
+### What changed
+
+A new **appended** registry key `wl_exact`, dispatched by
+`data.summarization.EXACT_METHODS` inside `summarize_graph`:
+
+```
+raw AIG -> fold_inversions_into_x -> color_refinement(pe_aware=False)
+        -> apply_exact_merge_map
+```
+
+Same sharded precompute driver, same resume machinery, one extra branch. `wl`
+is untouched and stays on the lossy rewrite; the two are now genuinely
+different arms, which makes C.3 below a nearly free extra result.
+
+Ranges below are as of **2026-08-02**, when `identity`, `spectral` and `lsh`
+were deleted from the code rather than merely left unrun. The list is
+positional, so **every range moved**: one written down before that date now
+means a different method.
+
+| method | precompute range | train task | model |
+|---|---|---|---|
+| cone      | `--array=0-31`   | `--array=0` | production |
+| wl        | `--array=32-63`  | `--array=1` | production |
+| convmatch | `--array=64-95`  | `--array=2` | production |
+| **wl_exact** | **`--array=96-127`** | **`--array=3`** | **`ExactGraphBaseModel`** |
+
+`train_summarization.sh` asks Python whether the method is in `EXACT_METHODS`
+and adds `--model exact --pe_type none` if so, rather than restating the list
+in shell. **Index 3 is now the last taken** — the random within-type merge arm
+proposed below would be index 4 (`--array=128-159`).
+
+### Three things that had to be decided, not just plumbed
+
+1. **`pe_aware` is a compression cliff, and it is now set explicitly for both
+   WL entries in `config.SUMMARIZATION_PARAMS`** rather than inherited from the
+   function default. Folding `level` into the initial colours is what keeps
+   `apply_merge_map`'s min-pooled `level` exact, so it is right for the lossy
+   track — and on a deep datapath circuit it means essentially nothing merges.
+   Node retention, measured end to end:
+
+   | design | levels | `pe_aware=True` (as shipped) | `pe_aware=False` |
+   |---|---|---|---|
+   | sqrt  | 5059 | **99.0%** | 1.4% |
+   | div   | 4373 | **95.2%** | 0.8% |
+   | c6288 |  121 | **41.5%** | 2.0% |
+   | jpeg  |   40 |  **5.4%** | 1.7% |
+   | aes   |   27 |   1.8%    | 1.4% |
+   | c1355 |   30 |  10.4%    | 9.6% |
+
+   This is Bollen's own `P1` problem: their 128-d node embeddings made every
+   node its own class and they had to discretize to compress at all. It is also
+   the real justification for `ExactGraphBaseModel`'s `pe_type="none"`
+   restriction, and it quantifies what re-adding a level PE would cost.
+
+   ⚠ **The table is about `wl`, not `wl_exact`.** On the exact path the flag is
+   *inert*: `summarize_graph` runs `fold_inversions_into_x` before clustering,
+   and that drops `level` outright, so there is nothing for `pe_aware=True` to
+   fold in — measured, same 26 classes either way on `adder`. `wl_exact` is set
+   to `False` to state intent and to stop the value drifting, not because the
+   flag is doing the work. **So when `wl` and `wl_exact` report very different
+   retention, the cause is the fold discarding `level`, not the flag.** Do not
+   write it up the other way round.
+
+2. **The intra-cluster guard in `apply_exact_merge_map` was deleted.** It
+   raised whenever a cluster contained two adjacent nodes, which blocked
+   nothing while nothing called the function and would have become blocking on
+   19 of 44 measured designs the moment the precompute path landed. It was also
+   wrong: Bollen's Def 3.6 builds the reduct's edge relation over *all* class
+   pairs including `v == w`, so the intra-cluster case is a well-defined
+   weighted self-loop and the existing `coalesced_count / target_class_size`
+   formula already computes it. Verified independently on this branch, running
+   the real 4-layer `GCNConvExact` stack and comparing every class member
+   against its super-node:
+
+   | design | nodes → classes | intra-cluster edges | max rel. err |
+   |---|---|---|---|
+   | 8192 (d=1)  |  98,353 → 37     | **3,891** | 1.2e-07 |
+   | 8192 (d=2)  |  98,353 → 1,491  | 224 | 4.1e-07 |
+   | 16384 (d=4) | 196,764 → 92,424 | 9   | 2.3e-07 |
+   | 1024 (d=1)  |  12,302 → 37     | 473 | 1.2e-07 |
+
+   The unit test that asserted the guard fires is inverted: it now asserts the
+   self-loop appears with weight `intra_class_edges / class_size`.
+
+3. **Model depth is now asserted against reduct depth.** The exactness argument
+   holds for `num_layers <= refinement depth` and no further. `config` couples
+   them at definition time (`SUMMARIZATION_DEPTH = NUM_LAYERS`), but reducts are
+   precomputed and cached while `--num_layers` gets tuned afterwards, so a
+   5-layer model on a depth-4 cache would break exactness **silently** — no
+   error, just a slightly wrong number. The precompute now writes
+   `_summarization_params.json` *inside* each cache directory (so it is packed
+   into the shard tarball and survives staging, unlike `_summary_stats_*.json`),
+   and `train.py --model exact` refuses to start if the depth does not cover the
+   model.
+
+### Why the depth assertion matters — the non-convergence argument
+
+Worth putting in the writeup verbatim, because it is what makes
+`apply_exact_merge_map` sound and it is *conditional*:
+
+> Averaging `count / target_class_size` is exact **even when refinement has not
+> converged**. Layer-*l* messages depend only on cr^{l-1} classes; members of a
+> cr^d class agree on the multiset of their neighbours' cr^{d-1} colours, hence
+> on cr^{l-1} counts for every *l ≤ d*. Splitting those counts across finer
+> round-*d* classes and re-averaging preserves the per-cr^{l-1}-colour totals.
+
+Confirmed empirically above at d=1 and d=2 on designs where refinement is
+nowhere near converged. The `l ≤ d` clause is exactly what item 3 protects.
+
+### Method set (supersedes the SCOPE DECISION box below)
+
+Four arms, three families. `spectral` and `lsh` move to Related Work, and as
+of 2026-08-02 they are **deleted from the code**, not merely left unrun — same
+for the `identity` control, whose reasons for not being an experiment are in
+the box below. The reasons for dropping S4/S5 are unchanged; what changed is
+that the registry, `config.SUMMARIZATION_PARAMS`, the shared method list and
+the unit tests no longer carry them, so the set here is now the set that
+exists.
+
+| method | model | role |
+|---|---|---|
+| `wl_exact` | `ExactGraphBaseModel` | exact · GNN-aware · domain-adapted — **the proof** |
+| `cone` | production GCN+ | approximate · domain-specific — **the contribution** |
+| `convmatch` | production GCN+ | approximate · GNN-aware · domain-blind — **the SOTA bar** |
+| `wl` (lossy) | production GCN+ | optional 4th — see below |
+
+⚠ **`cone` is the domain-specific arm provisionally.** The alternative is
+`mffc` (maximal fanout-free cone contraction), which exists on branch
+`claude/aig-graph-summarization-coarsening-8a9ea6` and not here. The argument
+for it: `refactor` operates on exactly one MFFC at a time, so the
+decomposition is the optimizer's own transformation unit, which ties what the
+summary preserves to what the `optimizability` label measures; it is also
+parameter-free, where `cone` carries `max_chain_length` and `level_band`. Two
+things measured while comparing them on 300 synthetic AIGs: mffc's quotient
+was acyclic on every one (so "only cone guarantees a DAG" is not a reason to
+prefer cone), and compression was near-identical (0.196 vs 0.190). Unresolved:
+mffc's compression on the real corpus. Deciding this means porting mffc here
+and running one shard of each.
+
+**The cheapest new result available** is running the *same* WL merge map
+through both rewrites: `apply_merge_map` (lossy, production model) and
+`apply_exact_merge_map` (exact model). Same clustering, two quotients, so it
+isolates precisely what the lossy rewrite costs. The clustering is already
+computed; the marginal cost is one precompute pass and one training run.
+
+### ⚠ The comparability problem — say this plainly in the thesis
+
+`ExactGraphBaseModel` has **no GraphNorm, no positional encoding and no edge
+attributes**. `cone` and `convmatch` train on the production GCN+ with all
+three. **Their accuracies cannot go on the same Pareto front — they are
+different models.** So the grid needs *two* baselines:
+
+| arm | baseline it is compared against |
+|---|---|
+| `wl_exact` | exact model on uncoarsened graphs ← **an extra training run, currently unbudgeted** |
+| `cone`, `convmatch` | production GCN+ on full graphs (already exists) |
+
+`wl_exact`'s RQ3 result is exact by construction, so its real contribution is
+the RQ2 memory/time measurement plus the RQ5 verification. The exact track
+answers a *different question* than the other two; it does not sit on their
+Pareto front, and the write-up has to say so rather than imply a shared axis.
+
+**Exactness and improvement are mutually exclusive.** `wl_exact` proves nothing
+is lost, which means it *cannot* demonstrate the over-squashing /
+receptive-field benefit hypothesised elsewhere in these notes — identical
+embeddings, identical accuracy, by construction. That hypothesis now belongs to
+`cone`/`convmatch` only, and it still needs the CA8 receptive-field metric,
+which is still unbuilt.
+
+### Which experiments each arm feeds
+
+| RQ | measured | `wl_exact` | `cone` / `convmatch` |
+|---|---|---|---|
+| **RQ2** efficiency | node/edge retention, offline wall-clock, peak VRAM, `train_step_time_s_epoch`, inference throughput | yes — the primary result | yes |
+| **RQ3** retention | Smooth L1, RMSE, **R²**, **Spearman** vs the matching baseline; Pareto front against sparsification | exact by construction | the real measurement |
+| **RQ5** cross-state | train reduced, infer full | **theorem → verify** | genuine experiment |
+
+**RQ5 for `wl_exact` is a verification, not an experiment.** The reduct and the
+original produce the same graph embedding, so a model trained on reducts and
+queried on full graphs gives *identical* predictions — train-on-reduced already
+*is* train-on-full. One forward pass per state, no training run. The full-graph
+input is free: `fold_inversions_into_x` with no merge applied *is* the
+exact-schema uncoarsened graph. Implemented in `src/verify_exact_rq5.py`, which
+reports the residual as an explicit number rather than hiding it in an assert.
+
+> **Note on where this lives.** The task specified wiring it into `src/test.py`.
+> On this branch `src/test.py` is **empty (0 bytes)** — main's 904-line eval
+> harness (`build_eval_passes` / `run_eval_pass`, `--reduction_type`, the
+> `full_graph` pass) was written after `summarization` forked and is not in this
+> history. `verify_exact_rq5.py` is therefore standalone; when the branches
+> merge it should become a pass inside that harness rather than a second
+> entry point.
+
+Still: **always report RMSE *and* R² *and* Spearman together** (CA19 below).
+CTS-Bench found MAE essentially unmoved (0.16→0.17) while R² fell below zero —
+global error looked fine while all discriminative power was gone.
+
+### ConvMatch — two structural properties to disclose, not fix
+
+Both measured on this branch. Neither is a bug in the setup; making either one
+go away would stop it being the published method, which is the whole point of
+using it as the SOTA bar.
+
+1. **ConvMatch is direction-blind.** S3 symmetrizes the adjacency
+   (`summarization.py:_undirected_simple`), and on a DAG whose edge direction
+   *is* the logic flow that is a real limitation. Measured: reversing every edge
+   (holding `level` fixed, so only the structure changes) produces a **bit-identical
+   partition** — 703 classes on `adder`, 6,151 on `1024`, `torch.equal` true in
+   both cases. That is a finding about what a domain-blind coarsener can see,
+   and it is one of the things `cone` exists to contrast against.
+2. **Its objective favours low-degree nodes regardless of similarity.** Eq. 7 is
+   an unweighted L1 sum, so merging two low-degree nodes scores better than
+   merging two genuine convolution twins of higher degree. Measured on a
+   hand-built AIG (costs from `_convmatch_costs`, lower is better):
+
+   | pair | undirected degrees | cost |
+   |---|---|---|
+   | two PIs | 1, 1 | **0.703** |
+   | two PIs | 2, 2 | **1.148** |
+   | genuine convolution twins (two ANDs with identical fanins) | 3, 3 | 1.734 |
+   | mismatched pair at the same degree | 3, 3 | 1.881 |
+   | mismatched pair at the same degree | 3, 3 | 2.561 |
+
+   So convolution equivalence decides *between* pairs of comparable degree
+   (1.734 < 1.881 < 2.561 at degree 3) but not *across* degrees — both PI pairs
+   beat the twins. Worth one sentence in the write-up, and it is a reason its
+   behaviour on a deep DAG differs from the node-classification setting it was
+   published in.
+
+One scale divergence also stays and needs disclosing: the reference finds
+candidates by exact KD-tree kNN on a PCA-reduced standardised SGC embedding;
+this implementation uses random-projection sorting, because exact kNN per graph
+over ~700k graphs is unaffordable.
+
+### ⚠ Provenance caveat on every compression number in this box
+
+All retention/compression figures here and below were measured on **seed
+designs**, not the training corpus: the 50 unrandomized tier0 designs parsed
+from `data/designs/*/tier0/*.bench` (and, for the exactness re-derivation on
+this branch, the 8 `.aig` files available locally plus the `adder.aig` test
+fixture). **Not** the 231k randomized tier0, not tier1-Orchestrate, not tier2.
+Every one must be re-measured on the real corpus before entering the thesis.
+Treat them as provisional and carry this caveat with them.
+
+Node retention, backward exact refinement, initial colour = 4-D type one-hot,
+mean over the 50 seed designs:
+
+| | d=1 | d=2 | d=3 | **d=4** | bisim d=4 | +level in colour |
+|---|---|---|---|---|---|---|
+| mean | 0.4% | 2.6% | 7.8% | **13.3%** | 13.3% | 29.7% |
+
+Edges at d=4: 14.1%. Under the exact-track schema (type + inverted-fanin count,
+i.e. after `fold_inversions_into_x`): **17.9%** nodes — folding costs +4.6pp.
+
+**Compression improves with graph size** (vga_lcd 0.9%, div 0.8%, aes 1.4%,
+jpeg 1.7% at d=4) — the opposite of Bollen's result on OGB graphs, and the best
+possible direction, since the OOM problem is on the large graphs.
+
+### Three findings that change what is written below
+
+1. **CA1 is refuted.** The box below calls strash "the single biggest risk to
+   S2" and predicts d=1 finds nearly nothing. Measured d=1 retention: **0.4%**.
+   Strash dedupes identical fanin *pointers*; WL groups by fanin *colours* —
+   different granularities, and strash removes essentially none of the WL
+   redundancy. The risk flag and the "measure residual redundancy first" gate
+   are both dead.
+2. **`count_cap` is inert on AIGs.** Identical class counts in **50 of 50**
+   designs at d=4. Provable, not coincidence: AIG in-degree is fixed by node
+   type (AND=2, PO=1, PI/const=0), and when in-degree is fixed the multiset of
+   fanin colours carries exactly the information of the set, so Bollen's graded
+   refinement collapses on circuits. A reportable negative result, and it
+   removes a planned sweep arm. Same for `direction`: `"backward"` is *forced*
+   for the exact track because it is the direction the GNN aggregates in;
+   forward/both is not lossless. It stays a genuine knob for lossy methods only.
+3. **The level PE, not strash, is what threatens compression** — the table in
+   item 1 of "Three things that had to be decided" above.
+
+---
+
+## STATUS (2026-07-31) — all five methods built, superseded by the box above
 
 Supersedes the 2026-07-28 box below, which said S1/S3/S4/S5 were not started.
 **All five are now implemented, registered and unit-tested** in
@@ -140,8 +452,14 @@ with whether the PI/PO interface survives.
 
 Cost, stated honestly: it is still a fourth precompute + training arm — the
 coarsened graphs differ, so no existing cache is reusable — and it needs a
-`METHODS` entry appended at index 6 (`--array=192-223`) to be submittable. The
-clustering is free; the runs are not.
+`METHODS` entry appended to be submittable. **Index 6 (`--array=192-223`) is now
+`wl_exact`**, so this would be index 7 (`--array=224-255`). The clustering is
+free; the runs are not.
+
+⚠ The `wl` at `depth=1` rejection above rests on CA1, which the top box
+**refutes** — measured d=1 retention is 0.4%, not "almost nothing". The
+conclusion (use random within-type merging as the naive floor) still stands on
+its other two reasons, but not on this one.
 
 ### Findings from building them (these belong in the writeup, not just here)
 
@@ -556,9 +874,11 @@ candidates against the `n/2` merges a 0.5 target needs.
 - [ ] Which graphs took S4's heavy-edge fallback is not recorded anywhere. If
       most of the corpus is above 5k nodes, S4 is really "heavy-edge with a
       spectral rule on small graphs" and must be described that way.
-- [ ] The empirical S2 residual-redundancy probe (d=1..4 over ~1–10k graphs)
-      from the original plan still has not been run. CA1 says d=1 should find
-      nearly nothing; that is a reportable dataset statistic either way.
+- [x] **DONE (provisionally).** The empirical S2 residual-redundancy probe
+      (d=1..4) has been run on the 50 unrandomized tier0 seed designs: 0.4% /
+      2.6% / 7.8% / 13.3% node retention. CA1's prediction that d=1 finds nearly
+      nothing is **refuted**. Still needs re-running on the real corpus before
+      the number enters the thesis — see the provenance caveat in the top box.
 - [ ] FRAIG leakage negative control: still not started.
 - [ ] S1's `level_band` and S3/S4's `reduction_ratio` are set to plausible
       defaults in `config.SUMMARIZATION_PARAMS`, not calibrated. A
@@ -566,8 +886,12 @@ candidates against the `n/2` merges a 0.5 target needs.
       retention first.
 - [ ] **Build the random within-type merge arm** (see "CANDIDATE 4th arm" in
       the scope-decision box). Agreed as a good baseline; not yet written.
-      ~10 lines plus a `METHODS` append at index 6, then its own precompute and
-      training run.
+      ~10 lines plus a `METHODS` append at **index 7** (index 6 is now
+      `wl_exact`), then its own precompute and training run.
+- [ ] **Budget the second baseline the exact track needs**: `ExactGraphBaseModel`
+      on *uncoarsened* graphs. Without it `wl_exact` has nothing comparable to
+      report against — see "The comparability problem" in the top box. It is a
+      full training run and is currently unplanned.
 - [ ] **DECIDE: can S5 be in C8 at all?** It now calibrates its own bin width
       per graph, but that cannot beat the descriptor ceiling (finding 8), and
       at a 0.5 target the ceiling binds on every AIG measured. Three ways out,
@@ -711,7 +1035,7 @@ quota — a *single* method would eat 98% of what's left. Corrected design:
   **multigraph** with edge **multiplicities**. Graded variant `cr_c`: `c=∞` = full
   color refinement, `c=1` = **bisimulation**. Compression is data-dependent (33–93%).
 - **Generale, Blume, Cochez (2022)** — *Scaling R-GCN Training with Graph
-  Summarization.* RQ4 precedent for **node classification**: train R-GCN on summary,
+  Summarization.* RQ5 precedent for **node classification**: train R-GCN on summary,
   transfer weights back via a **node→super-node mapping**, infer on full graph.
   Outperforms from-scratch baseline (jump-start). Uses Attributes/IO summary +
   **k-forward bisimulation** (FLUID, k=3). Super-nodes carry **weighted multi-label**
@@ -784,7 +1108,7 @@ Earlier framing ("R1 = a node→super-node mapping, not shared weights") was for
 
 - A GNN's learnable weights are **size- and identity-agnostic** (inductive). Training
   GCN+ on summarized graphs and running the **same weights** on full graphs is the
-  natural RQ4 mechanism — **no mapping needed**. This is "shared weights."
+  natural RQ5 mechanism — **no mapping needed**. This is "shared weights."
 - **Anyone done shared weights?** Yes — **SCAL** (Huang 2021): train on coarsened
   graph, "directly use this model to inference." **Buffelli** (2022): train so
   embeddings are consistent across coarsening ratios (size-shift). Plus the whole
@@ -796,7 +1120,7 @@ Earlier framing ("R1 = a node→super-node mapping, not shared weights") was for
 
 ### → Proposed: run BOTH mechanisms as two experiments (they answer different Qs)
 1. **Shared-weights direct transfer** — train on summary, test on full, same weights.
-   The clean RQ4 test. **Requires the input feature schema to match** between summary
+   The clean RQ5 test. **Requires the input feature schema to match** between summary
    and full graphs (enriched-superset schema; full graph = size-1 super-nodes).
 2. **Summary-pretrain → full-finetune (warm-start)** — Generale-style jump-start.
    Tests whether summary pretraining helps, separate from generalization.
@@ -856,6 +1180,13 @@ AIG-native, built on levels / dominators / fanout-free structure. Two merge axes
 > **separate, dedicated model** (`gcn_exact.py`/`base_model_exact.py`), which also
 > needed polarity moved off edges onto a node feature. Original text kept below;
 > read the STATUS box for the corrected picture before acting on this section.
+>
+> Two further corrections from the later pass: the count-cap `c` below is
+> presented as a live knob, but it is **inert on AIGs** — identical class counts
+> in 50 of 50 designs at d=4, and provably so, since AIG in-degree is fixed by
+> node type and a fixed in-degree makes the fanin-colour multiset carry exactly
+> the information of the set. And the closing "risk: strash" line is **refuted**
+> (CA1, below).
 
 Bollen exact compression + FLUID k-bisimulation, unified by the count-cap `c`.
 - Knobs: `c` (∞ = exact WL/lossless, 1 = bisimulation/lossy), depth `d` (=4, couple to
@@ -936,7 +1267,7 @@ Kept out as a primary method; note as related-work / future-work only.
   generalize poorly across architectures.
 - **Scope** — a whole separate literature + expensive bi-level optimization; our
   three-family framing is partitioning / sparsification / summarization, not this.
-- NB: shared-weights cross-state (RQ4) is impossible for condensation (synthetic
+- NB: shared-weights cross-state (RQ5) is impossible for condensation (synthetic
   nodes aren't real), so it can't answer our headline question anyway.
 
 ---
@@ -1192,7 +1523,7 @@ spread. Assume the same spread here.
    `warmup_train_cache.sh` already uses.
 3. **Compute once, reuse everywhere.** Merge-maps are deterministic per
    `(method, params, seed)` → key by signature hash and reuse across all seeds, Optuna
-   trials, and both the RQ3 (matched-state) and RQ4 (cross-state) experiments. Never
+   trials, and both the RQ3 (matched-state) and RQ5 (cross-state) experiments. Never
    recompute per training run.
 4. **Chain, don't idle the GPU:**
    `PID=$(sbatch --parsable src/shell/precompute_summarization.sh)` then
@@ -1269,7 +1600,7 @@ structural). This is the bridge that makes the section AIG-specific rather than
     guaranteed-acyclic DAG coarsenings (upgrades C7 from "don't block" to "achievable
     if wanted").
   - DAG-GNNs (DAGNN, D-VAE) respect topological order; **DCN/PDCN decouples model
-    complexity from graph size** (size generalization = RQ4 flavour). Architecture
+    complexity from graph size** (size generalization = RQ5 flavour). Architecture
     alternative — note, but out of scope (we use GCN+).
 
 ## The research gap (positioning — use in intro/related work)
@@ -1329,7 +1660,7 @@ No structural-equivalence angle. One task, one label, one clustering method.
   coarsening strategies** — which is precisely our thesis, one stage earlier.
 - **Consequences for us:**
   1. Cite as the strongest motivation that **domain-aware coarsening is needed** in EDA.
-  2. Their **zero-shot negative R²** is a direct warning for **RQ4** — expect cross-state
+  2. Their **zero-shot negative R²** is a direct warning for **RQ5** — expect cross-state
      transfer to be hard. If our domain-aware methods transfer at all, that's a *result*,
      and we now have a citation showing the generic case fails.
   3. It's a **benchmark-paper template** — mirrors our RQ2/RQ3 trade-off framing; use its
@@ -1440,6 +1771,13 @@ Generic (from earlier, C1–C9) **plus** AIG-specific:
   structural equivalence → **S2 at depth 1 will find almost nothing.** The open question
   is whether **deeper** refinement (d = 2,3,4) still finds mergeable classes. Measure
   before believing S2 compresses. (This is the single biggest risk to S2.)
+  **↑ REFUTED (2026-07-31, later pass) — the prediction and the risk flag are both
+  wrong.** Measured d=1 node retention over the 50 tier0 seed designs: **0.4%**, i.e.
+  d=1 merges 99.6% of nodes. Strash dedupes identical fanin *pointers*; WL groups by
+  fanin *colours* — different granularities, and strash removes essentially none of the
+  WL redundancy. The "measure residual redundancy before believing S2 compresses" gate
+  is satisfied and closed. The real threat to S2's compression is the **level PE**
+  (`pe_aware=True` takes retention to 99.0% on sqrt), not strash — see the top box.
 - **CA1b — Possible label confound (LOW PRIORITY — document, do not fix).**
   `generate_csv.py:46-49` computes `optimizability = (t0_nodes - t1_nodes)/t0_nodes`
   where `t0_nodes` comes from `stats[0]` = the **first** `print_stats`, which runs
@@ -1447,7 +1785,7 @@ Generic (from earlier, C1–C9) **plus** AIG-specific:
   credit for structural hashing rather than for Orchestrate.
   **Decision: not regenerating the dataset — infeasible on time/compute, and correctly
   out of scope.** This is a *disclosure* item, not a blocker: the label is defined
-  consistently across every graph and every method, so all comparisons in RQ2/RQ3/RQ4
+  consistently across every graph and every method, so all comparisons in RQ2 through RQ5
   remain internally valid regardless.
   **If ever checked, it costs minutes, not compute:** the existing logs only hold two
   `print_stats` (pre-strash, post-opt), so it needs a handful of ABC calls on ~20 tier0
@@ -1492,12 +1830,12 @@ Generic (from earlier, C1–C9) **plus** AIG-specific:
 - **CA13 — Scope the novelty claim tightly.** After CTS-Bench, never claim "first
   coarsening study in EDA." Claim: *first for AIG / logic synthesis / optimizability
   regression, and first to bridge generic coarsening with AIG-native equivalence.*
-- **CA14 — Expect RQ4 to be hard.** CTS-Bench reports **negative R² zero-shot** for
+- **CA14 — Expect RQ5 to be hard.** CTS-Bench reports **negative R² zero-shot** for
   generic coarsening. Plan for the possibility that cross-state fails for S3–S5 and
   succeeds only for S1–S2 — that asymmetry *is* the headline result, so instrument for
   it (report matched-state and cross-state side by side per method).
 - **CA15 — Two transfer mechanisms, two experiments.** Shared-weights direct transfer
-  (clean RQ4) vs summary-pretrain→full-finetune warm-start (Generale jump-start). Don't
+  (clean RQ5) vs summary-pretrain→full-finetune warm-start (Generale jump-start). Don't
   conflate; they answer different questions.
 - **CA16 — Method-family balance is deliberate.** S1 domain-specific / S2 adapted-SOTA /
   S3 SOTA / S4 classic control / S5 naive control. If a method is dropped for time,
@@ -1563,7 +1901,7 @@ Generic (from earlier, C1–C9) **plus** AIG-specific:
 >    `apply_merge_map(g, torch.arange(g.num_nodes), g.num_nodes)` must return a graph
 >    equivalent to `g` — same edges, `x` equal to the original one-hot, `edge_attr` equal to
 >    the original one-hot, `node_size` all ones, `level` unchanged. This identity property
->    is the foundation of cross-state inference (RQ4); if it fails nothing downstream is
+>    is the foundation of cross-state inference (RQ5); if it fails nothing downstream is
 >    valid. Also test: a simple hand-built merge (2 nodes → 1) produces the expected counts,
 >    coalesced edges, and `internal_edges`.
 >

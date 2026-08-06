@@ -8,11 +8,21 @@
 # would look healthy while measuring the wrong method.
 #
 # APPEND ONLY — never reorder or remove.  The array ranges people submit by
-# hand (and any --dependency chains already queued) are positional.
+# hand (and any --dependency chains already queued) are positional.  The list
+# was re-cut once, on 2026-08-02, when identity, spectral and lsh were deleted
+# from the study: every index below moved, so a range noted down before that
+# date means a different method now.
 #
-# Ordered as in the thesis: control, domain-specific, adapted SOTA, SOTA,
-# classic control, cheap control.
-METHODS=(identity cone wl convmatch spectral lsh)
+# Ordered as in the thesis: domain-specific, adapted SOTA, SOTA — then
+# wl_exact, appended afterwards because the list is append-only, so its slot is
+# wherever it lands rather than where it belongs thematically (next to wl).
+#
+# wl_exact runs the SAME clustering as wl but through the exact rewrite
+# (data/exact_graph.py) instead of the lossy apply_merge_map, and is the only
+# method trained with `--model exact`.  data.summarization.EXACT_METHODS is
+# the single source of truth for which methods those are;
+# train_summarization.sh queries it directly rather than restating it here.
+METHODS=(cone wl convmatch wl_exact)
 
 # Shards per method in precompute_summarization.sh.  Its array index packs
 # both coordinates: method = index / SHARDS_PER_METHOD, shard = index %

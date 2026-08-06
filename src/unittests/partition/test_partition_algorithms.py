@@ -413,6 +413,7 @@ class TestDatasetPartitionFallback(unittest.TestCase):
         ds.partition = "level_slicing"
         ds.positional_encoding = None
         ds.normalize_edges = False
+        ds.exact_schema = False
         ds.samples = [MagicMock(y_node_opt=0.5)]
         ds._y_tensors = [torch.tensor([[0.5]], dtype=torch.float32)]
         ds._load_graph_for_sample = MagicMock()
@@ -443,6 +444,7 @@ class TestDatasetPartitionFallback(unittest.TestCase):
         ds.sparsification_replace_path = None
         ds.positional_encoding = None
         ds.normalize_edges = False
+        ds.exact_schema = False
         ds.samples = [MagicMock(y_node_opt=0.5)]
         ds._y_tensors = [torch.tensor([[0.5]], dtype=torch.float32)]
         ds._load_graph_for_sample = MagicMock()

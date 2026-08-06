@@ -98,15 +98,18 @@ def apply_exact_merge_map(data: Data, cluster: torch.Tensor, num_clusters: int) 
     for size-weighted pooling downstream — see models/base_model_exact.py).
     No ``edge_attr``: this schema never has one.
 
-    Raises if the cluster has any intra-cluster edges (i.e. a real edge
-    between two members of the same class). This is not a defensive
-    over-check: silently dropping such an edge, as apply_merge_map's
-    lossy quotient does, is a genuine correctness bug for THIS function,
-    since its whole purpose is an exact quotient — folding the edge back in
-    as a weighted self-loop would need its own careful derivation, deferred
-    rather than guessed at. Two structurally-repetitive but non-adjacent
-    AIG regions (e.g. duplicated adder bit-slices) can legitimately land in
-    the same WL-exact class; this is not limited to literal cycles.
+    Intra-cluster edges (a real edge between two members of the same class)
+    are kept, as a weighted self-loop, and need no special case. Bollen's
+    Def 3.6 builds the reduct's edge relation over *all* pairs of classes
+    including ``v == w``, so a self-loop is part of the definition rather
+    than a degenerate case of it, and ``coalesced_count / target_class_size``
+    already computes its weight correctly: each member of the class has the
+    same number of same-class fanins, and that count is what the self-loop
+    carries. This is not rare — a cluster of structurally repetitive AIG
+    regions (duplicated bit-slices) can easily contain adjacent members
+    without any literal cycle, and the coarser the reduct the more common it
+    gets. Note this is where the two rewrites genuinely differ: the lossy
+    ``apply_merge_map`` *drops* these edges, which is what makes it lossy.
 
     Same preconditions as apply_merge_map: *cluster* assigns every node an
     id in [0, num_clusters) and uses each at least once; pure (never mutates
@@ -122,17 +125,10 @@ def apply_exact_merge_map(data: Data, cluster: torch.Tensor, num_clusters: int) 
     x_sum.index_add_(0, cluster, data.x)
     x = x_sum / node_size.unsqueeze(1).to(data.x.dtype)
 
-    # Edges: remap, then reject intra-cluster edges (see the docstring
-    # above) before doing anything else with them.
+    # Edges: remap.  Intra-cluster edges survive as self-loops rather than
+    # being dropped (see the docstring above); coalesce collapses them onto
+    # the ``(c, c)`` entry like any other parallel super-edge.
     merged = cluster[data.edge_index]
-    is_internal = merged[0] == merged[1]
-    if bool(is_internal.any()):
-        raise ValueError(
-            f"{int(is_internal.sum())} edge(s) connect two members of the "
-            "same cluster; apply_exact_merge_map cannot represent these "
-            "without breaking exactness. The clustering method must not "
-            "merge nodes with a direct edge between them."
-        )
     ones = torch.ones(merged.size(1), 1, dtype=data.x.dtype)
     edge_index, counts = coalesce(
         merged, ones, num_nodes=num_clusters, reduce="sum"

@@ -39,6 +39,10 @@ MAX_NUM_GATES = 366040
 
 TASK_OUT_DIM = 1  # Regression task with single output value
 NODE_INPUT_DIM = 4  # [constant, pi, and_gate, po]
+# Exact-compression track only: data.exact_graph.fold_inversions_into_x
+# appends an inverted-fanin count column and drops edge_attr entirely, so the
+# exact model reads one more node feature and no edge features.
+EXACT_NODE_INPUT_DIM = NODE_INPUT_DIM + 1
 EDGE_ATTR_DIM = 2  # [normal edge, primary output edge]
 NORMALIZE_EDGES = False
 # Sparsification configuration
@@ -58,22 +62,69 @@ SUMMARIZATION_SEED = 42
 # travels exactly NUM_LAYERS hops in the model, so merging nodes that agree to
 # that depth is what the model cannot distinguish.
 SUMMARIZATION_DEPTH = NUM_LAYERS
-# Target fraction of nodes removed by the two ratio-driven methods.  Picked to
+# Target fraction of nodes removed by ConvMatch, the one ratio-driven method
+# left in the set.  Picked to
 # match the sparsification sweep's mid-point so the Pareto fronts are
 # comparable at a matched compression point (C8).
 SUMMARIZATION_REDUCTION_RATIO = 0.5
 
 SUMMARIZATION_PARAMS: dict[str, dict] = {
-    # S0 — control: no compression, exercises the pipeline end to end.
-    "identity": {},
     # S1 — level-bounded cone coarsening (domain-specific).
     "cone": {"max_chain_length": 4, "level_band": 0},
     # S2 — graded WL / bisimulation.  count_cap=None is exact colour
     # refinement; set it to 1 for the bisimulation endpoint.
+    #
+    # pe_aware is set explicitly on both WL entries because it is the single
+    # biggest lever on compression, and leaving it to the function default
+    # would hide that.  Folding `level` into the initial colours keeps nodes
+    # of different depth apart, which is what makes apply_merge_map's
+    # min-pooled `level` exact — but on a deep datapath circuit it means
+    # almost nothing merges.  Node retention measured end to end (50
+    # unrandomized tier0 seed designs, provisional — see
+    # summarization_notes.md):
+    #
+    #   design  levels  pe_aware=True  pe_aware=False
+    #   sqrt      5059          99.0%            1.4%
+    #   div       4373          95.2%            0.8%
+    #   c6288      121          41.5%            2.0%
+    #   jpeg        40           5.4%            1.7%
+    #   aes         27           1.8%            1.4%
+    #
+    # So True is right for the lossy track (whose model consumes the PE) and
+    # wrong for the exact track (whose model is pe_type="none").
     "wl": {
         "depth": SUMMARIZATION_DEPTH,
         "count_cap": None,
         "direction": "backward",
+        "pe_aware": True,
+    },
+    # S2-exact — the same colour refinement, rewritten by
+    # data.exact_graph.apply_exact_merge_map instead of apply_merge_map and
+    # trained with models.base_model_exact.ExactGraphBaseModel.
+    #
+    # count_cap and direction here are EXACTNESS REQUIREMENTS, not tunables:
+    #   count_cap=None     — capping compares neighbour sets, not multisets,
+    #                        so a super-node no longer determines the number
+    #                        of messages each member received.
+    #   direction="backward" — the direction the GNN aggregates in.  Forward
+    #                        or both merges nodes the model can still tell
+    #                        apart, which is not lossless.
+    # pe_aware=False is stated for intent, not effect: summarize_graph runs
+    # fold_inversions_into_x *before* clustering on this path, and that drops
+    # `level` entirely, so the flag is already inert here (measured: same 26
+    # classes on adder either way).  It says what the exact track means —
+    # its model has no positional encoding — and stops the value drifting to
+    # True if the fold ever stops dropping `level`.  NOTE the wl/wl_exact
+    # retention gap therefore comes from the fold, not from this flag.
+    #
+    # Only `depth` is free, and it is tied to the model's layer count by
+    # summarize_graphs.assert_exact_depth_supports_model: exactness holds for
+    # num_layers <= depth, no further.
+    "wl_exact": {
+        "depth": SUMMARIZATION_DEPTH,
+        "count_cap": None,
+        "direction": "backward",
+        "pe_aware": False,
     },
     # S3 — A-ConvMatch (convolution matching), the general SOTA bar.
     # num_probes replaces the reference's exact kNN over the SGC embedding, so it
@@ -86,30 +137,6 @@ SUMMARIZATION_PARAMS: dict[str, dict] = {
         "reduction_ratio": SUMMARIZATION_REDUCTION_RATIO,
         "sgc_depth": SUMMARIZATION_DEPTH,
         "num_probes": 8,
-        "seed": SUMMARIZATION_SEED,
-    },
-    # S4 — spectral / local-variation, the domain-blind control.  The node cap
-    # bounds the eigensolver's cost; larger graphs fall back to heavy-edge.
-    "spectral": {
-        "reduction_ratio": SUMMARIZATION_REDUCTION_RATIO,
-        "variant": "local_variation",
-        "num_eigenvectors": 4,
-        "max_spectral_nodes": 5_000,
-    },
-    # S5 — LSH / UGC hashing, the cheap linear-time tier.  Driven by
-    # reduction_ratio rather than bin_width because the reference implementation
-    # calibrates the bin width per dataset too rather than fixing it, and a fixed
-    # bin width makes compression depend on graph size instead of on the knob.
-    #
-    # This does NOT put S5 on the same footing as S3/S4 for a matched-compression
-    # comparison (C8).  S5's retention is capped by the number of distinct node
-    # descriptors, which on an AIG is usually well below 0.5 — so at this setting
-    # the calibration is inoperative and S5 returns its finest partition, more
-    # compressed than requested.  The achieved ratio must be read off the
-    # precompute stats, never assumed to be this value.  See lsh_coarsening.
-    "lsh": {
-        "reduction_ratio": SUMMARIZATION_REDUCTION_RATIO,
-        "num_projections": 8,
         "seed": SUMMARIZATION_SEED,
     },
 }

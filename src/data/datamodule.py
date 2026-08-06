@@ -25,6 +25,7 @@ class AIGDataModule(pl.LightningDataModule):
         sparsification: str | None = None,
         partition: str | None = None,
         normalize_edges: bool = config.NORMALIZE_EDGES,
+        exact_schema: bool = False,
         cache_dir: str | Path | None = None,
         split_ratios: tuple[float, float, float] = (0.8, 0.1, 0.1),
         seed: int = 42,
@@ -47,6 +48,7 @@ class AIGDataModule(pl.LightningDataModule):
         self.sparsification = sparsification
         self.partition = partition
         self.normalize_edges = bool(normalize_edges)
+        self.exact_schema = bool(exact_schema)
         self.cache_dir = cache_dir
         self.split_ratios = split_ratios
         self.seed = seed
@@ -112,6 +114,7 @@ class AIGDataModule(pl.LightningDataModule):
             sparsification_replace_path=getattr(config, "SPARSIFICATION_REPLACE_PATH", None),
             partition=self.partition,
             normalize_edges=self.normalize_edges,
+            exact_schema=self.exact_schema,
             split=split,
             cache_dir=self.cache_dir,
             tier0_cache_dir=self.tier0_cache_dir,

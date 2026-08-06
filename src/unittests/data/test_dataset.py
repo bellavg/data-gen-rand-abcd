@@ -1435,6 +1435,69 @@ class TestBalancedDynamicBatchSampler(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 
+class TestExactSchemaFlag(unittest.TestCase):
+    """`exact_schema` keeps the exact track's edge_weight out of the bin.
+
+    Without it, get() strips edge_weight from every runtime sample (it is
+    normally a stale degree-derived value), which for an exact reduct throws
+    away the message multiplicity and leaves ExactGraphBaseModel raising on
+    a batch it should have been able to consume.
+    """
+
+    def setUp(self):
+        from data.exact_graph import fold_inversions_into_x
+
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        graph_dir = self.root / "graphs"
+        graph_dir.mkdir(parents=True)
+
+        folded = fold_inversions_into_x(aig_to_pytorch_geometric(_AIG_PATH))
+        self.pt_path = graph_dir / "exact_0000.pt"
+        torch.save(folded, self.pt_path)
+
+        self.csv_path = self.root / "data.csv"
+        _write_csv(self.csv_path, _make_rows([self.pt_path]))
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _make_ds(self, **kwargs):
+        from data.dataset import AIGGraphRegressionDataset
+
+        return AIGGraphRegressionDataset(self.csv_path, **kwargs)
+
+    def test_edge_weight_and_node_size_survive_get(self):
+        sample = self._make_ds(exact_schema=True)[0]
+        self.assertIsNotNone(getattr(sample, "edge_weight", None))
+        self.assertIsNotNone(getattr(sample, "node_size", None))
+
+    def test_edge_weight_is_stripped_without_the_flag(self):
+        # The pre-existing behaviour the flag exists to opt out of.
+        sample = self._make_ds()[0]
+        self.assertIsNone(getattr(sample, "edge_weight", None))
+
+    def test_exact_schema_does_not_arm_the_level_pe_refresh(self):
+        # positional_encoding still names the cache files, but exact-schema
+        # graphs have no `level`, so pe work must be off: otherwise
+        # _cache_single_graph sees pos_enc missing on every hit and rewrites
+        # the whole reduct cache on every run.
+        ds = self._make_ds(positional_encoding="level", exact_schema=True)
+        self.assertFalse(ds._cache_precomputed_level_pe)
+        self.assertTrue(self._make_ds(positional_encoding="level")._cache_precomputed_level_pe)
+
+    def test_cache_filename_still_tracks_positional_encoding(self):
+        # The exact track relies on this: it must keep naming files the way
+        # the production (pe=level) run did, or every reduct lookup misses.
+        level_ds = self._make_ds(positional_encoding="level", exact_schema=True)
+        none_ds = self._make_ds(exact_schema=True)
+        path = str(self.pt_path)
+        self.assertNotEqual(
+            level_ds._stable_graph_cache_name(path),
+            none_ds._stable_graph_cache_name(path),
+        )
+
+
 class TestGetNumNodesList(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

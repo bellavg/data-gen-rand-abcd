@@ -14,6 +14,7 @@ from pytorch_lightning.loggers import WandbLogger
 import config
 from config import HEAD_DROPOUT, NORMALIZE_EDGES
 from data.datamodule import AIGDataModule
+from data.summarize_graphs import assert_exact_depth_supports_model
 from models.lightning_model import AIGRegressionLightningModule
 from train_utils import PreciseEarlyStopping, TrainingStartupCallback
 
@@ -77,6 +78,25 @@ def main(args):
             "--sparsification and --partition are mutually exclusive; set only one."
         )
 
+    exact = args.model == "exact"
+    # The exact model consumes no positional encoding — but --pe_type also
+    # decides the graph cache *filename* (dataset._stable_graph_cache_name
+    # hashes it), and the reducts inherited their filenames from the
+    # production pe=level cache the precompute read.  So the dataset keeps
+    # --pe_type and only the model drops it.  Passing --pe_type none instead
+    # would make every reduct lookup miss, silently re-cache the raw
+    # uncoarsened graphs into the staging directory, and only fail hours
+    # later inside the model.
+    model_pe_type = "none" if exact else args.pe_type
+    if exact:
+        # The reducts were built at a fixed refinement depth and then cached;
+        # --num_layers is tuned long afterwards, and a deeper model quietly
+        # stops being exact.  Check before anything expensive starts.
+        assert_exact_depth_supports_model(
+            [d for d in (args.tier0_cache_dir, args.tier1_cache_dir) if d],
+            args.num_layers,
+        )
+
     print(f"--- Starting Final Training for Algorithm: {args.algorithm} ---")
 
     # 2. Setup DataModule & load datasets EARLY (CPU work — no GPU needed)
@@ -97,6 +117,7 @@ def main(args):
         hp_tuning_splits_path=args.hp_tuning_splits_path,
         tier0_cache_dir=args.tier0_cache_dir,
         tier1_cache_dir=args.tier1_cache_dir,
+        exact_schema=exact,
         dynamic_batching=getattr(args, "dynamic_batching", False),
         max_total_nodes=args.max_total_nodes_per_batch,
     )
@@ -128,14 +149,25 @@ def main(args):
             "normalize_edges": NORMALIZE_EDGES,
         }
     )
+    if exact:
+        # The exact encoder has no normalization and no edge features, so
+        # leaving these in would have WandB report norm_type="layer" for a
+        # model that has no norm at all — the exact class of silently-wrong
+        # reporting the model selector exists to prevent.
+        for key in ("norm_type", "edge_attr_dim", "normalize_edges"):
+            encoder_kwargs.pop(key, None)
 
     # 4. Initialize the Lightning Module
     model = AIGRegressionLightningModule(
         encoder_name=args.encoder_name,
         hidden_dim=args.hidden_dim,
-        pe_type=args.pe_type,
-        pos_enc_dim=args.pos_enc_dim if args.pe_type != "none" else 0,
+        node_input_dim=(
+            config.EXACT_NODE_INPUT_DIM if exact else config.NODE_INPUT_DIM
+        ),
+        pe_type=model_pe_type,
+        pos_enc_dim=args.pos_enc_dim if model_pe_type != "none" else 0,
         pooling_type=args.pooling_type,
+        model_type=args.model,
         encoder_kwargs=encoder_kwargs,
         head_dropout=HEAD_DROPOUT,
         lr=args.lr,
@@ -249,6 +281,20 @@ if __name__ == "__main__":
 
     # Hyperparameters
     parser.add_argument("--encoder_name", type=str, default=config.ENCODER_NAME)
+    parser.add_argument(
+        "--model",
+        type=str,
+        choices=("production", "exact"),
+        default="production",
+        help=(
+            "Base model. 'exact' selects the exact-compression track "
+            "(ExactGraphBaseModel): no normalization, size-weighted pooling, "
+            "edge_weight multiplicity, no edge_attr, pe_type must be 'none'. "
+            "Use it only with a cache built by an exact summarization method "
+            "(wl_exact). Deliberately explicit rather than inferred from the "
+            "data — see models.lightning_model._build_base_model."
+        ),
+    )
     parser.add_argument("--batch_size", type=int, default=config.BATCH_SIZE)
     parser.add_argument("--lr", type=float, default=config.LR)
     parser.add_argument("--weight_decay", type=float, default=config.WEIGHT_DECAY)

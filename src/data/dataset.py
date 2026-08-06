@@ -129,6 +129,7 @@ class AIGGraphRegressionDataset(PyGDataset):
         sparsification_replace_path: tuple[str, str] | None = None,
         partition: str | None = None,
         normalize_edges: bool = False,
+        exact_schema: bool = False,
         split: str | None = None,
         cache_dir: str | Path | None = None,
         tier0_cache_dir: str | Path | None = None,
@@ -149,6 +150,14 @@ class AIGGraphRegressionDataset(PyGDataset):
         self.sparsification_replace_path = sparsification_replace_path
         self.partition = partition
         self.normalize_edges = bool(normalize_edges)
+        # Exact-compression track (data.exact_graph): edge_weight carries the
+        # message multiplicity of the reduct, so it must reach the model.  An
+        # explicit flag rather than sniffing the loaded graph for node_size,
+        # because sniffing per graph cannot see the batch: PyG collates the
+        # keys of data_list[0], so one graph missing the attribute either
+        # drops it for everyone (if it is first) or raises a bare KeyError
+        # (if it is not).
+        self.exact_schema = bool(exact_schema)
         self.split = split
         self.cache_dir = Path(cache_dir) if cache_dir is not None else None
         self._tier0_cache_dir = (
@@ -162,9 +171,18 @@ class AIGGraphRegressionDataset(PyGDataset):
         self.num_samples = num_samples
         self.num_workers = num_workers
         self.hp_tuning_splits_path = hp_tuning_splits_path
+        # ``exact_schema`` excluded: exact-schema graphs carry no ``level``
+        # (fold_inversions_into_x drops it), so pe_transform can never
+        # produce a ``pos_enc`` for them.  Leaving this True would make
+        # _cache_single_graph's needs_refresh check fire on *every* graph on
+        # *every* run and rewrite the whole reduct cache each time.
+        # ``positional_encoding`` itself is deliberately NOT overridden here:
+        # _stable_graph_cache_name hashes it into the cache FILENAME, and the
+        # reducts inherited their names from the production cache, so
+        # changing it would make every lookup miss.
         self._cache_precomputed_level_pe = (
             str(self.positional_encoding).lower() == "level"
-            if self.positional_encoding is not None
+            if self.positional_encoding is not None and not self.exact_schema
             else False
         )
 
@@ -828,7 +846,11 @@ class AIGGraphRegressionDataset(PyGDataset):
                 data_obj, self.sparsification, cache_path=sparse_cache_path
             )
 
-        if not self.normalize_edges and hasattr(data_obj, "edge_weight"):
+        if (
+            not self.normalize_edges
+            and not self.exact_schema
+            and hasattr(data_obj, "edge_weight")
+        ):
             # Keep edge_weight in cache files, but drop it from runtime samples
             # to avoid unnecessary batching/device transfer when disabled.
             try:

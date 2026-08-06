@@ -53,6 +53,16 @@ _NUM_NODES_GLOBAL = "_num_nodes_global.json"
 _NUM_NODES_SHARD_GLOB = "_num_nodes_shard*.json"
 CHECKPOINT_EVERY = 50_000   # atomic index save cadence (number of completed files)
 
+# Provenance written *inside* each output cache directory, so it is packed
+# into the shard archive and survives staging on the training node — unlike
+# _summary_stats_*.json, which is copied next to the archives instead.
+# Training reads it back through assert_exact_depth_supports_model: reducts
+# are precomputed once and then outlive several rounds of model
+# hyperparameter tuning, and a model deeper than the refinement depth breaks
+# exactness silently.  Every shard writes the same content, so concurrent
+# writers are harmless.
+SUMMARIZATION_PARAMS_FILE = "_summarization_params.json"
+
 
 def _shard_index_name(shard_id: int) -> str:
     return f"_num_nodes_shard{shard_id:03d}.json"
@@ -153,6 +163,78 @@ def merge_shard_indexes(directory: str | Path) -> int:
     return len(merged)
 
 
+def read_summarization_params(cache_dir: str | Path) -> dict:
+    """Method and parameters a summarized cache directory was built with.
+
+    Returns ``{}`` for a directory of raw (unsummarized) graphs, so callers
+    can tell "not summarized" apart from "summarized at depth d".
+    """
+    return _read_json(Path(cache_dir) / SUMMARIZATION_PARAMS_FILE)
+
+
+def assert_exact_depth_supports_model(
+    cache_dirs: list[str | Path], num_layers: int
+) -> None:
+    """Refuse to train an exact-track model deeper than its reducts.
+
+    ``apply_exact_merge_map``'s per-target-member multiplicity is exact for
+    layer *l* only while *l* <= the refinement depth *d* the reduct was built
+    at: members of a round-*d* class agree on their neighbours' round-(*d*-1)
+    colours, which is what makes the layer-*l* message counts agree for every
+    *l* <= *d*.  Beyond that they can differ, and nothing downstream notices —
+    the run finishes and reports a slightly wrong number.
+
+    config couples the two (``SUMMARIZATION_DEPTH = NUM_LAYERS``) at
+    definition time, but reducts are precomputed and cached on disk while
+    ``--num_layers`` gets tuned afterwards, so the coupling is not enforced
+    where it matters.
+
+    Also rejects a cache built by a *lossy* method: every method's precompute
+    writes provenance, so the depth alone cannot tell an exact reduct from a
+    ``wl`` one, and the lossy schema silently misfeeds the exact model.
+    """
+    from data.summarization import EXACT_METHODS
+
+    if not cache_dirs:
+        raise ValueError(
+            "model_type='exact' needs at least one cache directory to check, "
+            "but no tier cache directory was given. The exact model must "
+            "train on materialized reducts (--tier0_cache_dir / "
+            "--tier1_cache_dir), never on raw graphs."
+        )
+
+    for cache_dir in cache_dirs:
+        provenance = read_summarization_params(cache_dir)
+        if not provenance:
+            raise ValueError(
+                f"No {SUMMARIZATION_PARAMS_FILE} in {cache_dir}. The exact "
+                "model can only train on graphs materialized by an exact "
+                "summarization method (see data.summarization.EXACT_METHODS); "
+                "this directory holds raw or pre-provenance graphs, whose "
+                "schema the exact model cannot consume correctly."
+            )
+        method = provenance.get("method")
+        if method not in EXACT_METHODS:
+            raise ValueError(
+                f"{cache_dir} was built by method {method!r}, which uses the "
+                f"lossy rewrite. The exact model needs one of "
+                f"{sorted(EXACT_METHODS)}: the lossy schema has edge_attr and "
+                "no node_size/edge_weight, so it would be read as a coarsened "
+                "graph of all size-1 super-nodes and train on wrong numbers."
+            )
+        depth = provenance.get("params", {}).get("depth")
+        if depth is None or int(depth) < num_layers:
+            raise ValueError(
+                f"Model has {num_layers} layers but the reducts in "
+                f"{cache_dir} were refined to depth {depth!r} "
+                f"(method {provenance.get('method')!r}). Exactness holds only "
+                "for num_layers <= refinement depth; a deeper model reads "
+                "distinctions the reduct no longer carries and fails "
+                "silently. Re-run the precompute with a larger "
+                "config.SUMMARIZATION_DEPTH, or lower --num_layers."
+            )
+
+
 def build_tasks(
     manifest_dirs: list[str | Path],
     out_root: Path,
@@ -241,6 +323,20 @@ def summarize_from_manifests(
         parent = str(Path(out_path_str).parent)
         if parent not in num_nodes_by_dir:
             num_nodes_by_dir[parent] = _read_json(Path(parent) / index_name)
+
+    # Written before the resume check so a shard that has nothing left to do
+    # still leaves the provenance behind.
+    provenance = {
+        "method": method,
+        "params": {
+            key: value
+            if isinstance(value, (bool, int, float, str, type(None)))
+            else str(value)
+            for key, value in params.items()
+        },
+    }
+    for parent in num_nodes_by_dir:
+        _write_json_atomic(Path(parent) / SUMMARIZATION_PARAMS_FILE, provenance)
 
     pending = [
         task

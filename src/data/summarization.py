@@ -34,12 +34,7 @@ def _relabel(labels: torch.Tensor) -> torch.Tensor:
 
 
 def _relabel_rows(key: torch.Tensor) -> torch.Tensor:
-    """Contiguous ids for the distinct *rows* of a key matrix.
-
-    Keys are integer bucket ids in every caller but one: ``_calibrate_lsh``
-    passes raw float scores to get the bin-width-zero limit, which relies on
-    identical descriptors producing bit-identical projections.
-    """
+    """Contiguous ids for the distinct *rows* of a key matrix."""
     return torch.unique(key, dim=0, return_inverse=True)[1]
 
 
@@ -75,24 +70,6 @@ def _node_levels(data: Data) -> torch.Tensor:
     return torch.expm1(pos_enc.reshape(-1).double()).round().long()
 
 
-def _edge_polarity(data: Data) -> torch.Tensor:
-    """``[E, 2]`` one-hot inverter polarity, defaulting to all-normal.
-
-    The exact-compression track folds polarity into node features and drops
-    ``edge_attr`` entirely (see ``data.exact_graph``), so a descriptor built
-    from it must not assume the attribute exists.  Note this only keeps the
-    *clustering* callable on such a graph: ``summarize_graph`` would still
-    fail in ``apply_merge_map``, which needs ``edge_attr`` to build the
-    super-edge polarity counts.  The exact track has its own rewrite.
-    """
-    edge_attr = getattr(data, "edge_attr", None)
-    if edge_attr is not None:
-        return edge_attr
-    polarity = torch.zeros(data.edge_index.size(1), 2)
-    polarity[:, 0] = 1.0
-    return polarity
-
-
 def _undirected_simple(
     edge_index: torch.Tensor,
     num_nodes: int,
@@ -100,9 +77,9 @@ def _undirected_simple(
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Undirected simple edge list ``(i < j)`` carrying edge multiplicities.
 
-    The direction-blind methods (S3, S4) are defined on an undirected graph,
-    so this drops orientation, discards self-loops, and folds parallel edges
-    into one edge whose weight is how many originals it stands for.
+    ConvMatch (S3) is defined on an undirected graph, so this drops
+    orientation, discards self-loops, and folds parallel edges into one edge
+    whose weight is how many originals it stands for.
     """
     lower = torch.minimum(edge_index[0], edge_index[1])
     upper = torch.maximum(edge_index[0], edge_index[1])
@@ -124,7 +101,7 @@ def _mutual_best_pairs(
 ) -> torch.Tensor:
     """Select disjoint node pairs that are each other's cheapest partner.
 
-    Both agglomerative methods want "merge the cheapest non-overlapping
+    Agglomerative merging wants "merge the cheapest non-overlapping
     candidates".  Doing that exactly means a sequential scan over every sorted
     candidate, which is far too slow in Python at ~10^6 edges across ~10^5
     graphs.  Mutual-best matching is the standard parallel stand-in: it selects
@@ -199,10 +176,9 @@ def _greedy_disjoint_pairs(
         taken += matched.size(1)
 
         # Drop every candidate touching a node just matched.  The rest are
-        # reused with the costs they already have: exact for spectral, where
-        # a merge elsewhere changes no other node's degree or subspace row,
-        # and a close approximation for ConvMatch, where a survivor next to a
-        # merged node drifts by a few percent (rank correlation 0.99).
+        # reused with the costs they already have: a close approximation for
+        # ConvMatch, where a survivor next to a merged node drifts by a few
+        # percent (rank correlation 0.99).
         used = torch.zeros(num_nodes, dtype=torch.bool)
         used[matched.reshape(-1)] = True
         keep = ~(used[pairs[0]] | used[pairs[1]])
@@ -229,19 +205,6 @@ def _apply_pairs(label: torch.Tensor, matched: torch.Tensor, num_clusters: int):
 # =====================================================================
 # CLUSTERING METHODS
 # =====================================================================
-
-def identity_clustering(data: Data) -> torch.Tensor:
-    """Assign every node to its own super-node (zero compression).
-
-    A test fixture, not an experiment.  Its output compares equal to the
-    input on everything the production encoder reads, so training on it only
-    reproduces the unsummarized baseline — and it cannot serve as a control
-    for the staging path either, since a run that silently fell back to raw
-    graphs would produce exactly this.  Useful for telling a broken pipeline
-    apart from a broken method, and as the identity case of apply_merge_map.
-    """
-    return torch.arange(data.x.size(0), dtype=torch.long)
-
 
 def _initial_colors(data: Data, pe_aware: bool) -> torch.Tensor:
     """Colour nodes by their features, optionally including the encoding."""
@@ -600,6 +563,14 @@ def convmatch_coarsening(
     contributing their pre-merge values, which is part of what makes the cost
     O(1) per pair.  The larger approximation — an adjacent pair's shared edge
     — is corrected exactly.
+
+    One restriction is added that the paper does not have: candidate pairs
+    must share a node type, so a primary input or output never dissolves
+    into a super-node of a different role.  That is the boundary guarantee
+    every method in this study obeys, imposed here on the candidate set so
+    the convolution objective itself stays exactly the paper's.  It also
+    means the reachable compression is floored by the per-type node counts,
+    which on an AND-dominated AIG costs almost nothing.
     """
     if not 0.0 <= reduction_ratio < 1.0:
         raise ValueError(f"reduction_ratio must be in [0, 1), got {reduction_ratio}")
@@ -621,6 +592,12 @@ def convmatch_coarsening(
     candidates = torch.cat(
         [pairs, _projection_neighbour_pairs(embedding, num_probes, seed)], dim=1
     )
+
+    # Boundary guarantee: candidates never cross node types.  Filtering once
+    # up front is enough — merges then only ever join same-type clusters, so
+    # every remapped candidate stays same-type by induction.
+    types = data.x.argmax(dim=1)
+    candidates = candidates[:, types[candidates[0]] == types[candidates[1]]]
 
     label = torch.arange(num_nodes, dtype=torch.long)
     size = torch.ones(num_nodes)
@@ -829,382 +806,6 @@ def _convmatch_costs(
     )
 
 
-def spectral_coarsening(
-    data: Data,
-    reduction_ratio: float = 0.5,
-    variant: str = "local_variation",
-    num_eigenvectors: int = 4,
-    max_spectral_nodes: int = 5_000,
-) -> torch.Tensor:
-    """Cluster nodes by spectral local variation or heavy-edge matching.
-
-    The generic, logic-blind control: it contracts the edges whose contraction
-    disturbs the graph's *spectrum* least, knowing nothing about gates, levels
-    or polarity.  This is the coarsening counterpart of random edge dropout in
-    the sparsification family — principled, and principled about the wrong
-    thing.
-
-    ``variant="local_variation"`` scores an edge by Loukas' local variation,
-    the movement it forces on the subspace spanned by the *num_eigenvectors*
-    smallest non-trivial Laplacian eigenvectors, normalised by the volume of
-    the pair.  Because that costs an eigendecomposition per graph, graphs above
-    *max_spectral_nodes* fall back to ``variant="heavy_edge"``, which scores by
-    the classic ``w_ij / sqrt(d_i d_j)`` matching weight and needs no
-    eigensolver at all.  The same fallback catches an eigensolver that fails to
-    converge.  Which path a graph took is not recorded, so the cap should be
-    read as part of the method's definition rather than as an implementation
-    detail.
-
-    As for ConvMatch, *reduction_ratio* is a target rather than a guarantee:
-    a graph with too few contractible edges stops short of it.
-    """
-    if variant not in ("local_variation", "heavy_edge"):
-        raise ValueError(
-            f"variant must be 'local_variation' or 'heavy_edge', got {variant!r}"
-        )
-    if not 0.0 <= reduction_ratio < 1.0:
-        raise ValueError(f"reduction_ratio must be in [0, 1), got {reduction_ratio}")
-
-    num_nodes = data.x.size(0)
-    target = max(1, int(round(num_nodes * (1.0 - reduction_ratio))))
-    pairs, weight = _undirected_simple(data.edge_index, num_nodes)
-    if target >= num_nodes or pairs.size(1) == 0:
-        return torch.arange(num_nodes, dtype=torch.long)
-
-    subspace = None
-    if variant == "local_variation" and num_nodes <= max_spectral_nodes:
-        subspace = _laplacian_subspace(pairs, weight, num_nodes, num_eigenvectors)
-
-    label = torch.arange(num_nodes, dtype=torch.long)
-    size = torch.ones(num_nodes)
-    num_clusters = num_nodes
-
-    while num_clusters > target and pairs.size(1):
-        cost = _spectral_edge_costs(pairs, weight, subspace, num_clusters)
-        matched = _greedy_disjoint_pairs(
-            pairs, cost, num_clusters, num_clusters - target
-        )
-        if matched.size(1) == 0:
-            break
-
-        label, cluster_map, num_clusters = _apply_pairs(label, matched, num_clusters)
-        pairs, weight = _undirected_simple(cluster_map[pairs], num_clusters, weight)
-        new_size = _pool_sum(size, cluster_map, num_clusters)
-        if subspace is not None:
-            subspace = _pool_sum(
-                subspace * size.unsqueeze(1), cluster_map, num_clusters
-            ) / new_size.unsqueeze(1)
-        size = new_size
-
-    return label
-
-
-def _spectral_edge_costs(
-    pairs: torch.Tensor,
-    weight: torch.Tensor,
-    subspace: torch.Tensor | None,
-    num_clusters: int,
-) -> torch.Tensor:
-    """Score each edge for contraction; lower is better.
-
-    With a *subspace*, this is Loukas' edge-family local variation.  For a
-    two-node contraction set his general form ``||B' L_e B||_F`` collapses to
-    the movement the contraction forces on the preserved subspace scaled by
-    the volume of the pair — the edge weight cancels out of ``L_e``, and the
-    degrees **multiply**.  Without one it is his heavy-edge proximity,
-    ``w_ij`` over the heaviest edge incident to either endpoint, negated so
-    that lower stays better.
-    """
-    degree = torch.zeros(num_clusters).index_add_(
-        0, pairs.reshape(-1), weight.repeat(2)
-    )
-    if subspace is None:
-        heaviest = torch.zeros(num_clusters).scatter_reduce_(
-            0, pairs.reshape(-1), weight.repeat(2), reduce="amax", include_self=False
-        )
-        return -weight / torch.maximum(
-            heaviest[pairs[0]], heaviest[pairs[1]]
-        ).clamp_min(1e-12)
-
-    movement = (subspace[pairs[0]] - subspace[pairs[1]]).pow(2).sum(1)
-    return (degree[pairs[0]] + degree[pairs[1]]) * movement
-
-
-def _laplacian_subspace(
-    pairs: torch.Tensor,
-    weight: torch.Tensor,
-    num_nodes: int,
-    num_eigenvectors: int,
-) -> torch.Tensor | None:
-    """Loukas' preserved subspace, or None if the eigensolver is unavailable.
-
-    The subspace is the ``num_eigenvectors`` lowest Laplacian eigenvectors
-    scaled by the inverse square root of their eigenvalues, as the reference
-    implementation builds it — an eigenvector is worth preserving in inverse
-    proportion to its frequency, and the flat nullspace directions are given
-    unit weight rather than infinite.
-
-    Returning None is not an error path: it is how a graph too small or too
-    awkward for the eigensolver hands the caller back to heavy-edge scoring.
-    """
-    wanted = min(num_eigenvectors, num_nodes - 2)
-    if wanted < 1:
-        return None
-
-    import numpy as _np
-    from scipy.sparse import coo_matrix, diags, eye
-    from scipy.sparse.linalg import eigsh
-
-    rows = torch.cat([pairs[0], pairs[1]]).numpy()
-    cols = torch.cat([pairs[1], pairs[0]]).numpy()
-    values = weight.double().repeat(2).numpy()
-    adjacency = coo_matrix(
-        (values, (rows, cols)), shape=(num_nodes, num_nodes)
-    ).tocsr()
-    degrees = _np.asarray(adjacency.sum(axis=1)).ravel()
-    laplacian = diags(degrees) - adjacency
-
-    try:
-        # Reflecting the spectrum turns the smallest eigenvalues into the
-        # largest, which converges without the sparse factorization that
-        # shift-invert needs and that "SM" on a singular Laplacian does not
-        # reach reliably.  A fixed v0 keeps the result reproducible.
-        offset = 2.0 * float(degrees.max()) if degrees.size else 1.0
-        reflected = offset * eye(num_nodes, format="csc") - laplacian
-        eigenvalues, eigenvectors = eigsh(
-            reflected, k=wanted + 1, which="LM", tol=1e-5, v0=_np.ones(num_nodes)
-        )
-        eigenvalues = offset - eigenvalues
-    except Exception:
-        return None
-
-    order = _np.argsort(eigenvalues)
-    eigenvalues = eigenvalues[order]
-    # A flat direction carries no frequency information to trade off, so it
-    # is weighted 1 instead of blowing up as lambda^-1/2.
-    eigenvalues[eigenvalues < 1e-10] = 1.0
-    subspace = eigenvectors[:, order] * (eigenvalues ** -0.5)
-    return torch.from_numpy(_np.ascontiguousarray(subspace)).float()
-
-
-def lsh_coarsening(
-    data: Data,
-    bin_width: float = 2.0,
-    num_projections: int = 8,
-    seed: int = 42,
-    reduction_ratio: float | None = None,
-) -> torch.Tensor:
-    """Cluster nodes by locality-sensitive hashing (UGC-style).
-
-    The cheap tier: one pass to build a per-node descriptor, one matrix
-    multiply to hash it, and nodes landing in the same bucket merge.  No
-    iteration, no eigensolver, no neighbour search — linear in the size of the
-    graph, which makes it the method most obviously affordable across millions
-    of AIGs, and the naive control the principled methods have to beat.
-
-    The descriptor is the light AIG adaptation named in the design notes: node
-    type, level, the fan-in and fan-out counts split by inverter polarity, and
-    the type census of the immediate fanins and fanouts.  Columns are
-    standardised per graph, so *bin_width* is in standard deviations rather
-    than raw units.  Node type is an exact part of the bucket key rather than
-    a hashed feature, so primary inputs and outputs never dissolve into AND
-    super-nodes.
-
-    Hashing is p-stable (Euclidean) LSH.  Offsets are drawn independently of
-    *bin_width*, which makes doubling it produce a coarser partition — a true
-    refinement of the previous one — rather than merely a differently-shaped
-    one: compression responds to the knob monotonically, not just on average.
-    This deviates from the reference implementation, which draws the offset
-    from ``U(-r, r)`` and so loses that property; it is what makes the
-    calibration below a well-posed search rather than a random walk.
-
-    Two ways to set the compression:
-
-    *reduction_ratio* (the production setting) targets a fraction of nodes
-    removed, as S3 and S4 do, by searching for the *bin_width* that achieves
-    it on this graph.  This mirrors the reference implementation, which does
-    not treat the bin width as a parameter either: it bisects for it per
-    dataset (``BinWidthFinder.Find_Binwidth``) and ships the results as a
-    lookup table.  As for the other ratio-driven methods the ratio is a target,
-    not a guarantee — the node-type key alone bounds how far the graph can
-    collapse.
-
-    ``reduction_ratio=None`` uses *bin_width* directly, which is the method
-    exactly as published.  Worth keeping for the ablation, because a fixed bin
-    width does **not** fix the compression: the number of occupied buckets
-    saturates while the node count keeps growing, so retention falls sharply
-    with graph size — at ``bin_width=2.0`` it measures ~0.83 on an 88-node
-    graph and ~0.001 on a 366k-node one.  That scale dependence is inherent to
-    hashing, and is why the calibrated path is the one used in production.
-    """
-    if bin_width <= 0:
-        raise ValueError(f"bin_width must be > 0, got {bin_width}")
-    if num_projections < 1:
-        raise ValueError(f"num_projections must be >= 1, got {num_projections}")
-    if reduction_ratio is not None and not 0.0 <= reduction_ratio < 1.0:
-        raise ValueError(f"reduction_ratio must be in [0, 1), got {reduction_ratio}")
-
-    num_nodes = data.x.size(0)
-    features = _hash_descriptor(data)
-    features = (features - features.mean(dim=0)) / features.std(
-        dim=0, unbiased=False
-    ).clamp_min(1e-6)
-
-    generator = torch.Generator().manual_seed(seed)
-    projections = torch.randn(
-        features.size(1), num_projections, generator=generator, dtype=torch.float64
-    )
-    offsets = torch.rand(num_projections, generator=generator, dtype=torch.float64)
-
-    # The projection scores are the whole hash bar the final binning, so the
-    # calibration search below re-bins them rather than recomputing anything.
-    scores = features.double() @ projections + offsets
-    types = data.x[:, :4].argmax(dim=1).reshape(num_nodes, 1)
-
-    if reduction_ratio is None:
-        return _lsh_partition(scores, types, bin_width)
-
-    target = max(1, int(round(num_nodes * (1.0 - reduction_ratio))))
-    return _calibrate_lsh(scores, types, target)
-
-
-def _lsh_partition(
-    scores: torch.Tensor, types: torch.Tensor, bin_width: float
-) -> torch.Tensor:
-    """Bucket projection scores at one bin width, keyed by exact node type."""
-    codes = torch.floor(scores / bin_width).long()
-    return _relabel_rows(torch.cat([types, codes], dim=1))
-
-
-# Iteration caps for the bin-width search.  Bracketing walks in powers of two,
-# so 24 steps span bin widths from ~6e-8 to ~1.7e7 standard deviations, far
-# past the range any standardised descriptor occupies; the refinement steps
-# then halve the remaining interval on a log scale.  Both only bound a search
-# that normally exits early on the tolerance below.
-_LSH_MAX_BRACKET_STEPS = 24
-_LSH_MAX_REFINE_STEPS = 12
-# Stop once the cluster count is within this fraction of the target.  Matched
-# to the reference's own sweep precision (0.05 on the coarsening ratio).
-_LSH_RATIO_TOLERANCE = 0.05
-
-
-def _calibrate_lsh(
-    scores: torch.Tensor, types: torch.Tensor, target: int
-) -> torch.Tensor:
-    """Search for the bin width whose partition is closest to *target* clusters.
-
-    Cluster count is non-increasing in bin width — that is the monotonicity the
-    offset convention buys (see ``lsh_coarsening``) — so bracketing by powers of
-    two and then bisecting on a log scale converges, which the reference's
-    ``bw *= 0.5`` / ``bw *= 1.5`` walk does not reliably do.
-
-    The reachable cluster counts are bounded at **both** ends, so a target
-    outside the band is met as closely as the band allows rather than chased:
-
-    *Ceiling on retention* (floor on compression).  Nodes with identical
-    descriptors project to identical scores, so no bin width separates them:
-    the partition by distinct ``(type, score)`` row is the finest S5 can ever
-    produce.  AIG descriptors are degenerate enough that this bites — measured
-    at 0.22-0.37 retention on synthetic AIGs of 5k-200k nodes, and as low as
-    0.002 on a structurally regular one, i.e. S5 often cannot compress *less*
-    than the graph's own descriptor degeneracy whatever the target says.  It is
-    known in closed form, so it is checked before searching; when it binds — and
-    at ``reduction_ratio=0.5`` on an AIG it usually does — the search is skipped
-    entirely and no bin width is ever evaluated.
-
-    **This bound is not liftable by tuning.** It is the distinct-descriptor
-    count, so raising ``num_projections`` does not move it (measured identical
-    at 8, 64 and 512 projections); only a more discriminating descriptor would.
-    A caller that needs a specific retention out of S5 cannot get it from this
-    function on a degenerate graph, and must report achieved against requested.
-
-    *Floor on retention* (ceiling on compression).  As the bin width grows every
-    score collapses to the sign of its projection, so the partition saturates at
-    the distinct sign patterns — at most ``2^num_projections`` per node type,
-    **independent of graph size**.  With the default 8 projections that is a few
-    hundred clusters, which is why very aggressive targets saturate on a large
-    graph.  Raising *num_projections* is what lifts this bound.
-
-    Between the two the search brackets and bisects.  Callers get "as close as
-    this graph allows" either way, matching the target-not-guarantee contract
-    of S3 and S4.
-    """
-    # The bin_width -> 0 limit: distinct descriptors, split by node type.
-    finest = _relabel_rows(torch.cat([types.double(), scores], dim=1))
-    if int(finest.max()) + 1 <= target:
-        return finest
-
-    best = _lsh_partition(scores, types, 1.0)
-    best_count = int(best.max()) + 1
-    if best_count == target:
-        return best
-
-    # Bracket the target: grow the width to merge more, shrink it to merge
-    # less.  Only the side we need is walked, and the walk stops as soon as the
-    # count crosses the target.
-    low, high = 1.0, 1.0
-    coarsening = best_count > target
-    for _ in range(_LSH_MAX_BRACKET_STEPS):
-        width = high * 2.0 if coarsening else low * 0.5
-        cluster = _lsh_partition(scores, types, width)
-        count = int(cluster.max()) + 1
-        if abs(count - target) < abs(best_count - target):
-            best, best_count = cluster, count
-        if coarsening:
-            high = width
-        else:
-            low = width
-        if (count <= target) if coarsening else (count >= target):
-            break
-    else:
-        # Never crossed: the target lies outside what this graph can produce,
-        # and `best` already holds the closest end of the range.
-        return best
-
-    for _ in range(_LSH_MAX_REFINE_STEPS):
-        if abs(best_count - target) <= _LSH_RATIO_TOLERANCE * target:
-            break
-        # Geometric midpoint: the count responds to the width multiplicatively,
-        # so halving the log interval is what actually halves the search space.
-        width = (low * high) ** 0.5
-        cluster = _lsh_partition(scores, types, width)
-        count = int(cluster.max()) + 1
-        if abs(count - target) < abs(best_count - target):
-            best, best_count = cluster, count
-        if count > target:
-            low = width
-        else:
-            high = width
-
-    return best
-
-
-def _hash_descriptor(data: Data) -> torch.Tensor:
-    """Per-node feature + connectivity descriptor hashed by ``lsh_coarsening``."""
-    num_nodes = data.x.size(0)
-    source, destination = data.edge_index
-    polarity = _edge_polarity(data)
-
-    fanin_polarity = torch.zeros(num_nodes, 2).index_add_(0, destination, polarity)
-    fanout_polarity = torch.zeros(num_nodes, 2).index_add_(0, source, polarity)
-    fanin_types = torch.zeros(num_nodes, data.x.size(1)).index_add_(
-        0, destination, data.x[source]
-    )
-    fanout_types = torch.zeros(num_nodes, data.x.size(1)).index_add_(
-        0, source, data.x[destination]
-    )
-
-    return torch.cat(
-        [
-            data.x,
-            _node_levels(data).to(torch.float32).reshape(-1, 1),
-            fanin_polarity,
-            fanout_polarity,
-            fanin_types,
-            fanout_types,
-        ],
-        dim=1,
-    )
 
 
 # A method maps a graph to a cluster vector ``LongTensor[num_nodes]``
@@ -1212,13 +813,23 @@ def _hash_descriptor(data: Data) -> torch.Tensor:
 # summarization method means adding an entry here; nothing downstream of
 # apply_merge_map changes.
 SUMMARIZATION_REGISTRY: dict[str, Callable[..., torch.Tensor]] = {
-    "identity": identity_clustering,
     "cone": cone_coarsening,
     "wl": color_refinement,
     "convmatch": convmatch_coarsening,
-    "spectral": spectral_coarsening,
-    "lsh": lsh_coarsening,
+    "wl_exact": color_refinement,
 }
+
+# Methods whose output goes through the *exact* rewrite instead of the lossy
+# ``apply_merge_map``: the graph is first converted to the exact schema
+# (polarity folded into x, edge_attr dropped) and the quotient then puts edge
+# multiplicity on edge_weight rather than edge_attr.  See data/exact_graph.py
+# for why that is the only representation a trained GNN can reproduce exactly,
+# and models/base_model_exact.py for the model that consumes it.
+#
+# ``wl_exact`` runs the same clustering function as ``wl``; the two differ
+# only in the rewrite and in the parameters config gives them (``wl_exact``
+# must be pe_aware=False, since its model has no positional encoding).
+EXACT_METHODS = frozenset({"wl_exact"})
 
 
 # =====================================================================
@@ -1349,24 +960,40 @@ def apply_merge_map(data: Data, cluster: torch.Tensor, num_clusters: int) -> Dat
 
 
 def summarize_graph(data: Data, method: str, **params) -> Data:
-    """Run a registered summarization method and rewrite the graph."""
+    """Run a registered summarization method and rewrite the graph.
+
+    Methods in ``EXACT_METHODS`` are converted to the exact schema first and
+    then quotiented by ``apply_exact_merge_map``; everything else takes the
+    lossy ``apply_merge_map`` path.  Clustering runs on the *converted* graph
+    for the exact track, so colour refinement seeds on the folded features
+    (type + inverted-fanin count) that the exact model actually reads.
+    """
     if method not in SUMMARIZATION_REGISTRY:
         raise ValueError(
             f"Unknown summarization method: {method!r}. "
             f"Valid: {sorted(SUMMARIZATION_REGISTRY)}"
         )
+
+    if method in EXACT_METHODS:
+        # Imported here, not at module scope: exact_graph imports
+        # _validate_and_bincount from this module, so a top-level import
+        # either way round is circular.
+        from data.exact_graph import apply_exact_merge_map, fold_inversions_into_x
+
+        data = fold_inversions_into_x(data)
+        cluster = SUMMARIZATION_REGISTRY[method](data, **params).reshape(-1).long()
+        return apply_exact_merge_map(data, cluster, int(cluster.max()) + 1)
+
     cluster = SUMMARIZATION_REGISTRY[method](data, **params).reshape(-1).long()
     return apply_merge_map(data, cluster, int(cluster.max()) + 1)
 
 
 __all__ = [
+    "EXACT_METHODS",
     "SUMMARIZATION_REGISTRY",
     "apply_merge_map",
     "color_refinement",
     "cone_coarsening",
     "convmatch_coarsening",
-    "identity_clustering",
-    "lsh_coarsening",
-    "spectral_coarsening",
     "summarize_graph",
 ]

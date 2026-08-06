@@ -5,9 +5,8 @@ Tests cover:
   schema (level) and the cached schema (pos_enc)
 - Every registered method: contiguous cluster ids, acceptance by
   apply_merge_map, determinism, and rejection of invalid parameters
-- Per-method behaviour: cone chain/width merging and DAG preservation, LSH
-  bucket monotonicity and type purity, spectral ratio targeting and
-  eigensolver fallback, ConvMatch twin merging and polarity blindness
+- Per-method behaviour: cone chain/width merging and DAG preservation,
+  ConvMatch twin merging and polarity blindness
 - Feature/edge merging: type counts, summed polarity counts on coalesced
   super-edges, level minimum, internal (intra-cluster) edge counting
 - Cluster-vector validation: wrong length, out-of-range ids, unused ids
@@ -29,22 +28,22 @@ from torch_geometric.data import Batch, Data
 
 from data.sparsification import _register_pyg_safe_globals
 from data.summarization import (
+    EXACT_METHODS,
     SUMMARIZATION_REGISTRY,
-    _hash_descriptor,
     apply_merge_map,
     color_refinement,
     cone_coarsening,
     convmatch_coarsening,
-    identity_clustering,
-    lsh_coarsening,
-    spectral_coarsening,
     summarize_graph,
 )
 from data.summarize_graphs import (
     _NUM_NODES_GLOBAL,
+    SUMMARIZATION_PARAMS_FILE,
     _shard_index_name,
+    assert_exact_depth_supports_model,
     build_tasks,
     merge_shard_indexes,
+    read_summarization_params,
     summarize_from_manifests,
 )
 
@@ -345,17 +344,6 @@ class TestPurityAndAttrs:
 
 
 class TestRegistry:
-    def test_identity_clustering(self, aig_graph: Data) -> None:
-        cluster = identity_clustering(aig_graph)
-        assert torch.equal(cluster, torch.arange(N_NODES))
-        assert cluster.dtype == torch.long
-
-    def test_registry_identity_roundtrip(self, aig_graph: Data) -> None:
-        out = summarize_graph(aig_graph, "identity")
-        assert torch.equal(out.x, aig_graph.x)
-        assert _edges(out) == _edges(aig_graph)
-        assert int(out.internal_edges) == 0
-
     def test_unknown_method_raises(self, aig_graph: Data) -> None:
         with pytest.raises(ValueError, match="Unknown summarization method"):
             summarize_graph(aig_graph, "not_a_method")
@@ -364,6 +352,51 @@ class TestRegistry:
         out = summarize_graph(aig_graph, "wl", depth=0, pe_aware=False)
         # depth=0, ignoring the encoding, groups purely by node type.
         assert out.num_nodes == 4
+
+
+class TestExactDispatch:
+    """summarize_graph routes EXACT_METHODS through the other rewrite.
+
+    This is the seam the whole exact track hangs off: the clustering
+    functions are shared with the lossy methods, so if the dispatch stops
+    happening, `wl_exact` silently becomes a third approximate method and
+    every downstream exactness claim attaches to nothing.
+    """
+
+    def test_wl_exact_produces_the_exact_schema(self, aig_graph: Data) -> None:
+        out = summarize_graph(aig_graph, "wl_exact", depth=1, pe_aware=False)
+
+        # Polarity folded into x, so one extra column and no edge_attr...
+        assert out.x.size(1) == aig_graph.x.size(1) + 1
+        assert getattr(out, "edge_attr", None) is None
+        # ...multiplicity on edge_weight, and sizes for the pooling.
+        assert out.edge_weight is not None
+        assert int(out.node_size.sum()) == N_NODES
+        # x is the class representative, not member type counts: a merged
+        # PI class still reads as one PI.
+        assert float(out.x[:, :4].max()) == 1.0
+
+    def test_wl_stays_on_the_lossy_rewrite(self, aig_graph: Data) -> None:
+        out = summarize_graph(aig_graph, "wl", depth=1, pe_aware=False)
+
+        assert out.edge_attr is not None
+        assert getattr(out, "node_size", None) is None
+        assert getattr(out, "internal_edges", None) is not None
+
+    def test_exact_methods_are_registered(self) -> None:
+        assert EXACT_METHODS <= set(SUMMARIZATION_REGISTRY)
+
+    def test_exact_rewrite_needs_no_level(self, aig_graph: Data) -> None:
+        # apply_merge_map requires level/pos_enc to derive the merged
+        # encoding; the exact rewrite deliberately does not, because its
+        # model has no positional encoding.  Not an inconsistency to
+        # harmonize -- assert the difference so nobody "fixes" it.
+        stripped = aig_graph.clone()
+        del stripped.level
+
+        summarize_graph(stripped, "wl_exact", depth=1, pe_aware=False)
+        with pytest.raises(ValueError, match="neither 'level' nor 'pos_enc'"):
+            summarize_graph(stripped, "wl", depth=1, pe_aware=False)
 
 
 # =====================================================================
@@ -640,11 +673,23 @@ class TestEveryMethod:
         # contiguous vector is the method's job, not the rewrite's.
         assert set(cluster.tolist()) == set(range(len(cluster.unique())))
 
-    def test_round_trips_through_apply_merge_map(
+    def test_round_trips_through_its_rewrite(
         self, method: str, aig_graph: Data
     ) -> None:
         out = summarize_graph(aig_graph, method)
         assert out.num_nodes <= N_NODES
+
+        if method in EXACT_METHODS:
+            # Different rewrite, deliberately different schema: polarity
+            # folded into an extra x column, multiplicity on edge_weight,
+            # and member counts on node_size instead of summed into x.  See
+            # TestExactDispatch for the full contract.
+            assert out.x.shape == (out.num_nodes, 5)
+            assert getattr(out, "edge_attr", None) is None
+            assert out.edge_weight.shape == (out.edge_index.size(1),)
+            assert int(out.node_size.sum()) == N_NODES
+            return
+
         assert out.x.shape == (out.num_nodes, 4)
         assert out.edge_attr.shape == (out.edge_index.size(1), 2)
         # Members are conserved: a merge moves counts around, never adds them.
@@ -765,53 +810,6 @@ def banded_aig() -> Data:
     )
 
 
-@pytest.fixture
-def wide_aig() -> Data:
-    """A ~440-node AIG with graded structure, for the hashing properties.
-
-    The LSH guarantees are asymptotic in the number of distinct descriptors:
-    on a ten-node fixture every node lands in its own bucket whatever the
-    parameters, so a violation cannot show up.  Gates here vary in level, in
-    fanout and in polarity mix, which is what makes the buckets contend.
-    """
-    types: list[int] = [1] * 20
-    edges: list[tuple[int, int]] = []
-    inverted: set[int] = set()
-    frontier = list(range(20))
-    for depth in range(1, 15):
-        layer = []
-        for offset in range(len(frontier) - 1):
-            node = len(types)
-            types.append(2)
-            for source in (frontier[offset], frontier[(offset + depth) % len(frontier)]):
-                if (source + node) % 3 == 0:
-                    inverted.add(len(edges))
-                edges.append((source, node))
-            layer.append(node)
-        frontier = layer[: max(2, len(layer) - 2)]
-        if len(frontier) < 2:
-            break
-    for source in frontier:
-        node = len(types)
-        types.append(3)
-        edges.append((source, node))
-    return _build(types=types, edges=edges, inverted=inverted)
-
-
-@pytest.fixture
-def ladder_aig() -> Data:
-    """A cascade of five ANDs, each one level deeper than the last.
-
-    Levels and fanout counts vary from gate to gate, which is what gives the
-    hashed descriptors of S5 something to spread out over.
-    """
-    return _build(
-        types=[1, 1, 2, 2, 2, 2, 2, 3],
-        edges=[
-            (0, 2), (1, 2), (2, 3), (0, 3), (3, 4), (1, 4),
-            (4, 5), (0, 5), (5, 6), (1, 6), (6, 7),
-        ],
-    )
 
 
 class TestConeCoarsening:
@@ -910,293 +908,6 @@ class TestConeCoarsening:
 
 
 # =====================================================================
-# S5 — LSH / UGC HASH COARSENING
-# =====================================================================
-
-
-class TestLshCoarsening:
-    def test_doubling_bin_width_never_increases_clusters(
-        self, wide_aig: Data
-    ) -> None:
-        # Offsets are drawn independently of bin_width, so each doubling
-        # produces a coarser bucketing rather than a differently shaped one.
-        # This is a guarantee, not a trend, and is what makes the parameter
-        # usable as a compression knob.  It needs a graph big enough for
-        # buckets to contend: on a ten-node fixture the property cannot be
-        # violated even by an implementation that does not have it.
-        widths = (0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0)
-        partitions = [lsh_coarsening(wide_aig, bin_width=w) for w in widths]
-
-        # Non-increasing counts alone would not show refinement — two
-        # partitions can have the same size and cut the graph differently.
-        # Assert the real relation: every group of the finer partition lies
-        # wholly inside one group of the coarser.
-        for finer, coarser in zip(partitions, partitions[1:], strict=False):
-            for group in finer.unique():
-                assert len(coarser[finer == group].unique()) == 1
-
-        counts = [len(p.unique()) for p in partitions]
-        assert counts[0] > counts[-1], "the knob did nothing over this range"
-
-    @pytest.mark.parametrize("bin_width", [0.25, 2.0, 1e6])
-    def test_node_types_never_merge(self, wide_aig: Data, bin_width: float) -> None:
-        # Node type is an exact part of the bucket key, so a primary input can
-        # never dissolve into an AND super-node however coarse the hashing.
-        # Needs a graph where the hashed columns alone *would* collide across
-        # types; on a small one they never do, and the test proves nothing.
-        cluster = lsh_coarsening(wide_aig, bin_width=bin_width)
-        types = wide_aig.x.argmax(dim=1)
-        for group in cluster.unique():
-            assert len(types[cluster == group].unique()) == 1
-
-    def test_structurally_identical_nodes_collide(
-        self, reconvergent_aig: Data
-    ) -> None:
-        # PIs 0-3 have identical descriptors: same level, no fanin, one
-        # regular fanout into an AND.
-        cluster = lsh_coarsening(reconvergent_aig)
-        assert len(cluster[[0, 1, 2, 3]].unique()) == 1
-
-    @pytest.mark.parametrize(
-        ("kwargs", "match"),
-        [
-            ({"bin_width": 0.0}, "bin_width must be"),
-            ({"num_projections": 0}, "num_projections must be"),
-            ({"reduction_ratio": 1.0}, "reduction_ratio must be"),
-            ({"reduction_ratio": -0.1}, "reduction_ratio must be"),
-        ],
-    )
-    def test_invalid_params_raise(
-        self, aig_graph: Data, kwargs: dict, match: str
-    ) -> None:
-        with pytest.raises(ValueError, match=match):
-            lsh_coarsening(aig_graph, **kwargs)
-
-    # These three ratios are the ones that actually reach the bisection on this
-    # fixture (4, 7 and 11 bin-width evaluations respectively).  Ratios outside
-    # them are served by the closed-form ceiling or by the saturation floor
-    # without searching, so parametrizing on those would test nothing —
-    # the two tests below cover those paths deliberately instead.
-    @pytest.mark.parametrize("ratio", [0.55, 0.6, 0.65])
-    def test_reduction_ratio_hits_reachable_targets(
-        self, wide_aig: Data, ratio: float
-    ) -> None:
-        num_nodes = wide_aig.x.size(0)
-        target = round(num_nodes * (1.0 - ratio))
-        achieved = len(lsh_coarsening(wide_aig, reduction_ratio=ratio).unique())
-        # Tighter than the search's own 5% stopping tolerance, so a loosened
-        # tolerance or a deleted refinement loop fails here rather than passing
-        # on slack.
-        assert abs(achieved - target) <= 0.06 * target, (
-            f"asked for {target} clusters, got {achieved}"
-        )
-
-    def test_bisection_beats_the_bracket_walk_alone(self, wide_aig: Data) -> None:
-        # The bracketing walk moves in powers of two, so it alone can only ever
-        # land on a doubling boundary.  This pins that the refinement loop runs
-        # and improves on it: without bisection the 0.65 target lands >=4
-        # clusters out, with it the error is 1.
-        num_nodes = wide_aig.x.size(0)
-        target = round(num_nodes * (1.0 - 0.65))
-        achieved = len(lsh_coarsening(wide_aig, reduction_ratio=0.65).unique())
-        assert abs(achieved - target) <= 1
-
-        bracket_only = min(
-            (
-                len(lsh_coarsening(wide_aig, bin_width=2.0**e).unique())
-                for e in range(-6, 14)
-            ),
-            key=lambda count: abs(count - target),
-        )
-        assert abs(bracket_only - target) > abs(achieved - target), (
-            "a power-of-two bin width already hits the target; the fixture "
-            "cannot show that refinement does anything"
-        )
-
-    def test_ratio_cannot_beat_the_descriptor_ceiling(self, wide_aig: Data) -> None:
-        # Nodes with identical descriptors project to identical scores, so no
-        # bin width separates them.  Asking for less compression than that
-        # ceiling allows must return the finest partition rather than loop or
-        # silently return something coarser.
-        ceiling = len(torch.unique(_hash_descriptor(wide_aig), dim=0))
-        assert ceiling < wide_aig.x.size(0), "fixture cannot exercise the ceiling"
-        assert len(lsh_coarsening(wide_aig, reduction_ratio=0.0).unique()) == ceiling
-
-        # And it is genuinely a ceiling: nothing reaches more clusters.
-        for ratio in (0.0, 0.01, 0.05):
-            achieved = len(lsh_coarsening(wide_aig, reduction_ratio=ratio).unique())
-            assert achieved <= ceiling
-
-    def test_ratio_saturates_at_the_projection_floor(self, wide_aig: Data) -> None:
-        # At large bin widths every score collapses to the sign of its
-        # projection, so the partition saturates at the distinct sign patterns
-        # and further compression is unavailable at any bin width.  The search
-        # must return that floor instead of spinning through its iteration cap
-        # or reporting success.
-        num_nodes = wide_aig.x.size(0)
-        floors = {
-            len(lsh_coarsening(wide_aig, reduction_ratio=r).unique())
-            for r in (0.9, 0.95, 0.99)
-        }
-        assert len(floors) == 1, f"expected one saturated count, got {floors}"
-
-        floor = floors.pop()
-        assert floor > round(num_nodes * (1.0 - 0.9)), (
-            "fixture does not actually saturate; the test proves nothing"
-        )
-        # Bounded by distinct sign patterns per node type, not by graph size.
-        num_types = len(wide_aig.x.argmax(dim=1).unique())
-        assert floor <= 2**8 * num_types
-
-    def test_calibration_still_never_merges_node_types(self, wide_aig: Data) -> None:
-        # C4 has to survive the search, not just the fixed-width path.
-        cluster = lsh_coarsening(wide_aig, reduction_ratio=0.7)
-        types = wide_aig.x.argmax(dim=1)
-        for group in cluster.unique():
-            assert len(types[cluster == group].unique()) == 1
-
-    @pytest.mark.parametrize(("bin_width", "expected"), [(1.5, 44), (8.0, 30)])
-    def test_fixed_bin_width_path_is_unchanged(
-        self, wide_aig: Data, bin_width: float, expected: int
-    ) -> None:
-        # The fixed-bin_width mode is the as-published ablation, and adding
-        # calibration must not perturb it.  Golden counts rather than a
-        # self-comparison: `reduction_ratio=None` is the signature default, so
-        # asserting the two calls agree cannot fail under any implementation.
-        # These pin the offset convention and the standardisation together —
-        # changing either moves them.
-        assert len(lsh_coarsening(wide_aig, bin_width=bin_width).unique()) == expected
-
-    def test_calibration_is_deterministic(self, wide_aig: Data) -> None:
-        assert torch.equal(
-            lsh_coarsening(wide_aig, reduction_ratio=0.6),
-            lsh_coarsening(wide_aig, reduction_ratio=0.6),
-        )
-
-    def test_calibrated_output_survives_the_merge_map(self, wide_aig: Data) -> None:
-        # The registry-wide contract tests call each method with no kwargs, so
-        # they exercise the fixed-width path only — leaving the path production
-        # actually runs unverified.  apply_merge_map rejects gaps rather than
-        # relabelling, so contiguity is a hard requirement, not a nicety.
-        import config
-
-        cluster = lsh_coarsening(wide_aig, **config.SUMMARIZATION_PARAMS["lsh"])
-        num_clusters = int(cluster.max()) + 1
-        assert torch.equal(cluster.unique(), torch.arange(num_clusters))
-
-        merged = apply_merge_map(wide_aig, cluster, num_clusters)
-        assert merged.num_nodes == num_clusters
-        assert int(merged.x.sum()) == wide_aig.x.size(0)
-
-
-# =====================================================================
-# S4 — SPECTRAL / LOCAL VARIATION
-# =====================================================================
-
-
-class TestSpectralCoarsening:
-    @pytest.mark.parametrize("ratio", [0.2, 0.5, 0.8])
-    def test_reaches_the_target_ratio(self, aig_graph: Data, ratio: float) -> None:
-        cluster = spectral_coarsening(aig_graph, reduction_ratio=ratio)
-        assert len(cluster.unique()) == round(N_NODES * (1.0 - ratio))
-
-    def test_zero_ratio_is_identity(self, aig_graph: Data) -> None:
-        cluster = spectral_coarsening(aig_graph, reduction_ratio=0.0)
-        assert torch.equal(cluster, torch.arange(N_NODES))
-
-    def test_node_cap_falls_back_to_heavy_edge(self, aig_graph: Data) -> None:
-        # Above the cap the eigensolver is skipped entirely.  The fallback is
-        # part of the method's definition, so it has to be the same partition
-        # heavy_edge would have produced, not an approximation of the spectral
-        # one.
-        capped = spectral_coarsening(aig_graph, max_spectral_nodes=0)
-        heavy = spectral_coarsening(aig_graph, variant="heavy_edge")
-        assert torch.equal(capped, heavy)
-
-    def test_the_two_variants_pick_different_edges(self, aig_graph: Data) -> None:
-        # Guards against the eigensolver silently failing and every graph
-        # quietly taking the fallback path: heavy-edge scores by degree alone,
-        # local variation by how far contraction moves the low Laplacian
-        # eigenvectors, and on this graph they disagree.
-        spectral = spectral_coarsening(aig_graph, reduction_ratio=0.3)
-        heavy = spectral_coarsening(
-            aig_graph, reduction_ratio=0.3, variant="heavy_edge"
-        )
-        assert not torch.equal(spectral, heavy)
-
-    def test_edgeless_graph_is_identity(self, aig_graph: Data) -> None:
-        aig_graph.edge_index = torch.empty((2, 0), dtype=torch.long)
-        aig_graph.edge_attr = torch.empty((0, 2), dtype=torch.float32)
-        cluster = spectral_coarsening(aig_graph, reduction_ratio=0.9)
-        assert torch.equal(cluster, torch.arange(N_NODES))
-
-    def test_cost_ranks_edges_as_the_reference_implementation_does(
-        self, aig_graph: Data
-    ) -> None:
-        """Differential test against Loukas' ``contract_variation_edges``.
-
-        That reference scores a candidate edge as
-        ``||B^T L_e B||_F`` with ``B = (I - 11^T/2) A[edge]`` and
-        ``L_e = [[2d_i - w, -w], [-w, 2d_j - w]]``.  Written out, the edge
-        weight cancels and what is left is the movement of the preserved
-        subspace scaled by the volume of the pair — so the degrees multiply
-        rather than divide, which is exactly the kind of inversion that still
-        produces a plausible-looking coarsening.  Costs are compared as a
-        ranking, since only the ordering drives the matching.
-        """
-        import numpy as np
-
-        from data.summarization import (
-            _laplacian_subspace,
-            _spectral_edge_costs,
-            _undirected_simple,
-        )
-
-        num_nodes = N_NODES
-        pairs, weight = _undirected_simple(aig_graph.edge_index, num_nodes)
-        subspace = _laplacian_subspace(pairs, weight, num_nodes, 4)
-        assert subspace is not None, "eigensolver did not run on this graph"
-
-        degree = torch.zeros(num_nodes).index_add_(
-            0, pairs.reshape(-1), weight.repeat(2)
-        )
-        projector = np.eye(2) - np.ones((2, 2)) / 2
-        basis = subspace.double().numpy()
-        reference = []
-        for edge in range(pairs.size(1)):
-            i, j = int(pairs[0, edge]), int(pairs[1, edge])
-            edge_weight = float(weight[edge])
-            diagonal = 2 * np.array([float(degree[i]), float(degree[j])]) - edge_weight
-            local = np.array(
-                [[diagonal[0], -edge_weight], [-edge_weight, diagonal[1]]]
-            )
-            projected = projector @ basis[[i, j], :]
-            reference.append(np.linalg.norm(projected.T @ local @ projected))
-
-        actual = _spectral_edge_costs(pairs, weight, subspace, num_nodes)
-
-        ratio = actual / torch.tensor(reference, dtype=actual.dtype)
-        assert torch.allclose(ratio, ratio[0].expand_as(ratio), atol=1e-4), (
-            "cost is not a constant multiple of the reference, so it ranks "
-            f"edges differently: ratios {ratio.tolist()}"
-        )
-
-    @pytest.mark.parametrize(
-        ("kwargs", "match"),
-        [
-            ({"variant": "kron"}, "variant must be"),
-            ({"reduction_ratio": 1.0}, "reduction_ratio must be"),
-            ({"reduction_ratio": -0.1}, "reduction_ratio must be"),
-        ],
-    )
-    def test_invalid_params_raise(
-        self, aig_graph: Data, kwargs: dict, match: str
-    ) -> None:
-        with pytest.raises(ValueError, match=match):
-            spectral_coarsening(aig_graph, **kwargs)
-
-
-# =====================================================================
 # S3 — CONVOLUTION MATCHING
 # =====================================================================
 
@@ -1228,12 +939,24 @@ def twin_aig() -> Data:
 class TestConvMatchCoarsening:
     @pytest.mark.parametrize("ratio", [0.2, 0.5, 0.8])
     def test_reaches_the_target_ratio(self, aig_graph: Data, ratio: float) -> None:
+        # The type filter floors reachable compression at one cluster per
+        # node type (4 on this fixture), so the deepest target saturates at
+        # the floor instead of being met exactly.
         cluster = convmatch_coarsening(aig_graph, reduction_ratio=ratio)
-        assert len(cluster.unique()) == round(N_NODES * (1.0 - ratio))
+        assert len(cluster.unique()) == max(round(N_NODES * (1.0 - ratio)), 4)
 
     def test_zero_ratio_is_identity(self, aig_graph: Data) -> None:
         cluster = convmatch_coarsening(aig_graph, reduction_ratio=0.0)
         assert torch.equal(cluster, torch.arange(N_NODES))
+
+    def test_node_types_never_merge(self, aig_graph: Data) -> None:
+        # The boundary guarantee lives in the candidate filter, not the
+        # cost, so it must hold even at a target the objective could only
+        # reach by dissolving PIs into their AND fanouts.
+        cluster = convmatch_coarsening(aig_graph, reduction_ratio=0.8)
+        types = aig_graph.x.argmax(dim=1)
+        for group in cluster.unique():
+            assert len(types[cluster == group].unique()) == 1
 
     def test_identical_neighbourhoods_are_the_cheaper_merge(
         self, twin_aig: Data
@@ -1516,6 +1239,17 @@ def manifest_workspace(tmp_path: Path, aig_graph: Data) -> tuple[Path, Path]:
     return meta_dir, tmp_path / "out"
 
 
+# These tests exercise the driver — layout, indexing, resume, sharding, error
+# isolation — not what any method computes, so they run whichever one is
+# cheapest and most predictable.  wl at depth 0 ignores the encoding and groups
+# purely by node type, collapsing the fixture to one super-node per type; the
+# count is what the index and stats are asserted against.
+_DRIVER_METHOD = "wl"
+_DRIVER_PARAMS = {"depth": 0, "pe_aware": False}
+_DRIVER_STATS = f"_summary_stats_{_DRIVER_METHOD}_shard000.json"
+N_DRIVER_NODES = 4
+
+
 class TestDriver:
     def test_build_tasks_mirrors_layout(
         self, manifest_workspace: tuple[Path, Path]
@@ -1542,7 +1276,9 @@ class TestDriver:
         self, manifest_workspace: tuple[Path, Path]
     ) -> None:
         meta_dir, out_root = manifest_workspace
-        summarize_from_manifests([meta_dir], "identity", out_root)
+        summarize_from_manifests(
+            [meta_dir], _DRIVER_METHOD, out_root, params=_DRIVER_PARAMS
+        )
 
         out_dir = out_root / "shared_tier0_cache"
         assert sorted(p.name for p in out_dir.glob("*.pt")) == [
@@ -1553,20 +1289,22 @@ class TestDriver:
 
         # Keyed by source graph path, holding post-merge counts.
         num_nodes = json.loads((out_dir / _shard_index_name(0)).read_text())
-        assert num_nodes == {f"/raw/tier0/graph{i}.pt": N_NODES for i in range(3)}
+        assert num_nodes == {
+            f"/raw/tier0/graph{i}.pt": N_DRIVER_NODES for i in range(3)
+        }
 
-        stats = json.loads(
-            (out_root / "_summary_stats_identity_shard000.json").read_text()
-        )
+        stats = json.loads((out_root / _DRIVER_STATS).read_text())
         assert stats["graphs"] == 3
         assert stats["errors"] == 0
-        assert stats["node_retention"] == 1.0
+        assert stats["node_retention"] == N_DRIVER_NODES / N_NODES
 
     def test_driver_output_is_a_summarized_graph(
         self, manifest_workspace: tuple[Path, Path]
     ) -> None:
         meta_dir, out_root = manifest_workspace
-        summarize_from_manifests([meta_dir], "identity", out_root)
+        summarize_from_manifests(
+            [meta_dir], _DRIVER_METHOD, out_root, params=_DRIVER_PARAMS
+        )
 
         _register_pyg_safe_globals()
         written = torch.load(
@@ -1574,20 +1312,27 @@ class TestDriver:
             map_location="cpu",
             weights_only=True,
         )
-        # Not merely a copy of the input: the rewrite adds internal_edges
-        # and drops nothing the dataset needs.
+        # Not merely a copy of the input: the rewrite merges, records the
+        # edges that became internal, and drops nothing the dataset needs.
         assert "num_nodes" in written.keys()
-        assert int(written.internal_edges) == 0
-        assert written.x.shape == (N_NODES, 4)
+        assert written.x.shape == (N_DRIVER_NODES, 4)
+        # Members are conserved by the merge, so the type counts still sum to
+        # the original node count.
+        assert int(written.x.sum()) == N_NODES
+        assert int(written.internal_edges) == 3
 
     def test_driver_resumes(
         self, manifest_workspace: tuple[Path, Path], capsys: pytest.CaptureFixture
     ) -> None:
         meta_dir, out_root = manifest_workspace
-        summarize_from_manifests([meta_dir], "identity", out_root)
+        summarize_from_manifests(
+            [meta_dir], _DRIVER_METHOD, out_root, params=_DRIVER_PARAMS
+        )
         capsys.readouterr()
 
-        summarize_from_manifests([meta_dir], "identity", out_root)
+        summarize_from_manifests(
+            [meta_dir], _DRIVER_METHOD, out_root, params=_DRIVER_PARAMS
+        )
         assert "skipping 3 already done" in capsys.readouterr().out
 
     def test_driver_redoes_graphs_missing_from_index(
@@ -1596,18 +1341,22 @@ class TestDriver:
         # An output file whose node count was never recorded must be redone,
         # or the index ends up with holes after an interrupted run.
         meta_dir, out_root = manifest_workspace
-        summarize_from_manifests([meta_dir], "identity", out_root)
+        summarize_from_manifests(
+            [meta_dir], _DRIVER_METHOD, out_root, params=_DRIVER_PARAMS
+        )
         index_path = out_root / "shared_tier0_cache" / _shard_index_name(0)
         index = json.loads(index_path.read_text())
         index.pop("/raw/tier0/graph1.pt")
         index_path.write_text(json.dumps(index))
         capsys.readouterr()
 
-        summarize_from_manifests([meta_dir], "identity", out_root)
+        summarize_from_manifests(
+            [meta_dir], _DRIVER_METHOD, out_root, params=_DRIVER_PARAMS
+        )
 
         assert "skipping 2 already done" in capsys.readouterr().out
         assert json.loads(index_path.read_text()) == {
-            f"/raw/tier0/graph{i}.pt": N_NODES for i in range(3)
+            f"/raw/tier0/graph{i}.pt": N_DRIVER_NODES for i in range(3)
         }
 
     def test_driver_isolates_a_bad_graph(
@@ -1623,17 +1372,17 @@ class TestDriver:
         )  # no level and no pos_enc
         torch.save(bad, meta_dir.parents[2] / "shared_tier0_cache" / "graph1.pt")
 
-        summarize_from_manifests([meta_dir], "identity", out_root)
+        summarize_from_manifests(
+            [meta_dir], _DRIVER_METHOD, out_root, params=_DRIVER_PARAMS
+        )
 
         out_dir = out_root / "shared_tier0_cache"
-        stats = json.loads(
-            (out_root / "_summary_stats_identity_shard000.json").read_text()
-        )
+        stats = json.loads((out_root / _DRIVER_STATS).read_text())
         assert stats["graphs"] == 2
         assert stats["errors"] == 1
         assert json.loads((out_dir / _shard_index_name(0)).read_text()) == {
-            "/raw/tier0/graph0.pt": N_NODES,
-            "/raw/tier0/graph2.pt": N_NODES,
+            "/raw/tier0/graph0.pt": N_DRIVER_NODES,
+            "/raw/tier0/graph2.pt": N_DRIVER_NODES,
         }
 
     def test_shards_write_separate_indexes_and_merge(
@@ -1644,7 +1393,12 @@ class TestDriver:
         meta_dir, out_root = manifest_workspace
         for shard_id in range(2):
             summarize_from_manifests(
-                [meta_dir], "identity", out_root, shard_id=shard_id, num_shards=2
+                [meta_dir],
+                _DRIVER_METHOD,
+                out_root,
+                shard_id=shard_id,
+                num_shards=2,
+                params=_DRIVER_PARAMS,
             )
 
         out_dir = out_root / "shared_tier0_cache"
@@ -1655,9 +1409,108 @@ class TestDriver:
 
         assert merge_shard_indexes(out_dir) == 3
         assert json.loads((out_dir / _NUM_NODES_GLOBAL).read_text()) == {
-            f"/raw/tier0/graph{i}.pt": N_NODES for i in range(3)
+            f"/raw/tier0/graph{i}.pt": N_DRIVER_NODES for i in range(3)
         }
+
+    def test_params_default_to_the_config_entry(
+        self, manifest_workspace: tuple[Path, Path]
+    ) -> None:
+        # The cluster job runs `python -m data.summarize_graphs <method>` with
+        # no parameters, so the driver looks them up in config.  Every other
+        # test here passes params explicitly, which would leave that lookup —
+        # the only path production takes — uncovered.
+        meta_dir, out_root = manifest_workspace
+        summarize_from_manifests([meta_dir], "cone", out_root)
+
+        stats = json.loads(
+            (out_root / "_summary_stats_cone_shard000.json").read_text()
+        )
+        assert stats["graphs"] == 3
+        assert stats["errors"] == 0
 
     def test_merge_shard_indexes_no_input(self, tmp_path: Path) -> None:
         assert merge_shard_indexes(tmp_path) == 0
         assert not (tmp_path / _NUM_NODES_GLOBAL).exists()
+
+
+class TestReductDepthGuard:
+    """Model depth must not exceed the refinement depth of the reducts.
+
+    Reducts are precomputed once and cached; --num_layers gets tuned long
+    afterwards.  A deeper model reads distinctions the reduct no longer
+    carries, and nothing errors — the run just reports a slightly wrong
+    number.  config couples the two at definition time
+    (SUMMARIZATION_DEPTH = NUM_LAYERS), which is exactly the coupling a
+    later command-line override breaks.
+    """
+
+    def _summarize(self, meta_dir: Path, out_root: Path, depth: int) -> Path:
+        summarize_from_manifests(
+            [meta_dir],
+            "wl_exact",
+            out_root,
+            params={"depth": depth, "count_cap": None, "pe_aware": False},
+        )
+        return out_root / "shared_tier0_cache"
+
+    def test_driver_records_provenance_inside_the_cache_dir(
+        self, manifest_workspace: tuple[Path, Path]
+    ) -> None:
+        # Inside the cache directory, not next to the archives: only this
+        # location is packed into the shard tarball, so only this one
+        # survives staging onto the training node.
+        meta_dir, out_root = manifest_workspace
+        out_dir = self._summarize(meta_dir, out_root, depth=3)
+
+        assert (out_dir / SUMMARIZATION_PARAMS_FILE).is_file()
+        provenance = read_summarization_params(out_dir)
+        assert provenance["method"] == "wl_exact"
+        assert provenance["params"]["depth"] == 3
+
+    def test_accepts_a_model_no_deeper_than_the_reduct(
+        self, manifest_workspace: tuple[Path, Path]
+    ) -> None:
+        meta_dir, out_root = manifest_workspace
+        out_dir = self._summarize(meta_dir, out_root, depth=3)
+
+        for num_layers in (1, 2, 3):
+            assert_exact_depth_supports_model([out_dir], num_layers)
+
+    def test_rejects_a_model_deeper_than_the_reduct(
+        self, manifest_workspace: tuple[Path, Path]
+    ) -> None:
+        meta_dir, out_root = manifest_workspace
+        out_dir = self._summarize(meta_dir, out_root, depth=3)
+
+        with pytest.raises(ValueError, match="refined to depth 3"):
+            assert_exact_depth_supports_model([out_dir], 4)
+
+    def test_rejects_a_cache_built_by_a_lossy_method(
+        self, manifest_workspace: tuple[Path, Path]
+    ) -> None:
+        # Every method's precompute writes provenance, so depth alone cannot
+        # tell an exact reduct from a `wl` one — and the lossy schema
+        # (edge_attr, no node_size/edge_weight) would be misread as a graph
+        # of all size-1 super-nodes rather than erroring.
+        meta_dir, out_root = manifest_workspace
+        summarize_from_manifests(
+            [meta_dir], "wl", out_root, params={"depth": 4, "pe_aware": False}
+        )
+        out_dir = out_root / "shared_tier0_cache"
+
+        with pytest.raises(ValueError, match="which uses the lossy rewrite"):
+            assert_exact_depth_supports_model([out_dir], 4)
+
+    def test_rejects_an_empty_cache_dir_list(self) -> None:
+        # Nothing to check must not read as "checked and fine": training
+        # without tier cache dirs means training on raw graphs.
+        with pytest.raises(ValueError, match="at least one cache directory"):
+            assert_exact_depth_supports_model([], 4)
+
+    def test_rejects_a_cache_with_no_provenance(self, tmp_path: Path) -> None:
+        # A raw (unsummarized) cache, or one written before provenance
+        # existed — neither can be trained on by the exact model, and
+        # neither announces that fact any other way.
+        assert read_summarization_params(tmp_path) == {}
+        with pytest.raises(ValueError, match="No _summarization_params.json"):
+            assert_exact_depth_supports_model([tmp_path], 1)
