@@ -2,7 +2,7 @@
 #SBATCH --job-name=aig_train_baseline_gamora
 #SBATCH --time=72:00:00
 #SBATCH --nodes=1
-#SBATCH --partition=gpu_h100
+#SBATCH --partition=gpu_a100
 #SBATCH --gpus=1
 #SBATCH --constraint=scratch-node
 #SBATCH --output=logs/train_baseline_gamora_%j.out
