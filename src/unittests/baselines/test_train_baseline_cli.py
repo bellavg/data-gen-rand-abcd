@@ -243,27 +243,28 @@ class TestTrainBaselineCLI(unittest.TestCase):
         with self.assertRaises(ValueError):
             train_baseline._build_loss(SimpleNamespace(loss="huber", loss_beta=0.01))
 
-    def test_gamora_node_budget_matches_the_primary_models(self):
-        """The Gamora baseline's whole batching argument is parity.
+    def test_gamora_node_budget_reflects_the_documented_speed_deviation(self):
+        """The Gamora baseline's node budget WAS primary-model parity.
 
-        Unlike HOGA's and DeepGate4's, its node budget is not a memory
-        compromise -- it is set to config.MAX_TOTAL_NODES_PER_BATCH so the
-        baseline trains at the same effective batch (~75 graphs/step) as the
-        primary model it is compared against, with no gradient accumulation.
-        train_baseline.py's argparse default derives from that constant, but
-        train_baseline_gamora.sh passes a LITERAL, so retuning the constant
-        would silently leave the baseline at the old budget and break the
-        parity the comparison rests on. Assert they agree.
+        Originally the literal was pinned equal to config.MAX_TOTAL_NODES_PER_BATCH
+        so the baseline trained at the same effective batch (~75 graphs/step)
+        as the primary model it is compared against, with no gradient
+        accumulation. Raised to 15,000,000 on 2026-08-06 as a deliberate,
+        documented deviation from that parity for wall-clock speed -- see
+        train_baseline_gamora.sh's own comment above the literal for the
+        measured GPU-memory/utilization evidence. The two values are now
+        EXPECTED to differ; assert the shell script's literal directly rather
+        than against config.MAX_TOTAL_NODES_PER_BATCH, so a future retune of
+        either one is a conscious edit here, not a silent drift back into (or
+        further out of) parity.
         """
-        import config
-
         script = (_SHELL_DIR / "train_baseline_gamora.sh").read_text()
         match = re.search(
             r'(?m)^GAMORA_MAX_NODES_PER_BATCH="\$\{GAMORA_MAX_NODES_PER_BATCH:-(\d+)\}"',
             script,
         )
         self.assertIsNotNone(match, "GAMORA_MAX_NODES_PER_BATCH default not found")
-        self.assertEqual(int(match.group(1)), config.MAX_TOTAL_NODES_PER_BATCH)
+        self.assertEqual(int(match.group(1)), 15_000_000)
 
     def test_gamora_flags_are_wired(self):
         # train_baseline_gamora.sh passes all of these; a rename would break
@@ -312,7 +313,8 @@ class TestTrainBaselineCLI(unittest.TestCase):
         whether `--torch_compile true` actually reaches it. Source-level
         rather than a full CLI run, matching this file's own established
         pattern for pinning a literal (e.g.
-        test_gamora_node_budget_matches_the_primary_models): `main()` loads
+        test_gamora_node_budget_reflects_the_documented_speed_deviation):
+        `main()` loads
         the real dataset and touches wandb, which is too heavy to invoke here
         just to prove one kwarg is threaded through.
         """

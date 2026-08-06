@@ -169,8 +169,10 @@ graph embedding is the BatchNorm bias regardless of the circuit, and that step
 carries no information from the encoder at all. (Train mode only; eval uses
 running statistics.)
 
-Nothing to fix in the configured regime -- at the 3M-node budget a batch holds
-~75 graphs and no graph reaches the budget, so singleton batches do not arise.
+Nothing to fix in the configured regime -- at train_baseline_gamora.sh's
+15M-node budget (originally 3M, raised as a documented speed deviation -- see
+that script) a batch holds on the order of hundreds of graphs and no graph
+reaches the budget, so singleton batches do not arise.
 It matters if the budget is ever lowered below config.MAX_NUM_GATES, because a
 graph larger than the budget forms a singleton batch that graph-level pooling
 cannot split. `test_single_graph_train_batch_collapses_to_the_bn_bias` pins it
@@ -364,5 +366,13 @@ class GamoraGraphRegressor(SAGE_MULT):
         x = self.bn0(F.relu(x))
         # --- end Gamora trunk ---
 
-        graph_embed = global_mean_pool(x, batch.batch)
+        # size= avoids PyG's scatter() computing dim_size via int(index.max()),
+        # which forces a GPU->CPU sync on every step. batch.num_graphs is a
+        # plain Python int already known from collation, no sync needed. Absent
+        # on a bare (uncollated) Data -- getattr falls back to None there, which
+        # is also when batch.batch itself is None, so global_mean_pool takes
+        # its x.mean(dim=-2) branch and size is unused either way.
+        graph_embed = global_mean_pool(
+            x, batch.batch, size=getattr(batch, "num_graphs", None)
+        )
         return torch.sigmoid(self.regression_head(graph_embed))

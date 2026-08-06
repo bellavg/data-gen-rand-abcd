@@ -115,70 +115,98 @@ HP_TUNING_SPLITS="/scratch-shared/$USER/big_optuna_run/shared_dataset_cache/algo
 # submitting, and reverting before the next 4/32 run -- the same pattern
 # test.sh's SKIP_FULL_GRAPH block uses. If you do this, ALSO edit
 # GAMORA_MAX_NODES_PER_BATCH below (10.10 KB/node at 8/80 vs 2.08 at 4/32, see
-# that comment) and re-derive ACCUMULATE_GRAD_BATCHES so the effective batch
-# still targets ~75 graphs/step -- neither follows from this edit automatically.
+# that comment -- at the current 15M-node budget, 8/80 is ~145 GB fp32, likely
+# over 80 GB even under bf16-mixed, so lower the budget for 8/80 rather than
+# leaving it) and re-derive ACCUMULATE_GRAD_BATCHES if you also change the
+# budget back toward primary-model parity -- neither follows from this edit
+# automatically.
 GAMORA_NUM_LAYERS="${GAMORA_NUM_LAYERS:-4}"
 GAMORA_HIDDEN_DIM="${GAMORA_HIDDEN_DIM:-32}"
 
 # Node-budget batching replaces a fixed graph count, as for the other two
-# large-graph baselines -- but for the opposite reason. HOGA and DeepGate4 need
-# a budget to avoid OOM; Gamora needs one only to keep the effective batch
-# comparable. So this is set to config.MAX_TOTAL_NODES_PER_BATCH, the primary
-# model's own budget (3,000,000), giving ~75 graphs per step -- the same
-# effective batch train_no_sparsification.sh runs at, with
-# ACCUMULATE_GRAD_BATCHES left at 1.
+# large-graph baselines -- but originally for the opposite reason. HOGA and
+# DeepGate4 need a budget to avoid OOM; this budget was ORIGINALLY set to
+# config.MAX_TOTAL_NODES_PER_BATCH (3,000,000), the primary model's own
+# budget, purely to keep the effective batch comparable (~75 graphs/step, the
+# same effective batch train_no_sparsification.sh runs at).
+#
+# RAISED to 15,000,000 on 2026-08-06 as a deliberate, documented DEVIATION
+# from that parity, for wall-clock speed rather than memory: a real H100 run
+# at the 3M budget used only 4.6 GB of the card's 80 GB (5.8%), and GPU
+# utilization (wandb system metrics, DCGM sampling -- not the app-level
+# step_s/data_wait_s split, which is not trustworthy without a
+# torch.cuda.synchronize() the callback doesn't have) sat at a moderate 60%
+# mean with near-idle CPU (4%) and near-idle GPU memory traffic (0.9%) --
+# a pattern more consistent with many small, sequential kernel launches
+# (4 SAGEConv layers' gather/scatter + relu/dropout/batchnorm, an
+# 8,193-parameter model) paying fixed per-launch overhead than with either a
+# data-loading or a compute-bound workload. Fewer, larger batches per epoch
+# amortizes that fixed overhead over more nodes, at the cost of no longer
+# matching the primary model's per-step gradient noise.
+#
+# THIS BREAKS THE PARITY ARGUMENT ABOVE. ~75 graphs/step no longer holds --
+# see the recalculated estimate below -- and test_train_baseline_cli.py's
+# test_gamora_node_budget_reflects_the_documented_speed_deviation pins THIS
+# value rather than asserting equality with config.MAX_TOTAL_NODES_PER_BATCH,
+# specifically because the two are now expected to differ. Compare this run
+# against the primary model on GRAPHS SEEN (TrainingStartupCallback's
+# graphs_seen), not on step or epoch index -- see the LIMIT_TRAIN_BATCHES
+# comment below, which already establishes that pattern for a different
+# reason (HOGA's own capped run).
 #
 # That means NEITHER of the accumulation caveats in the HOGA and DeepGate4
 # scripts applies here: there is no window over which Lightning's constant
 # divisor mis-weights micro-batches, because there is no window.
 #
 # MEASURED on the largest single graph (config.MAX_NUM_GATES = 366,040 nodes,
-# 677,172 edges, fp32) at these defaults: 743 MB retained for backward, i.e.
-# 2.08 KB/node, for a model of 8,193 parameters. That is the sum of the tensors
-# autograd packs for backward, deduplicated by storage pointer -- NOT an RSS
-# delta, which reads only 561 MB on the same forward because the CPU allocator
-# reuses resident freed pages. It is still a lower bound on peak: transient
-# per-op buffers freed inside the forward are not counted.
+# 677,172 edges, fp32) at published hyperparameters: 743 MB retained for
+# backward, i.e. 2.08 KB/node, for a model of 8,193 parameters. That is the
+# sum of the tensors autograd packs for backward, deduplicated by storage
+# pointer -- NOT an RSS delta, which reads only 561 MB on the same forward
+# because the CPU allocator reuses resident freed pages. It is still a lower
+# bound on peak: transient per-op buffers freed inside the forward are not
+# counted.
 #
-# So 3M nodes is ~6.2 GB fp32, roughly half that under the bf16-mixed AMP this
-# script gets on H100, and the irreducible singleton-batch peak that constrains
-# the other two baselines is not a constraint here. VERIFY the steady-state
-# figure on the first epoch anyway (nvidia-smi, or wandb GPU Memory Allocated)
-# -- if it lands far below the card there is nothing to gain by raising this,
-# since the point of the value is parity with the primary model, not
-# utilisation.
+# Extrapolating: 15M nodes is ~31.2 GB fp32, roughly half that (~15.6 GB)
+# under the bf16-mixed AMP this script gets on H100 -- comfortably under 80 GB
+# even allowing for the real 3M-node run's higher-than-extrapolated actual
+# usage (4.6 GB observed vs. ~3.1 GB extrapolated bf16-mixed, i.e. real
+# overhead beyond this backward-only estimate), which scaled the same way
+# would be ~23 GB at 15M. VERIFY the steady-state figure on the first batch
+# anyway (nvidia-smi, or wandb GPU Memory Allocated) before trusting either
+# estimate -- if it's near the card, back off; if it's still far below,
+# raising further is not unreasonable but was not tried here.
 #
 # The 8-layer/80-channel configuration is a different story: the same
-# measurement gives 10.10 KB/node, ~30 GB fp32 at this budget. If you edit
+# measurement gives 10.10 KB/node, ~30 GB fp32 at the ORIGINAL 3M budget --
+# scale accordingly (or lower the budget back down) if editing
 # GAMORA_NUM_LAYERS/GAMORA_HIDDEN_DIM to 8/80 (see that block above for how --
-# an env override does not work here), lower this budget too.
+# an env override does not work here).
 #
 # DO NOT lower this below config.MAX_NUM_GATES (366,040) without reading
 # src/baselines/gamora/regressor.py first: a graph bigger than the budget forms
 # a singleton batch, and in train mode a singleton batch's graph embedding is
 # exactly bn0's bias -- upstream's BatchNorm normalises over the same node set
 # the pooling then averages, so the encoder contributes nothing to that step.
-#
-# The literal below MUST equal config.MAX_TOTAL_NODES_PER_BATCH, which is where
-# train_baseline.py's own default comes from and what the parity argument above
-# rests on. test_train_baseline_cli.py asserts the two agree, so retuning the
-# config constant without touching this line fails the suite rather than
-# silently breaking the comparison.
-GAMORA_MAX_NODES_PER_BATCH="${GAMORA_MAX_NODES_PER_BATCH:-3000000}"
+GAMORA_MAX_NODES_PER_BATCH="${GAMORA_MAX_NODES_PER_BATCH:-15000000}"
 
-# Left at 1 deliberately. The budget above already delivers the primary model's
-# ~75 graphs per update, so accumulating would OVERSHOOT it rather than close a
-# gap. If GAMORA_MAX_NODES_PER_BATCH is ever lowered, raise this to keep the
-# product near 3,000,000 nodes' worth of graphs -- the two must move together.
+# Left at 1 deliberately. Even at the raised 15M-node budget this is a single
+# batch per step with no window, so Lightning's constant accumulation divisor
+# never mis-weights a micro-batch -- the accumulation caveats in the HOGA and
+# DeepGate4 scripts still do not apply. If GAMORA_MAX_NODES_PER_BATCH is ever
+# lowered back toward 3,000,000 to restore primary-model parity, this can stay
+# at 1 for that too; accumulation was never what made the two comparable, the
+# node budget alone was.
 ACCUMULATE_GRAD_BATCHES="${ACCUMULATE_GRAD_BATCHES:-1}"
 
-# NOT capped, unlike train_baseline_hoga.sh (12500 / 1250). At a 3M-node budget
-# an epoch is roughly 700k train graphs / ~75 per batch = ~9.3k steps, and a
-# Gamora step is a small fraction of a HOGA step, so a full epoch is expected
-# to fit the checkpoint/early-stop cadence without subsampling. Leaving these
-# at 1.0 keeps val_loss computed on the FULL val split, which makes this
-# baseline's val_loss directly comparable to train.py's -- something HOGA's
-# capped run cannot offer.
+# NOT capped, unlike train_baseline_hoga.sh (12500 / 1250). At the 15M-node
+# budget an epoch is roughly 700k train graphs / ~375 per batch (15M / ~40k
+# avg graph size) = ~1.9k steps -- down from the ~9.3k estimated at the
+# original 3M budget -- and a Gamora step is already a small fraction of a
+# HOGA step, so a full epoch is expected to fit the checkpoint/early-stop
+# cadence without subsampling. Leaving these at 1.0 keeps val_loss computed on
+# the FULL val split, which makes this baseline's val_loss directly comparable
+# to train.py's -- something HOGA's capped run cannot offer.
 #
 # This is an ESTIMATE, not a measurement: no Gamora epoch has been timed on the
 # cluster. RECALIBRATE from the first "[train] Epoch summary" line

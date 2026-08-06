@@ -271,9 +271,10 @@ class TestGamoraHeadSurgery(unittest.TestCase):
         the BN bias, whatever the circuit was. The encoder contributes nothing
         to that step.
 
-        Harmless in the configured regime: at the 3M-node budget a batch holds
-        ~75 graphs and no graph reaches the budget, so singleton batches do not
-        arise. It becomes real if the budget is ever lowered below
+        Harmless in the configured regime: at train_baseline_gamora.sh's
+        15M-node budget a batch holds on the order of hundreds of graphs and
+        no graph reaches the budget, so singleton batches do not arise. It
+        becomes real if the budget is ever lowered below
         config.MAX_NUM_GATES, because an oversized graph forms a singleton batch
         that graph-level pooling cannot split. Pinned so that consequence is
         discovered here and not in a flat training curve.

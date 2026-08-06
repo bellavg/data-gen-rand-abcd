@@ -130,14 +130,19 @@ of all) are not counted.
 Extrapolating: at the 3M-node budget below that is ~6.2 GB fp32 and roughly
 half that under the bf16-mixed AMP an H100 job gets -- comfortable on an 80 GB
 card with no gradient checkpointing, no partitioning, and no memory-driven
-compromise on the batch. The budget is therefore set to
-config.MAX_TOTAL_NODES_PER_BATCH, the SAME budget the primary model uses. That
-yields ~75 graphs per step, matching the primary model's effective batch, so
---accumulate_grad_batches stays at 1 and neither of the harmonic-mean caveats
-above applies to it. Upstream publishes no graph-level batch size to match
-anyway: its unit is 20 sampled root NODES from a single graph
-(gnn_multitask.py:570-572), which cannot transfer to a graph-level task. See
-baselines/gamora/regressor.py for what that sampler means for this port, and
+compromise on the batch. --gamora_max_nodes_per_batch's ARGPARSE DEFAULT is
+therefore config.MAX_TOTAL_NODES_PER_BATCH, the SAME budget the primary model
+uses, yielding ~75 graphs per step and matching the primary model's effective
+batch, so --accumulate_grad_batches stays at 1 and neither of the
+harmonic-mean caveats above applies to it. train_baseline_gamora.sh, however,
+passes a LITERAL that overrides this default (15,000,000 as of 2026-08-06, a
+documented speed deviation from parity -- see that script's own comment
+above the literal); the parity description here is accurate for the CLI
+default only, not for what that script actually runs. Upstream publishes no
+graph-level batch size to match anyway: its unit is 20 sampled root NODES
+from a single graph (gnn_multitask.py:570-572), which cannot transfer to a
+graph-level task. See baselines/gamora/regressor.py for what that sampler
+means for this port, and
 for why the row must be labelled as Gamora's encoder rather than as Gamora.
 
 LOSS. --loss is resolved per baseline, like lr and batch_size, because the
@@ -1147,9 +1152,11 @@ if __name__ == "__main__":
             "retained for backward in fp32, so 3M nodes is ~6.2 GB (about half "
             "that under bf16-mixed) and ~75 graphs per step, matching the effective batch "
             "of the model this is compared against with "
-            "--accumulate_grad_batches left at 1. Upstream publishes no "
-            "graph-level batch size (its unit is 20 sampled root nodes from "
-            "one graph). See this module's docstring."
+            "--accumulate_grad_batches left at 1. train_baseline_gamora.sh "
+            "overrides this default with a larger literal as a documented "
+            "speed deviation from that parity -- see that script. Upstream "
+            "publishes no graph-level batch size (its unit is 20 sampled "
+            "root nodes from one graph). See this module's docstring."
         ),
     )
 
