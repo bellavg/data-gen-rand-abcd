@@ -6,8 +6,11 @@ baselines -- SynthNet, HOGA, DeepGate4 and Gamora each get their own
 Lightning-training tests in their own test file for that reason. The one
 exception is `compile_model`, covered here at the wrapper level plus one
 Gamora-specific end-to-end check in test_gamora.py, since Gamora is the only
-baseline actually turned on under compile (see
-baselines/common/lightning_wrapper.py's module docstring for why).
+baseline compile has ever been verified against at all (see
+baselines/common/lightning_wrapper.py's module docstring for the full,
+repeatedly-revised history -- train_baseline_gamora.sh's own TORCH_COMPILE
+default has flipped multiple times and should not be assumed true from this
+comment).
 """
 
 from __future__ import annotations

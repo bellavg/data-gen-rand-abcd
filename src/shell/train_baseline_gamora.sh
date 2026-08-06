@@ -233,39 +233,44 @@ LIMIT_VAL_BATCHES="${LIMIT_VAL_BATCHES:-1.0}"
 # check against the other three baselines, which do keep MSE.
 LOSS="${LOSS:-smooth_l1}"
 
-# DEFAULT ON, 2026-08-06 -- a deliberate re-test, not a return to the
-# original default-on state. History:
-#   1. First tried on gpu_a100: 3 batches that take ~10s uncompiled took
-#      ~202s compiled (~20x), so it was turned off.
-#   2. But a SEPARATE gpu_a100 run with compile OFF also showed ~108s for the
-#      same 3 batches (~10x vs. gpu_h100's ~10-15s), with the identical
-#      fast-step/slow-next-wait log pattern the compiled run showed --
-#      proving that pattern (and likely most of the 20x) is gpu_a100-specific
-#      and NOT caused by torch.compile. The one real compiled run this
-#      project has ever done was on the one node type independently confirmed
-#      to be pathologically slow for this workload for an unrelated reason.
-#      Compile has never actually been tested clean, on gpu_h100.
-# THIS RUN is that test. Also relevant: the graph break at global_mean_pool
-# this comment used to warn about (PyG's scatter() calling int(index.max())
-# when dim_size isn't given) is fixed in the same change that raised
-# GAMORA_MAX_NODES_PER_BATCH above -- regressor.py now passes
-# size=batch.num_graphs, so Dynamo may fuse more of the forward pass than it
-# did during the original A100 test, not just the SAGEConv stack.
+# DEFAULT OFF AGAIN, 2026-08-06 (second reversal same day). History:
+#   1. Briefly default-on: a real gpu_a100 run regressed ~20x, turned off.
+#   2. A SEPARATE gpu_a100 run with compile OFF showed the same ~10x
+#      regression and the identical fast-step/slow-next-wait log pattern,
+#      proving gpu_a100 itself is pathological for this workload for a
+#      reason unrelated to compile -- so compile had never actually been
+#      tested clean, on gpu_h100. Turned back on for that clean test,
+#      stacked with the SAME run that first raised GAMORA_MAX_NODES_PER_BATCH
+#      to 15,000,000 above.
+#   3. That combined test hung: batch 0 (JIT compile) had not printed a
+#      step_s after over an HOUR of wall-clock, ~100x+ beyond the "tens of
+#      seconds" expected for a one-time compile. Killed rather than waited
+#      out further. Stacking two never-tested-together changes in one run
+#      means the hang cannot be attributed to either alone -- most likely
+#      candidate is Dynamo/Triton autotuning at a scale nothing in the local
+#      CPU/toy verification (nor the original A100 test, at the old 3M
+#      budget) ever exercised: this run's first batch was 45 graphs /
+#      14.9M nodes / 29.8M edges, ~5x the largest shape torch.compile had
+#      ever been asked to trace for this model. Left OFF here so the next
+#      run isolates the 15M-node-budget change alone with a known-quiet
+#      variable, before compile is tried again -- and if it IS tried again,
+#      do it at the ORIGINAL 3M budget first, not re-stacked with 15M.
 #
-# torch.compile is invoked with dynamic=True regardless (real batches vary in
-# node count, edge count AND graph count every step, so this is required, not
-# optional -- see baselines/common/lightning_wrapper.py's module docstring for
-# what dynamic=True actually buys on this torch version). Checkpoints are
-# unaffected by this setting either way -- the wrapper strips torch.compile's
-# key prefix on save.
+# torch.compile is invoked with dynamic=True regardless when this IS turned
+# on (real batches vary in node count, edge count AND graph count every step,
+# so this is required, not optional -- see
+# baselines/common/lightning_wrapper.py's module docstring for what
+# dynamic=True actually buys on this torch version, and for the graph-break
+# fix at global_mean_pool that landed alongside the 15M change and should
+# still hold whenever compile is retried). Checkpoints are unaffected by this
+# setting either way -- the wrapper strips torch.compile's key prefix on save.
 #
-# WATCH: batch 0 will be slow (one-time JIT compile, expect tens of seconds).
-# Judge steady state from batch 1 onward's step_s against the gpu_h100 eager
-# baseline (1.463s, 1.717s on the same two batch shapes) -- if it's not
-# meaningfully faster than that by a few batches in, this isn't paying off and
-# should go back to false, same revert procedure as before (env override does
-# not reach an sbatch job on this cluster -- edit the literal below).
-TORCH_COMPILE="${TORCH_COMPILE:-true}"
+# Do not flip this back to true without first getting a real, at-scale
+# steady-state avg_step_s comparison (not just "did it crash") -- an env
+# override does not reach an sbatch job on this cluster, so that means
+# editing the literal below, submitting, and reverting afterward, same as
+# testing any other change here.
+TORCH_COMPILE="${TORCH_COMPILE:-false}"
 
 NUM_WORKERS="${NUM_WORKERS:-16}"  # of the 18 cores auto-assigned per GPU on gpu_h100; 2 left for the main process + pin_memory thread
 PREFETCH_FACTOR="${PREFETCH_FACTOR:-4}"

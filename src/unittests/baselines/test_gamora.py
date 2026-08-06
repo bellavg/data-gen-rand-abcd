@@ -486,9 +486,11 @@ class TestNoSamplingInPort(unittest.TestCase):
 
 
 class TestGamoraTorchCompile(unittest.TestCase):
-    """Gamora is the one baseline compile is turned on for (train_baseline_
-    gamora.sh, --torch_compile true) -- see baselines/common/
-    lightning_wrapper.py's module docstring for the full rationale. These run
+    """Gamora is the one baseline compile has been verified against (whether
+    train_baseline_gamora.sh currently defaults --torch_compile true or
+    false is a separate, frequently-revised question -- see
+    baselines/common/lightning_wrapper.py's module docstring for the current
+    state and full history). These run
     torch.compile against the REAL GamoraGraphRegressor, not the generic toy
     stand-in test_lightning_wrapper.py uses for wrapper-level behaviour, so
     the claims made in that docstring (eager/compiled equivalence, gradients,
@@ -631,10 +633,12 @@ class TestGamoraLightningTraining(unittest.TestCase):
         trainer.test(model, dataloaders=self.test_loader)
 
     def test_training_and_testing_loop_with_torch_compile(self):
-        """Gamora is the one baseline actually turned on under torch.compile
-        (train_baseline_gamora.sh, --torch_compile true) -- see
-        baselines/common/lightning_wrapper.py's module docstring for why it,
-        specifically, was verified and the other three were not. This is the
+        """Gamora is the one baseline compile has been verified against --
+        see baselines/common/lightning_wrapper.py's module docstring for why
+        it, specifically, was verified and the other three were not (that
+        docstring also has the current state of train_baseline_gamora.sh's
+        own TORCH_COMPILE default, which has changed repeatedly and should
+        not be assumed from this comment). This is the
         integration check: the real `BaselineRegressionLightningModule` +
         `pl.Trainer` path, not just a raw forward/backward call, actually
         completes fit+test with compile enabled. Slower than the rest of the

@@ -331,13 +331,20 @@ class TestTrainBaselineCLI(unittest.TestCase):
             "args.torch_compile is not passed to BaselineRegressionLightningModule",
         )
 
-    def test_only_gamora_script_turns_on_torch_compile(self):
+    def test_only_gamora_script_wires_torch_compile(self):
         """The opt-in is per-script, not per-baseline in train_baseline.py.
 
-        Only Gamora has been verified under compile (see
-        baselines/common/lightning_wrapper.py); the other three scripts must
-        not pass --torch_compile at all, so they keep the parser's off
-        default rather than someone copy-pasting Gamora's block into them.
+        Only Gamora's script passes --torch_compile at all; the other three
+        must not, so they keep the parser's off default rather than someone
+        copy-pasting Gamora's block into them. This does NOT pin whether
+        Gamora's own TORCH_COMPILE defaults true or false -- that value has
+        flipped three times in one day (2026-08-06: on for an A100 test that
+        regressed, off, back on for a clean H100 test that then hung for over
+        an hour on batch 0 and was killed, off again) and is expected to keep
+        moving as it gets re-tested; asserting a specific literal here would
+        just be testing the same commit that set it. What must stay true
+        regardless of that value is that Gamora is the only script wiring the
+        flag in the first place.
         """
         scripts = sorted(_SHELL_DIR.glob("train_baseline_*.sh"))
         self.assertTrue(scripts, "no baseline job scripts found")
@@ -349,11 +356,6 @@ class TestTrainBaselineCLI(unittest.TestCase):
                 )
                 if script.name == "train_baseline_gamora.sh":
                     self.assertTrue(has_flag, "gamora script must pass --torch_compile")
-                    self.assertRegex(
-                        text,
-                        r'(?m)^TORCH_COMPILE="\$\{TORCH_COMPILE:-true\}"',
-                        "gamora script must default TORCH_COMPILE to true",
-                    )
                 else:
                     self.assertFalse(
                         has_flag, f"{script.name} must not pass --torch_compile"
