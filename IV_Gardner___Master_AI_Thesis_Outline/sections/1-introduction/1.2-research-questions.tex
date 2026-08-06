@@ -3,14 +3,15 @@
 
 \subsection{Problem Formalization}
 \label{sec:intro:formalization}
-An AIG $G = (\mathcal{V}, \mathcal{E})$ holds one node per primary input, one per primary
-output, a single constant node, and a set of AND gates $\mathcal{V}_{\wedge}(G) \subseteq
+An AIG $G = (\mathcal{V}, \mathcal{E})$ is comprised of one node per primary input, one per primary
+output, a single constant node, and a set of AND gates $\mathcal{V}_{\wedge}(G) \subsetneq
 \mathcal{V}$, each with exactly two incoming edges. Every edge records whether the signal it
-carries is inverted (\ref{sec:prelim:aig}). The \emph{target script} $S$, whose effect on
-$G$ is the quantity predicted, maps $G$ to a function-equivalent circuit $S(G)$ with the
-same primary inputs, primary outputs, and constant. $S$ only keeps a rewrite that does not
-increase the AND gate count, so AND gates are the only thing it ever removes, never adds.
-The \emph{optimizability} of $G$ under $S$ is the fraction of them it does remove,
+carries is inverted (\ref{sec:prelim:aig}). The \emph{target script} $S$ is the one synthesis
+script this thesis predicts the effect of, mapping $G$ to a functionally equivalent AIG
+$S(G)$ with the same primary inputs, primary outputs, and constant. A synthesis script can
+add AND gates as well as remove them; the target script does not
+(\ref{sec:intro:scope:algorithm}), so every AND gate $S$ changes is one it removes.
+The \emph{optimizability} of $G$ under $S$ is the fraction of AND gates it removes,
 \begin{equation}
     y_S(G) = 1 - \frac{\left| \mathcal{V}_{\wedge}(S(G)) \right|}{\left| \mathcal{V}_{\wedge}(G) \right|}
     \;\in\; [0, 1],
@@ -39,15 +40,16 @@ $k$, and only the edges it cuts between subgraphs are dropped, so $\eta_{\mathca
 together with $k$ reports what partitioning costs.
 Accuracy is reported as predictive error (Smooth L1 loss, RMSE, and the coefficient of
 determination $R^2$) and as ranking ability, the Spearman correlation between predicted and
-true optimizability across the test circuits. Cost is reported as peak memory and time per graph
+true optimizability across the test AIGs. Cost is reported as peak memory and time per graph
 (\ref{sec:method:experiment:metrics}).
 
 \subsection{RQ1: Task Feasibility and Baseline}
 \label{sec:intro:rq1}
 Can $f_\theta$ predict $y_S(G)$~\eqref{eq:intro:target} from the unreduced AIG $G$ alone, on
-designs withheld from training? Accuracy is measured against two references: the training-set
-mean $\bar{y}_S$ and existing GNN models for circuits, retrained on the same data to predict
-$y_S$ and evaluated on the same withheld graphs (\ref{sec:method:architecture:baselines}).
+designs withheld from training? Accuracy is measured against two baseline references: trivial
+predictors fitted on the train split, among them the constant $\bar{y}_S$,
+and existing GNN models for AIGs, retrained on the same data to predict $y_S$ and
+evaluated on the same withheld graphs (\ref{sec:method:architecture:baselines}).
 
 \paragraph{Sensitivity to the evaluation protocol.}
 The corpus supplies many graphs per design, so a train/test split can be drawn in three ways.
@@ -87,7 +89,7 @@ differ from it in node and edge retention and in predictive retention?
 \subsection{RQ4: Value of AIG-Specific Adaptation}
 \label{sec:intro:rq4}
 A \emph{domain-agnostic} reduction decides what to remove or collapse from connectivity and
-from node and edge attributes, without reading what those attributes mean in a circuit. An
+from node and edge attributes, without reading what those attributes mean in an AIG. An
 \emph{AIG-specific} reduction is the same method under a criterion that does read them: a
 node's topological level $\ell(v)$, its fanout, or its role as a gate. To what extent do
 AIG-specific reductions reach higher predictive retention than their domain-agnostic
@@ -116,20 +118,20 @@ in~\ref{sec:discussion:limitations}.
 
 \paragraph{Target script.}
 \label{sec:intro:scope:algorithm}
-Training and evaluation target one script, \texttt{orchestrate}
+Training and evaluation target one specific optimization script, \texttt{orchestrate}
 (\ref{sec:prelim:algorithms:orchestrate}), since variance across scripts would confound the
 cost attributable to a reduction.
 
 \paragraph{Graph scale.}
 \label{sec:intro:scope:scale}
-The RQ1 baseline trains on the unreduced $G$, which must fit in memory, so the corpus is
-bounded at $400{,}000$ nodes per AIG, below the millions of nodes an industrial design
-reaches (\ref{sec:method:experiment:scale},~\ref{sec:discussion:limitations:scalability}).
+The corpus is capped at $400{,}000$ nodes per AIG so the RQ1 baseline, which trains on the
+unreduced $G$, fits in memory, well below the millions of nodes an industrial design reaches
+(\ref{sec:method:experiment:scale},~\ref{sec:discussion:limitations:scalability}).
 
 \paragraph{Definition of optimizability.}
 \label{sec:intro:scope:target}
 Optimizability $y_S(G)$~\eqref{eq:intro:target} is defined on AND gate counts, the standard
-area proxy on an AIG (\ref{sec:intro:motivation:synthesis}). Delay and power are not modeled
+area proxy on an AIG (\ref{sec:intro:motivation:synthesis}). Delay and power dissipation are not modeled
 (\ref{sec:discussion:limitations:validity}).
 
 \paragraph{Reduction classes.}
@@ -150,9 +152,9 @@ reduction.
 
 \paragraph{What the prediction supports.}
 \label{sec:intro:scope:prediction}
-The model predicts $y_S(G)$ for the one target script $S$, which says what fraction of a
-circuit's AND gates $S$ would remove, and therefore whether running it is worthwhile. It
+The model predicts $y_S(G)$ for the one target script $S$, which states what fraction of an
+AIG's AND gates $S$ would remove, and therefore whether running it is worthwhile. It
 cannot choose a script. Choosing one requires comparing candidate scripts on the same
-circuit, which a model fitted to a single $S$ has no way to do
+AIG, which a model fitted to a single $S$ cannot support
 (\ref{sec:conclusion:futurework:generation}).
 
