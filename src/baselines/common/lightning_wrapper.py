@@ -24,20 +24,25 @@ not preventing an unbounded per-batch cost that was never actually there on
 this torch version. Still worth setting explicitly rather than relying on
 automatic detection to trigger correctly on the first real training step.
 
-Default is FALSE here, unlike the primary model's default TRUE. This wrapper
-is shared by all four baselines, and enabling compile changes what actually
-executes on the GPU for whichever one uses it. Only Gamora has real
-verification behind it -- see `src/unittests/baselines/test_gamora.py`'s
-`TestGamoraTorchCompile` (eager-vs-compiled forward on the actual
-`GamoraGraphRegressor`, gradients, four batch shapes) and
-`src/unittests/baselines/test_lightning_wrapper.py` (the generic wrapping/
-checkpoint-key behavior below, on a toy model). HOGA's custom
+Default is FALSE for every baseline, INCLUDING Gamora as of 2026-08-06 -- see
+train_baseline_gamora.sh's TORCH_COMPILE block for why: a real run on
+gpu_a100 regressed ~20x (3 batches: ~10s uncompiled vs. ~202s compiled),
+almost certainly repeated recompilation rather than one stable graph, because
+real batches vary in THREE shape dimensions at once (node count, edge count,
+graph count) and the CPU/toy-model verification below only exercised one
+varying dimension at a time. That verification is real and still worth
+having (`src/unittests/baselines/test_gamora.py`'s `TestGamoraTorchCompile`:
+eager-vs-compiled forward on the actual `GamoraGraphRegressor`, gradients,
+four batch shapes; `src/unittests/baselines/test_lightning_wrapper.py`: the
+generic wrapping/checkpoint-key behavior below, on a toy model) -- it just
+was not sufficient evidence to ship this default-on for a real training job,
+and the corrected lesson is: CPU/toy-model shape coverage does not stand in
+for a real workload's actual shape diversity at real scale. Re-verify at
+scale (a real steady-state avg_step_s comparison, not just "did it crash")
+before defaulting this on again, for Gamora or anyone else. HOGA's custom
 `MultiheadAttention` and DeepGate4's gradient-checkpointed sparse transformer
-are exactly the kind of code that has, in other codebases, interacted badly
-with `torch.compile` (checkpointing especially -- recompute-in-backward and
-Dynamo's graph capture have known rough edges together), and neither has been
-tested here. Turn this on per-baseline only after doing the same verification
-Gamora got, not by flipping the default.
+remain untested here on top of that -- checkpointing especially has known
+rough edges with Dynamo's graph capture in other codebases.
 
 KNOWN LIMITATION, not a bug: compiling `GamoraGraphRegressor` produces a graph
 break at `global_mean_pool` -- PyG's `scatter` calls `int(index.max())`

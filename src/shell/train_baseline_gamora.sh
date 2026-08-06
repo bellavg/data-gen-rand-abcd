@@ -190,31 +190,46 @@ LIMIT_VAL_BATCHES="${LIMIT_VAL_BATCHES:-1.0}"
 # check against the other three baselines, which do keep MSE.
 LOSS="${LOSS:-smooth_l1}"
 
-# ON for Gamora specifically, unlike the other three baselines' scripts
-# (train_baseline.py's own default is off -- the shared wrapper serves all
-# four, and only this one has real verification behind it: see
-# src/unittests/baselines/test_gamora.py's TestGamoraTorchCompile, which runs
-# eager-vs-compiled equivalence, gradients and varying batch shapes against
-# the actual GamoraGraphRegressor, not a stand-in). Every batch here has a
-# different shape (node-budget batching), so torch.compile is invoked with
-# dynamic=True. One known limitation, not a bug: PyG's global_mean_pool calls
-# int(index.max()), which forces a graph break Dynamo cannot trace through, so
-# the model compiles as two segments rather than one fused graph -- the
-# SAGEConv stack compiles, the pooling step falls back to eager. Checkpoints
-# are unaffected: the wrapper strips torch.compile's key prefix on save, so a
-# checkpoint from this run has the same keys as an uncompiled one. Full
-# rationale, including what is and is NOT verified (fp32/CPU only -- the
-# actual bf16-mixed-autocast H100 numerics are unchecked, so "compile only
-# changes speed, not results" is an expectation here, not a demonstrated
-# fact), in baselines/common/lightning_wrapper.py's module docstring.
+# DEFAULTS OFF. Was on by default for one real run (2026-08-06, gpu_a100) and
+# regressed badly: 3 batches that take ~10s uncompiled took ~202s compiled --
+# a ~20x slowdown, not the intended speedup. Real-batch-idx timestamps from
+# that job's log:
+#   idx0 start 15:57:49 -> idx2 done 16:01:11  (compiled, this run)
+#   idx0 start 12:43:50 -> idx2 done 12:44:00  (uncompiled, prior run)
+# The per-step step_s the run reported (0.028s, 0.173s) is not real -- far too
+# fast for a ~2.8-3M-node batch -- and the missing time shows up as
+# data_wait_s on the FOLLOWING batch instead (29.5s), consistent with
+# torch.compile recompiling rather than settling into one reusable graph.
 #
-# First few steps after enabling this will be SLOWER than uncompiled
-# (one-time trace + compile cost); judge from steady-state avg_step_s a few
-# batches in, not the first one. To get an UNCOMPILED run for that
-# comparison: an env override does not reach an sbatch job on this cluster
-# (same limitation as SPLIT_BY above) -- edit the literal below to false,
-# submit separately, and revert it afterward.
-TORCH_COMPILE="${TORCH_COMPILE:-true}"
+# Root cause, best explanation available without being able to attach a
+# profiler to a live Snellius job: local verification
+# (test_gamora.py's TestGamoraTorchCompile) used a toy/CPU setup where batch
+# shape varied along ONE axis at a time. Real batches here vary along THREE
+# axes simultaneously every step -- node count, edge count, AND graph count
+# (idx0: 25 graphs/3.0M nodes, idx1: 9 graphs/2.8M nodes, idx2: 40 graphs/
+# 3.0M nodes) -- a harder case for Dynamo's dynamic-shape tracing to settle
+# on than what was actually tested, and each GPU-side Triton recompile costs
+# tens of seconds, not the sub-second CPU compiles measured locally. That
+# combination was not verified before this was shipped default-on, and it
+# should have been -- CPU/toy-model verification does not stand in for this
+# workload's real shape diversity at real scale.
+#
+# torch.compile is invoked with dynamic=True regardless (it is still the
+# right setting; the finding above is about whether compiling this workload
+# at all is worthwhile, not about that flag), and one known, unrelated
+# limitation stands either way: PyG's global_mean_pool calls int(index.max()),
+# forcing a graph break Dynamo cannot trace through, so even a stable compile
+# only fuses the SAGEConv stack, not the pooling step. Checkpoints are
+# unaffected regardless of this setting -- the wrapper strips torch.compile's
+# key prefix on save. Full rationale in
+# baselines/common/lightning_wrapper.py's module docstring.
+#
+# Do not flip this back to true without first getting a real, at-scale
+# steady-state avg_step_s comparison (not just "did it crash") -- an env
+# override does not reach an sbatch job on this cluster (same limitation as
+# SPLIT_BY above), so that means editing the literal below, submitting, and
+# reverting afterward, same as testing any other change here.
+TORCH_COMPILE="${TORCH_COMPILE:-false}"
 
 NUM_WORKERS="${NUM_WORKERS:-16}"  # of the 18 cores auto-assigned per GPU on gpu_h100; 2 left for the main process + pin_memory thread
 PREFETCH_FACTOR="${PREFETCH_FACTOR:-4}"
