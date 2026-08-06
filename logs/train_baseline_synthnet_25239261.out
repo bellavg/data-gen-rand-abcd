@@ -1,0 +1,80 @@
+Using NUM_WORKERS=16 for data loading.
+Using SPLIT_BY=design.
+Using SYNTHNET_UPSTREAM_EDGE_DIRECTION=true.
+CUDA_VISIBLE_DEVICES=0
+Starting SynthNet baseline training for Orchestrate on GPU 0...
+--- Starting Baseline Training: synthnet / Orchestrate ---
+[main] Loading datasets before Trainer/WandB init ...
+[datamodule] setup(stage='fit') entered
+[datamodule] Creating train dataset ...
+[dataset] Read 924220 candidate samples from CSV in 11.3s
+[dataset] After split/filter: 707325 samples from 44 designs in 0.9s (split='train')
+[dataset] Manifest fast-path: 707325 samples matched in 1.2s
+[datamodule] Train dataset ready (21.6s)
+[datamodule] Creating val dataset ...
+[dataset] Read 924220 candidate samples from CSV in 0.0s
+[dataset] After split/filter: 80525 samples from 5 designs in 0.1s (split='val')
+[dataset] Manifest fast-path: 80525 samples matched in 0.2s
+[datamodule] Val dataset ready (22.6s)
+[main] Datasets loaded in 22.6s
+[main] Initialising WandB logger ...
+[main] WandB ready in 0.0s
+Using bf16-mixed Automatic Mixed Precision (AMP)
+Using accelerator=gpu, devices=1
+Using bfloat16 Automatic Mixed Precision (AMP)
+GPU available: True (cuda), used: True
+TPU available: False, using: 0 TPU cores
+💡 Tip: For seamless cloud logging and experiment tracking, try installing [litlogger](https://pypi.org/project/litlogger/) to enable LitLogger, which logs metrics and artifacts automatically to the Lightning Experiments platform.
+`Trainer(limit_train_batches=1.0)` was configured so 100% of the batches per epoch will be used..
+`Trainer(limit_val_batches=1.0)` was configured so 100% of the batches will be used..
+--- Running Training for baseline=synthnet algorithm=Orchestrate ---
+wandb: WARNING The anonymous setting has no effect and will be removed in a future version.
+wandb: [wandb.login()] Loaded credentials for https://api.wandb.ai from /home/igardner1/.netrc.
+wandb: Currently logged in as: isabella-v-gardner (isabella-v-gardner-university-of-amsterdam) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: setting up run prrm6030
+wandb: Tracking run with wandb version 0.28.1
+wandb: Run data is saved locally in /scratch-shared/igardner1/aig_baseline_run/synthnet_Orchestrate/logs_synthnet_Orchestrate/wandb/run-20260805_121305-prrm6030
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run train_baseline_synthnet_Orchestrate
+wandb: ⭐️ View project at https://wandb.ai/isabella-v-gardner-university-of-amsterdam/AIG-SUMMARIZE
+wandb: 🚀 View run at https://wandb.ai/isabella-v-gardner-university-of-amsterdam/AIG-SUMMARIZE/runs/prrm6030
+LOCAL_RANK: 0 - CUDA_VISIBLE_DEVICES: [0]
+[train] Fit entered; preparing dataloaders and training loop...
+/scratch-shared/igardner1/.venv/lib/python3.13/site-packages/pytorch_lightning/utilities/model_summary/model_summary.py:242: Precision bf16-mixed is not supported by the model summary.  Estimated model size in MB will not be accurate. Using 32 bits instead.
+
+  | Name         | Type                   | Params | Mode  | FLOPs
+------------------------------------------------------------------------
+0 | model        | SynthNetGraphRegressor | 596 K  | train | 0    
+1 | loss_fn      | MSELoss                | 0      | train | 0    
+2 | rmse_metrics | ModuleDict             | 0      | train | 0    
+3 | r2_metrics   | ModuleDict             | 0      | train | 0    
+------------------------------------------------------------------------
+596 K     Trainable params
+0         Non-trainable params
+596 K     Total params
+2.386     Total estimated model params size (MB)
+25        Modules in train mode
+0         Modules in eval mode
+0         Total Flops
+SLURM auto-requeueing enabled. Setting signal handlers.
+/scratch-shared/igardner1/.venv/lib/python3.13/site-packages/pytorch_lightning/utilities/_pytree.py:21: `isinstance(treespec, LeafSpec)` is deprecated, use `isinstance(treespec, TreeSpec) and treespec.is_leaf()` instead.
+[train] Training loop started after 0.6s.
+[train] Batches per epoch: train=11052, val=1259
+[train] First training batch started after 8.5s.
+[train] Batch stats: idx=0 graphs=64 nodes=3097687 edges=5439430 data_wait_s=7.953
+[train] Batch compute: idx=0 step_s=3.728
+[train] Batch stats: idx=1 graphs=64 nodes=2094094 edges=3633712 data_wait_s=0.020
+[train] Batch compute: idx=1 step_s=0.103
+[train] Batch stats: idx=2 graphs=64 nodes=3025596 edges=5181340 data_wait_s=0.015
+[train] Batch compute: idx=2 step_s=0.143
+[train] Epoch summary: avg_graphs_per_batch=64.00 avg_nodes_per_batch=2574631 avg_edges_per_batch=4507574 avg_data_wait_s=0.253 avg_step_s=0.061 epoch_s=3782.3
+Metric val_loss improved. New best score: 0.000437966
+[train] Epoch summary: avg_graphs_per_batch=64.00 avg_nodes_per_batch=2574631 avg_edges_per_batch=4507574 avg_data_wait_s=0.273 avg_step_s=0.061 epoch_s=3897.2
+[train] Epoch summary: avg_graphs_per_batch=64.00 avg_nodes_per_batch=2574631 avg_edges_per_batch=4507574 avg_data_wait_s=0.409 avg_step_s=0.060 epoch_s=8261.9
+[train] Epoch summary: avg_graphs_per_batch=64.00 avg_nodes_per_batch=2574631 avg_edges_per_batch=4507574 avg_data_wait_s=0.393 avg_step_s=0.060 epoch_s=4414.4
+[train] Epoch summary: avg_graphs_per_batch=64.00 avg_nodes_per_batch=2574631 avg_edges_per_batch=4507574 avg_data_wait_s=0.378 avg_step_s=0.060 epoch_s=4198.5
+Monitored metric val_loss did not improve in the last 4 records. Best score: 0.000. Signaling Trainer to stop.
+--- trainer.fit completed in 24560.0s ---
+[1;34mwandb[0m: 
+[1;34mwandb[0m: 🚀 View run [33mtrain_baseline_synthnet_Orchestrate[0m at: [34mhttps://wandb.ai/isabella-v-gardner-university-of-amsterdam/AIG-SUMMARIZE/runs/prrm6030[0m
+[1;34mwandb[0m: Find logs at: [1;35m../../../scratch-shared/igardner1/aig_baseline_run/synthnet_Orchestrate/logs_synthnet_Orchestrate/wandb/run-20260805_121305-prrm6030/logs[0m
