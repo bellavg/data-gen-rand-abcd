@@ -396,6 +396,17 @@ def _run_label(args: argparse.Namespace) -> str:
     # neither could be attributed afterwards.
     if args.loss != _BASELINE_DEFAULTS[args.baseline]["loss"]:
         label = f"{label}_{args.loss}"
+    # And for --lr, same reason: train_baseline_gamora.sh's GAMORA_LR deviation
+    # (0.0003, config.LR, vs. upstream's published 0.008) is meant to be a
+    # second data point alongside the faithful run, not a replacement for it --
+    # without this suffix the two would share algo_checkpoint_dir/log_dir and
+    # ModelCheckpoint(save_last=True) would silently overwrite the first run's
+    # last.ckpt. getattr, not args.lr: existing _run_label unit tests build a
+    # SimpleNamespace without an lr field, matching real usage where args.lr is
+    # always resolved (main(), above) before _run_label is ever called.
+    lr = getattr(args, "lr", None)
+    if lr is not None and lr != _BASELINE_DEFAULTS[args.baseline]["lr"]:
+        label = f"{label}_lr{lr:g}"
     # And for PolarGate's size covariates, for the same reason and a sharper
     # one: the size-covariate arm is the ONLY model in the suite that sees |V|
     # and |E|, so the paired `true` arm is what makes any PolarGate win

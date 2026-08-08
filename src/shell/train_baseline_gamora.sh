@@ -233,6 +233,21 @@ LIMIT_VAL_BATCHES="${LIMIT_VAL_BATCHES:-1.0}"
 # check against the other three baselines, which do keep MSE.
 LOSS="${LOSS:-smooth_l1}"
 
+# DEVIATION FROM PUBLISHED lr, run 2026-08-08. Upstream's --lr default is
+# 0.008 (regressor.py's DEFAULT_LR, used whenever this is left unset) --
+# tuned for F.nll_loss over 20-node sampled minibatches on an 8-bit
+# multiplier, not for a SmoothL1 regression loss over ~375 whole graphs/step
+# on this dataset. The one completed run at 0.008 (wandb xfauwjcw,
+# 2026-08-06) collapsed to val_r2 oscillating near/below zero (+0.007 best
+# epoch, -0.75 worst) with train_rmse well above val_rmse throughout --
+# the exact flat-curve failure regressor.py's own docstring predicted for
+# this LR. Set here to config.LR (0.0003), the PRIMARY model's own value, so
+# this run is a directly comparable second data point rather than a guess.
+# This is a labeled deviation, not upstream's value -- report it as one, and
+# keep the 0.008 result alongside it rather than replacing it. Revert to
+# unset (falls back to 0.008) if re-running the faithful configuration.
+GAMORA_LR="${GAMORA_LR:-0.0003}"
+
 # DEFAULT OFF AGAIN, 2026-08-06 (second reversal same day). History:
 #   1. Briefly default-on: a real gpu_a100 run regressed ~20x, turned off.
 #   2. A SEPARATE gpu_a100 run with compile OFF showed the same ~10x
@@ -302,6 +317,7 @@ echo "Using NUM_WORKERS=$NUM_WORKERS for data loading."
 echo "Using SPLIT_BY=$SPLIT_BY."
 echo "Using GAMORA_NUM_LAYERS=$GAMORA_NUM_LAYERS, GAMORA_HIDDEN_DIM=$GAMORA_HIDDEN_DIM."
 echo "Using LOSS=$LOSS."
+echo "Using GAMORA_LR=$GAMORA_LR (0.008 is upstream's published value; see the deviation comment above)."
 echo "Using TORCH_COMPILE=$TORCH_COMPILE."
 echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-<unset>}"
 
@@ -345,6 +361,7 @@ srun python -u -m train_baseline \
     --split_by           "$SPLIT_BY" \
     --use_graph_cache    "false" \
     --loss               "$LOSS" \
+    --lr                 "$GAMORA_LR" \
     --torch_compile      "$TORCH_COMPILE" \
     --gamora_num_layers  "$GAMORA_NUM_LAYERS" \
     --gamora_hidden_dim  "$GAMORA_HIDDEN_DIM" \

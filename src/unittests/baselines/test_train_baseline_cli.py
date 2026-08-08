@@ -174,6 +174,46 @@ class TestTrainBaselineCLI(unittest.TestCase):
         self.assertEqual(label("hoga", "mse"), "hoga_Orchestrate")
         self.assertEqual(label("hoga", "smooth_l1"), "hoga_Orchestrate_smooth_l1")
 
+    def test_run_label_separates_the_two_gamora_lr_recipes(self):
+        """train_baseline_gamora.sh's GAMORA_LR deviation (0.0003, config.LR)
+        is meant to run alongside the faithful 0.008 run, not replace it -- so
+        without a suffix the two share algo_checkpoint_dir/log_dir and
+        ModelCheckpoint(save_last=True) silently overwrites the first run's
+        last.ckpt. Upstream's own 0.008 stays untagged so the existing
+        wandb xfauwjcw checkpoint dir keeps its name.
+        """
+        import config
+        import train_baseline
+
+        def label(lr):
+            return train_baseline._run_label(
+                SimpleNamespace(
+                    baseline="gamora",
+                    algorithm="Orchestrate",
+                    split_by=config.SPLIT_BY,
+                    synthnet_upstream_edge_direction=True,
+                    loss=train_baseline._BASELINE_DEFAULTS["gamora"]["loss"],
+                    lr=lr,
+                )
+            )
+
+        self.assertEqual(label(0.008), "gamora_Orchestrate")
+        self.assertEqual(label(0.0003), "gamora_Orchestrate_lr0.0003")
+        # A namespace with no lr attribute at all (older callers) must not
+        # crash -- treated as "unset", same as the baseline's own default.
+        self.assertEqual(
+            train_baseline._run_label(
+                SimpleNamespace(
+                    baseline="gamora",
+                    algorithm="Orchestrate",
+                    split_by=config.SPLIT_BY,
+                    synthnet_upstream_edge_direction=True,
+                    loss=train_baseline._BASELINE_DEFAULTS["gamora"]["loss"],
+                )
+            ),
+            "gamora_Orchestrate",
+        )
+
     def test_polargate_defaults_to_upstreams_own_loss(self):
         """The defect this guards: train_baseline.py used to hardcode
         nn.MSELoss() for every baseline while train.py trains the primary model
