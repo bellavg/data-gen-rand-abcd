@@ -236,35 +236,31 @@ they are the things a reader of the results table needs to know.
    The readout MLP is upstream's, at upstream's shape (`num_layer=3`,
    `p_drop=0.2`, `act_layer='relu'`), preceded by pooling and followed by the
    sigmoid upstream also applies.
-2. **Size-aware readout, on by default.** Mean pooling is invariant to |V| and
-   |E|, and on this dataset a two-parameter OLS on log node and edge count
-   alone already outranks the primary encoder on Spearman — so a size-blind
-   baseline loses to a trivial predictor before its architecture is tested.
-   `--polargate_size_covariates` (default true) concatenates `log1p(|V|)` and
-   `log1p(|E|)` onto the pooled embedding. `--polargate_pooling sum` is the
-   alternative encoding of the same information and is not the default, because
-   summing tanh-bounded rows over 366,040 nodes produces embeddings four orders
-   of magnitude larger than a 40-node graph's, straight into a sigmoid.
+2. **Size-aware readout, available, OFF by default as of 2026-08-07 (was on).**
+   Mean pooling is invariant to |V| and |E|, and on this dataset a
+   two-parameter OLS on log node and edge count alone already outranks the
+   primary encoder on Spearman — so a size-blind baseline loses to a trivial
+   predictor before its architecture is tested. `--polargate_size_covariates`
+   (default **false**, was true) concatenates `log1p(|V|)` and `log1p(|E|)`
+   onto the pooled embedding when enabled. `--polargate_pooling sum` is the
+   alternative encoding of the same information and is not the default
+   either way, because summing tanh-bounded rows over 366,040 nodes produces
+   embeddings four orders of magnitude larger than a 40-node graph's,
+   straight into a sigmoid.
 
-   ⚠️ **THIS MAKES PolarGate THE ONLY MODEL IN THE SUITE THAT SEES GRAPH SIZE
-   EXPLICITLY.** HOGA, DeepGate4, SynthNet and the primary encoder all pool
-   without any size covariate (`grep -rn size_covariate src/baselines src/models`
-   returns only this baseline's files). So a PolarGate result that BEATS the
-   others cannot be attributed to ambipolar message passing — it may just be
-   the size head-start. The confound runs one way only: a PolarGate result that
-   still LOSES while holding that advantage is, if anything, stronger evidence
-   for the "out of regime" reading.
+   Dropped to `false` per the project author: this covariate is not part of
+   upstream's model and not required to get this port running on this
+   hardware/dataset, so it doesn't meet the bar for a deliberate deviation —
+   this is meant to be a baseline, not a customized comparison.
 
-   Before any cross-model table is built, do one of:
-   - run `--polargate_size_covariates false` as a paired ablation and report
-     both numbers, so a reader can see how much of the gap is size; or
-   - give every baseline and the primary model the same covariates, which
-     levels the field but is a change to already-reported models; or
-   - drop the default to false, accepting the size-blind handicap the other
-     four already carry.
-
-   Reporting only the default, next to size-blind competitors, is the one
-   option that is not defensible.
+   ⚠️ **TURNING THIS ON MAKES PolarGate THE ONLY MODEL IN THE SUITE THAT SEES
+   GRAPH SIZE EXPLICITLY.** HOGA, DeepGate4, SynthNet and the primary encoder
+   all pool without any size covariate (`grep -rn size_covariate src/baselines
+   src/models` returns only this baseline's files). So a PolarGate result that
+   BEATS the others with covariates on cannot be attributed to ambipolar
+   message passing — it may just be the size head-start. Run
+   `--polargate_size_covariates true` as a paired ablation and report both
+   numbers if that comparison is ever needed.
 3. **No BatchNorm in the head.** Upstream passes `norm_layer='batchnorm'`,
    where the MLP sees one row per NODE. Here it sees one row per GRAPH — often
    a single row, since a graph larger than the node budget cannot be split.
@@ -275,12 +271,16 @@ they are the things a reader of the results table needs to know.
    the motivation but not the failure mode: DeepGate4's vendored `MLP.forward`
    pads a 1-row input by repeating it, so it emits a constant instead of
    raising. PolarGate's vendored `MLP` has no such padding.
-4. **Loss defaults to SmoothL1(beta=0.01), not MSE.** This is the only baseline
-   that does. It matches `train.py:151` and therefore the primary model; the
-   other three keep the MSE that `train_baseline.py` previously hardcoded for
-   everything. Upstream PolarGate's own default is neither (`--loss_type 'mae'`).
-   `--loss mse` runs the other arm, and the run label is suffixed so the two
-   cannot overwrite each other.
+4. **Loss defaults to upstream's own `mae` as of 2026-08-07 (was SmoothL1(beta=0.01)).**
+   The SmoothL1 default matched `train.py:151`, scoring PolarGate on the same
+   objective as the primary model — a deliberate comparability choice, not
+   something upstream does or something required to run this port. Dropped
+   per the project author: this is a baseline, and fidelity to upstream's
+   published config (`--loss_type 'mae'`) now wins over comparability with the
+   primary model. `--loss smooth_l1` restores the comparability arm; `--loss
+   mse` gives a like-for-like check against SynthNet/HOGA/DeepGate4 instead.
+   The run label is suffixed for either non-default arm so runs cannot
+   overwrite each other.
 5. **Early stopping at patience 4, not upstream's 50.** Upstream's 500
    epochs / patience 50 (train.py argparse; TODAES Section 6.2) is unreachable
    in a 72h walltime and would let this baseline train far longer than the
@@ -356,6 +356,17 @@ SKU; 94 GiB is the larger one) the conclusion is the same either way. A
 largest-graph singleton batch retains 28.7 GiB in float32, roughly half that
 under the bf16-mixed AMP the SLURM script selects, so it sits comfortably
 inside the card — and unlike HOGA and DeepGate4, the largest graph is not what
-sets this baseline's peak. The 500,000-node default budget (~39 GiB fp32 /
-~20 GiB bf16) is the ceiling to watch. **The GPU figure itself was not measured.** Take it from `nvidia-smi` or
-wandb's "GPU Memory Allocated" on the first epoch and record it here.
+sets this baseline's peak.
+
+**The GPU figure now IS measured**, from a real run (2026-08-06/07, wandb run
+`94bm63rj`, H100, bf16-mixed AMP): at the then-500,000-node budget,
+`system.gpu.0.memoryAllocatedBytes` held flat at ~30.7-30.9 GB for the run's
+full 6.5h (the CUDA caching allocator's high-water mark, not a leak) — ~61.9
+KB/node end-to-end, including optimizer state and allocator overhead on top
+of the isolated activation estimate above. Scaling that measured ratio, the
+node budget was raised to **800,000** (2026-08-07), estimated ~49 GB —
+matching DeepGate4's own calibrated ceiling on this card (the more aggressive
+of HOGA's ~45 GB/56% and DeepGate4's ~49 GB/61%), leaving ~30 GB (38%)
+headroom for allocator fragmentation and packing variance. Still an
+extrapolation — verify the real peak at 800k from the next run's `nvidia-smi`
+or wandb trace and update this figure again.

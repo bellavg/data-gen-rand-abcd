@@ -145,7 +145,7 @@ class TestTrainBaselineCLI(unittest.TestCase):
         )
 
     def test_run_label_separates_the_two_loss_recipes(self):
-        """PolarGate is meant to be run under both its own MSE-style recipe and
+        """PolarGate is meant to be run under both upstream's own 'mae' and
         the primary model's SmoothL1 (train.py:151), and the two runs differ in
         nothing else -- so without a suffix the second overwrites the first's
         last.ckpt. Each baseline's own default stays untagged.
@@ -161,31 +161,35 @@ class TestTrainBaselineCLI(unittest.TestCase):
                     split_by=config.SPLIT_BY,
                     synthnet_upstream_edge_direction=True,
                     loss=loss,
-                    polargate_size_covariates=True,
+                    polargate_size_covariates=False,
                     polargate_pooling="mean",
                 )
             )
 
-        self.assertEqual(label("polargate", "smooth_l1"), "polargate_Orchestrate")
-        self.assertEqual(label("polargate", "mse"), "polargate_Orchestrate_mse")
+        self.assertEqual(label("polargate", "mae"), "polargate_Orchestrate")
+        self.assertEqual(
+            label("polargate", "smooth_l1"), "polargate_Orchestrate_smooth_l1"
+        )
         # Inverted for the other three, whose default is mse.
         self.assertEqual(label("hoga", "mse"), "hoga_Orchestrate")
         self.assertEqual(label("hoga", "smooth_l1"), "hoga_Orchestrate_smooth_l1")
 
-    def test_polargate_defaults_to_the_primary_models_loss(self):
+    def test_polargate_defaults_to_upstreams_own_loss(self):
         """The defect this guards: train_baseline.py used to hardcode
         nn.MSELoss() for every baseline while train.py trains the primary model
         under SmoothL1(beta=0.01). The label is 48.8% exactly zero, so MSE
         through a terminal sigmoid collapses toward the mean and the comparison
         confounds objective with architecture. Changing the existing three
-        (SynthNet/HOGA/DeepGate4) would invalidate runs already made, so only
-        Gamora and PolarGate move -- both publish no loss of their own to
-        preserve.
+        (SynthNet/HOGA/DeepGate4) would invalidate runs already made. Gamora
+        publishes no loss of its own, so it takes the primary model's; PolarGate
+        defaults to upstream's own 'mae' (train.py's --loss_type default) as of
+        2026-08-07, per the project author's no-unnecessary-variations directive
+        -- see baselines/polargate/PROVENANCE.md.
         """
         import train_baseline
 
         self.assertEqual(
-            train_baseline._BASELINE_DEFAULTS["polargate"]["loss"], "smooth_l1"
+            train_baseline._BASELINE_DEFAULTS["polargate"]["loss"], "mae"
         )
         for baseline in ("synthnet", "hoga", "deepgate4"):
             with self.subTest(baseline=baseline):
@@ -277,10 +281,10 @@ class TestTrainBaselineCLI(unittest.TestCase):
         architecture with loss choice. Gamora publishes
         no regression loss at all (its task is classification, F.nll_loss at
         gnn_multitask.py:183), so it takes the primary model's. PolarGate
-        defaults to the same loss for the related reason that it is being
-        compared directly against the primary model. The other three
-        keep the loss their runs were made under, and this test is what stops
-        that changing by accident.
+        defaults to upstream's own 'mae' (train.py's --loss_type default) as
+        of 2026-08-07 -- see baselines/polargate/PROVENANCE.md. The other
+        three keep the loss their runs were made under, and this test is what
+        stops that changing by accident.
         """
         import torch.nn as nn
 
@@ -294,7 +298,7 @@ class TestTrainBaselineCLI(unittest.TestCase):
         self.assertEqual(train_baseline.HOGA_DEFAULTS["loss"], "mse")
         self.assertEqual(train_baseline.DEEPGATE4_DEFAULTS["loss"], "mse")
         self.assertEqual(train_baseline.GAMORA_DEFAULTS["loss"], "smooth_l1")
-        self.assertEqual(train_baseline.POLARGATE_DEFAULTS["loss"], "smooth_l1")
+        self.assertEqual(train_baseline.POLARGATE_DEFAULTS["loss"], "mae")
 
         mse = train_baseline._build_loss(SimpleNamespace(loss="mse", loss_beta=0.01))
         self.assertIsInstance(mse, nn.MSELoss)
@@ -306,6 +310,9 @@ class TestTrainBaselineCLI(unittest.TestCase):
         # beta must match train.py's, or "the primary model's loss" is a
         # differently-shaped loss that merely shares a name.
         self.assertEqual(smooth.beta, 0.01)
+
+        mae = train_baseline._build_loss(SimpleNamespace(loss="mae", loss_beta=0.01))
+        self.assertIsInstance(mae, nn.L1Loss)
 
         with self.assertRaises(ValueError):
             train_baseline._build_loss(SimpleNamespace(loss="huber", loss_beta=0.01))

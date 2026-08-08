@@ -229,7 +229,7 @@ class BaselineRegressionLightningModule(pl.LightningModule):
 
         if prefix in ("val", "test"):
             r2: R2Score = self.r2_metrics[f"s_{prefix}"]  # type: ignore[assignment]
-            r2(preds, targets)
+            r2.update(preds, targets)
             self.log(
                 f"{prefix}_r2",
                 r2,

@@ -146,14 +146,17 @@ means for this port, and
 for why the row must be labelled as Gamora's encoder rather than as Gamora.
 
 POLARGATE also uses the node-budget + accumulation treatment. Its per-node cost
-is MEASURED, not assumed: autograd retains 84,066 bytes (82.1 KiB) per node
-for the backward pass at the published out_dim=256 / layer_num=9, in float32 -- constant to
-three significant figures across 25k, 50k and 100k nodes, since the trunk is
-nine fixed-width convs with no attention and no virtual-edge expansion. Under
-the bf16-mixed AMP selected on H100 that is roughly half. So the 500k-node
-default budget is ~39 GiB fp32 / ~20 GiB bf16, and the irreducible singleton
-peak at config.MAX_NUM_GATES is below it, not above -- unlike HOGA and
-DeepGate4, the largest graph is not what sets this baseline's peak.
+was originally estimated in isolation (autograd retains 84,066 bytes/node for
+the backward pass alone, at out_dim=256 / layer_num=9 in float32) and is now
+MEASURED end-to-end from a real run instead: wandb run 94bm63rj (H100,
+bf16-mixed AMP) held ~30.7-30.9 GB flat for its full 6.5h at a 500k-node
+budget, ~61.9 KB/node including optimizer state and allocator overhead --
+higher than the isolated estimate, as expected. The default budget is now
+800k nodes (2026-08-07), scaling that measured ratio to an estimated ~49 GB,
+matching DeepGate4's own calibrated ceiling on this card. The irreducible
+singleton peak at config.MAX_NUM_GATES (~28.7 GiB fp32) stays below it at
+either budget -- unlike HOGA and DeepGate4, the largest graph is not what
+sets this baseline's peak.
 
 Unlike HOGA and DeepGate4, PolarGate also has a PUBLISHED effective
 batch: upstream's `--batch_size 256` is gradient accumulation over 256
@@ -174,16 +177,20 @@ DeepGate4 keep MSE as the setting their runs were made under, so all three are
 unchanged. Gamora publishes NO regression loss at all -- its task is
 classification, trained with `F.nll_loss` (gnn_multitask.py:183) -- so there is
 nothing to be faithful to, and it defaults instead to the primary model's own
-loss, SmoothL1 at beta=0.01 (train.py:151). PolarGate defaults to the same
-SmoothL1(beta=0.01) for a related but distinct reason: matching train.py:151
-means PolarGate and the primary model are scored on the same objective, which
-matters because the label is 48.8% exactly zero (mean 0.020, SD 0.053), and
-MSE through a terminal sigmoid on that distribution collapses toward the mean
--- so a baseline scored under MSE against a primary model trained under
-SmoothL1 differs in objective as well as architecture. Upstream PolarGate's
-own default is neither: train.py's `--loss_type` defaults to 'mae' (L1) for
-its per-node probability task. --loss mse restores the old MSE-for-everything
-behaviour for a like-for-like check against SynthNet/HOGA/DeepGate4.
+loss, SmoothL1 at beta=0.01 (train.py:151).
+
+PolarGate defaults to upstream's own 'mae' (train.py's `--loss_type` argparse
+default) as of 2026-08-07. It previously defaulted to the primary model's
+SmoothL1(beta=0.01), matching train.py:151 so PolarGate and the primary model
+were scored on the same objective -- which mattered because the label is
+48.8% exactly zero (mean 0.020, SD 0.053), and MSE/MAE through a terminal
+sigmoid on that distribution can collapse toward the mean. That was a
+deliberate comparability choice, not something upstream does or something
+required to make the code run, so it was dropped per the project author's "no
+variations beyond hardware/dataset necessity" directive -- this is a baseline,
+and fidelity to the published config now wins over comparability with the
+primary model. --loss smooth_l1 restores the comparability arm; --loss mse
+gives a like-for-like check against SynthNet/HOGA/DeepGate4 instead.
 
 PROVENANCE OF THE TWO FIGURES USED TO JUSTIFY THE CHOICES ABOVE -- the label
 distribution (48.8% exactly zero, mean 0.020, SD 0.053) behind both Gamora's
@@ -345,10 +352,13 @@ POLARGATE_DEFAULTS = {
     # epochs ... early stopping ... patience of 50". Unreachable in walltime
     # here, so --patience governs; see shell/train_baseline_polargate.sh.
     "max_epochs": PG_DEFAULT_NUM_EPOCHS,
-    # Like Gamora, defaults to the primary model's own loss rather than MSE:
-    # matches train.py:151, so this baseline and the primary model are scored
-    # on the same objective.
-    "loss": "smooth_l1",
+    # Upstream's own default (train.py argparse --loss_type) as of 2026-08-07.
+    # Previously defaulted to the primary model's SmoothL1 for comparability
+    # (matches train.py:151, same objective as the primary model); that was a
+    # deliberate but non-required deviation, dropped per the project author's
+    # "no variations beyond hardware/dataset necessity" directive. Pass
+    # --loss smooth_l1 for the comparability arm.
+    "loss": "mae",
 }
 _BASELINE_DEFAULTS = {
     "synthnet": SYNTHNET_DEFAULTS,
@@ -378,20 +388,24 @@ def _run_label(args: argparse.Namespace) -> str:
     if args.baseline == "synthnet" and not args.synthnet_upstream_edge_direction:
         label = f"{label}_nativeedges"
     # Same rule for --loss: every baseline's default stays untagged, and the
-    # non-default run gets a suffix. PolarGate is meant to be run under BOTH
-    # its own MSE-style recipe and the primary model's SmoothL1 (see the module
-    # docstring's LOSS section), so without this the second run would overwrite
-    # the first's last.ckpt and neither could be attributed afterwards.
+    # non-default run gets a suffix. PolarGate may be run under its own
+    # default (upstream's 'mae'), the primary model's 'smooth_l1' for
+    # comparability, or 'mse' for a like-for-like check against
+    # SynthNet/HOGA/DeepGate4 (see the module docstring's LOSS section), so
+    # without this a second arm would overwrite the first's last.ckpt and
+    # neither could be attributed afterwards.
     if args.loss != _BASELINE_DEFAULTS[args.baseline]["loss"]:
         label = f"{label}_{args.loss}"
     # And for PolarGate's size covariates, for the same reason and a sharper
     # one: the size-covariate arm is the ONLY model in the suite that sees |V|
-    # and |E|, so the paired `false` ablation is what makes any PolarGate win
-    # attributable at all. Two arms that differ in nothing else must not share
-    # a checkpoint dir. See baselines/polargate/PROVENANCE.md.
+    # and |E|, so the paired `true` arm is what makes any PolarGate win
+    # attributable at all if it's ever turned back on. Two arms that differ in
+    # nothing else must not share a checkpoint dir. Default is now `false`
+    # (upstream's own size-blind readout, as of 2026-08-07), so `true` is the
+    # one that gets suffixed. See baselines/polargate/PROVENANCE.md.
     if args.baseline == "polargate":
-        if not args.polargate_size_covariates:
-            label = f"{label}_nosizecov"
+        if args.polargate_size_covariates:
+            label = f"{label}_sizecov"
         if args.polargate_pooling != "mean":
             label = f"{label}_{args.polargate_pooling}pool"
     return label
@@ -531,6 +545,8 @@ def _build_loss(args: argparse.Namespace) -> nn.Module:
         return nn.MSELoss()
     if args.loss == "smooth_l1":
         return nn.SmoothL1Loss(beta=args.loss_beta)
+    if args.loss == "mae":
+        return nn.L1Loss()
     raise ValueError(f"Unknown loss: {args.loss!r}")
 
 
@@ -939,19 +955,17 @@ if __name__ == "__main__":
     parser.add_argument("--lr", type=float, default=None)
     parser.add_argument("--weight_decay", type=float, default=None)
     # Per-baseline like the four above, resolved from _BASELINE_DEFAULTS in
-    # main(): SynthNet/HOGA/DeepGate4 keep "mse", Gamora and PolarGate default
-    # to "smooth_l1" (the primary model's loss, train.py:151) because neither
-    # publishes an MSE precedent worth preserving. This replaces a hardcoded
-    # nn.MSELoss() that applied to every baseline regardless of what its paper
-    # used or what it was being compared against. The label is 48.8% exactly
-    # zero (mean 0.020, SD 0.053), and MSE through a terminal sigmoid on that
-    # distribution collapses toward the mean, so an MSE-scored baseline is not
-    # compared to a SmoothL1-trained primary model on equal terms.
+    # main(): SynthNet/HOGA/DeepGate4 keep "mse", Gamora defaults to
+    # "smooth_l1" (the primary model's loss, train.py:151) since it publishes
+    # no regression loss of its own, and PolarGate defaults to "mae" (upstream
+    # train.py's own --loss_type default, as of 2026-08-07). This replaces a
+    # hardcoded nn.MSELoss() that applied to every baseline regardless of what
+    # its paper used or what it was being compared against.
     parser.add_argument(
         "--loss",
         type=str,
         default=None,
-        choices=["mse", "smooth_l1"],
+        choices=["mse", "smooth_l1", "mae"],
         help="Regression loss. Defaults per baseline; see train_baseline.py's "
         "module docstring for why the default is not the same for all five.",
     )
@@ -1342,54 +1356,61 @@ if __name__ == "__main__":
         default="mean",
         choices=["mean", "sum"],
         help=(
-            "Node-to-graph pooling. 'mean' (default) paired with "
-            "--polargate_size_covariates true is how this port avoids a "
-            "size-blind readout. 'sum' is the alternative -- it encodes |V| "
-            "implicitly -- but summing tanh-bounded rows over 366,040 nodes "
-            "gives embeddings ~4 orders of magnitude larger than a 40-node "
-            "graph's, straight into a sigmoid. Report whichever was used."
+            "Node-to-graph pooling. 'mean' (default) is size-blind on its "
+            "own, matching upstream's own readout shape; pairing it with "
+            "--polargate_size_covariates true is how this port can opt into "
+            "a size-aware readout if that's ever needed. 'sum' is an "
+            "alternative that encodes |V| implicitly -- but summing "
+            "tanh-bounded rows over 366,040 nodes gives embeddings ~4 orders "
+            "of magnitude larger than a 40-node graph's, straight into a "
+            "sigmoid. Report whichever was used."
         ),
     )
     parser.add_argument(
         "--polargate_size_covariates",
         type=lambda x: str(x).lower() in ("true", "1", "yes"),
-        default=True,
+        default=False,
         help=(
             "Concatenate log1p(|V|) and log1p(|E|) per graph onto the pooled "
-            "embedding before the head. TRUE by default: mean pooling cannot "
-            "represent graph size, and on this dataset a two-parameter OLS on "
-            "those two numbers alone already outranks the primary encoder on "
-            "Spearman, so a size-blind baseline loses to a trivial predictor "
-            "before the architecture is tested at all. WARNING: this makes "
-            "PolarGate the ONLY model in the suite that sees graph size -- "
-            "HOGA, DeepGate4, SynthNet and the primary encoder all pool "
-            "without it -- so a PolarGate WIN is confounded and cannot be "
-            "credited to its architecture. Run the 'false' arm as a paired "
-            "ablation and report both. See baselines/polargate/PROVENANCE.md."
+            "embedding before the head. FALSE by default as of 2026-08-07: "
+            "this is not part of upstream's model or needed to make the code "
+            "run, it was a comparability fix for mean pooling's size-blindness "
+            "(on this dataset a two-parameter OLS on log|V|/log|E| alone "
+            "already outranks the primary encoder on Spearman). WARNING if "
+            "you turn this on: it makes PolarGate the ONLY model in the suite "
+            "that sees graph size -- HOGA, DeepGate4, SynthNet and the "
+            "primary encoder all pool without it -- so a PolarGate WIN would "
+            "be confounded and not credited to its architecture. Run the "
+            "'true' arm as a paired ablation and report both if needed. See "
+            "baselines/polargate/PROVENANCE.md."
         ),
     )
     parser.add_argument(
         "--polargate_max_nodes_per_batch",
         type=int,
-        default=500_000,
+        default=800_000,
         help=(
             "Total-node budget per PolarGate batch, replacing --batch_size for "
             "this baseline (0 disables, restoring fixed graph-count batching). "
-            "MEASURED cost: autograd retains 84,066 bytes/node for backward at "
-            "out_dim=256 / layer_num=9 in float32 and ~1.98 edges/node, so "
-            "500k nodes is ~39 GiB fp32 and ~20 GiB under the bf16-mixed AMP "
-            "an H100 gets. Sized jointly with --accumulate_grad_batches to "
-            "reproduce upstream's PUBLISHED 256-graph effective batch: at this "
-            "dataset's ~40k mean nodes, 500k is at most 12.5 graphs per "
-            "micro-batch, so 20 accumulation steps give around 250 graphs per "
-            "update against upstream's 256 (scaling HOGA's measured batch "
-            "count instead suggests ~16 graphs and ~310 -- see "
-            "shell/train_baseline_polargate.sh; read the real figure off the "
-            "first epoch summary). Retune "
-            "the two together -- their product is the effective batch. Unlike "
-            "HOGA and DeepGate4 the largest single graph does NOT set the "
-            "peak here: a 366,040-node singleton batch retains 28.7 GiB fp32, "
-            "below a full 500k budget. See this module's docstring and "
+            "MEASURED from a real run (wandb 94bm63rj, H100, bf16-mixed): at "
+            "the prior 500k budget, end-to-end training memory (fwd+bwd+"
+            "optimizer, allocator high-water mark) sat flat at ~30.7-30.9 GB "
+            "the whole run, ~61.9 KB/node effective -- higher than the "
+            "isolated activation-only estimate (84,066 B/node backward-pass "
+            "only, in float32) because it includes optimizer state and "
+            "allocator overhead. 800k scales that measured ratio to ~49 GB, "
+            "matching DeepGate4's own calibrated ceiling on this card (the "
+            "more aggressive of HOGA's ~45 GB and DeepGate4's ~49 GB "
+            "targets), leaving ~30 GB headroom on an 80 GB card for "
+            "allocator fragmentation and packing variance. Sized jointly "
+            "with --accumulate_grad_batches "
+            "to reproduce upstream's PUBLISHED 256-graph effective batch -- "
+            "see shell/train_baseline_polargate.sh; read the real figure off "
+            "the first epoch summary and retune both together, their product "
+            "is the effective batch. Unlike HOGA and DeepGate4 the largest "
+            "single graph does NOT set the peak here: a 366,040-node "
+            "singleton batch retains ~28.7 GiB fp32, below a full budget at "
+            "either size. See this module's docstring and "
             "shell/train_baseline_polargate.sh."
         ),
     )

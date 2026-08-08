@@ -381,7 +381,7 @@ class TestPolarGateRunLabel(unittest.TestCase):
                 algorithm="Orchestrate",
                 split_by=config.SPLIT_BY,
                 loss=train_baseline._BASELINE_DEFAULTS["polargate"]["loss"],
-                polargate_size_covariates=True,
+                polargate_size_covariates=False,
                 polargate_pooling="mean",
             )
             for key, value in overrides.items():
@@ -390,19 +390,19 @@ class TestPolarGateRunLabel(unittest.TestCase):
 
         self.assertEqual(label(), "polargate_Orchestrate")
         self.assertEqual(
-            label(polargate_size_covariates=False),
-            "polargate_Orchestrate_nosizecov",
+            label(polargate_size_covariates=True),
+            "polargate_Orchestrate_sizecov",
         )
         self.assertEqual(
             label(polargate_pooling="sum"), "polargate_Orchestrate_sumpool"
         )
         # Suffixes stack, and neither is emitted for the other baselines.
         self.assertEqual(
-            label(polargate_size_covariates=False, polargate_pooling="sum"),
-            "polargate_Orchestrate_nosizecov_sumpool",
+            label(polargate_size_covariates=True, polargate_pooling="sum"),
+            "polargate_Orchestrate_sizecov_sumpool",
         )
         self.assertEqual(
-            label(baseline="hoga", loss="mse", polargate_size_covariates=False),
+            label(baseline="hoga", loss="mse", polargate_size_covariates=True),
             "hoga_Orchestrate",
         )
 

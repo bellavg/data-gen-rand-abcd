@@ -19,12 +19,12 @@
 #    repo. src/test.py already has spearmanr wired up. If the claim holds,
 #    it says something about every baseline here, not just PolarGate.
 #
-# 2. RUN THE size_covariates PAIRED ABLATION, not just the default. PolarGate
-#    is the ONLY model in this suite that sees |V|/|E| explicitly -- HOGA,
-#    DeepGate4, SynthNet and the primary encoder all pool size-blind. A
-#    PolarGate WIN over them is not attributable to its architecture unless
-#    the size-blind arm is also reported:
-#      sbatch --export=ALL,POLARGATE_SIZE_COVARIATES=false <this script>
+# 2. size_covariates now DEFAULTS to false (2026-08-07) -- upstream's own
+#    size-blind readout, since the covariate isn't part of upstream's model
+#    and isn't required to run this port. If the size-covariate arm is ever
+#    needed for a specific comparison, run it as the paired ablation and
+#    report both:
+#      sbatch --export=ALL,POLARGATE_SIZE_COVARIATES=true <this script>
 #
 # 3. NO BASELINE EVAL PATH EXISTS YET. src/test.py:555 hardcodes
 #    AIGRegressionLightningModule.load_from_checkpoint, which cannot load a
@@ -34,12 +34,13 @@
 #
 # 4. RECALIBRATE FROM THE FIRST EPOCH, don't trust the defaults below as
 #    final. POLARGATE_MAX_NODES_PER_BATCH / ACCUMULATE_GRAD_BATCHES are sized
-#    to hit upstream's published 256-graph effective batch from TWO
-#    disagreeing estimates (see the comment above their definitions) --  read
-#    the real avg_graphs_per_batch off "[train] Epoch summary" and retune if
-#    it's off target. The GPU memory figures were extrapolated from a CPU
-#    measurement (never run on an H100) -- read the real peak off nvidia-smi
-#    or wandb and record it in PROVENANCE.md.
+#    to hit upstream's published 256-graph effective batch, now from a REAL
+#    H100 GPU-memory measurement (wandb run 94bm63rj, 2026-08-06/07) scaled to
+#    the new budget -- but the graphs-per-micro-batch side of the pairing is
+#    still an estimate (see the comment above their definitions). Read the
+#    real avg_graphs_per_batch off "[train] Epoch summary" and the real peak
+#    off nvidia-smi or wandb "GPU Memory Allocated" on the first epoch, and
+#    retune/record both if they're off target.
 # =========================================================
 
 set -euo pipefail
@@ -129,69 +130,84 @@ HP_TUNING_SPLITS="/scratch-shared/$USER/big_optuna_run/shared_dataset_cache/algo
 POLARGATE_LAYER_NUM="${POLARGATE_LAYER_NUM:-9}"
 POLARGATE_OUT_DIM="${POLARGATE_OUT_DIM:-256}"
 
-# Mean pooling plus explicit log-size covariates, NOT upstream's readout.
-# Upstream predicts one value per NODE, so it never pools; a graph-level mean
-# is invariant to |V| and |E|, and on this dataset a two-parameter OLS on log
-# node and edge count alone already outranks the primary encoder on Spearman.
-# A size-blind baseline would therefore be beaten by a trivial predictor before
-# its architecture was tested at all. Set POLARGATE_POOLING=sum for the
-# alternative encoding of the same information; leaving covariates on with sum
+# Mean pooling, upstream's readout shape (per-node in the original, per-graph
+# here since the task is graph-level). Size covariates default OFF as of
+# 2026-08-07: log1p(|V|)/log1p(|E|) concatenated onto the pooled embedding are
+# not part of upstream's model at all -- they were an added-on fix for mean
+# pooling's size-blindness, not something required to make this baseline run.
+# Per the project author: no variations beyond what the hardware/dataset force
+# (this is "just a baseline"), so the default now matches upstream's own
+# size-blind readout. Set POLARGATE_POOLING=sum for the alternative encoding of
+# size that doesn't need a covariate at all; leaving covariates on with sum
 # pooling is redundant but harmless.
 #
-# CONFOUND WARNING, read before building any cross-model table: PolarGate is
-# the ONLY model in this suite that sees graph size. HOGA, DeepGate4, SynthNet
-# and the primary encoder all pool without any size covariate. So a PolarGate
-# WIN cannot be credited to ambipolar message passing -- it may be the size
-# head-start alone. (A PolarGate LOSS is unaffected, and is if anything
-# stronger evidence for the out-of-regime reading.) Run the paired ablation:
-#   sbatch --export=ALL,POLARGATE_SIZE_COVARIATES=false src/shell/train_baseline_polargate.sh
-# and report both arms. See src/baselines/polargate/PROVENANCE.md.
+# CONFOUND WARNING if you ever turn this back on: PolarGate would then be the
+# ONLY model in this suite that sees graph size explicitly (HOGA, DeepGate4,
+# SynthNet and the primary encoder all pool size-blind), so a WIN couldn't be
+# credited to ambipolar message passing alone. Run the paired arm and report
+# both if you do:
+#   sbatch --export=ALL,POLARGATE_SIZE_COVARIATES=true src/shell/train_baseline_polargate.sh
+# See src/baselines/polargate/PROVENANCE.md.
 POLARGATE_POOLING="${POLARGATE_POOLING:-mean}"
-POLARGATE_SIZE_COVARIATES="${POLARGATE_SIZE_COVARIATES:-true}"
+POLARGATE_SIZE_COVARIATES="${POLARGATE_SIZE_COVARIATES:-false}"
 
-# Loss. Defaults to smooth_l1 (beta=0.01) for this baseline, matching
-# train.py:151 and therefore the primary model, because the label is 48.8%
-# exactly zero (mean 0.020, SD 0.053) and MSE through a terminal sigmoid on
-# that distribution collapses toward the mean. The other three baselines still
-# default to MSE, so this is the one baseline scored on the primary model's own
-# objective. Run the MSE arm too and report both:
-#   sbatch --export=ALL,POLARGATE_LOSS=mse src/shell/train_baseline_polargate.sh
+# Loss. Defaults to upstream's own 'mae' (train.py argparse default,
+# --loss_type) as of 2026-08-07 -- not the primary model's SmoothL1. The
+# SmoothL1 default was a comparability choice (matching train.py:151 so this
+# baseline and the primary model share an objective, since the label is 48.8%
+# exactly zero and MSE through a terminal sigmoid collapses toward the mean),
+# not something upstream does or something needed to make the code run. Per
+# the project author: no variations beyond hardware/dataset necessity, so this
+# now runs upstream's actual published loss. Run the SmoothL1 arm for
+# comparability with the primary model if needed:
+#   sbatch --export=ALL,POLARGATE_LOSS=smooth_l1 src/shell/train_baseline_polargate.sh
 # train_baseline.py suffixes the run label with a non-default loss, so the two
 # runs get separate checkpoint dirs.
-POLARGATE_LOSS="${POLARGATE_LOSS:-smooth_l1}"
+POLARGATE_LOSS="${POLARGATE_LOSS:-mae}"
 
 # Node budget replaces a fixed graph count, as for HOGA and DeepGate4.
 #
-# MEASURED cost, at the published out_dim=256 / layer_num=9 in float32:
-# autograd retains 84,066 bytes (82.1 KiB) per node for the backward pass --
-# constant to three significant figures across 25k, 50k and 100k nodes, since
-# the trunk is nine fixed-width convs with no attention and no virtual-edge
-# expansion. So a 500k budget is ~39 GiB fp32, roughly half that under the
-# bf16-mixed AMP this script gets on H100. Unlike HOGA and DeepGate4, the
-# largest single graph is NOT what sets the peak: a 366,040-node singleton
-# batch retains 28.7 GiB fp32, below a full 500k budget.
+# MEASURED FROM A REAL RUN (wandb run 94bm63rj, 2026-08-06/07, H100,
+# bf16-mixed AMP): at the 500,000-node budget this used to run, system.gpu.0.
+# memoryAllocatedBytes sat essentially flat at ~30.7-30.9 GB for the entire
+# 6.5h it ran -- the CUDA caching allocator's high-water mark, holding steady
+# once reached, not a leak. That is END-TO-END training memory (forward +
+# backward + optimizer state + allocator overhead), not the isolated
+# activation-only estimate below, and it is higher than that estimate as a
+# result -- ~61.9 KB/node effective, vs the ~41-43 KB/node the activation math
+# alone implies under bf16.
 #
-# The GPU figure itself was NOT measured -- the port was written on a machine
-# with no access to the cluster. Take it from nvidia-smi or wandb "GPU Memory
-# Allocated" on the first epoch and record it in PROVENANCE.md.
+# The isolated estimate this was originally sized from, for reference: autograd
+# retains 84,066 bytes (82.1 KiB) per node for the backward pass alone, at the
+# published out_dim=256 / layer_num=9 in float32 -- constant to three
+# significant figures across 25k, 50k and 100k nodes, since the trunk is nine
+# fixed-width convs with no attention and no virtual-edge expansion. Unlike
+# HOGA and DeepGate4, the largest single graph does not set this baseline's
+# peak on its own: a 366,040-node singleton batch retains ~28.7 GiB fp32,
+# below a full budget at either size below.
+#
+# RAISED to 800,000 as of 2026-08-07, using the MEASURED 61.9 KB/node ratio
+# above: 500,000 * (49/30.9) ~= 800,000 nodes lands at an estimated ~49 GB,
+# matching DeepGate4's own calibrated ceiling on this card (the more
+# aggressive of HOGA's ~45 GB / 56% and DeepGate4's ~49 GB / 61%), leaving
+# ~30 GB (38%) headroom on the 80 GB card for allocator fragmentation and
+# packing variance. Pack it fuller than this only after confirming the real
+# peak from nvidia-smi / wandb "GPU Memory Allocated" on the first epoch --
+# this is still an extrapolation, just from a real measurement instead of an
+# isolated one this time.
 #
 # Unlike HOGA and DeepGate4, PolarGate publishes an effective batch:
 # train.sh's --batch_size 256 is gradient accumulation over 256 one-graph
 # forwards (train.py:339 steps the optimizer every batch_size iterations of a
-# single-graph loop). Sizing the pair needs the graphs-per-micro-batch figure,
-# and the two available estimates disagree, so treat it as a RANGE:
-#   - From the ~40k mean node count quoted throughout this repo: 500k/40k =
-#     12.5, and that is an upper bound, since packing is imperfect and any
-#     graph over the budget forms a singleton.
-#   - From HOGA's own MEASURED 149,485 train micro-batches at its 150k budget:
-#     ~45k micro-batches here, i.e. ~707k/45k = ~16 graphs each.
-# Those cannot both be right. The second implies a train-split mean nearer 32k
-# nodes than 40k, which is plausible (the ~40k figure is quoted for train+val
-# and is itself approximate) but unverified. So 20 accumulation steps gives
-# somewhere around 250-310 graphs per update against upstream's 256, and the
-# 12.5-graph reading is the one that lands on target.
-# DO NOT treat either end as known -- read avg_graphs_per_batch off the first
-# epoch summary and retune from that.
+# single-graph loop). ACCUMULATE_GRAD_BATCHES scales down from the prior
+# 500k/20 pairing by the same 1.6x the node budget grew by (20 / 1.6 ~= 12.5,
+# rounded to 13) to keep targeting that same ~250-330 graphs/update range
+# against upstream's 256 -- the underlying graphs-per-micro-batch estimate was
+# already a RANGE (12.5-16 graphs at 500k, from two disagreeing derivations;
+# see prior git history for the full derivation), so this is a scaled
+# re-estimate, not a new measurement.
+# DO NOT treat this as known -- read avg_graphs_per_batch off the first epoch
+# summary and retune from that.
 #
 # THE TWO MUST BE RETUNED TOGETHER -- their product is the effective batch, and
 # the whole point of the pairing is to hit the paper's number. Note this makes
@@ -206,8 +222,8 @@ POLARGATE_LOSS="${POLARGATE_LOSS:-smooth_l1}"
 # avg_graphs_per_batch in "[train] Epoch summary", and nvidia-smi / wandb "GPU
 # Memory Allocated" gives the real peak. Recalibrate from those, not from the
 # ~40k mean.
-POLARGATE_MAX_NODES_PER_BATCH="${POLARGATE_MAX_NODES_PER_BATCH:-500000}"
-ACCUMULATE_GRAD_BATCHES="${ACCUMULATE_GRAD_BATCHES:-20}"
+POLARGATE_MAX_NODES_PER_BATCH="${POLARGATE_MAX_NODES_PER_BATCH:-800000}"
+ACCUMULATE_GRAD_BATCHES="${ACCUMULATE_GRAD_BATCHES:-13}"
 
 # FULL EPOCHS, deliberately, unlike train_baseline_hoga.sh.
 #

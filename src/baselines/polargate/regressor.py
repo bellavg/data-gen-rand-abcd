@@ -96,17 +96,22 @@ DEVIATIONS FROM UPSTREAM, ALL DELIBERATE
    graphs (~788k with val). The function is deleted from the vendored layers.py, and `forward` raises if
    `batch.x` is missing, so the fallback cannot be silently re-entered.
 
-4. **Size-aware readout, on by default.** Mean pooling is invariant to |V| and
-   |E|, and on this dataset a two-parameter OLS on log node and edge count
-   already outranks the primary encoder on Spearman -- so a size-blind baseline
-   is handicapped against a trivial predictor rather than against the model it
-   is meant to test. `size_covariates=True` (the default) concatenates
-   `log1p(|V|)` and `log1p(|E|)` per graph onto the pooled embedding before the
-   head. `pooling="sum"` is the alternative route to the same information and
-   is available, but it is NOT the default: summing tanh-bounded rows over a
-   366,040-node graph produces graph embeddings four orders of magnitude larger
-   than a 40-node graph's, straight into a sigmoid. Whichever is used must be
-   stated in the results caption, since neither is upstream's readout.
+4. **Size-aware readout, available but OFF by default as of 2026-08-07.** Mean
+   pooling is invariant to |V| and |E|, and on this dataset a two-parameter
+   OLS on log node and edge count already outranks the primary encoder on
+   Spearman -- so a size-blind baseline is handicapped against a trivial
+   predictor rather than against the model it is meant to test. Passing
+   `size_covariates=True` concatenates `log1p(|V|)` and `log1p(|E|)` per graph
+   onto the pooled embedding before the head, but it is not part of upstream's
+   model and not required to run this port, so the default now matches
+   upstream's own size-blind readout (per the project author: no variations
+   beyond hardware/dataset necessity -- this is just a baseline). If turned on,
+   `pooling="sum"` is the alternative route to the same information, but is
+   NOT the default either way: summing tanh-bounded rows over a 366,040-node
+   graph produces graph embeddings four orders of magnitude larger than a
+   40-node graph's, straight into a sigmoid. Whichever combination is used
+   must be stated in the results caption, since none of it is upstream's
+   readout.
 
    Under bf16 autocast the covariates are computed in float32 and cast down,
    leaving ~0.4% relative precision, i.e. ~+/-0.05 on a log-count of 12.8. The
@@ -261,7 +266,7 @@ class PolarGateGraphRegressor(nn.Module):
         norm_emb: bool = False,
         task_out_dim: int = 1,
         pooling: str = "mean",
-        size_covariates: bool = True,
+        size_covariates: bool = False,
         head_dropout: float = DEFAULT_HEAD_DROPOUT,
         head_norm_layer: str | None = None,
     ) -> None:
